@@ -1,7 +1,7 @@
 {
   "round": 72,
   "updateDate": "",
-  "generatedAt": "2026/05/08 03:00:11",
+  "generatedAt": "2026/05/08 06:33:48",
   "records": [
     {
       "rank": "1",
@@ -30152,19 +30152,6 @@
     },
     {
       "rank": "230",
-      "name": "Ｌｐｅａ＊",
-      "shopname": "ＧｉＧＯ籠原",
-      "updateDate": "2026/05/08 02:42:36",
-      "carname": "RPS13[AR]",
-      "point": "2320",
-      "mytitleId": "62bf47e61e8c779481c51afec03e255f",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 4
-    },
-    {
-      "rank": "231",
       "name": "森亜るるか",
       "shopname": "ウェアハウス岩槻店",
       "updateDate": "2026/05/06 18:34:00",
@@ -30177,7 +30164,7 @@
       "starCnt": 1
     },
     {
-      "rank": "232",
+      "rank": "231",
       "name": "あき",
       "shopname": "プラサカプコン羽生店",
       "updateDate": "2026/05/05 20:20:36",
@@ -30190,7 +30177,7 @@
       "starCnt": 6
     },
     {
-      "rank": "233",
+      "rank": "232",
       "name": "赤城ユイナ",
       "shopname": "タイトーステーション 大宮店",
       "updateDate": "2026/05/08 00:20:54",
@@ -30201,6 +30188,19 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
       "starCnt": 6
+    },
+    {
+      "rank": "233",
+      "name": "Ｌｐｅａ＊",
+      "shopname": "ＧｉＧＯ籠原",
+      "updateDate": "2026/05/08 02:49:37",
+      "carname": "CP9Aエボ5[DH]",
+      "point": "2260",
+      "mytitleId": "62bf47e61e8c779481c51afec03e255f",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 4
     },
     {
       "rank": "234",
@@ -190210,12 +190210,12 @@
       "rank": "9",
       "name": "あ＠とくしま",
       "shopname": "ラウンドワン徳島・万代店",
-      "updateDate": "2026/05/08 02:39:45",
-      "carname": "CT9Aエボ9[AR]",
-      "point": "13200",
+      "updateDate": "2026/05/08 02:49:37",
+      "carname": "ZZW30[HC]",
+      "point": "13460",
       "mytitleId": "2004b284a721b42f6b04c992e2589f29",
       "prideId": "5f88cb6a33355e7bc890d92576e36c94",
-      "pridePoint": 6536,
+      "pridePoint": 6539,
       "onlineBattleRankId": "",
       "starCnt": 0
     },
