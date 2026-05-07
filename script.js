@@ -2,8 +2,8 @@
    Initial DAC Round Data Viewer（auto-json-00 対応）
    - latest.json → 最新ラウンド取得
    - roundXX.json → 統合JSON読み込み（配列 or {records:[]} 両対応）
-   - 星数 + PRIDE帯 を同列で扱うサマリ
-   - クリックで詳細表示
+   - 時間フィルタ + Ruby星数フィルタ
+   - サマリCSV / 全データCSV
 --------------------------------------------------------- */
 
 /* ★ 定義（rd72fix から継承） */
@@ -24,6 +24,7 @@ const PRIDE_LEVELS = [
    グローバル
 --------------------------------------------------------- */
 let allData = [];     // roundXX.json の全プレイヤー
+let filteredData = []; // フィルタ後のデータ
 let summaryRows = []; // サマリ行データ
 let detailList = [];  // 詳細表示用
 let latestRound = null;
@@ -35,6 +36,13 @@ function log(msg) {
   const box = document.getElementById("logBox");
   box.textContent += msg + "\n";
   box.scrollTop = box.scrollHeight;
+}
+
+/* ---------------------------------------------------------
+   カンマ付きフォーマット
+--------------------------------------------------------- */
+function fmt(n) {
+  return Number(n).toLocaleString();
 }
 
 /* ---------------------------------------------------------
@@ -70,6 +78,44 @@ async function loadRoundData() {
 }
 
 /* ---------------------------------------------------------
+   時間フィルタ
+--------------------------------------------------------- */
+function filterByTime(data) {
+  const minutes = Number(document.getElementById("rangeSelect").value);
+  const nowMs = Date.now();
+  const RANGE = minutes * 60 * 1000;
+
+  return data.filter(p => {
+    if (!p.updateDate) return false;
+    const t = new Date(p.updateDate.replace(/-/g, "/")).getTime();
+    return nowMs - t <= RANGE;
+  });
+}
+
+/* ---------------------------------------------------------
+   Ruby星数フィルタ
+--------------------------------------------------------- */
+function filterByRuby(data) {
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+
+  return data.filter(p => {
+    if (p.onlineBattleRankId !== RUBY_ID) return true; // PRIDE帯は常に残す
+    return selectedStars.includes(p.starCnt);
+  });
+}
+
+/* ---------------------------------------------------------
+   フィルタ適用
+--------------------------------------------------------- */
+function applyFilters() {
+  let data = [...allData];
+  data = filterByTime(data);
+  data = filterByRuby(data);
+  filteredData = data;
+}
+
+/* ---------------------------------------------------------
    サマリ生成（星数 + PRIDE帯）
 --------------------------------------------------------- */
 function buildSummary() {
@@ -77,7 +123,7 @@ function buildSummary() {
 
   /* ★ ランク帯（星数） */
   for (let star = 1; star <= 8; star++) {
-    const list = allData.filter(p =>
+    const list = filteredData.filter(p =>
       p.onlineBattleRankId === RUBY_ID && p.starCnt === star
     );
 
@@ -92,7 +138,7 @@ function buildSummary() {
 
   /* ★ PRIDE帯 */
   PRIDE_LEVELS.forEach(level => {
-    const list = allData.filter(p =>
+    const list = filteredData.filter(p =>
       p.pridePoint >= level.min && p.pridePoint <= level.max
     );
 
@@ -122,12 +168,12 @@ function renderSummary() {
 
     return `
       <tr class="clickable" data-key="${r.key}">
-        <td><img src="${r.icon}" width="32"></td>
-        <td>${r.label}</td>
-        <td>${cnt}</td>
-        <td>${avg}</td>
-        <td>${min}</td>
-        <td>${max}</td>
+        <td class="center"><img src="${r.icon}" width="32"></td>
+        <td class="left">${r.label}</td>
+        <td class="right">${fmt(cnt)}</td>
+        <td class="right">${fmt(avg)}</td>
+        <td class="right">${fmt(min)}</td>
+        <td class="right">${fmt(max)}</td>
       </tr>
     `;
   }).join("");
@@ -168,11 +214,11 @@ function showDetail(key) {
 
   const rows = detailList.map(p => `
     <tr>
-      <td>${p.rank}</td>
-      <td>${p.name}</td>
-      <td>${p.point}</td>
-      <td>${p.shopname}</td>
-      <td>${p.updateDate}</td>
+      <td class="right">${fmt(p.rank)}</td>
+      <td class="left">${p.name}</td>
+      <td class="right">${fmt(p.point)}</td>
+      <td class="left">${p.shopname}</td>
+      <td class="left">${p.updateDate}</td>
     </tr>
   `).join("");
 
@@ -196,14 +242,39 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   CSV出力（rd72fix のロジックを継承）
+   サマリCSV出力
 --------------------------------------------------------- */
-function exportCSV() {
-  if (!detailList.length) {
-    alert("詳細データがありません");
-    return;
-  }
+function exportSummaryCSV() {
+  const columns = ["label","count","avg","min","max"];
+  const header = "帯,人数,平均RP,最小RP,最大RP";
 
+  const body = summaryRows.map(r => {
+    const cnt = r.list.length;
+    const points = r.list.map(p => Number(p.point ?? 0));
+    const avg = cnt ? Math.round(points.reduce((a,b)=>a+b,0) / cnt) : 0;
+    const min = cnt ? Math.min(...points) : 0;
+    const max = cnt ? Math.max(...points) : 0;
+
+    return `${r.label},${cnt},${avg},${min},${max}`;
+  }).join("\n");
+
+  const csv = "\ufeff" + header + "\n" + body;
+
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "summary.csv";
+  a.click();
+
+  URL.revokeObjectURL(url);
+}
+
+/* ---------------------------------------------------------
+   全データCSV出力
+--------------------------------------------------------- */
+function exportAllCSV() {
   const columns = [
     "rank","name","shopname","updateDate","point",
     "mytitleId","prideId","pridePoint","onlineBattleRankId","starCnt"
@@ -211,7 +282,7 @@ function exportCSV() {
 
   const header = columns.join(",");
 
-  const body = detailList
+  const body = allData
     .map(p =>
       columns
         .map(col => `"${String(p[col] ?? "").replace(/"/g, '""')}"`)
@@ -226,7 +297,7 @@ function exportCSV() {
 
   const a = document.createElement("a");
   a.href = url;
-  a.download = "detail_records.csv";
+  a.download = "all_records.csv";
   a.click();
 
   URL.revokeObjectURL(url);
@@ -241,6 +312,7 @@ async function init() {
   await loadLatest();
   await loadRoundData();
 
+  applyFilters();
   buildSummary();
   renderSummary();
 
@@ -251,11 +323,27 @@ async function init() {
    イベント
 --------------------------------------------------------- */
 document.getElementById("reloadBtn").onclick = init;
+document.getElementById("filterBtn").onclick = () => {
+  applyFilters();
+  buildSummary();
+  renderSummary();
+};
+document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
+document.getElementById("allCsvBtn").onclick = exportAllCSV;
 document.getElementById("backBtn").onclick = () => {
   document.getElementById("detailView").style.display = "none";
   document.getElementById("summaryView").style.display = "block";
 };
-document.getElementById("csvBtn").onclick = exportCSV;
+
+/* ---------------------------------------------------------
+   Ruby星数フィルタ生成
+--------------------------------------------------------- */
+window.onload = () => {
+  const rubyBox = document.getElementById("rubyFilters");
+  rubyBox.innerHTML = [...Array(8).keys()]
+    .map(i => `<label><input type="checkbox" class="ruby-filter" value="${i+1}" checked> ☆${i+1}</label>`)
+    .join(" ");
+};
 
 /* ---------------------------------------------------------
    実行
