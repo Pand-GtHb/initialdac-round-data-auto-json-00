@@ -34,7 +34,7 @@ jobs:
           echo "Fetching round $ROUND ..."
 
           for i in $(seq 0 62); do
-            URL="https://initiald.sega.jp/inidac/ranking/api/round-point/$i?round=$ROUND"
+            URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${i}.json"
             OUT="tmp/$i.json"
 
             echo "Fetching $URL"
@@ -90,4 +90,3 @@ jobs:
           git add latest.json round*.json
           git commit -m "Auto update: round ${{ steps.round.outputs.latest }}" || echo "No changes"
           git push
-
