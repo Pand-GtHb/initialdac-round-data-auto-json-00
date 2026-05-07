@@ -2,7 +2,7 @@ name: Auto Fetch InitialDAC JSON
 
 on:
   schedule:
-    - cron: "*/20 * * * *"   # 20分ごと
+    - cron: "*/20 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -38,10 +38,8 @@ jobs:
             OUT="tmp/$i.json"
 
             echo "Fetching $URL"
-
             curl -s "$URL" -o "$OUT"
 
-            # JSON破損チェック
             if ! jq empty "$OUT" 2>/dev/null; then
               echo "❌ JSON parse error at area $i"
               exit 1
@@ -52,33 +50,33 @@ jobs:
         run: |
           ROUND=${{ steps.round.outputs.latest }}
 
-          # records[] を統合
-          jq -s '
-            map(.records) | add
-          ' tmp/*.json > merged_records.json
+          jq -s 'map(.records) | add' tmp/*.json > merged_records.json
 
-          # updateDate の最大値を取得
           MAX_DATE=$(jq -r '.[].updateDate' tmp/*.json | sort -r | head -n 1)
 
-          # roundXX.json を生成
+          GEN_DATE=$(TZ='Asia/Tokyo' date +"%Y/%m/%d %H:%M:%S")
+
           jq -n \
             --arg round "$ROUND" \
             --arg update "$MAX_DATE" \
+            --arg gen "$GEN_DATE" \
             --slurpfile rec merged_records.json '
             {
               round: ($round | tonumber),
               updateDate: $update,
+              generatedAt: $gen,
               records: $rec[0]
             }
           ' > "round${ROUND}.json"
 
-          # latest.json を生成
           jq -n \
             --arg round "$ROUND" \
-            --arg update "$MAX_DATE" '
+            --arg update "$MAX_DATE" \
+            --arg gen "$GEN_DATE" '
             {
               latestRound: ($round | tonumber),
-              updateDate: $update
+              updateDate: $update,
+              generatedAt: $gen
             }
           ' > latest.json
 
