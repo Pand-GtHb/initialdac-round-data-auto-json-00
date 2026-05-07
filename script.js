@@ -4,9 +4,11 @@
    - roundXX.json → 統合JSON読み込み（配列 or {records:[]} 両対応）
    - 時間フィルタ + Ruby星数フィルタ
    - サマリCSV / 全データCSV
+   - generatedAt 表示
+   - ログ色分け（緑/赤）
 --------------------------------------------------------- */
 
-/* ★ 定義（rd72fix から継承） */
+/* ★ 定義 */
 const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
 
@@ -23,19 +25,31 @@ const PRIDE_LEVELS = [
 /* ---------------------------------------------------------
    グローバル
 --------------------------------------------------------- */
-let allData = [];     // roundXX.json の全プレイヤー
-let filteredData = []; // フィルタ後のデータ
-let summaryRows = []; // サマリ行データ
-let detailList = [];  // 詳細表示用
+let allData = [];
+let filteredData = [];
+let summaryRows = [];
+let detailList = [];
 let latestRound = null;
+let generatedAt = "";
 
 /* ---------------------------------------------------------
-   デバッグログ
+   ログ（緑/赤）
 --------------------------------------------------------- */
-function log(msg) {
+function appendLog(msg, type = "normal") {
   const box = document.getElementById("logBox");
-  box.textContent += msg + "\n";
+  const line = document.createElement("div");
+  line.textContent = msg;
+  line.style.color = type === "error" ? "#ff5555" : "#00ff00";
+  box.appendChild(line);
   box.scrollTop = box.scrollHeight;
+}
+
+function log(msg) {
+  appendLog(msg, "normal");
+}
+
+function logError(msg) {
+  appendLog(msg, "error");
 }
 
 /* ---------------------------------------------------------
@@ -45,20 +59,28 @@ function fmt(n) {
   return Number(n).toLocaleString();
 }
 
+/* Safari 互換の日時パース */
+function parseDateJST(str) {
+  return new Date(str.replace(/-/g, "/"));
+}
+
 /* ---------------------------------------------------------
    latest.json を取得
 --------------------------------------------------------- */
 async function loadLatest() {
   log("latest.json を取得中…");
 
-  const res = await fetch("latest.json", { cache: "no-store" });
-  const json = await res.json();
+  try {
+    const res = await fetch("latest.json", { cache: "no-store" });
+    const json = await res.json();
 
-  latestRound = json.latestRound;
-  document.getElementById("latestRound").textContent = latestRound;
-  document.getElementById("jsonUpdateTime").textContent = json.updateDate;
+    latestRound = json.latestRound;
+    document.getElementById("latestRound").textContent = latestRound;
 
-  log("latest.json 読み込み完了");
+    log("latest.json 読み込み完了");
+  } catch (e) {
+    logError("latest.json の取得に失敗");
+  }
 }
 
 /* ---------------------------------------------------------
@@ -68,13 +90,22 @@ async function loadRoundData() {
   const url = `round${latestRound}.json?t=${Date.now()}`;
   log(`round${latestRound}.json を取得中…`);
 
-  const res = await fetch(url, { cache: "no-store" });
-  const json = await res.json();
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    const json = await res.json();
 
-  // ★ 配列 or {records:[]} の両対応
-  allData = Array.isArray(json) ? json : json.records;
+    // ★ generatedAt を保存
+    generatedAt = json.generatedAt ?? "";
 
-  log(`round${latestRound}.json 読み込み完了（${allData.length}件）`);
+    // ★ 配列 or {records:[]} の両対応
+    allData = Array.isArray(json) ? json : json.records;
+
+    document.getElementById("jsonUpdateTime").textContent = generatedAt;
+
+    log(`round${latestRound}.json 読み込み完了（${allData.length}件）`);
+  } catch (e) {
+    logError(`round${latestRound}.json の取得に失敗`);
+  }
 }
 
 /* ---------------------------------------------------------
@@ -87,7 +118,7 @@ function filterByTime(data) {
 
   return data.filter(p => {
     if (!p.updateDate) return false;
-    const t = new Date(p.updateDate.replace(/-/g, "/")).getTime();
+    const t = parseDateJST(p.updateDate).getTime();
     return nowMs - t <= RANGE;
   });
 }
@@ -100,7 +131,7 @@ function filterByRuby(data) {
     .map(x => Number(x.value));
 
   return data.filter(p => {
-    if (p.onlineBattleRankId !== RUBY_ID) return true; // PRIDE帯は常に残す
+    if (p.onlineBattleRankId !== RUBY_ID) return true;
     return selectedStars.includes(p.starCnt);
   });
 }
@@ -113,15 +144,19 @@ function applyFilters() {
   data = filterByTime(data);
   data = filterByRuby(data);
   filteredData = data;
+
+  // サマリタイトル更新
+  document.getElementById("summaryTitle").textContent =
+    `稼働プレイヤー（合計：${fmt(filteredData.length)}人）`;
 }
 
 /* ---------------------------------------------------------
-   サマリ生成（星数 + PRIDE帯）
+   サマリ生成
 --------------------------------------------------------- */
 function buildSummary() {
   summaryRows = [];
 
-  /* ★ ランク帯（星数） */
+  // ★ ランク帯
   for (let star = 1; star <= 8; star++) {
     const list = filteredData.filter(p =>
       p.onlineBattleRankId === RUBY_ID && p.starCnt === star
@@ -136,7 +171,7 @@ function buildSummary() {
     });
   }
 
-  /* ★ PRIDE帯 */
+  // ★ PRIDE帯
   PRIDE_LEVELS.forEach(level => {
     const list = filteredData.filter(p =>
       p.pridePoint >= level.min && p.pridePoint <= level.max
@@ -194,12 +229,8 @@ function renderSummary() {
     </div>
   `;
 
-  /* クリックイベント */
   document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
-    tr.addEventListener("click", () => {
-      const key = tr.dataset.key;
-      showDetail(key);
-    });
+    tr.addEventListener("click", () => showDetail(tr.dataset.key));
   });
 }
 
@@ -242,10 +273,9 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   サマリCSV出力
+   CSV出力（サマリ）
 --------------------------------------------------------- */
 function exportSummaryCSV() {
-  const columns = ["label","count","avg","min","max"];
   const header = "帯,人数,平均RP,最小RP,最大RP";
 
   const body = summaryRows.map(r => {
@@ -272,7 +302,7 @@ function exportSummaryCSV() {
 }
 
 /* ---------------------------------------------------------
-   全データCSV出力
+   CSV出力（全データ）
 --------------------------------------------------------- */
 function exportAllCSV() {
   const columns = [
@@ -316,7 +346,7 @@ async function init() {
   buildSummary();
   renderSummary();
 
-  log("=== 初期化完了 ===");
+  log("=== Viewer 初期化完了 ===");
 }
 
 /* ---------------------------------------------------------
