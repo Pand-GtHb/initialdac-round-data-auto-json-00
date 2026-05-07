@@ -1,7 +1,7 @@
 /* ---------------------------------------------------------
    Initial DAC Round Data Viewer（auto-json-00 対応）
    - latest.json → 最新ラウンド取得
-   - roundXX.json → 統合JSON読み込み
+   - roundXX.json → 統合JSON読み込み（配列 or {records:[]} 両対応）
    - 星数 + PRIDE帯 を同列で扱うサマリ
    - クリックで詳細表示
 --------------------------------------------------------- */
@@ -54,14 +54,17 @@ async function loadLatest() {
 }
 
 /* ---------------------------------------------------------
-   roundXX.json を取得
+   roundXX.json を取得（配列 or {records:[]} 両対応）
 --------------------------------------------------------- */
 async function loadRoundData() {
   const url = `round${latestRound}.json?t=${Date.now()}`;
   log(`round${latestRound}.json を取得中…`);
 
   const res = await fetch(url, { cache: "no-store" });
-  allData = await res.json();
+  const json = await res.json();
+
+  // ★ 配列 or {records:[]} の両対応
+  allData = Array.isArray(json) ? json : json.records;
 
   log(`round${latestRound}.json 読み込み完了（${allData.length}件）`);
 }
