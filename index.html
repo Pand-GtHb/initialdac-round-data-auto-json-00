@@ -12,12 +12,8 @@ body {
     padding: 10px;
     background: #f5f5f5;
 }
-h2 {
-    margin-top: 0;
-}
 #logBox {
     background: #222;
-    color: #0f0;
     padding: 10px;
     font-size: 13px;
     white-space: pre-wrap;
@@ -34,29 +30,12 @@ th, td {
     border: 1px solid #ccc;
     padding: 6px;
 }
-th {
-    background: #eee;
-}
-td.left {
-    text-align: left;
-}
-td.right {
-    text-align: right;
-}
-td.center {
-    text-align: center;
-}
-.clickable {
-    cursor: pointer;
-    color: #0078d4;
-    font-weight: bold;
-}
-#summaryView, #detailView {
-    margin-top: 20px;
-}
-#detailView {
-    display: none;
-}
+td.left { text-align: left; }
+td.right { text-align: right; }
+td.center { text-align: center; }
+.clickable { cursor: pointer; color: #0078d4; font-weight: bold; }
+#summaryView, #detailView { margin-top: 20px; }
+#detailView { display: none; }
 </style>
 </head>
 
@@ -64,60 +43,47 @@ td.center {
 
 <h2>InitialD Round Data Viewer（auto-json-00 対応）</h2>
 
-<!-- 最新ラウンド -->
 <div>
-    <b>最新ラウンド：</b>
-    <span id="latestRound">読み込み中…</span>
+  <b>最新ラウンド：</b>
+  <span id="latestRound">読み込み中…</span>
 </div>
 
-<!-- JSON更新日時 -->
 <div style="margin-top:10px;">
-    <b>JSON更新日時：</b>
-    <span id="jsonUpdateTime">読み込み中…</span>
+  <b>時間フィルタ：</b>
+  <select id="rangeSelect">
+      <option value="30" selected>30分</option>
+      <option value="60">1時間</option>
+      <option value="120">2時間</option>
+      <option value="180">3時間</option>
+  </select>
+
+  <b style="margin-left:20px;">JSON更新日時：</b>
+  <span id="jsonUpdateTime">読み込み中…</span>
 </div>
 
-<!-- 時間フィルタ -->
 <div style="margin-top:10px;">
-    <b>時間フィルタ：</b>
-    <select id="rangeSelect">
-        <option value="30" selected>30分前</option>
-        <option value="60">1時間前</option>
-        <option value="120">2時間前</option>
-        <option value="180">3時間前</option>
-    </select>
+  <b>Ruby星数フィルタ：</b><br>
+  <span id="rubyFilters"></span>
 </div>
 
-<!-- Ruby星数フィルタ -->
 <div style="margin-top:10px;">
-    <b>Ruby星数フィルタ：</b><br>
-    <span id="rubyFilters">
-        <!-- script.js で自動生成（☆1〜☆8） -->
-    </span>
+  <button id="reloadBtn">最新データ取得</button>
+  <button id="filterBtn" style="margin-left:10px;">フィルタ適用</button>
+  <button id="summaryCsvBtn" style="margin-left:10px;">サマリCSV出力</button>
+  <button id="allCsvBtn" style="margin-left:10px;">全データCSV出力</button>
 </div>
 
-<!-- ボタン -->
-<div style="margin-top:10px;">
-    <button id="reloadBtn">最新データ取得</button>
-    <button id="filterBtn" style="margin-left:10px;">フィルタ適用</button>
-    <button id="summaryCsvBtn" style="margin-left:10px;">サマリCSV出力</button>
-    <button id="allCsvBtn" style="margin-left:10px;">全データCSV出力</button>
-</div>
+<div id="logBox"></div>
 
-<!-- デバッグログ -->
-<h3 style="margin-top:20px;">デバッグログ</h3>
-<div id="logBox">（ここに fetch の成功/失敗が表示されます）</div>
-
-<!-- サマリ表示 -->
 <div id="summaryView">
-    <h3>ランク帯サマリ（星数＋PRIDE帯）</h3>
-    <div id="summaryArea"></div>
+  <h3 id="summaryTitle">稼働プレイヤー（合計：0人）</h3>
+  <div id="summaryArea"></div>
 </div>
 
-<!-- 詳細表示 -->
 <div id="detailView">
-    <h3>詳細一覧</h3>
-    <button id="backBtn">← サマリに戻る</button>
-    <div id="detailArea" style="margin-top:10px;"></div>
+  <h3>詳細一覧</h3>
+  <button id="backBtn">← サマリに戻る</button>
+  <div id="detailArea" style="margin-top:10px;"></div>
 </div>
 
 <script src="script.js"></script>
