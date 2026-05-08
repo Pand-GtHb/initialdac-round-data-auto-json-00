@@ -25,7 +25,7 @@ let latestRound = null;
 let generatedAt = "";
 
 /* ---------------------------------------------------------
-   ログ（緑/赤）
+   ログ
 --------------------------------------------------------- */
 function appendLog(msg, type = "normal") {
   const box = document.getElementById("logBox");
@@ -43,6 +43,17 @@ function logError(msg) { appendLog(msg, "error"); }
 --------------------------------------------------------- */
 function fmt(n) { return Number(n).toLocaleString(); }
 function parseDateJST(str) { return new Date(str.replace(/-/g, "/")); }
+
+function formatGeneratedAt(str) {
+  if (!str) return "-";
+  const d = parseDateJST(str);
+  const y = d.getFullYear();
+  const m = ("0" + (d.getMonth() + 1)).slice(-2);
+  const day = ("0" + d.getDate()).slice(-2);
+  const hh = ("0" + d.getHours()).slice(-2);
+  const mm = ("0" + d.getMinutes()).slice(-2);
+  return `${y}/${m}/${day} ${hh}:${mm}`;
+}
 
 /* ---------------------------------------------------------
    latest.json
@@ -82,9 +93,9 @@ async function loadRoundData() {
     const json = await res.json();
 
     generatedAt = json.generatedAt ?? "";
-    document.getElementById("jsonUpdateTime").textContent = generatedAt;
+    document.getElementById("jsonUpdateTime").textContent = formatGeneratedAt(generatedAt);
 
-    allData = json.records;
+    allData = Array.isArray(json) ? json : json.records;
 
     log(`round${latestRound}.json 読み込み完了 (${allData.length}件)`);
   } catch (e) {
@@ -93,7 +104,7 @@ async function loadRoundData() {
 }
 
 /* ---------------------------------------------------------
-   フィルタ（表示開始＝generatedAt − フィルタ時間）
+   フィルタ
 --------------------------------------------------------- */
 function applyFilters() {
   const minutes = Number(document.getElementById("rangeSelect").value);
@@ -101,30 +112,31 @@ function applyFilters() {
   if (!generatedAt) {
     logError("generatedAt が未取得のため、時間フィルタをスキップしました");
     filteredData = [...allData];
-  } else {
-    const baseMs = parseDateJST(generatedAt).getTime();
-    const filterStartMs = baseMs - minutes * 60 * 1000;
-
-    const d = new Date(filterStartMs);
-    const y = d.getFullYear();
-    const m = ("0" + (d.getMonth() + 1)).slice(-2);
-    const day = ("0" + d.getDate()).slice(-2);
-    const hh = ("0" + d.getHours()).slice(-2);
-    const mm = ("0" + d.getMinutes()).slice(-2);
-
-    document.getElementById("filterStartTime").textContent =
-      `${y}/${m}/${day} ${hh}:${mm}`;
-
-    filteredData = allData.filter(p => {
-      if (!p.updateDate) return false;
-      const t = parseDateJST(p.updateDate).getTime();
-      return t >= filterStartMs;
-    });
+    return;
   }
+
+  const baseMs = parseDateJST(generatedAt).getTime();
+  const filterStartMs = baseMs - minutes * 60 * 1000;
+
+  const d = new Date(filterStartMs);
+  const y = d.getFullYear();
+  const m = ("0" + (d.getMonth() + 1)).slice(-2);
+  const day = ("0" + d.getDate()).slice(-2);
+  const hh = ("0" + d.getHours()).slice(-2);
+  const mm = ("0" + d.getMinutes()).slice(-2);
+
+  document.getElementById("filterStartTime").textContent =
+    `${y}/${m}/${day} ${hh}:${mm}`;
+
+  filteredData = allData.filter(p => {
+    if (!p.updateDate) return false;
+    const t = parseDateJST(p.updateDate).getTime();
+    return t >= filterStartMs;
+  });
 }
 
 /* ---------------------------------------------------------
-   サマリ生成（延べ人数基準）
+   サマリ生成
 --------------------------------------------------------- */
 function buildSummary() {
   summaryRows = [];
@@ -141,7 +153,7 @@ function buildSummary() {
     summaryRows.push({
       key: `R${star}`,
       label: `☆${star}`,
-      icon: `${BASE_URL}/icons/ruby.png`,
+      icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
       list
     });
   }
@@ -155,7 +167,7 @@ function buildSummary() {
     summaryRows.push({
       key: `P_${level.level}`,
       label: level.level,
-      icon: `${BASE_URL}/icons/pride/${level.icon}.png`,
+      icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
       list
     });
   });
@@ -238,19 +250,37 @@ function showDetail(key) {
   const area = document.getElementById("detailArea");
 
   const rows = detailList.map(p => {
+    let rankIcon = "";
+
+    if (p.onlineBattleRankId === RUBY_ID) {
+      rankIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`;
+    } else {
+      const pride = PRIDE_LEVELS.find(x =>
+        p.pridePoint >= x.min && p.pridePoint <= x.max
+      );
+      if (pride) {
+        rankIcon = `https://initiald.sega.jp/inidac/ranking-images/pride/${pride.icon}.png`;
+      }
+    }
+
+    let lvLabel = "";
+    if (p.onlineBattleRankId === RUBY_ID) {
+      lvLabel = `☆${p.starCnt}`;
+    } else {
+      const pride = PRIDE_LEVELS.find(x =>
+        p.pridePoint >= x.min && p.pridePoint <= x.max
+      );
+      lvLabel = pride ? pride.level : "";
+    }
+
     const titleUrl = p.mytitleId
       ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
       : "";
 
-    const starLabel =
-      p.onlineBattleRankId === RUBY_ID && p.starCnt
-        ? `☆${p.starCnt}`
-        : "";
-
     return `
       <tr>
-        <td class="right">${fmt(p.rank)}</td>
-        <td class="left">${starLabel}</td>
+        <td class="center"><img src="${rankIcon}" width="32"></td>
+        <td class="left">${lvLabel}</td>
         <td class="left">${p.name}</td>
         <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
         <td class="right">${fmt(p.point)}</td>
@@ -375,4 +405,20 @@ document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
 document.getElementById("allCsvBtn").onclick = exportAllCSV;
 document.getElementById("backBtn").onclick = () => {
   document.getElementById("detailView").style.display = "none";
-  document.getElementById("summaryView").
+  document.getElementById("summaryView").style.display = "block";
+};
+
+/* ---------------------------------------------------------
+   Ruby星数フィルタ生成
+--------------------------------------------------------- */
+window.onload = () => {
+  const rubyBox = document.getElementById("rubyFilters");
+  rubyBox.innerHTML = [...Array(8).keys()]
+    .map(i => `<label><input type="checkbox" class="ruby-filter" value="${i+1}" checked> ☆${i+1}</label>`)
+    .join(" ");
+};
+
+/* ---------------------------------------------------------
+   実行
+--------------------------------------------------------- */
+init();
