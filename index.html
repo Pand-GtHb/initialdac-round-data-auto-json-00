@@ -20,13 +20,20 @@ body {
     height: 200px;
     overflow-y: auto;
     border-radius: 6px;
+    margin-top: 20px;   /* ← ボタンとの間隔 */
+    margin-bottom: 20px; /* ← サマリとの間隔 */
 }
 table {
     border-collapse: collapse;
     width: 100%;
     background: #fff;
 }
-th, td {
+th {
+    background: #0078D4;
+    color: white;
+    padding: 6px;
+}
+td {
     border: 1px solid #ccc;
     padding: 6px;
 }
@@ -36,6 +43,19 @@ td.center { text-align: center; }
 .clickable { cursor: pointer; color: #0078d4; font-weight: bold; }
 #summaryView, #detailView { margin-top: 20px; }
 #detailView { display: none; }
+
+/* バーグラフ */
+.bar-wrap {
+    width: 100%;
+    background: #ddd;
+    height: 12px;
+    border-radius: 4px;
+}
+.bar {
+    height: 12px;
+    background: #0078D4;
+    border-radius: 4px;
+}
 </style>
 </head>
 
@@ -73,13 +93,16 @@ td.center { text-align: center; }
   <button id="allCsvBtn" style="margin-left:10px;">全データCSV出力</button>
 </div>
 
+<!-- ログ表示部 -->
 <div id="logBox"></div>
 
+<!-- サマリ表示 -->
 <div id="summaryView">
   <h3 id="summaryTitle">稼働プレイヤー（合計：0人）</h3>
   <div id="summaryArea"></div>
 </div>
 
+<!-- 詳細表示 -->
 <div id="detailView">
   <h3>詳細一覧</h3>
   <button id="backBtn">← サマリに戻る</button>
