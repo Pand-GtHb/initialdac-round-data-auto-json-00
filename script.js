@@ -12,9 +12,9 @@ const PRIDE_LEVELS = [
   { level: "B=100～",   min: 100,   max: 499,   icon: "3c8cc917bb7a97d46ba35c93d898491c" },
   { level: "C=500～",   min: 500,   max: 999,   icon: "ec8f805c9de95c65c858d2e1341f76ab" },
   { level: "D=1000～",  min: 1000,  max: 4999,  icon: "58446a29e6c496139963728eea887349" },
-  { level: "E=5000～",  min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
-  { level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
-  { level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
+  { level: "E=5000～",   min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
+  { level: "F=10000～",  min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
+  { level: "G=50000～",  min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
 ];
 
 let allData = [];
@@ -187,7 +187,7 @@ function buildSummary() {
 
     summaryRows.push({
       key: `P_${level.level}`,
-      label: level.level,
+      label: `${level.min}～${level.max === Infinity ? "∞" : level.max}`,
       icon: prideIcon,
       list
     });
@@ -269,7 +269,7 @@ function showDetail(key) {
   if (isRubyBand) {
     bandIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`;
   } else {
-    const levelInfo = PRIDE_LEVELS.find(l => l.level === bandLabel);
+    const levelInfo = PRIDE_LEVELS.find(l => `${l.min}～${l.max === Infinity ? "∞" : l.max}` === bandLabel);
     if (levelInfo) {
       bandIcon =
         `https://initiald.sega.jp/inidac/ranking-images/pride/${levelInfo.icon}.png`;
@@ -291,7 +291,7 @@ function showDetail(key) {
 
     const starOrLevel = isRubyBand
       ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
-      : bandLabel;
+      : p.pridePoint;
 
     return `
       <tr>
