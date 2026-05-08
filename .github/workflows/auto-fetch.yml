@@ -14,39 +14,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install jq
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
+        run: sudo apt-get install -y jq
 
-      # ---------------------------------------------------------
-      # ① SEGA公式 round-all JSON から最新ラウンドを自動検出
-      # ---------------------------------------------------------
-      - name: Determine latest round from SEGA
+      - name: Determine latest round
         id: round
         run: |
-          URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-all_area-all.json"
-          echo "Fetching latest round info from $URL"
-
-          curl -s "$URL" -o round-all.json
-
-          if ! jq empty round-all.json 2>/dev/null; then
-            echo "❌ Failed to parse round-all.json"
-            exit 1
+          if [ -f latest.json ]; then
+            LATEST=$(jq -r '.latestRound' latest.json)
+          else
+            LATEST=72
           fi
-
-          LATEST=$(jq -r '.round' round-all.json)
-
-          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
-            echo "❌ Could not detect latest round"
-            exit 1
-          fi
-
-          echo "Detected latest round = $LATEST"
           echo "latest=$LATEST" >> $GITHUB_OUTPUT
 
-      # ---------------------------------------------------------
-      # ② 63エリアの JSON を取得
-      # ---------------------------------------------------------
       - name: Fetch 63 JSON files
         run: |
           mkdir -p tmp
@@ -67,44 +46,16 @@ jobs:
             fi
           done
 
-      # ---------------------------------------------------------
-      # ③ JSON結合 ＋ area追加（2桁化）＋ carname削除 ＋ 必要項目だけ抽出
-      # ---------------------------------------------------------
       - name: Merge JSON
         run: |
           ROUND=${{ steps.round.outputs.latest }}
 
-          # 全 records を結合
-          jq -s 'map(.records) | add' tmp/*.json > merged_records_raw.json
+          jq -s 'map(.records) | add' tmp/*.json > merged_records.json
 
-          # area番号付与・carname削除・必要項目だけ抽出
-          jq '
-            to_entries | map(
-              .value
-              | .area = (.key | tostring | lpad(2; "0"))
-              | del(.carname)
-              | {
-                  rank,
-                  name,
-                  shopname,
-                  updateDate,
-                  point,
-                  mytitleId,
-                  prideId,
-                  onlineBattleRankId,
-                  pridePoint,
-                  starCnt,
-                  area
-                }
-            )
-          ' merged_records_raw.json > merged_records.json
-
-          # updateDate の最大値
-          MAX_DATE=$(jq -r '.[].updateDate' merged_records.json | sort -r | head -n 1)
+          MAX_DATE=$(jq -r '.[].updateDate' tmp/*.json | sort -r | head -n 1)
 
           GEN_DATE=$(TZ='Asia/Tokyo' date +"%Y/%m/%d %H:%M:%S")
 
-          # roundXX.json を生成
           jq -n \
             --arg round "$ROUND" \
             --arg update "$MAX_DATE" \
@@ -118,7 +69,6 @@ jobs:
             }
           ' > "round${ROUND}.json"
 
-          # latest.json を生成
           jq -n \
             --arg round "$ROUND" \
             --arg update "$MAX_DATE" \
@@ -130,9 +80,6 @@ jobs:
             }
           ' > latest.json
 
-      # ---------------------------------------------------------
-      # ④ Commit & Push
-      # ---------------------------------------------------------
       - name: Commit & Push
         run: |
           git config user.name "github-actions"
