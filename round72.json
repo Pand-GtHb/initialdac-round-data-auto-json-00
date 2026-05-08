@@ -1,6 +1,6 @@
 {
   "round": "72",
-  "generatedAt": "2026/05/09 03:01:03",
+  "generatedAt": "2026/05/09 03:46:02",
   "records": [
     {
       "rank": "1",
@@ -27824,6 +27824,19 @@
     },
     {
       "rank": "12",
+      "name": "ちびぜろ",
+      "shopname": "キャロム坂戸店",
+      "updateDate": "2026/05/09 03:21:48",
+      "carname": "CE9Aエボ3[AR]",
+      "point": "19280",
+      "mytitleId": "ef39dad6971d5c55c54b3c391d95490f",
+      "prideId": "58446a29e6c496139963728eea887349",
+      "pridePoint": 3546,
+      "onlineBattleRankId": "",
+      "starCnt": 0
+    },
+    {
+      "rank": "13",
       "name": "　緋色残月　",
       "shopname": "楽市楽座イオンモール川口前川店",
       "updateDate": "2026/05/06 13:15:28",
@@ -27834,19 +27847,6 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
       "starCnt": 8
-    },
-    {
-      "rank": "13",
-      "name": "ちびぜろ",
-      "shopname": "キャロム坂戸店",
-      "updateDate": "2026/05/09 01:03:39",
-      "carname": "CT9Aエボ9[AR]",
-      "point": "18560",
-      "mytitleId": "ef39dad6971d5c55c54b3c391d95490f",
-      "prideId": "58446a29e6c496139963728eea887349",
-      "pridePoint": 3541,
-      "onlineBattleRankId": "",
-      "starCnt": 0
     },
     {
       "rank": "14",
@@ -27917,12 +27917,12 @@
       "rank": "19",
       "name": "女部田　郁子",
       "shopname": "ウェアハウス越谷店",
-      "updateDate": "2026/05/09 02:56:48",
-      "carname": "CP9Aエボ6[HC]",
-      "point": "13880",
+      "updateDate": "2026/05/09 03:12:12",
+      "carname": "CT9Aエボ9[AR]",
+      "point": "14340",
       "mytitleId": "76182a70f5f5b39367cd5cda70a3d9d3",
       "prideId": "ec8f805c9de95c65c858d2e1341f76ab",
-      "pridePoint": 586,
+      "pridePoint": 594,
       "onlineBattleRankId": "",
       "starCnt": 0
     },
@@ -43411,19 +43411,6 @@
     },
     {
       "rank": "211",
-      "name": "Ａｃｔｕｅｌ",
-      "shopname": "タイトーＦステーションオリナス錦糸町店",
-      "updateDate": "2026/05/09 02:56:49",
-      "carname": "ZZW30[HC]",
-      "point": "4480",
-      "mytitleId": "6c38fbdffa1e61b5727a5993c691b3a1",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 7
-    },
-    {
-      "rank": "212",
       "name": "Ｓαｌｅｍ．",
       "shopname": "ゲームサファリ池袋",
       "updateDate": "2026/05/05 22:01:58",
@@ -43436,7 +43423,7 @@
       "starCnt": 6
     },
     {
-      "rank": "213",
+      "rank": "212",
       "name": "はせ",
       "shopname": "ＧｉＧＯ調布",
       "updateDate": "2026/05/08 16:42:33",
@@ -43449,7 +43436,7 @@
       "starCnt": 6
     },
     {
-      "rank": "214",
+      "rank": "213",
       "name": "とくめい",
       "shopname": "Ｈｅｙ",
       "updateDate": "2026/05/08 13:25:37",
@@ -43462,7 +43449,7 @@
       "starCnt": 2
     },
     {
-      "rank": "215",
+      "rank": "214",
       "name": "聖なるビンタ",
       "shopname": "ＧｉＧＯ渋谷宮益坂",
       "updateDate": "2026/05/07 19:09:43",
@@ -43475,7 +43462,7 @@
       "starCnt": 1
     },
     {
-      "rank": "216",
+      "rank": "215",
       "name": "ラトナプティ",
       "shopname": "タイトーステーション 町田店",
       "updateDate": "2026/05/08 18:56:54",
@@ -43488,7 +43475,7 @@
       "starCnt": 4
     },
     {
-      "rank": "217",
+      "rank": "216",
       "name": "ｓＬｅｂ",
       "shopname": "ゲームサファリ池袋",
       "updateDate": "2026/04/25 21:39:58",
@@ -43501,7 +43488,7 @@
       "starCnt": 8
     },
     {
-      "rank": "218",
+      "rank": "217",
       "name": "レムりん",
       "shopname": "タイトーステーション 町田店",
       "updateDate": "2026/05/04 11:31:58",
@@ -43512,6 +43499,19 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
       "starCnt": 4
+    },
+    {
+      "rank": "218",
+      "name": "Ａｃｔｕｅｌ",
+      "shopname": "タイトーＦステーションオリナス錦糸町店",
+      "updateDate": "2026/05/09 03:11:05",
+      "carname": "ZZW30[HC]",
+      "point": "4360",
+      "mytitleId": "6c38fbdffa1e61b5727a5993c691b3a1",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 7
     },
     {
       "rank": "219",
@@ -126353,9 +126353,9 @@
       "rank": "22",
       "name": "ゆにこーん",
       "shopname": "ラウンドワン岸和田店",
-      "updateDate": "2026/05/09 02:57:45",
-      "carname": "DC2[HC]",
-      "point": "21580",
+      "updateDate": "2026/05/09 03:04:16",
+      "carname": "CP9Aエボ5[AR]",
+      "point": "21520",
       "mytitleId": "59ae2de1ffd13451697b60099605d1ed",
       "prideId": "58446a29e6c496139963728eea887349",
       "pridePoint": 1268,
@@ -127482,6 +127482,19 @@
     },
     {
       "rank": "109",
+      "name": "ぱんらずな",
+      "shopname": "ラウンドワン岸和田店",
+      "updateDate": "2026/05/09 03:10:40",
+      "carname": "S13[HC]",
+      "point": "5200",
+      "mytitleId": "715fa733b88037cfc0a13ec78ac20ff4",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 6
+    },
+    {
+      "rank": "110",
       "name": "にりーの弟子",
       "shopname": "タイトーステーション 難波店",
       "updateDate": "2026/05/07 00:02:31",
@@ -127494,7 +127507,7 @@
       "starCnt": 7
     },
     {
-      "rank": "110",
+      "rank": "111",
       "name": "Ｒ",
       "shopname": "ＧｉＧＯあべのアポロ３Ｆ",
       "updateDate": "2026/05/03 15:29:56",
@@ -127507,7 +127520,7 @@
       "starCnt": 3
     },
     {
-      "rank": "111",
+      "rank": "112",
       "name": "超親子丼の漢",
       "shopname": "モンキートリック",
       "updateDate": "2026/05/07 21:25:31",
@@ -127520,7 +127533,7 @@
       "starCnt": 8
     },
     {
-      "rank": "112",
+      "rank": "113",
       "name": "一瞬　千撃",
       "shopname": "ラウンドワン梅田店",
       "updateDate": "2026/05/07 11:00:09",
@@ -127531,19 +127544,6 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78b6e12126e2a1e4802ed8674342c946c2",
       "starCnt": 5
-    },
-    {
-      "rank": "113",
-      "name": "ぱんらずな",
-      "shopname": "ラウンドワン岸和田店",
-      "updateDate": "2026/05/09 03:00:54",
-      "carname": "S14[DH]",
-      "point": "5000",
-      "mytitleId": "715fa733b88037cfc0a13ec78ac20ff4",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 6
     },
     {
       "rank": "114",
@@ -151766,6 +151766,19 @@
     },
     {
       "rank": "52",
+      "name": "石川　涼楓",
+      "shopname": "トップラン岩岡",
+      "updateDate": "2026/05/09 03:15:04",
+      "carname": "NB8C[AR]",
+      "point": "5440",
+      "mytitleId": "2d4474e601fa1b4ca7e350b344862ed6",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 8
+    },
+    {
+      "rank": "53",
       "name": "やっちゃん",
       "shopname": "ｎａｍｃｏ豊岡店",
       "updateDate": "2026/05/08 16:29:06",
@@ -151778,7 +151791,7 @@
       "starCnt": 3
     },
     {
-      "rank": "53",
+      "rank": "54",
       "name": "がちくん",
       "shopname": "ラウンドワン姫路飾磨店",
       "updateDate": "2026/05/07 21:55:24",
@@ -151791,7 +151804,7 @@
       "starCnt": 7
     },
     {
-      "rank": "54",
+      "rank": "55",
       "name": "いくらぁ",
       "shopname": "ＧｉＧＯフェニックスプラザ摩耶",
       "updateDate": "2026/05/07 18:06:17",
@@ -151804,7 +151817,7 @@
       "starCnt": 2
     },
     {
-      "rank": "55",
+      "rank": "56",
       "name": "伊島優人",
       "shopname": "ＧｉＧＯコロワ甲子園",
       "updateDate": "2026/05/08 13:24:20",
@@ -151817,7 +151830,7 @@
       "starCnt": 1
     },
     {
-      "rank": "56",
+      "rank": "57",
       "name": "式守さん",
       "shopname": "ゲームアイビス太子",
       "updateDate": "2026/05/08 16:26:00",
@@ -151830,7 +151843,7 @@
       "starCnt": 1
     },
     {
-      "rank": "57",
+      "rank": "58",
       "name": "立花カレン",
       "shopname": "楽市楽座イオンモール神戸北店",
       "updateDate": "2026/05/06 17:45:35",
@@ -151843,7 +151856,7 @@
       "starCnt": 4
     },
     {
-      "rank": "58",
+      "rank": "59",
       "name": "　九条　沙季",
       "shopname": "遊スペース アローズ",
       "updateDate": "2026/05/08 20:08:38",
@@ -151854,19 +151867,6 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
       "starCnt": 6
-    },
-    {
-      "rank": "59",
-      "name": "石川　涼楓",
-      "shopname": "トップラン岩岡",
-      "updateDate": "2026/05/09 02:47:03",
-      "carname": "911[AR]",
-      "point": "4980",
-      "mytitleId": "2d4474e601fa1b4ca7e350b344862ed6",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 8
     },
     {
       "rank": "60",
@@ -163505,19 +163505,6 @@
     },
     {
       "rank": "91",
-      "name": "いろは",
-      "shopname": "タイトーステーション仙台名掛丁店",
-      "updateDate": "2026/05/09 03:01:11",
-      "carname": "4C[AR]",
-      "point": "4320",
-      "mytitleId": "6be5e868945e37a69cea5e6444cd4405",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 8
-    },
-    {
-      "rank": "92",
       "name": "＠ＹＵ！！",
       "shopname": "ユーズランド大河原店",
       "updateDate": "2026/05/06 11:25:39",
@@ -163530,7 +163517,7 @@
       "starCnt": 5
     },
     {
-      "rank": "93",
+      "rank": "92",
       "name": "ブローウィン",
       "shopname": "タイトーステーション 仙台ベガロポリス店",
       "updateDate": "2026/05/07 23:39:12",
@@ -163543,7 +163530,7 @@
       "starCnt": 6
     },
     {
-      "rank": "94",
+      "rank": "93",
       "name": "ユーズランド",
       "shopname": "ユーズランド大河原店",
       "updateDate": "2026/05/08 13:27:03",
@@ -163554,6 +163541,19 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
       "starCnt": 2
+    },
+    {
+      "rank": "94",
+      "name": "いろは",
+      "shopname": "タイトーステーション仙台名掛丁店",
+      "updateDate": "2026/05/09 03:12:19",
+      "carname": "FD3S[AR]",
+      "point": "4200",
+      "mytitleId": "6be5e868945e37a69cea5e6444cd4405",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 7
     },
     {
       "rank": "95",
@@ -186658,19 +186658,6 @@
     },
     {
       "rank": "122",
-      "name": "青いイナズマ",
-      "shopname": "ドライブイン古城",
-      "updateDate": "2026/05/06 20:22:28",
-      "carname": "JZA80[AR]",
-      "point": "920",
-      "mytitleId": "52c23c9475f1a8743e869e060aa8bb3b",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 7
-    },
-    {
-      "rank": "123",
       "name": "とーー！",
       "shopname": "アミパラ倉敷店",
       "updateDate": "2026/05/08 16:32:24",
@@ -186683,7 +186670,7 @@
       "starCnt": 4
     },
     {
-      "rank": "124",
+      "rank": "123",
       "name": "クロムＸ",
       "shopname": "タイトーＦステーションマルナカ新倉敷店",
       "updateDate": "2026/05/06 11:29:19",
@@ -186696,7 +186683,7 @@
       "starCnt": 3
     },
     {
-      "rank": "125",
+      "rank": "124",
       "name": "こんた",
       "shopname": "ユーズランド倉敷店",
       "updateDate": "2026/05/08 17:14:57",
@@ -186709,7 +186696,7 @@
       "starCnt": 3
     },
     {
-      "rank": "126",
+      "rank": "125",
       "name": "山吹　沙綾",
       "shopname": "アミパラ岡山店",
       "updateDate": "2026/05/06 15:30:04",
@@ -186722,7 +186709,7 @@
       "starCnt": 4
     },
     {
-      "rank": "127",
+      "rank": "126",
       "name": "川田　将雅",
       "shopname": "アミパラ倉敷店",
       "updateDate": "2026/05/02 13:28:37",
@@ -186735,7 +186722,7 @@
       "starCnt": 8
     },
     {
-      "rank": "128",
+      "rank": "127",
       "name": "Ｇｉｓｅｌｅ",
       "shopname": "ドライブイン古城",
       "updateDate": "2026/05/06 15:02:04",
@@ -186748,7 +186735,7 @@
       "starCnt": 3
     },
     {
-      "rank": "129",
+      "rank": "128",
       "name": "珍珍満湖",
       "shopname": "アミパラ岡山店",
       "updateDate": "2026/05/07 17:54:35",
@@ -186759,6 +186746,19 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
       "starCnt": 2
+    },
+    {
+      "rank": "129",
+      "name": "青いイナズマ",
+      "shopname": "ドライブイン古城",
+      "updateDate": "2026/05/09 03:21:55",
+      "carname": "86レビン[AR]",
+      "point": "860",
+      "mytitleId": "52c23c9475f1a8743e869e060aa8bb3b",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 7
     },
     {
       "rank": "130",
@@ -193002,6 +193002,19 @@
     },
     {
       "rank": "6",
+      "name": "バレンシーア",
+      "shopname": "ＧｉＧＯスエヒロボウル徳島",
+      "updateDate": "2026/05/09 03:16:14",
+      "carname": "シルエイティ[AR]",
+      "point": "16460",
+      "mytitleId": "c9b5ee8f79ffb37df2ff179065c829ff",
+      "prideId": "807b2b796691b862d667448a3918edd7",
+      "pridePoint": 12474,
+      "onlineBattleRankId": "",
+      "starCnt": 0
+    },
+    {
+      "rank": "7",
       "name": "ジェイクリー",
       "shopname": "ラウンドワン徳島・万代店",
       "updateDate": "2026/05/08 23:04:21",
@@ -193012,19 +193025,6 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
       "starCnt": 8
-    },
-    {
-      "rank": "7",
-      "name": "バレンシーア",
-      "shopname": "ＧｉＧＯスエヒロボウル徳島",
-      "updateDate": "2026/05/09 03:01:44",
-      "carname": "ZC6[AR]",
-      "point": "15940",
-      "mytitleId": "c9b5ee8f79ffb37df2ff179065c829ff",
-      "prideId": "807b2b796691b862d667448a3918edd7",
-      "pridePoint": 12470,
-      "onlineBattleRankId": "",
-      "starCnt": 0
     },
     {
       "rank": "8",
@@ -193069,12 +193069,12 @@
       "rank": "11",
       "name": "りょう＠ＺＲ",
       "shopname": "ＧｉＧＯスエヒロボウル徳島",
-      "updateDate": "2026/04/27 19:41:26",
+      "updateDate": "2026/05/09 03:37:09",
       "carname": "CN9Aエボ4[HC]",
-      "point": "11700",
+      "point": "11960",
       "mytitleId": "2004b284a721b42f6b04c992e2589f29",
       "prideId": "3c8cc917bb7a97d46ba35c93d898491c",
-      "pridePoint": 106,
+      "pridePoint": 110,
       "onlineBattleRankId": "",
       "starCnt": 0
     },
@@ -193405,6 +193405,19 @@
     },
     {
       "rank": "37",
+      "name": "Ｖｉｏｌｅｔ",
+      "shopname": "アミューズメントパフェパレパレ田宮店",
+      "updateDate": "2026/05/09 03:14:57",
+      "carname": "CP9Aエボ5[AR]",
+      "point": "5320",
+      "mytitleId": "d1712885b7abfedfeb4aed3591a96d8c",
+      "prideId": "ef788ee816773c454495ebf83e5ac380",
+      "pridePoint": 62,
+      "onlineBattleRankId": "",
+      "starCnt": 0
+    },
+    {
+      "rank": "38",
       "name": "西野　七瀬",
       "shopname": "アミューズメントパフェパレパレ田宮店",
       "updateDate": "2026/05/05 17:38:20",
@@ -193417,7 +193430,7 @@
       "starCnt": 7
     },
     {
-      "rank": "38",
+      "rank": "39",
       "name": "氷雨",
       "shopname": "アミューズメントパフェパレパレ田宮店",
       "updateDate": "2026/05/08 19:08:53",
@@ -193430,7 +193443,7 @@
       "starCnt": 8
     },
     {
-      "rank": "39",
+      "rank": "40",
       "name": "～もみじ～",
       "shopname": "ＧｉＧＯスエヒロボウル徳島",
       "updateDate": "2026/05/01 15:58:29",
@@ -193441,19 +193454,6 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
       "starCnt": 8
-    },
-    {
-      "rank": "40",
-      "name": "Ｖｉｏｌｅｔ",
-      "shopname": "アミューズメントパフェパレパレ田宮店",
-      "updateDate": "2026/05/09 03:01:11",
-      "carname": "CP9Aエボ5[AR]",
-      "point": "5120",
-      "mytitleId": "d1712885b7abfedfeb4aed3591a96d8c",
-      "prideId": "ef788ee816773c454495ebf83e5ac380",
-      "pridePoint": 62,
-      "onlineBattleRankId": "",
-      "starCnt": 0
     },
     {
       "rank": "41",
@@ -302358,6 +302358,19 @@
     },
     {
       "rank": "99",
+      "name": "前科もち＾＾",
+      "shopname": "群馬レジャーランド太田店",
+      "updateDate": "2026/05/09 03:24:04",
+      "carname": "JZX100[HC]",
+      "point": "3320",
+      "mytitleId": "2004b284a721b42f6b04c992e2589f29",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 3
+    },
+    {
+      "rank": "100",
       "name": "りりり",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/08 22:43:29",
@@ -302370,7 +302383,7 @@
       "starCnt": 3
     },
     {
-      "rank": "100",
+      "rank": "101",
       "name": "こうちゃ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/28 20:22:20",
@@ -302383,7 +302396,7 @@
       "starCnt": 1
     },
     {
-      "rank": "101",
+      "rank": "102",
       "name": "咲良　うた",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/07 15:09:44",
@@ -302396,7 +302409,7 @@
       "starCnt": 7
     },
     {
-      "rank": "102",
+      "rank": "103",
       "name": "夢月ロア．",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/05 16:06:40",
@@ -302409,7 +302422,7 @@
       "starCnt": 2
     },
     {
-      "rank": "103",
+      "rank": "104",
       "name": "エボリタンＷ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/08 20:28:44",
@@ -302422,7 +302435,7 @@
       "starCnt": 3
     },
     {
-      "rank": "104",
+      "rank": "105",
       "name": "こなみ　れん",
       "shopname": "群馬レジャーランド前橋店",
       "updateDate": "2026/05/08 21:19:08",
@@ -302435,7 +302448,7 @@
       "starCnt": 1
     },
     {
-      "rank": "105",
+      "rank": "106",
       "name": "ひむこ",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/08 19:37:20",
@@ -302448,7 +302461,7 @@
       "starCnt": 3
     },
     {
-      "rank": "106",
+      "rank": "107",
       "name": "Ｋａｏｒｉ☆",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/05 12:12:04",
@@ -302461,7 +302474,7 @@
       "starCnt": 1
     },
     {
-      "rank": "107",
+      "rank": "108",
       "name": "夕凪　つばさ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/07 13:52:28",
@@ -302474,7 +302487,7 @@
       "starCnt": 6
     },
     {
-      "rank": "108",
+      "rank": "109",
       "name": "舞姫",
       "shopname": "ＨａｐｉｐｉＬａｎｄ太田",
       "updateDate": "2026/05/05 15:10:13",
@@ -302487,7 +302500,7 @@
       "starCnt": 5
     },
     {
-      "rank": "109",
+      "rank": "110",
       "name": "パラドクス",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/05 19:45:39",
@@ -302500,7 +302513,7 @@
       "starCnt": 2
     },
     {
-      "rank": "110",
+      "rank": "111",
       "name": "瑠璃",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/06 13:42:50",
@@ -302513,7 +302526,7 @@
       "starCnt": 2
     },
     {
-      "rank": "111",
+      "rank": "112",
       "name": "博麗霊夢＿",
       "shopname": "ＧｉＧＯ　ＭＥＧＡドン･キホーテ桐生",
       "updateDate": "2026/05/08 17:13:12",
@@ -302526,7 +302539,7 @@
       "starCnt": 6
     },
     {
-      "rank": "112",
+      "rank": "113",
       "name": "シャルロット",
       "shopname": "群馬レジャーランド前橋店",
       "updateDate": "2026/05/08 21:35:00",
@@ -302539,7 +302552,7 @@
       "starCnt": 2
     },
     {
-      "rank": "113",
+      "rank": "114",
       "name": "さくらももこ",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/05/06 17:41:19",
@@ -302552,7 +302565,7 @@
       "starCnt": 1
     },
     {
-      "rank": "114",
+      "rank": "115",
       "name": "ねこちんゆー",
       "shopname": "ＧｉＧＯ太田",
       "updateDate": "2026/05/06 18:18:31",
@@ -302565,7 +302578,7 @@
       "starCnt": 2
     },
     {
-      "rank": "115",
+      "rank": "116",
       "name": "つな",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/05/03 19:20:09",
@@ -302578,7 +302591,7 @@
       "starCnt": 2
     },
     {
-      "rank": "116",
+      "rank": "117",
       "name": "Ｂｏｎｎｉｅ",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/03 13:54:35",
@@ -302591,7 +302604,7 @@
       "starCnt": 7
     },
     {
-      "rank": "117",
+      "rank": "118",
       "name": "たまぁ",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/05/07 18:58:05",
@@ -302604,7 +302617,7 @@
       "starCnt": 5
     },
     {
-      "rank": "118",
+      "rank": "119",
       "name": "たくみ",
       "shopname": "ＧｉＧＯ沼田",
       "updateDate": "2026/05/05 20:13:43",
@@ -302617,7 +302630,7 @@
       "starCnt": 4
     },
     {
-      "rank": "119",
+      "rank": "120",
       "name": "レミリア",
       "shopname": "ゲームシティボストン",
       "updateDate": "2026/05/06 14:29:41",
@@ -302630,7 +302643,7 @@
       "starCnt": 7
     },
     {
-      "rank": "120",
+      "rank": "121",
       "name": "理央．",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/08 15:50:00",
@@ -302643,7 +302656,7 @@
       "starCnt": 7
     },
     {
-      "rank": "121",
+      "rank": "122",
       "name": "箆璃渡都芭瑠",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/04/29 13:21:41",
@@ -302656,7 +302669,7 @@
       "starCnt": 0
     },
     {
-      "rank": "122",
+      "rank": "123",
       "name": "ぐんまちゃん",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/08 23:47:26",
@@ -302669,7 +302682,7 @@
       "starCnt": 4
     },
     {
-      "rank": "123",
+      "rank": "124",
       "name": "ＨＲＫＮ",
       "shopname": "ＧｉＧＯ太田",
       "updateDate": "2026/05/03 15:11:38",
@@ -302682,7 +302695,7 @@
       "starCnt": 5
     },
     {
-      "rank": "124",
+      "rank": "125",
       "name": "小雀とと",
       "shopname": "ゲームパークＭ１",
       "updateDate": "2026/05/06 13:48:48",
@@ -302695,7 +302708,7 @@
       "starCnt": 6
     },
     {
-      "rank": "125",
+      "rank": "126",
       "name": "天使のつむぎ",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/05/08 22:01:43",
@@ -302708,7 +302721,7 @@
       "starCnt": 7
     },
     {
-      "rank": "126",
+      "rank": "127",
       "name": "あかぎぐんま",
       "shopname": "ＧｉＧＯ沼田",
       "updateDate": "2026/04/29 14:13:38",
@@ -302721,7 +302734,7 @@
       "starCnt": 5
     },
     {
-      "rank": "127",
+      "rank": "128",
       "name": "カジ＠８６Ｔ",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/04/30 20:16:24",
@@ -302734,7 +302747,7 @@
       "starCnt": 4
     },
     {
-      "rank": "128",
+      "rank": "129",
       "name": "蒜鹿　七鳴",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/05/01 17:02:55",
@@ -302747,7 +302760,7 @@
       "starCnt": 3
     },
     {
-      "rank": "129",
+      "rank": "130",
       "name": "銀河のパンダ",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/05/02 18:11:38",
@@ -302760,7 +302773,7 @@
       "starCnt": 4
     },
     {
-      "rank": "130",
+      "rank": "131",
       "name": "天野花恵",
       "shopname": "関東スポーツセンター",
       "updateDate": "2026/05/03 17:50:08",
@@ -302773,7 +302786,7 @@
       "starCnt": 3
     },
     {
-      "rank": "131",
+      "rank": "132",
       "name": "いずな",
       "shopname": "ＧｉＧＯ　ＭＥＧＡドン･キホーテ桐生",
       "updateDate": "2026/05/05 14:20:30",
@@ -302786,7 +302799,7 @@
       "starCnt": 4
     },
     {
-      "rank": "132",
+      "rank": "133",
       "name": "ぐんのすけぇ",
       "shopname": "ＧｉＧＯ沼田",
       "updateDate": "2026/05/07 15:09:34",
@@ -302799,7 +302812,7 @@
       "starCnt": 3
     },
     {
-      "rank": "133",
+      "rank": "134",
       "name": "かしわもち？",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/03 22:51:19",
@@ -302812,7 +302825,7 @@
       "starCnt": 1
     },
     {
-      "rank": "134",
+      "rank": "135",
       "name": "マダムヤン",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/30 16:13:45",
@@ -302825,7 +302838,7 @@
       "starCnt": 3
     },
     {
-      "rank": "135",
+      "rank": "136",
       "name": "みおりつＨＴ",
       "shopname": "アピナ太田店",
       "updateDate": "2026/05/04 22:51:33",
@@ -302838,7 +302851,7 @@
       "starCnt": 6
     },
     {
-      "rank": "136",
+      "rank": "137",
       "name": "聖園　ミカ",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/08 15:37:55",
@@ -302849,19 +302862,6 @@
       "pridePoint": 58,
       "onlineBattleRankId": "",
       "starCnt": 0
-    },
-    {
-      "rank": "137",
-      "name": "前科もち＾＾",
-      "shopname": "群馬レジャーランド太田店",
-      "updateDate": "2026/05/09 02:32:43",
-      "carname": "FL5[HC]",
-      "point": "2640",
-      "mytitleId": "2004b284a721b42f6b04c992e2589f29",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 3
     },
     {
       "rank": "138",
@@ -302956,19 +302956,6 @@
     },
     {
       "rank": "145",
-      "name": "∬く～みん∀",
-      "shopname": "ＧｉＧＯ館林",
-      "updateDate": "2026/05/09 02:55:55",
-      "carname": "FD3S[AR]",
-      "point": "2560",
-      "mytitleId": "6d4099cf6e704cc47f3ffdbed61339b2",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
-      "starCnt": 6
-    },
-    {
-      "rank": "146",
       "name": "仲武羅　呪雨",
       "shopname": "ラウンドワン前橋店",
       "updateDate": "2026/05/06 18:26:05",
@@ -302981,7 +302968,7 @@
       "starCnt": 5
     },
     {
-      "rank": "147",
+      "rank": "146",
       "name": "にぐれど",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/04/30 20:00:10",
@@ -302994,7 +302981,7 @@
       "starCnt": 1
     },
     {
-      "rank": "148",
+      "rank": "147",
       "name": "豊松スバル♪",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/08 22:25:11",
@@ -303007,7 +302994,7 @@
       "starCnt": 2
     },
     {
-      "rank": "149",
+      "rank": "148",
       "name": "なかまなし",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/08 17:30:31",
@@ -303018,6 +303005,19 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
       "starCnt": 3
+    },
+    {
+      "rank": "149",
+      "name": "∬く～みん∀",
+      "shopname": "ＧｉＧＯ館林",
+      "updateDate": "2026/05/09 03:13:11",
+      "carname": "ZZW30[HC]",
+      "point": "2500",
+      "mytitleId": "6d4099cf6e704cc47f3ffdbed61339b2",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
+      "starCnt": 6
     },
     {
       "rank": "150",
@@ -303177,6 +303177,19 @@
     },
     {
       "rank": "162",
+      "name": "くわがた",
+      "shopname": "ＧｉＧＯスマーク伊勢崎",
+      "updateDate": "2026/05/09 03:18:13",
+      "carname": "CN9Aエボ4[HC]",
+      "point": "2360",
+      "mytitleId": "2004b284a721b42f6b04c992e2589f29",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 4
+    },
+    {
+      "rank": "163",
       "name": "せりかまちょ",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/05 14:11:37",
@@ -303189,7 +303202,7 @@
       "starCnt": 3
     },
     {
-      "rank": "163",
+      "rank": "164",
       "name": "Ｅｕｐｈｏ",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/05/05 15:46:35",
@@ -303202,7 +303215,7 @@
       "starCnt": 1
     },
     {
-      "rank": "164",
+      "rank": "165",
       "name": "えちなせれあ",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/06 18:39:37",
@@ -303215,7 +303228,7 @@
       "starCnt": 7
     },
     {
-      "rank": "165",
+      "rank": "166",
       "name": "神無　美環",
       "shopname": "ゲームパークＭ１",
       "updateDate": "2026/05/08 20:53:45",
@@ -303228,7 +303241,7 @@
       "starCnt": 6
     },
     {
-      "rank": "166",
+      "rank": "167",
       "name": "獅白ぼたん",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/09 03:00:54",
@@ -303241,7 +303254,7 @@
       "starCnt": 6
     },
     {
-      "rank": "167",
+      "rank": "168",
       "name": "Ｋ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/06 17:28:21",
@@ -303254,7 +303267,7 @@
       "starCnt": 6
     },
     {
-      "rank": "168",
+      "rank": "169",
       "name": "Ｍｉｈａω♀",
       "shopname": "ＧｉＧＯ　ＭＥＧＡドン･キホーテ桐生",
       "updateDate": "2026/05/08 17:18:13",
@@ -303267,7 +303280,7 @@
       "starCnt": 1
     },
     {
-      "rank": "169",
+      "rank": "170",
       "name": "かのうひろ？",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/08 18:08:15",
@@ -303280,7 +303293,7 @@
       "starCnt": 4
     },
     {
-      "rank": "170",
+      "rank": "171",
       "name": "群３２７",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/04/28 18:31:14",
@@ -303293,7 +303306,7 @@
       "starCnt": 1
     },
     {
-      "rank": "171",
+      "rank": "172",
       "name": "津山の女",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/29 20:32:18",
@@ -303306,7 +303319,7 @@
       "starCnt": 0
     },
     {
-      "rank": "172",
+      "rank": "173",
       "name": "ユッキー？",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/04/29 17:00:56",
@@ -303319,7 +303332,7 @@
       "starCnt": 7
     },
     {
-      "rank": "173",
+      "rank": "174",
       "name": "ｎｙｎｙ",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/05/04 16:52:08",
@@ -303332,7 +303345,7 @@
       "starCnt": 4
     },
     {
-      "rank": "174",
+      "rank": "175",
       "name": "優ちゃんっ",
       "shopname": "アピナ太田店",
       "updateDate": "2026/05/06 17:05:37",
@@ -303345,7 +303358,7 @@
       "starCnt": 4
     },
     {
-      "rank": "175",
+      "rank": "176",
       "name": "蒜鹿　茜",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/08 19:58:23",
@@ -303358,7 +303371,7 @@
       "starCnt": 4
     },
     {
-      "rank": "176",
+      "rank": "177",
       "name": "ＭＩ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/07 20:40:59",
@@ -303371,7 +303384,7 @@
       "starCnt": 1
     },
     {
-      "rank": "177",
+      "rank": "178",
       "name": "よしこの弟子",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/05/02 19:40:38",
@@ -303384,7 +303397,7 @@
       "starCnt": 8
     },
     {
-      "rank": "178",
+      "rank": "179",
       "name": "Ｋａｎｎａ☆",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/05 11:36:47",
@@ -303397,7 +303410,7 @@
       "starCnt": 3
     },
     {
-      "rank": "179",
+      "rank": "180",
       "name": "ヒロ０５",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/08 18:25:21",
@@ -303410,7 +303423,7 @@
       "starCnt": 2
     },
     {
-      "rank": "180",
+      "rank": "181",
       "name": "松井＠αｔＲ",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/08 19:43:47",
@@ -303423,7 +303436,7 @@
       "starCnt": 8
     },
     {
-      "rank": "181",
+      "rank": "182",
       "name": "きつね",
       "shopname": "アピナ太田店",
       "updateDate": "2026/05/08 20:49:54",
@@ -303436,7 +303449,7 @@
       "starCnt": 4
     },
     {
-      "rank": "182",
+      "rank": "183",
       "name": "はるぽん",
       "shopname": "群馬レジャーランド前橋店",
       "updateDate": "2026/05/06 19:48:12",
@@ -303449,7 +303462,7 @@
       "starCnt": 1
     },
     {
-      "rank": "183",
+      "rank": "184",
       "name": "西田　汐里",
       "shopname": "ＧｉＧＯ太田",
       "updateDate": "2026/05/06 22:20:48",
@@ -303460,19 +303473,6 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
       "starCnt": 6
-    },
-    {
-      "rank": "184",
-      "name": "くわがた",
-      "shopname": "ＧｉＧＯスマーク伊勢崎",
-      "updateDate": "2026/05/01 01:15:19",
-      "carname": "FD3S6[AR]",
-      "point": "2160",
-      "mytitleId": "2004b284a721b42f6b04c992e2589f29",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 4
     },
     {
       "rank": "185",
@@ -305543,6 +305543,19 @@
     },
     {
       "rank": "344",
+      "name": "風真隊＿神楽",
+      "shopname": "ＧｉＧＯスマーク伊勢崎",
+      "updateDate": "2026/05/09 03:19:59",
+      "carname": "FC3S[DH]",
+      "point": "1000",
+      "mytitleId": "2004b284a721b42f6b04c992e2589f29",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
+      "starCnt": 2
+    },
+    {
+      "rank": "345",
       "name": "白鳥　愛羅",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/25 18:36:19",
@@ -305555,7 +305568,7 @@
       "starCnt": 6
     },
     {
-      "rank": "345",
+      "rank": "346",
       "name": "いつみん",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/29 13:12:55",
@@ -305568,7 +305581,7 @@
       "starCnt": 1
     },
     {
-      "rank": "346",
+      "rank": "347",
       "name": "プーサン＠",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/02 21:25:23",
@@ -305581,7 +305594,7 @@
       "starCnt": 3
     },
     {
-      "rank": "347",
+      "rank": "348",
       "name": "丹生　明里",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/03 17:08:25",
@@ -305594,7 +305607,7 @@
       "starCnt": 1
     },
     {
-      "rank": "348",
+      "rank": "349",
       "name": "ＲＵＩＫＥ",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/05/04 11:46:20",
@@ -305607,7 +305620,7 @@
       "starCnt": 5
     },
     {
-      "rank": "349",
+      "rank": "350",
       "name": "はるゆき",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/05 11:51:17",
@@ -305620,7 +305633,7 @@
       "starCnt": 2
     },
     {
-      "rank": "350",
+      "rank": "351",
       "name": "　無想転生　",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/05/06 16:42:28",
@@ -305633,7 +305646,7 @@
       "starCnt": 5
     },
     {
-      "rank": "351",
+      "rank": "352",
       "name": "ロブ子さん",
       "shopname": "ＧｉＧＯ　ＭＥＧＡドン･キホーテ桐生",
       "updateDate": "2026/05/08 21:22:12",
@@ -305646,7 +305659,7 @@
       "starCnt": 1
     },
     {
-      "rank": "352",
+      "rank": "353",
       "name": "ステラまる",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/02 12:53:50",
@@ -305659,7 +305672,7 @@
       "starCnt": 2
     },
     {
-      "rank": "353",
+      "rank": "354",
       "name": "ＺＯＮＥ",
       "shopname": "ゲームパークＭ１",
       "updateDate": "2026/05/08 15:22:59",
@@ -305672,7 +305685,7 @@
       "starCnt": 4
     },
     {
-      "rank": "354",
+      "rank": "355",
       "name": "からしちゃん",
       "shopname": "ゲームパークＭ１",
       "updateDate": "2026/04/25 13:01:40",
@@ -305685,7 +305698,7 @@
       "starCnt": 5
     },
     {
-      "rank": "355",
+      "rank": "356",
       "name": "カカロット",
       "shopname": "ＧｉＧＯ太田",
       "updateDate": "2026/04/26 11:18:08",
@@ -305698,7 +305711,7 @@
       "starCnt": 1
     },
     {
-      "rank": "356",
+      "rank": "357",
       "name": "ジャージＲ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/02 11:01:53",
@@ -305711,7 +305724,7 @@
       "starCnt": 0
     },
     {
-      "rank": "357",
+      "rank": "358",
       "name": "しゅん",
       "shopname": "ＧｉＧＯ沼田",
       "updateDate": "2026/05/06 12:15:20",
@@ -305724,7 +305737,7 @@
       "starCnt": 1
     },
     {
-      "rank": "358",
+      "rank": "359",
       "name": "群馬のハナ専",
       "shopname": "マトリクス前橋",
       "updateDate": "2026/05/06 18:20:55",
@@ -305737,7 +305750,7 @@
       "starCnt": 2
     },
     {
-      "rank": "359",
+      "rank": "360",
       "name": "ＫＩＮＡＲＩ",
       "shopname": "関東スポーツセンター",
       "updateDate": "2026/05/08 17:57:56",
@@ -305750,7 +305763,7 @@
       "starCnt": 1
     },
     {
-      "rank": "360",
+      "rank": "361",
       "name": "かんそう",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/26 13:59:31",
@@ -305763,7 +305776,7 @@
       "starCnt": 5
     },
     {
-      "rank": "361",
+      "rank": "362",
       "name": "　　田中",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/01 15:06:51",
@@ -305776,7 +305789,7 @@
       "starCnt": 1
     },
     {
-      "rank": "362",
+      "rank": "363",
       "name": "神崎　ひな",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/04 19:39:05",
@@ -305789,7 +305802,7 @@
       "starCnt": 1
     },
     {
-      "rank": "363",
+      "rank": "364",
       "name": "兎味ペロリナ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/05 00:42:04",
@@ -305802,7 +305815,7 @@
       "starCnt": 2
     },
     {
-      "rank": "364",
+      "rank": "365",
       "name": "樫人部長",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/05/05 10:09:43",
@@ -305815,7 +305828,7 @@
       "starCnt": 1
     },
     {
-      "rank": "365",
+      "rank": "366",
       "name": "ＫＫ１４",
       "shopname": "アピナ太田店",
       "updateDate": "2026/05/05 15:30:30",
@@ -305828,7 +305841,7 @@
       "starCnt": 1
     },
     {
-      "rank": "366",
+      "rank": "367",
       "name": "（・ω・）",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/06 12:43:39",
@@ -305841,7 +305854,7 @@
       "starCnt": 1
     },
     {
-      "rank": "367",
+      "rank": "368",
       "name": "こうき",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/05/06 18:01:00",
@@ -305854,7 +305867,7 @@
       "starCnt": 6
     },
     {
-      "rank": "368",
+      "rank": "369",
       "name": "ＪＯＫＥＲ",
       "shopname": "アピナ太田店",
       "updateDate": "2026/05/08 20:21:37",
@@ -305867,7 +305880,7 @@
       "starCnt": 4
     },
     {
-      "rank": "369",
+      "rank": "370",
       "name": "うりじチャン",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/05/08 21:19:20",
@@ -305880,7 +305893,7 @@
       "starCnt": 3
     },
     {
-      "rank": "370",
+      "rank": "371",
       "name": "やま",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/04/25 23:14:11",
@@ -305893,7 +305906,7 @@
       "starCnt": 2
     },
     {
-      "rank": "371",
+      "rank": "372",
       "name": "いえもん",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/04/28 22:32:23",
@@ -305906,7 +305919,7 @@
       "starCnt": 3
     },
     {
-      "rank": "372",
+      "rank": "373",
       "name": "藤原　拓海．",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/02 11:13:12",
@@ -305919,7 +305932,7 @@
       "starCnt": 3
     },
     {
-      "rank": "373",
+      "rank": "374",
       "name": "マール",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/03 21:53:19",
@@ -305932,7 +305945,7 @@
       "starCnt": 5
     },
     {
-      "rank": "374",
+      "rank": "375",
       "name": "るきがめ３",
       "shopname": "群馬レジャーランド前橋店",
       "updateDate": "2026/05/05 11:40:59",
@@ -305945,7 +305958,7 @@
       "starCnt": 1
     },
     {
-      "rank": "375",
+      "rank": "376",
       "name": "ロックオン",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/05 12:49:17",
@@ -305956,19 +305969,6 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
       "starCnt": 1
-    },
-    {
-      "rank": "376",
-      "name": "風真隊＿神楽",
-      "shopname": "ＧｉＧＯスマーク伊勢崎",
-      "updateDate": "2026/05/09 02:55:55",
-      "carname": "FD3S[AR]",
-      "point": "880",
-      "mytitleId": "2004b284a721b42f6b04c992e2589f29",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
-      "starCnt": 2
     },
     {
       "rank": "377",
@@ -310938,6 +310938,19 @@
     },
     {
       "rank": "759",
+      "name": "きなこもぉち",
+      "shopname": "アピナ太田店",
+      "updateDate": "2026/05/09 03:19:58",
+      "carname": "FC3S[DH]",
+      "point": "240",
+      "mytitleId": "0b9af2ff3220d7d44e0ad0dc1a4b0803",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78b6e12126e2a1e4802ed8674342c946c2",
+      "starCnt": 3
+    },
+    {
+      "rank": "760",
       "name": "ｎｉｒｕ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/27 16:48:56",
@@ -310950,7 +310963,7 @@
       "starCnt": 3
     },
     {
-      "rank": "760",
+      "rank": "761",
       "name": "ブルーライン",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/04/28 12:56:17",
@@ -310963,7 +310976,7 @@
       "starCnt": 2
     },
     {
-      "rank": "761",
+      "rank": "762",
       "name": "けんてぃー",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/04/30 20:50:04",
@@ -310976,7 +310989,7 @@
       "starCnt": 4
     },
     {
-      "rank": "762",
+      "rank": "763",
       "name": "マッチ",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/06 17:04:04",
@@ -310989,7 +311002,7 @@
       "starCnt": 1
     },
     {
-      "rank": "763",
+      "rank": "764",
       "name": "　中野　梓　",
       "shopname": "ＧｉＧＯ太田",
       "updateDate": "2026/05/07 17:59:34",
@@ -311002,7 +311015,7 @@
       "starCnt": 8
     },
     {
-      "rank": "764",
+      "rank": "765",
       "name": "ゆっきー",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/04/23 17:22:35",
@@ -311015,7 +311028,7 @@
       "starCnt": 2
     },
     {
-      "rank": "765",
+      "rank": "766",
       "name": "ル〜〜〜＊",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/04/23 20:15:45",
@@ -311028,7 +311041,7 @@
       "starCnt": 5
     },
     {
-      "rank": "766",
+      "rank": "767",
       "name": "ユメノツヅキ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/24 19:34:41",
@@ -311041,7 +311054,7 @@
       "starCnt": 8
     },
     {
-      "rank": "767",
+      "rank": "768",
       "name": "アンジェロ",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/04/25 14:09:36",
@@ -311054,7 +311067,7 @@
       "starCnt": 4
     },
     {
-      "rank": "768",
+      "rank": "769",
       "name": "ロン",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/04/25 21:56:05",
@@ -311067,7 +311080,7 @@
       "starCnt": 2
     },
     {
-      "rank": "769",
+      "rank": "770",
       "name": "まぐろ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/27 17:55:21",
@@ -311080,7 +311093,7 @@
       "starCnt": 1
     },
     {
-      "rank": "770",
+      "rank": "771",
       "name": "＿＿＿ー",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/04/29 09:38:55",
@@ -311093,7 +311106,7 @@
       "starCnt": 2
     },
     {
-      "rank": "771",
+      "rank": "772",
       "name": "ヴァンパイア",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/04/29 12:10:24",
@@ -311106,7 +311119,7 @@
       "starCnt": 4
     },
     {
-      "rank": "772",
+      "rank": "773",
       "name": "まあちゃん",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/04/29 15:22:45",
@@ -311119,7 +311132,7 @@
       "starCnt": 4
     },
     {
-      "rank": "773",
+      "rank": "774",
       "name": "しおちゃん．",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/04/29 20:13:39",
@@ -311132,7 +311145,7 @@
       "starCnt": 3
     },
     {
-      "rank": "774",
+      "rank": "775",
       "name": "なお＿９５",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/01 18:33:44",
@@ -311145,7 +311158,7 @@
       "starCnt": 5
     },
     {
-      "rank": "775",
+      "rank": "776",
       "name": "いちか",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/02 12:08:11",
@@ -311158,7 +311171,7 @@
       "starCnt": 1
     },
     {
-      "rank": "776",
+      "rank": "777",
       "name": "天若　藍．",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/02 13:10:12",
@@ -311171,7 +311184,7 @@
       "starCnt": 1
     },
     {
-      "rank": "777",
+      "rank": "778",
       "name": "Ｓｏｌｕ",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/02 16:29:37",
@@ -311184,7 +311197,7 @@
       "starCnt": 8
     },
     {
-      "rank": "778",
+      "rank": "779",
       "name": "ＮＥＫＯ一閃",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/02 16:38:48",
@@ -311197,7 +311210,7 @@
       "starCnt": 1
     },
     {
-      "rank": "779",
+      "rank": "780",
       "name": "銀河のおもち",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/05/02 16:56:20",
@@ -311210,7 +311223,7 @@
       "starCnt": 2
     },
     {
-      "rank": "780",
+      "rank": "781",
       "name": "千聖卍†",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/05/04 19:54:38",
@@ -311223,7 +311236,7 @@
       "starCnt": 2
     },
     {
-      "rank": "781",
+      "rank": "782",
       "name": "ＡＱＵＡ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/05 09:16:46",
@@ -311236,7 +311249,7 @@
       "starCnt": 1
     },
     {
-      "rank": "782",
+      "rank": "783",
       "name": "ひねくれ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/06 19:13:10",
@@ -311249,7 +311262,7 @@
       "starCnt": 3
     },
     {
-      "rank": "783",
+      "rank": "784",
       "name": "ｂｒｉｄｇｅ",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/07 17:10:45",
@@ -311262,7 +311275,7 @@
       "starCnt": 4
     },
     {
-      "rank": "784",
+      "rank": "785",
       "name": "ｓｏｒａ",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/05/08 12:34:17",
@@ -311275,7 +311288,7 @@
       "starCnt": 6
     },
     {
-      "rank": "785",
+      "rank": "786",
       "name": "空崎　ヒナ",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/08 15:50:47",
@@ -311288,7 +311301,7 @@
       "starCnt": 0
     },
     {
-      "rank": "786",
+      "rank": "787",
       "name": "エスプレッソ",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/04/23 14:22:54",
@@ -311301,7 +311314,7 @@
       "starCnt": 2
     },
     {
-      "rank": "787",
+      "rank": "788",
       "name": "椎名　碧流",
       "shopname": "マトリクス前橋",
       "updateDate": "2026/04/23 15:54:44",
@@ -311314,7 +311327,7 @@
       "starCnt": 3
     },
     {
-      "rank": "788",
+      "rank": "789",
       "name": "なお",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/04/24 18:17:23",
@@ -311327,7 +311340,7 @@
       "starCnt": 3
     },
     {
-      "rank": "789",
+      "rank": "790",
       "name": "アンパンマン",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/04/24 21:22:08",
@@ -311340,7 +311353,7 @@
       "starCnt": 2
     },
     {
-      "rank": "790",
+      "rank": "791",
       "name": "Ｄ端子",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/25 14:23:35",
@@ -311353,7 +311366,7 @@
       "starCnt": 2
     },
     {
-      "rank": "791",
+      "rank": "792",
       "name": "ＴＨ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/25 15:50:31",
@@ -311366,7 +311379,7 @@
       "starCnt": 5
     },
     {
-      "rank": "792",
+      "rank": "793",
       "name": "しょう",
       "shopname": "ＧｉＧＯ沼田",
       "updateDate": "2026/04/26 21:58:20",
@@ -311379,7 +311392,7 @@
       "starCnt": 4
     },
     {
-      "rank": "793",
+      "rank": "794",
       "name": "幾田りら",
       "shopname": "ＧｉＧＯ太田",
       "updateDate": "2026/04/30 14:28:30",
@@ -311392,7 +311405,7 @@
       "starCnt": 3
     },
     {
-      "rank": "794",
+      "rank": "795",
       "name": "黒坂優香子",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/05/01 12:19:33",
@@ -311405,7 +311418,7 @@
       "starCnt": 3
     },
     {
-      "rank": "795",
+      "rank": "796",
       "name": "とりば",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/02 13:55:25",
@@ -311418,7 +311431,7 @@
       "starCnt": 2
     },
     {
-      "rank": "796",
+      "rank": "797",
       "name": "かなかな",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/02 22:27:32",
@@ -311431,7 +311444,7 @@
       "starCnt": 5
     },
     {
-      "rank": "797",
+      "rank": "798",
       "name": "ＵＡＥ２０",
       "shopname": "ゲームパークＭ１",
       "updateDate": "2026/05/02 23:23:21",
@@ -311444,7 +311457,7 @@
       "starCnt": 4
     },
     {
-      "rank": "798",
+      "rank": "799",
       "name": "鬼宿",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/04 15:06:21",
@@ -311457,7 +311470,7 @@
       "starCnt": 2
     },
     {
-      "rank": "799",
+      "rank": "800",
       "name": "おきた",
       "shopname": "ＧｉＧＯ沼田",
       "updateDate": "2026/05/05 10:50:12",
@@ -311470,7 +311483,7 @@
       "starCnt": 6
     },
     {
-      "rank": "800",
+      "rank": "801",
       "name": "鈴代　沙弓",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/05 14:44:04",
@@ -311483,7 +311496,7 @@
       "starCnt": 7
     },
     {
-      "rank": "801",
+      "rank": "802",
       "name": "遠野　ひかる",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/05 16:51:04",
@@ -311496,7 +311509,7 @@
       "starCnt": 3
     },
     {
-      "rank": "802",
+      "rank": "803",
       "name": "はこね　あい",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/05 18:03:57",
@@ -311509,7 +311522,7 @@
       "starCnt": 5
     },
     {
-      "rank": "803",
+      "rank": "804",
       "name": "ＭＩＯ（○）",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/05/05 22:47:28",
@@ -311522,7 +311535,7 @@
       "starCnt": 2
     },
     {
-      "rank": "804",
+      "rank": "805",
       "name": "イクょ真子",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/05/05 23:02:26",
@@ -311535,7 +311548,7 @@
       "starCnt": 7
     },
     {
-      "rank": "805",
+      "rank": "806",
       "name": "はっしゅたぐ",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/06 14:16:27",
@@ -311548,7 +311561,7 @@
       "starCnt": 3
     },
     {
-      "rank": "806",
+      "rank": "807",
       "name": "ダーク＠（ょ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/06 16:46:47",
@@ -311561,7 +311574,7 @@
       "starCnt": 6
     },
     {
-      "rank": "807",
+      "rank": "808",
       "name": "スカト",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/05/08 18:19:11",
@@ -311574,7 +311587,20 @@
       "starCnt": 1
     },
     {
-      "rank": "808",
+      "rank": "809",
+      "name": "くわろぽ",
+      "shopname": "ＧｉＧＯスマーク伊勢崎",
+      "updateDate": "2026/05/09 03:37:09",
+      "carname": "JZX100[DH]",
+      "point": "180",
+      "mytitleId": "dae628bc5da842b1f27e397232f9a492",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 6
+    },
+    {
+      "rank": "810",
       "name": "やよモカ",
       "shopname": "アピナ太田店",
       "updateDate": "2026/04/23 10:22:58",
@@ -311587,7 +311613,7 @@
       "starCnt": 3
     },
     {
-      "rank": "809",
+      "rank": "811",
       "name": "まさ",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/04/23 12:36:35",
@@ -311600,7 +311626,7 @@
       "starCnt": 3
     },
     {
-      "rank": "810",
+      "rank": "812",
       "name": "カナタ",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/04/24 12:38:02",
@@ -311613,7 +311639,7 @@
       "starCnt": 4
     },
     {
-      "rank": "811",
+      "rank": "813",
       "name": "まつぼだお",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/24 15:54:07",
@@ -311626,7 +311652,7 @@
       "starCnt": 2
     },
     {
-      "rank": "812",
+      "rank": "814",
       "name": "もみやま",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/04/24 15:58:59",
@@ -311639,7 +311665,7 @@
       "starCnt": 1
     },
     {
-      "rank": "813",
+      "rank": "815",
       "name": "加賀",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/24 19:34:39",
@@ -311652,7 +311678,7 @@
       "starCnt": 1
     },
     {
-      "rank": "814",
+      "rank": "816",
       "name": "てるちゃん",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/04/25 16:38:37",
@@ -311665,7 +311691,7 @@
       "starCnt": 4
     },
     {
-      "rank": "815",
+      "rank": "817",
       "name": "黒瀬　海愛",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/25 18:31:51",
@@ -311678,7 +311704,7 @@
       "starCnt": 1
     },
     {
-      "rank": "816",
+      "rank": "818",
       "name": "ｆａｌｉｌｖ",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/04/25 22:25:23",
@@ -311691,7 +311717,7 @@
       "starCnt": 1
     },
     {
-      "rank": "817",
+      "rank": "819",
       "name": "ＺＸＹ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/27 18:52:39",
@@ -311704,7 +311730,7 @@
       "starCnt": 2
     },
     {
-      "rank": "818",
+      "rank": "820",
       "name": "ロボ♪",
       "shopname": "群馬レジャーランド前橋店",
       "updateDate": "2026/04/27 20:24:50",
@@ -311717,7 +311743,7 @@
       "starCnt": 1
     },
     {
-      "rank": "819",
+      "rank": "821",
       "name": "しもださやか",
       "shopname": "ＨａｐｉｐｉＬａｎｄ太田",
       "updateDate": "2026/04/28 18:03:26",
@@ -311730,7 +311756,7 @@
       "starCnt": 1
     },
     {
-      "rank": "820",
+      "rank": "822",
       "name": "くう",
       "shopname": "ラウンドワン前橋店",
       "updateDate": "2026/04/29 14:40:31",
@@ -311743,7 +311769,7 @@
       "starCnt": 2
     },
     {
-      "rank": "821",
+      "rank": "823",
       "name": "ドゥラメンテ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/29 16:23:23",
@@ -311756,7 +311782,7 @@
       "starCnt": 1
     },
     {
-      "rank": "822",
+      "rank": "824",
       "name": "しもしも",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/29 18:09:36",
@@ -311769,7 +311795,7 @@
       "starCnt": 1
     },
     {
-      "rank": "823",
+      "rank": "825",
       "name": "むちのむ",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/04/30 12:38:31",
@@ -311782,7 +311808,7 @@
       "starCnt": 1
     },
     {
-      "rank": "824",
+      "rank": "826",
       "name": "ｈａｍｕマル",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/04/30 13:12:59",
@@ -311795,7 +311821,7 @@
       "starCnt": 4
     },
     {
-      "rank": "825",
+      "rank": "827",
       "name": "桜森　朱音",
       "shopname": "アピナ太田店",
       "updateDate": "2026/04/30 13:14:27",
@@ -311808,7 +311834,7 @@
       "starCnt": 3
     },
     {
-      "rank": "826",
+      "rank": "828",
       "name": "まゆしぃ",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/04/30 14:02:17",
@@ -311821,7 +311847,7 @@
       "starCnt": 5
     },
     {
-      "rank": "827",
+      "rank": "829",
       "name": "ホホジロ",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/04/30 15:46:44",
@@ -311834,7 +311860,7 @@
       "starCnt": 5
     },
     {
-      "rank": "828",
+      "rank": "830",
       "name": "カリーナ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/01 12:06:11",
@@ -311847,7 +311873,7 @@
       "starCnt": 2
     },
     {
-      "rank": "829",
+      "rank": "831",
       "name": "ＵＡＥ６",
       "shopname": "ゲームパークＭ１",
       "updateDate": "2026/05/01 13:57:32",
@@ -311860,7 +311886,7 @@
       "starCnt": 4
     },
     {
-      "rank": "830",
+      "rank": "832",
       "name": "ＵＡＥ７",
       "shopname": "ゲームパークＭ１",
       "updateDate": "2026/05/01 14:23:07",
@@ -311873,7 +311899,7 @@
       "starCnt": 3
     },
     {
-      "rank": "831",
+      "rank": "833",
       "name": "ＫＡＣ４Ｆ",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/05/01 23:34:44",
@@ -311886,7 +311912,7 @@
       "starCnt": 6
     },
     {
-      "rank": "832",
+      "rank": "834",
       "name": "レミン",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/02 16:08:41",
@@ -311899,7 +311925,7 @@
       "starCnt": 4
     },
     {
-      "rank": "833",
+      "rank": "835",
       "name": "デン",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/02 16:21:09",
@@ -311912,7 +311938,7 @@
       "starCnt": 1
     },
     {
-      "rank": "834",
+      "rank": "836",
       "name": "ふるー",
       "shopname": "ＧｉＧＯ沼田",
       "updateDate": "2026/05/02 18:09:04",
@@ -311925,7 +311951,7 @@
       "starCnt": 3
     },
     {
-      "rank": "835",
+      "rank": "837",
       "name": "星野　熊",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/02 20:38:19",
@@ -311938,7 +311964,7 @@
       "starCnt": 4
     },
     {
-      "rank": "836",
+      "rank": "838",
       "name": "ＵＡＥ１",
       "shopname": "ゲームパークＭ１",
       "updateDate": "2026/05/02 22:01:34",
@@ -311951,7 +311977,7 @@
       "starCnt": 1
     },
     {
-      "rank": "837",
+      "rank": "839",
       "name": "ＧＲ銀河",
       "shopname": "ラウンドワン前橋店",
       "updateDate": "2026/05/04 11:15:34",
@@ -311964,7 +311990,7 @@
       "starCnt": 5
     },
     {
-      "rank": "838",
+      "rank": "840",
       "name": "ＫＡＭＥくん",
       "shopname": "THE 3RD PLANET 高崎店",
       "updateDate": "2026/05/04 20:31:31",
@@ -311977,7 +312003,7 @@
       "starCnt": 3
     },
     {
-      "rank": "839",
+      "rank": "841",
       "name": "十六夜咲夜",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/05 12:18:29",
@@ -311990,7 +312016,7 @@
       "starCnt": 5
     },
     {
-      "rank": "840",
+      "rank": "842",
       "name": "ゆー",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/05/05 16:21:19",
@@ -312003,7 +312029,7 @@
       "starCnt": 1
     },
     {
-      "rank": "841",
+      "rank": "843",
       "name": "悪魔",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/05 21:34:46",
@@ -312016,7 +312042,7 @@
       "starCnt": 2
     },
     {
-      "rank": "842",
+      "rank": "844",
       "name": "りゅうせい",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/06 12:30:09",
@@ -312029,7 +312055,7 @@
       "starCnt": 1
     },
     {
-      "rank": "843",
+      "rank": "845",
       "name": "かずま先生",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/05/06 16:22:54",
@@ -312042,7 +312068,7 @@
       "starCnt": 1
     },
     {
-      "rank": "844",
+      "rank": "846",
       "name": "ましろちゃん",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/07 17:43:18",
@@ -312055,7 +312081,7 @@
       "starCnt": 2
     },
     {
-      "rank": "845",
+      "rank": "847",
       "name": "りく",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/07 22:18:00",
@@ -312068,7 +312094,7 @@
       "starCnt": 3
     },
     {
-      "rank": "846",
+      "rank": "848",
       "name": "鹿さん",
       "shopname": "ＧｉＧＯ　ＭＥＧＡドン･キホーテ桐生",
       "updateDate": "2026/04/24 12:52:22",
@@ -312081,7 +312107,7 @@
       "starCnt": 1
     },
     {
-      "rank": "847",
+      "rank": "849",
       "name": "サイコ？！",
       "shopname": "アピナ太田店",
       "updateDate": "2026/04/24 16:40:04",
@@ -312094,7 +312120,7 @@
       "starCnt": 2
     },
     {
-      "rank": "848",
+      "rank": "850",
       "name": "かゅぃ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/24 21:00:29",
@@ -312107,7 +312133,7 @@
       "starCnt": 3
     },
     {
-      "rank": "849",
+      "rank": "851",
       "name": "Ｋａｅｄｅ☆",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/04/25 15:25:03",
@@ -312120,7 +312146,7 @@
       "starCnt": 3
     },
     {
-      "rank": "850",
+      "rank": "852",
       "name": "グンマ帝王",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/04/25 16:05:05",
@@ -312133,7 +312159,7 @@
       "starCnt": 4
     },
     {
-      "rank": "851",
+      "rank": "853",
       "name": "ＺＡＳＵ",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/04/25 20:13:06",
@@ -312146,7 +312172,7 @@
       "starCnt": 3
     },
     {
-      "rank": "852",
+      "rank": "854",
       "name": "ニャリ～",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/04/26 15:25:12",
@@ -312159,7 +312185,7 @@
       "starCnt": 1
     },
     {
-      "rank": "853",
+      "rank": "855",
       "name": "かずし",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/04/29 15:42:55",
@@ -312172,7 +312198,7 @@
       "starCnt": 1
     },
     {
-      "rank": "854",
+      "rank": "856",
       "name": "すどら",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/29 21:05:45",
@@ -312185,7 +312211,7 @@
       "starCnt": 1
     },
     {
-      "rank": "855",
+      "rank": "857",
       "name": "あ",
       "shopname": "ＧｉＧＯ太田",
       "updateDate": "2026/04/30 20:23:51",
@@ -312198,7 +312224,7 @@
       "starCnt": 2
     },
     {
-      "rank": "856",
+      "rank": "858",
       "name": "ＧＲシブカワ",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/02 15:09:58",
@@ -312211,7 +312237,7 @@
       "starCnt": 0
     },
     {
-      "rank": "857",
+      "rank": "859",
       "name": "れなちん",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/02 17:58:46",
@@ -312224,7 +312250,7 @@
       "starCnt": 3
     },
     {
-      "rank": "858",
+      "rank": "860",
       "name": "プレイヤー",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/02 20:33:44",
@@ -312237,7 +312263,7 @@
       "starCnt": 7
     },
     {
-      "rank": "859",
+      "rank": "861",
       "name": "よしゆう",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/02 22:55:18",
@@ -312250,7 +312276,7 @@
       "starCnt": 4
     },
     {
-      "rank": "860",
+      "rank": "862",
       "name": "ヲ",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/04 15:55:15",
@@ -312263,7 +312289,7 @@
       "starCnt": 2
     },
     {
-      "rank": "861",
+      "rank": "863",
       "name": "とっしー",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/05/04 16:52:36",
@@ -312276,7 +312302,7 @@
       "starCnt": 1
     },
     {
-      "rank": "862",
+      "rank": "864",
       "name": "ＨＥＬＬＯ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/05 10:13:10",
@@ -312289,7 +312315,7 @@
       "starCnt": 1
     },
     {
-      "rank": "863",
+      "rank": "865",
       "name": "たいちくん＿",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/05/05 12:36:52",
@@ -312302,7 +312328,7 @@
       "starCnt": 4
     },
     {
-      "rank": "864",
+      "rank": "866",
       "name": "ご都合主義×",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/05 12:43:23",
@@ -312315,7 +312341,7 @@
       "starCnt": 7
     },
     {
-      "rank": "865",
+      "rank": "867",
       "name": "かな　",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/05 17:17:52",
@@ -312328,7 +312354,7 @@
       "starCnt": 1
     },
     {
-      "rank": "866",
+      "rank": "868",
       "name": "ともあ",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/05/05 17:27:54",
@@ -312341,7 +312367,7 @@
       "starCnt": 1
     },
     {
-      "rank": "867",
+      "rank": "869",
       "name": "ユウイチ",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/05 23:27:38",
@@ -312354,7 +312380,7 @@
       "starCnt": 4
     },
     {
-      "rank": "868",
+      "rank": "870",
       "name": "たいーたいー",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/06 11:00:52",
@@ -312367,7 +312393,7 @@
       "starCnt": 2
     },
     {
-      "rank": "869",
+      "rank": "871",
       "name": "クルミ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/06 17:05:21",
@@ -312380,7 +312406,7 @@
       "starCnt": 1
     },
     {
-      "rank": "870",
+      "rank": "872",
       "name": "かいばしら",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/06 18:53:20",
@@ -312393,7 +312419,7 @@
       "starCnt": 1
     },
     {
-      "rank": "871",
+      "rank": "873",
       "name": "きら",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/06 19:35:31",
@@ -312406,7 +312432,7 @@
       "starCnt": 4
     },
     {
-      "rank": "872",
+      "rank": "874",
       "name": "海月",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/07 20:20:01",
@@ -312419,7 +312445,7 @@
       "starCnt": 1
     },
     {
-      "rank": "873",
+      "rank": "875",
       "name": "ブチワワ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/08 12:05:35",
@@ -312432,7 +312458,7 @@
       "starCnt": 3
     },
     {
-      "rank": "874",
+      "rank": "876",
       "name": "鹿島の珍棒♂",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/04/23 19:26:33",
@@ -312445,7 +312471,7 @@
       "starCnt": 1
     },
     {
-      "rank": "875",
+      "rank": "877",
       "name": "Ｅｌｌｕ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/25 21:23:15",
@@ -312458,7 +312484,7 @@
       "starCnt": 2
     },
     {
-      "rank": "876",
+      "rank": "878",
       "name": "ル",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/04/26 16:57:31",
@@ -312471,7 +312497,7 @@
       "starCnt": 1
     },
     {
-      "rank": "877",
+      "rank": "879",
       "name": "ＵＡＥ３２",
       "shopname": "マトリクス前橋",
       "updateDate": "2026/04/26 17:36:35",
@@ -312484,7 +312510,7 @@
       "starCnt": 1
     },
     {
-      "rank": "878",
+      "rank": "880",
       "name": "たじぃま",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/04/26 21:30:58",
@@ -312497,7 +312523,7 @@
       "starCnt": 5
     },
     {
-      "rank": "879",
+      "rank": "881",
       "name": "たく",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/04/27 13:50:38",
@@ -312510,7 +312536,7 @@
       "starCnt": 5
     },
     {
-      "rank": "880",
+      "rank": "882",
       "name": "よよジョジョ",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/04/27 15:43:24",
@@ -312523,7 +312549,7 @@
       "starCnt": 3
     },
     {
-      "rank": "881",
+      "rank": "883",
       "name": "あいうえお",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/04/29 13:39:55",
@@ -312536,7 +312562,7 @@
       "starCnt": 3
     },
     {
-      "rank": "882",
+      "rank": "884",
       "name": "ごりるき",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/04/29 16:37:32",
@@ -312549,7 +312575,7 @@
       "starCnt": 3
     },
     {
-      "rank": "883",
+      "rank": "885",
       "name": "たいやき＾＾",
       "shopname": "ラウンドワン前橋店",
       "updateDate": "2026/04/29 19:27:05",
@@ -312562,7 +312588,7 @@
       "starCnt": 4
     },
     {
-      "rank": "884",
+      "rank": "886",
       "name": "あらかず",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/02 00:26:36",
@@ -312575,7 +312601,7 @@
       "starCnt": 5
     },
     {
-      "rank": "885",
+      "rank": "887",
       "name": "＜：：＼＼＼",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/02 14:44:30",
@@ -312588,7 +312614,7 @@
       "starCnt": 3
     },
     {
-      "rank": "886",
+      "rank": "888",
       "name": "Ｍｉｓｔｙ．",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/03 15:22:14",
@@ -312601,7 +312627,7 @@
       "starCnt": 5
     },
     {
-      "rank": "887",
+      "rank": "889",
       "name": "ひろき",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/05/03 16:14:52",
@@ -312614,7 +312640,7 @@
       "starCnt": 5
     },
     {
-      "rank": "888",
+      "rank": "890",
       "name": "おうきん",
       "shopname": "群馬レジャーランド前橋店",
       "updateDate": "2026/05/03 17:08:28",
@@ -312627,7 +312653,7 @@
       "starCnt": 3
     },
     {
-      "rank": "889",
+      "rank": "891",
       "name": "７ａ＿",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/04 16:26:34",
@@ -312640,7 +312666,7 @@
       "starCnt": 4
     },
     {
-      "rank": "890",
+      "rank": "892",
       "name": "けい",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/05 10:32:34",
@@ -312653,7 +312679,7 @@
       "starCnt": 4
     },
     {
-      "rank": "891",
+      "rank": "893",
       "name": "めいぷる",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/05 10:55:48",
@@ -312666,7 +312692,7 @@
       "starCnt": 2
     },
     {
-      "rank": "892",
+      "rank": "894",
       "name": "おその弟子",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/05 14:14:51",
@@ -312679,7 +312705,7 @@
       "starCnt": 3
     },
     {
-      "rank": "893",
+      "rank": "895",
       "name": "小園　絵里奈",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/05 15:07:11",
@@ -312692,7 +312718,7 @@
       "starCnt": 1
     },
     {
-      "rank": "894",
+      "rank": "896",
       "name": "　Ｔ・Ｔ　　",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/05 15:34:52",
@@ -312705,7 +312731,7 @@
       "starCnt": 4
     },
     {
-      "rank": "895",
+      "rank": "897",
       "name": "ＳＫＩ",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/05/05 15:58:34",
@@ -312718,7 +312744,7 @@
       "starCnt": 4
     },
     {
-      "rank": "896",
+      "rank": "898",
       "name": "おに",
       "shopname": "群馬レジャーランド前橋店",
       "updateDate": "2026/05/05 16:43:01",
@@ -312731,7 +312757,7 @@
       "starCnt": 4
     },
     {
-      "rank": "897",
+      "rank": "899",
       "name": "ＵＡＥ４",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/07 12:33:30",
@@ -312744,7 +312770,7 @@
       "starCnt": 1
     },
     {
-      "rank": "898",
+      "rank": "900",
       "name": "ドクターＧ",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/07 13:19:12",
@@ -312757,7 +312783,7 @@
       "starCnt": 3
     },
     {
-      "rank": "899",
+      "rank": "901",
       "name": "みかん",
       "shopname": "アピナ太田店",
       "updateDate": "2026/05/08 00:35:34",
@@ -312770,20 +312796,7 @@
       "starCnt": 3
     },
     {
-      "rank": "900",
-      "name": "ガコッ！！",
-      "shopname": "群馬レジャーランド高崎駅東口店",
-      "updateDate": "2026/05/09 02:57:39",
-      "carname": "86トレノ[DH]",
-      "point": "120",
-      "mytitleId": "2004b284a721b42f6b04c992e2589f29",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 2
-    },
-    {
-      "rank": "901",
+      "rank": "902",
       "name": "らいとのＲ",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/04/23 19:53:26",
@@ -312796,7 +312809,7 @@
       "starCnt": 3
     },
     {
-      "rank": "902",
+      "rank": "903",
       "name": "ひめぞの",
       "shopname": "関東スポーツセンター",
       "updateDate": "2026/04/23 20:55:20",
@@ -312809,7 +312822,7 @@
       "starCnt": 1
     },
     {
-      "rank": "903",
+      "rank": "904",
       "name": "ともやん",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/04/24 15:25:14",
@@ -312822,7 +312835,7 @@
       "starCnt": 2
     },
     {
-      "rank": "904",
+      "rank": "905",
       "name": "みく",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/04/24 16:23:07",
@@ -312835,7 +312848,7 @@
       "starCnt": 4
     },
     {
-      "rank": "905",
+      "rank": "906",
       "name": "きいくん",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/04/25 13:26:51",
@@ -312848,7 +312861,7 @@
       "starCnt": 1
     },
     {
-      "rank": "906",
+      "rank": "907",
       "name": "やる気でない",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/26 17:42:35",
@@ -312861,7 +312874,7 @@
       "starCnt": 3
     },
     {
-      "rank": "907",
+      "rank": "908",
       "name": "こやかず",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/04/27 17:58:19",
@@ -312874,7 +312887,7 @@
       "starCnt": 2
     },
     {
-      "rank": "908",
+      "rank": "909",
       "name": "たいやき",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/04/29 17:18:42",
@@ -312887,7 +312900,7 @@
       "starCnt": 1
     },
     {
-      "rank": "909",
+      "rank": "910",
       "name": "しょうた",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/04/30 19:35:26",
@@ -312900,7 +312913,7 @@
       "starCnt": 3
     },
     {
-      "rank": "910",
+      "rank": "911",
       "name": "ＫＡＭＥＸ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/30 21:14:36",
@@ -312913,7 +312926,7 @@
       "starCnt": 2
     },
     {
-      "rank": "911",
+      "rank": "912",
       "name": "ひと",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/01 23:37:11",
@@ -312926,7 +312939,7 @@
       "starCnt": 4
     },
     {
-      "rank": "912",
+      "rank": "913",
       "name": "ぺ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/02 11:48:43",
@@ -312939,7 +312952,7 @@
       "starCnt": 4
     },
     {
-      "rank": "913",
+      "rank": "914",
       "name": "あきお",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/05/02 14:51:16",
@@ -312952,7 +312965,7 @@
       "starCnt": 3
     },
     {
-      "rank": "914",
+      "rank": "915",
       "name": "エスト",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/05/02 15:43:00",
@@ -312965,7 +312978,7 @@
       "starCnt": 1
     },
     {
-      "rank": "915",
+      "rank": "916",
       "name": "ＵＡＥ１８",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/02 20:14:03",
@@ -312978,7 +312991,7 @@
       "starCnt": 4
     },
     {
-      "rank": "916",
+      "rank": "917",
       "name": "あかいわ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/03 14:02:36",
@@ -312991,7 +313004,7 @@
       "starCnt": 4
     },
     {
-      "rank": "917",
+      "rank": "918",
       "name": "ここねく",
       "shopname": "ＧｉＧＯ館林",
       "updateDate": "2026/05/03 16:16:00",
@@ -313004,7 +313017,7 @@
       "starCnt": 5
     },
     {
-      "rank": "918",
+      "rank": "919",
       "name": "Ｋ",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/03 16:20:19",
@@ -313017,7 +313030,7 @@
       "starCnt": 5
     },
     {
-      "rank": "919",
+      "rank": "920",
       "name": "ｙｕｒａ♪♪",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/05/03 16:36:21",
@@ -313030,7 +313043,7 @@
       "starCnt": 1
     },
     {
-      "rank": "920",
+      "rank": "921",
       "name": "つなぅ",
       "shopname": "インターワールド伊勢崎店",
       "updateDate": "2026/05/03 19:52:17",
@@ -313043,7 +313056,7 @@
       "starCnt": 5
     },
     {
-      "rank": "921",
+      "rank": "922",
       "name": "ゆいと",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/04 14:24:17",
@@ -313056,7 +313069,7 @@
       "starCnt": 1
     },
     {
-      "rank": "922",
+      "rank": "923",
       "name": "のしん",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/04 15:34:41",
@@ -313069,7 +313082,7 @@
       "starCnt": 1
     },
     {
-      "rank": "923",
+      "rank": "924",
       "name": "めんちゃん",
       "shopname": "ＧｉＧＯ　ＭＥＧＡドン･キホーテ桐生",
       "updateDate": "2026/05/05 16:28:08",
@@ -313082,7 +313095,7 @@
       "starCnt": 1
     },
     {
-      "rank": "924",
+      "rank": "925",
       "name": "ともピーク",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/05 16:40:14",
@@ -313095,7 +313108,7 @@
       "starCnt": 4
     },
     {
-      "rank": "925",
+      "rank": "926",
       "name": "ミシシッピ",
       "shopname": "ｎａｍｃｏけやきウォーク前橋店",
       "updateDate": "2026/05/06 13:48:17",
@@ -313108,7 +313121,7 @@
       "starCnt": 2
     },
     {
-      "rank": "926",
+      "rank": "927",
       "name": "ああああああ",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/06 14:51:57",
@@ -313121,7 +313134,7 @@
       "starCnt": 3
     },
     {
-      "rank": "927",
+      "rank": "928",
       "name": "零",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/05/07 12:42:16",
@@ -313134,7 +313147,7 @@
       "starCnt": 1
     },
     {
-      "rank": "928",
+      "rank": "929",
       "name": "ＵＡＥ３５",
       "shopname": "マトリクス前橋",
       "updateDate": "2026/05/07 13:57:31",
@@ -313147,7 +313160,7 @@
       "starCnt": 1
     },
     {
-      "rank": "929",
+      "rank": "930",
       "name": "μ麗Ｒａｉμ",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/08 10:47:12",
@@ -313160,7 +313173,7 @@
       "starCnt": 2
     },
     {
-      "rank": "930",
+      "rank": "931",
       "name": "好香ちゃん",
       "shopname": "関東スポーツセンター",
       "updateDate": "2026/05/08 18:09:33",
@@ -313173,7 +313186,7 @@
       "starCnt": 4
     },
     {
-      "rank": "931",
+      "rank": "932",
       "name": "じょう",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/08 20:42:03",
@@ -313186,7 +313199,7 @@
       "starCnt": 1
     },
     {
-      "rank": "932",
+      "rank": "933",
       "name": "さろんぱす",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/05/01 15:16:17",
@@ -313199,7 +313212,7 @@
       "starCnt": 4
     },
     {
-      "rank": "933",
+      "rank": "934",
       "name": "なつ",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/01 15:20:46",
@@ -313212,7 +313225,7 @@
       "starCnt": 3
     },
     {
-      "rank": "934",
+      "rank": "935",
       "name": "＊＊＊＊＊＊",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/04 18:45:44",
@@ -313225,7 +313238,7 @@
       "starCnt": 4
     },
     {
-      "rank": "935",
+      "rank": "936",
       "name": "ちゃそｎ",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/05 16:43:01",
@@ -313238,7 +313251,7 @@
       "starCnt": 3
     },
     {
-      "rank": "936",
+      "rank": "937",
       "name": "んなぁ卿",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/08 18:47:11",
@@ -313251,7 +313264,7 @@
       "starCnt": 8
     },
     {
-      "rank": "937",
+      "rank": "938",
       "name": "Ｍｏｋｋｅ",
       "shopname": "アピナ太田店",
       "updateDate": "2026/04/26 12:54:23",
@@ -313264,7 +313277,7 @@
       "starCnt": 3
     },
     {
-      "rank": "938",
+      "rank": "939",
       "name": "フランゲン",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/04/30 17:35:03",
@@ -313277,7 +313290,7 @@
       "starCnt": 1
     },
     {
-      "rank": "939",
+      "rank": "940",
       "name": "サブ　Ｋさん",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/05/01 18:33:24",
@@ -313290,7 +313303,7 @@
       "starCnt": 6
     },
     {
-      "rank": "940",
+      "rank": "941",
       "name": "とと",
       "shopname": "ＧｉＧＯ沼田",
       "updateDate": "2026/05/08 12:06:09",
@@ -313303,7 +313316,7 @@
       "starCnt": 1
     },
     {
-      "rank": "941",
+      "rank": "942",
       "name": "ｓｈｅｒｒｙ",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/08 18:25:08",
@@ -313316,7 +313329,20 @@
       "starCnt": 2
     },
     {
-      "rank": "942",
+      "rank": "943",
+      "name": "ガコッ！！",
+      "shopname": "群馬レジャーランド高崎駅東口店",
+      "updateDate": "2026/05/09 03:04:33",
+      "carname": "86トレノ[DH]",
+      "point": "60",
+      "mytitleId": "2004b284a721b42f6b04c992e2589f29",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 2
+    },
+    {
+      "rank": "944",
       "name": "ＨＯＮＤＡ",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/04/25 12:05:04",
@@ -313329,7 +313355,7 @@
       "starCnt": 3
     },
     {
-      "rank": "943",
+      "rank": "945",
       "name": "リンネ",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/04/25 19:57:47",
@@ -313342,7 +313368,7 @@
       "starCnt": 2
     },
     {
-      "rank": "944",
+      "rank": "946",
       "name": "二度もぶった",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/04/26 13:54:29",
@@ -313355,7 +313381,7 @@
       "starCnt": 3
     },
     {
-      "rank": "945",
+      "rank": "947",
       "name": "ぐりーん",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/04/27 19:15:21",
@@ -313368,7 +313394,7 @@
       "starCnt": 1
     },
     {
-      "rank": "946",
+      "rank": "948",
       "name": "コンポタ",
       "shopname": "ゲームパークＭ１",
       "updateDate": "2026/04/28 18:03:40",
@@ -313381,7 +313407,7 @@
       "starCnt": 1
     },
     {
-      "rank": "947",
+      "rank": "949",
       "name": "りゅうせい",
       "shopname": "ユーズランド太田店",
       "updateDate": "2026/04/29 18:12:49",
@@ -313394,7 +313420,7 @@
       "starCnt": 2
     },
     {
-      "rank": "948",
+      "rank": "950",
       "name": "＠桜花＠せき",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/04 13:14:22",
@@ -313407,7 +313433,7 @@
       "starCnt": 2
     },
     {
-      "rank": "949",
+      "rank": "951",
       "name": "ｆａｐｉ２",
       "shopname": "ＧｉＧＯスマーク伊勢崎",
       "updateDate": "2026/05/04 13:45:56",
@@ -313420,7 +313446,7 @@
       "starCnt": 5
     },
     {
-      "rank": "950",
+      "rank": "952",
       "name": "たこ",
       "shopname": "マトリクス前橋",
       "updateDate": "2026/05/04 17:01:27",
@@ -313433,7 +313459,7 @@
       "starCnt": 1
     },
     {
-      "rank": "951",
+      "rank": "953",
       "name": "るかにー",
       "shopname": "群馬レジャーランド太田店",
       "updateDate": "2026/05/08 15:38:43",
@@ -313446,7 +313472,7 @@
       "starCnt": 2
     },
     {
-      "rank": "952",
+      "rank": "954",
       "name": "ウイング",
       "shopname": "群馬レジャーランド渋川店",
       "updateDate": "2026/05/02 15:05:03",
@@ -313459,7 +313485,7 @@
       "starCnt": 2
     },
     {
-      "rank": "953",
+      "rank": "955",
       "name": "棚橋トシミツ",
       "shopname": "群馬レジャーランド伊勢崎店",
       "updateDate": "2026/05/02 18:23:56",
@@ -313472,7 +313498,7 @@
       "starCnt": 4
     },
     {
-      "rank": "954",
+      "rank": "956",
       "name": "ゴースト",
       "shopname": "群馬レジャーランド高崎駅東口店",
       "updateDate": "2026/05/04 10:46:35",
@@ -313485,7 +313511,7 @@
       "starCnt": 1
     },
     {
-      "rank": "955",
+      "rank": "957",
       "name": "くぅる",
       "shopname": "ゲームパークＭ１",
       "updateDate": "2026/05/05 18:10:03",
@@ -313498,7 +313524,7 @@
       "starCnt": 2
     },
     {
-      "rank": "956",
+      "rank": "958",
       "name": "しのん",
       "shopname": "ユーズランド高崎店",
       "updateDate": "2026/05/05 19:40:27",
@@ -313511,7 +313537,7 @@
       "starCnt": 2
     },
     {
-      "rank": "957",
+      "rank": "959",
       "name": "たまご",
       "shopname": "群馬レジャーランド藤岡店",
       "updateDate": "2026/05/08 18:54:06",
