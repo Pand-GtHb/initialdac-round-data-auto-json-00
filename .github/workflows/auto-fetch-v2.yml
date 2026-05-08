@@ -51,9 +51,18 @@ jobs:
           ROUND=${{ steps.round.outputs.round }}
           MAX_DATE="${{ steps.calc.outputs.maxCalcDate }}"
 
-          jq -s --arg round "$ROUND" --arg calc "$MAX_DATE" \
-            '{round: $round, generatedAt: $calc, data: .}' \
-            tmp/*.json > "round${ROUND}.json"
+          # 全エリアの records を結合し、calcDate を削除
+          jq -s --arg round "$ROUND" --arg gen "$MAX_DATE" '
+            {
+              round: $round,
+              generatedAt: $gen,
+              records: (
+                map(.records // [])   # 各ファイルの records を取り出す
+                | add                 # 1つの配列に結合
+                | map(del(.calcDate)) # calcDate を削除
+              )
+            }
+          ' tmp/*.json > "round${ROUND}.json"
 
       - name: Commit & Push
         run: |
