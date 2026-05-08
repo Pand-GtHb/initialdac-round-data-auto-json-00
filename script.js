@@ -8,13 +8,13 @@ const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
 
 const PRIDE_LEVELS = [
-  { level: "A=～99", min: 1, max: 99, icon: "ef788ee816773c454495ebf83e5ac380" },
-  { level: "B=100～", min: 100, max: 499, icon: "3c8cc917bb7a97d46ba35c93d898491c" },
-  { level: "C=500～", min: 500, max: 999, icon: "ec8f805c9de95c65c858d2e1341f76ab" },
-  { level: "D=1000～", min: 1000, max: 4999, icon: "58446a29e6c496139963728eea887349" },
-  { level: "E=5000～", min: 5000, max: 9999, icon: "5f88cb6a33355e7bc890d92576e36c94" },
-  { level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
-  { level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
+  { level: "A=～99", min: 1, max: 99 },
+  { level: "B=100～", min: 100, max: 499 },
+  { level: "C=500～", min: 500, max: 999 },
+  { level: "D=1000～", min: 1000, max: 4999 },
+  { level: "E=5000～", min: 5000, max: 9999 },
+  { level: "F=10000～", min: 10000, max: 49999 },
+  { level: "G=50000～", min: 50000, max: Infinity }
 ];
 
 let allData = [];
@@ -25,7 +25,7 @@ let latestRound = null;
 let generatedAt = "";
 
 /* ---------------------------------------------------------
-   ログ（緑/赤）
+   ログ
 --------------------------------------------------------- */
 function appendLog(msg, type = "normal") {
   const box = document.getElementById("logBox");
@@ -43,6 +43,17 @@ function logError(msg) { appendLog(msg, "error"); }
 --------------------------------------------------------- */
 function fmt(n) { return Number(n).toLocaleString(); }
 function parseDateJST(str) { return new Date(str.replace(/-/g, "/")); }
+
+function formatGeneratedAt(str) {
+  if (!str) return "-";
+  const d = parseDateJST(str);
+  const y = d.getFullYear();
+  const m = ("0" + (d.getMonth() + 1)).slice(-2);
+  const day = ("0" + d.getDate()).slice(-2);
+  const hh = ("0" + d.getHours()).slice(-2);
+  const mm = ("0" + d.getMinutes()).slice(-2);
+  return `${y}/${m}/${day} ${hh}:${mm}`;
+}
 
 /* ---------------------------------------------------------
    latest.json
@@ -82,7 +93,7 @@ async function loadRoundData() {
     const json = await res.json();
 
     generatedAt = json.generatedAt ?? "";
-    document.getElementById("jsonUpdateTime").textContent = generatedAt;
+    document.getElementById("jsonUpdateTime").textContent = formatGeneratedAt(generatedAt);
 
     allData = Array.isArray(json) ? json : json.records;
 
@@ -93,7 +104,7 @@ async function loadRoundData() {
 }
 
 /* ---------------------------------------------------------
-   フィルタ（延べ人数基準）
+   フィルタ
 --------------------------------------------------------- */
 function applyFilters() {
   const minutes = Number(document.getElementById("rangeSelect").value);
@@ -101,30 +112,31 @@ function applyFilters() {
   if (!generatedAt) {
     logError("generatedAt が未取得のため、時間フィルタをスキップしました");
     filteredData = [...allData];
-  } else {
-    const baseMs = parseDateJST(generatedAt).getTime();
-    const filterStartMs = baseMs - minutes * 60 * 1000;
-
-    const d = new Date(filterStartMs);
-    const y = d.getFullYear();
-    const m = ("0" + (d.getMonth() + 1)).slice(-2);
-    const day = ("0" + d.getDate()).slice(-2);
-    const hh = ("0" + d.getHours()).slice(-2);
-    const mm = ("0" + d.getMinutes()).slice(-2);
-
-    document.getElementById("filterStartTime").textContent =
-      `${y}/${m}/${day} ${hh}:${mm}`;
-
-    filteredData = allData.filter(p => {
-      if (!p.updateDate) return false;
-      const t = parseDateJST(p.updateDate).getTime();
-      return t >= filterStartMs;
-    });
+    return;
   }
+
+  const baseMs = parseDateJST(generatedAt).getTime();
+  const filterStartMs = baseMs - minutes * 60 * 1000;
+
+  const d = new Date(filterStartMs);
+  const y = d.getFullYear();
+  const m = ("0" + (d.getMonth() + 1)).slice(-2);
+  const day = ("0" + d.getDate()).slice(-2);
+  const hh = ("0" + d.getHours()).slice(-2);
+  const mm = ("0" + d.getMinutes()).slice(-2);
+
+  document.getElementById("filterStartTime").textContent =
+    `${y}/${m}/${day} ${hh}:${mm}`;
+
+  filteredData = allData.filter(p => {
+    if (!p.updateDate) return false;
+    const t = parseDateJST(p.updateDate).getTime();
+    return t >= filterStartMs;
+  });
 }
 
 /* ---------------------------------------------------------
-   サマリ生成（延べ人数基準）
+   サマリ生成
 --------------------------------------------------------- */
 function buildSummary() {
   summaryRows = [];
@@ -141,7 +153,9 @@ function buildSummary() {
     summaryRows.push({
       key: `R${star}`,
       label: `☆${star}`,
-      icon: `${BASE_URL}/icons/ruby.png`,
+      icon: list.length
+        ? `https://initiald.sega.jp/inidac/ranking-images/online/${list[0].onlineBattleRankId}.png`
+        : "",
       list
     });
   }
@@ -155,14 +169,16 @@ function buildSummary() {
     summaryRows.push({
       key: `P_${level.level}`,
       label: level.level,
-      icon: `${BASE_URL}/icons/pride/${level.icon}.png`,
+      icon: list.length
+        ? `https://initiald.sega.jp/inidac/ranking-images/pride/${list[0].prideId}.png`
+        : "",
       list
     });
   });
 }
 
 /* ---------------------------------------------------------
-   サマリ表示（延べ人数基準）
+   サマリ表示
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
@@ -183,7 +199,7 @@ function renderSummary() {
 
     return `
       <tr class="clickable" data-key="${r.key}">
-        <td class="center"><img src="${r.icon}" width="32"></td>
+        <td class="center">${r.icon ? `<img src="${r.icon}" width="32">` : ""}</td>
         <td class="left">${r.label}</td>
         <td class="right">${fmt(cnt)}</td>
         <td class="right">${percent}%</td>
@@ -223,7 +239,7 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示（称号画像＋更新日時降順）
+   詳細表示
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = summaryRows.find(r => r.key === key);
@@ -238,18 +254,26 @@ function showDetail(key) {
   const area = document.getElementById("detailArea");
 
   const rows = detailList.map(p => {
-    const titleUrl = p.mytitleId
-      ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
-      : "";
+    let rankIcon = "";
+
+    if (p.onlineBattleRankId) {
+      rankIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${p.onlineBattleRankId}.png`;
+    } else if (p.prideId) {
+      rankIcon = `https://initiald.sega.jp/inidac/ranking-images/pride/${p.prideId}.png`;
+    }
 
     const starLabel =
       p.onlineBattleRankId === RUBY_ID && p.starCnt
         ? `☆${p.starCnt}`
         : "";
 
+    const titleUrl = p.mytitleId
+      ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
+      : "";
+
     return `
       <tr>
-        <td class="right">${fmt(p.rank)}</td>
+        <td class="center">${rankIcon ? `<img src="${rankIcon}" width="32">` : ""}</td>
         <td class="left">${starLabel}</td>
         <td class="left">${p.name}</td>
         <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
