@@ -14,39 +14,54 @@ jobs:
       - name: Install jq
         run: sudo apt-get install -y jq
 
-      - name: Read latest.json
-        id: latest
+      - name: Set round number (fixed for now)
+        id: round
         run: |
-          if [ -f latest.json ]; then
-            ROUND=$(jq -r '.latestRound' latest.json)
-          else
-            ROUND=72
-          fi
+          ROUND=72
           echo "round=$ROUND" >> $GITHUB_OUTPUT
 
       - name: Fetch JSON
         run: |
-          ROUND=${{ steps.latest.outputs.round }}
+          ROUND=${{ steps.round.outputs.round }}
           mkdir -p tmp
 
-          # area-0 ～ area-61（62エリア）
-          for AREA in $(seq -w 0 61); do
+          # area-0 ～ area-62（ゼロ埋めなし）
+          for AREA in $(seq 0 62); do
             URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${AREA}.json"
             echo "Fetching $URL"
-            curl -f -s "$URL" -o "tmp/round-${ROUND}_area-${AREA}.json" \
-              || echo "{}" > "tmp/round-${ROUND}_area-${AREA}.json"
+            curl -f -s "$URL" -o "tmp/area-${AREA}.json" \
+              || echo "{}" > "tmp/area-${AREA}.json"
           done
+
+      - name: Determine max calcDate
+        id: calc
+        run: |
+          # 各 JSON の calcDate を抽出し、最大値を取得
+          MAX_DATE=$(jq -r '.calcDate // empty' tmp/*.json | sort -r | head -n 1)
+
+          # fallback（calcDate が全て空の場合）
+          if [ -z "$MAX_DATE" ]; then
+            MAX_DATE=""
+          fi
+
+          echo "maxCalcDate=$MAX_DATE" >> $GITHUB_OUTPUT
 
       - name: Merge JSON
         run: |
-          ROUND=${{ steps.latest.outputs.round }}
-          jq -s --arg round "$ROUND" '{round: $round, generatedAt: now, data: .}' tmp/*.json > latest.json
+          ROUND=${{ steps.round.outputs.round }}
+          MAX_DATE="${{ steps.calc.outputs.maxCalcDate }}"
+
+          jq -s --arg round "$ROUND" --arg calc "$MAX_DATE" \
+            '{round: $round, generatedAt: $calc, data: .}' \
+            tmp/*.json > "round${ROUND}.json"
 
       - name: Commit & Push
         run: |
+          ROUND=${{ steps.round.outputs.round }}
+
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add latest.json tmp/
-          git commit -m "Auto update: round ${{ steps.latest.outputs.round }}" || echo "No changes"
+          git add "round${ROUND}.json" tmp/
+          git commit -m "Auto update: round ${ROUND}" || echo "No changes"
           git push
