@@ -2,7 +2,7 @@ name: Auto Fetch InitialDAC JSON
 
 on:
   schedule:
-    - cron: "5,25,45 * * * *"
+    - cron: "5,25,45 * * * *"   # 毎時 5分・25分・45分に実行
   workflow_dispatch:
 
 jobs:
@@ -13,82 +13,52 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install tools
+      - name: Install jq
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl
+          sudo apt-get install -y jq
 
-      - name: Fetch HTML
+      # ---------------------------------------------------------
+      # ① SEGA公式 round-all JSON から最新ラウンドを自動検出
+      # ---------------------------------------------------------
+      - name: Determine latest round from SEGA
+        id: round
         run: |
-          curl -s "https://initiald.sega.jp/inidac/ranking/#/round-point/" -o page.html
+          URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-all_area-all.json"
+          echo "Fetching latest round info from $URL"
 
-      - name: Extract latest seasonName
-        id: season
-        run: |
-          SEASON=$(grep -oP "<option value=\"\
+          curl -s "$URL" -o round-all.json
 
-\[object Object\\]
-
-\">.*?</option>" page.html \
-            | head -n 1 \
-            | sed -E "s/.*>(.*)<.*/\\1/")
-          echo "seasonName=$SEASON" >> $GITHUB_OUTPUT
-
-      - name: Extract latest round and roundName
-        id: roundinfo
-        run: |
-          LINE=$(grep -oP "<option value=\"(?!all)[0-9]+\">.*?</option>" page.html | head -n 1)
-
-          ROUND=$(echo "$LINE" | sed -E "s/.*value=\"([0-9]+)\".*/\\1/")
-          RNAME=$(echo "$LINE" | sed -E "s/.*>(.*)<.*/\\1/")
-
-          echo "round=$ROUND" >> $GITHUB_OUTPUT
-          echo "roundName=$RNAME" >> $GITHUB_OUTPUT
-
-      - name: Extract areaMap
-        run: |
-          mkdir -p meta
-          echo "{" > meta/areaMap.json
-
-          grep -oP "<option value=\"[0-9]+\">.*?</option>" page.html \
-            | sed -E "s/.*value=\"([0-9]+)\">(.*)<.*/\\1 \\2/" \
-            | while read NUM NAME; do
-                PAD=$(printf "%02d" "$NUM")
-                echo "\"$PAD\": \"$NAME\"," >> meta/areaMap.json
-              done
-
-          sed -i '$ s/,$//' meta/areaMap.json
-          echo "}" >> meta/areaMap.json
-
-      - name: Update roundMap.json
-        run: |
-          mkdir -p meta
-
-          ROUND=${{ steps.roundinfo.outputs.round }}
-          SEASON=${{ steps.season.outputs.seasonName }}
-          RNAME=${{ steps.roundinfo.outputs.roundName }}
-
-          if [ ! -f meta/roundMap.json ]; then
-            echo "{}" > meta/roundMap.json
+          if ! jq empty round-all.json 2>/dev/null; then
+            echo "❌ Failed to parse round-all.json"
+            exit 1
           fi
 
-          jq --arg r "$ROUND" \
-             --arg s "$SEASON" \
-             --arg rn "$RNAME" \
-             '.[$r] = {seasonName: $s, roundName: $rn}' \
-             meta/roundMap.json > meta/tmp.json
+          LATEST=$(jq -r '.round' round-all.json)
 
-          mv meta/tmp.json meta/roundMap.json
+          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+            echo "❌ Could not detect latest round"
+            exit 1
+          fi
 
+          echo "Detected latest round = $LATEST"
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+
+      # ---------------------------------------------------------
+      # ② 63エリアの JSON を取得
+      # ---------------------------------------------------------
       - name: Fetch 63 JSON files
         run: |
           mkdir -p tmp
-          ROUND=${{ steps.roundinfo.outputs.round }}
+          ROUND=${{ steps.round.outputs.latest }}
+
+          echo "Fetching round $ROUND ..."
 
           for i in $(seq 0 62); do
             URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${i}.json"
             OUT="tmp/$i.json"
 
+            echo "Fetching $URL"
             curl -s "$URL" -o "$OUT"
 
             if ! jq empty "$OUT" 2>/dev/null; then
@@ -97,30 +67,44 @@ jobs:
             fi
           done
 
-      - name: Merge JSON with area info
+      # ---------------------------------------------------------
+      # ③ JSON結合 ＋ area追加（2桁化）＋ carname削除 ＋ 必要項目だけ抽出
+      # ---------------------------------------------------------
+      - name: Merge JSON
         run: |
-          ROUND=${{ steps.roundinfo.outputs.round }}
+          ROUND=${{ steps.round.outputs.latest }}
 
-          jq -n '
-            [inputs as $in
-              | ($in.records // [])
-              | map(. + {
-                  area: (input_filename
-                    | capture("tmp/(?<num>[0-9]+).json")
-                    | .num
-                    | tonumber
-                    | tostring
-                    | lpad(2;"0")
-                  )
+          # 全 records を結合
+          jq -s 'map(.records) | add' tmp/*.json > merged_records_raw.json
+
+          # area番号付与・carname削除・必要項目だけ抽出
+          jq '
+            to_entries | map(
+              .value
+              | .area = (.key | tostring | lpad(2; "0"))
+              | del(.carname)
+              | {
+                  rank,
+                  name,
+                  shopname,
+                  updateDate,
+                  point,
+                  mytitleId,
+                  prideId,
+                  onlineBattleRankId,
+                  pridePoint,
+                  starCnt,
+                  area
                 }
-                | del(.carname)
-              )
-            ] | add
-          ' tmp/*.json > merged_records.json
+            )
+          ' merged_records_raw.json > merged_records.json
 
-          MAX_DATE=$(jq -r '.[].updateDate' tmp/*.json | sort -r | head -n 1)
-          GEN_DATE=$(TZ="Asia/Tokyo" date +"%Y/%m/%d %H:%M:%S")
+          # updateDate の最大値
+          MAX_DATE=$(jq -r '.[].updateDate' merged_records.json | sort -r | head -n 1)
 
+          GEN_DATE=$(TZ='Asia/Tokyo' date +"%Y/%m/%d %H:%M:%S")
+
+          # roundXX.json を生成
           jq -n \
             --arg round "$ROUND" \
             --arg update "$MAX_DATE" \
@@ -134,6 +118,7 @@ jobs:
             }
           ' > "round${ROUND}.json"
 
+          # latest.json を生成
           jq -n \
             --arg round "$ROUND" \
             --arg update "$MAX_DATE" \
@@ -145,11 +130,14 @@ jobs:
             }
           ' > latest.json
 
+      # ---------------------------------------------------------
+      # ④ Commit & Push
+      # ---------------------------------------------------------
       - name: Commit & Push
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add latest.json round*.json meta/areaMap.json meta/roundMap.json
-          git commit -m "Auto update: round ${{ steps.roundinfo.outputs.round }}" || echo "No changes"
+          git add latest.json round*.json
+          git commit -m "Auto update: round ${{ steps.round.outputs.latest }}" || echo "No changes"
           git push
