@@ -1,10 +1,11 @@
 name: Auto Fetch InitialDAC JSON
 
 on:
-  # 毎時 5分・25分・45分に実行
-  schedule:
-    - cron: "5,25,45 * * * *"
   workflow_dispatch:
+
+  # 10分ごとに実行
+  schedule:
+    - cron: "*/10 * * * *"
 
 jobs:
   fetch-and-merge:
