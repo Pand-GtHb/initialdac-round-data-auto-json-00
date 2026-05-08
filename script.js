@@ -101,7 +101,18 @@ async function loadRoundData() {
     const json = await res.json();
 
     generatedAt = json.generatedAt ?? "";
-    document.getElementById("jsonUpdateTime").textContent = generatedAt;
+
+    /* ★★★ 修正：終了時刻を hh:mm に統一 ★★★ */
+    if (generatedAt) {
+      const d = parseDateJST(generatedAt);
+      const y = d.getFullYear();
+      const m = ("0" + (d.getMonth() + 1)).slice(-2);
+      const day = ("0" + d.getDate()).slice(-2);
+      const hh = ("0" + d.getHours()).slice(-2);
+      const mm = ("0" + d.getMinutes()).slice(-2);
+      document.getElementById("jsonUpdateTime").textContent =
+        `${y}/${m}/${day} ${hh}:${mm}`;
+    }
 
     allData = json.records;
 
@@ -171,7 +182,6 @@ function buildSummary() {
       p.pridePoint >= level.min && p.pridePoint <= level.max
     );
 
-    // 0人でも帯アイコンは常に表示（icon ハッシュを使用）
     const prideIcon =
       `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`;
 
@@ -255,7 +265,6 @@ function showDetail(key) {
   const isRubyBand = key.startsWith("R");
   const bandLabel = row.label;
 
-  // 帯アイコン（サマリと同じものを使う）
   let bandIcon = "";
   if (isRubyBand) {
     bandIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`;
@@ -282,7 +291,7 @@ function showDetail(key) {
 
     const starOrLevel = isRubyBand
       ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
-      : bandLabel; // PRIDE帯は Level 表記（G=50000～ など）
+      : bandLabel;
 
     return `
       <tr>
