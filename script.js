@@ -2,6 +2,8 @@
    Initial DAC Round Data Viewer（auto-json-00 対応）
 --------------------------------------------------------- */
 
+const BASE_URL = "https://pand-github.github.io/initialdac-round-data-auto-json-00";
+
 const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
 
@@ -48,13 +50,20 @@ function parseDateJST(str) { return new Date(str.replace(/-/g, "/")); }
 async function loadLatest() {
   log("latest.json 取得準備中");
 
-  const res = await fetch("latest.json", { cache: "no-store" });
-  const json = await res.json();
+  try {
+    const res = await fetch(`${BASE_URL}/latest.json?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
 
-  latestRound = json.latestRound;
-  document.getElementById("latestRound").textContent = latestRound;
+    const json = await res.json();
+    if (!json.latestRound) throw new Error("latestRound が存在しません");
 
-  log("latest.json 数読み込み完了");
+    latestRound = json.latestRound;
+    document.getElementById("latestRound").textContent = latestRound;
+
+    log("latest.json 読み込み完了");
+  } catch (e) {
+    logError("latest.json の取得に失敗：" + e.message);
+  }
 }
 
 /* ---------------------------------------------------------
@@ -63,15 +72,24 @@ async function loadLatest() {
 async function loadRoundData() {
   log(`round${latestRound}.json 取得準備中`);
 
-  const res = await fetch(`round${latestRound}.json?t=${Date.now()}`, { cache: "no-store" });
-  const json = await res.json();
+  try {
+    const res = await fetch(
+      `${BASE_URL}/round${latestRound}.json?t=${Date.now()}`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) throw new Error("HTTP " + res.status);
 
-  generatedAt = json.generatedAt ?? "";
-  document.getElementById("jsonUpdateTime").textContent = generatedAt;
+    const json = await res.json();
 
-  allData = Array.isArray(json) ? json : json.records;
+    generatedAt = json.generatedAt ?? "";
+    document.getElementById("jsonUpdateTime").textContent = generatedAt;
 
-  log(`round${latestRound}.json 数読み込み完了 (${allData.length}件)`);
+    allData = Array.isArray(json) ? json : json.records;
+
+    log(`round${latestRound}.json 読み込み完了 (${allData.length}件)`);
+  } catch (e) {
+    logError("roundXX.json の取得に失敗：" + e.message);
+  }
 }
 
 /* ---------------------------------------------------------
@@ -123,7 +141,7 @@ function buildSummary() {
     summaryRows.push({
       key: `R${star}`,
       label: `☆${star}`,
-      icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
+      icon: `${BASE_URL}/icons/ruby.png`,
       list
     });
   }
@@ -137,7 +155,7 @@ function buildSummary() {
     summaryRows.push({
       key: `P_${level.level}`,
       label: level.level,
-      icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
+      icon: `${BASE_URL}/icons/pride/${level.icon}.png`,
       list
     });
   });
@@ -149,7 +167,6 @@ function buildSummary() {
 function renderSummary() {
   const area = document.getElementById("summaryArea");
 
-  // 延べ人数合計
   const total = summaryRows.reduce((sum, r) => sum + r.list.length, 0);
 
   document.getElementById("summaryTitle").textContent =
@@ -212,7 +229,6 @@ function showDetail(key) {
   const row = summaryRows.find(r => r.key === key);
   detailList = row.list.slice();
 
-  // 更新日時降順
   detailList.sort((a, b) => {
     const ta = parseDateJST(a.updateDate).getTime();
     const tb = parseDateJST(b.updateDate).getTime();
@@ -356,4 +372,7 @@ document.getElementById("filterBtn").onclick = () => {
   renderSummary();
 };
 document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
-document.getElementById("allCsvBtn").onclick
+document.getElementById("allCsvBtn").onclick = exportAllCSV;
+document.getElementById("backBtn").onclick = () => {
+  document.getElementById("detailView").style.display = "none";
+  document.getElementById("summaryView").style.display = "
