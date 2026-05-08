@@ -16,44 +16,52 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq pup curl
+          sudo apt-get install -y jq curl
 
       - name: Fetch HTML
-        id: html
         run: |
           curl -s "https://initiald.sega.jp/inidac/ranking/#/round-point/" -o page.html
 
       - name: Extract latest seasonName
         id: season
         run: |
-          SEASON=$(pup 'div.seasonSelect select option:first-child text{}' < page.html)
+          SEASON=$(grep -oP '<option value="
+
+\[object Object\]
+
+">.*?</option>' page.html \
+            | head -n 1 \
+            | sed -E 's/.*>(.*)<.*/\1/')
           echo "seasonName=$SEASON" >> $GITHUB_OUTPUT
 
       - name: Extract latest round and roundName
         id: roundinfo
         run: |
-          # ラウンド一覧の "all" を除いた最初の option を取得
-          ROUND=$(pup 'div.SelectArea--inner1 select:nth-of-type(2) option:not([value="all"]):first-child attr{value}' < page.html)
-          ROUNDNAME=$(pup 'div.SelectArea--inner1 select:nth-of-type(2) option:not([value="all"]):first-child text{}' < page.html)
+          # "全ラウンド" を除いた最初の option を取得
+          LINE=$(grep -oP '<option value="(?!all)[0-9]+">.*?</option>' page.html | head -n 1)
+
+          ROUND=$(echo "$LINE" | sed -E 's/.*value="([0-9]+)".*/\1/')
+          RNAME=$(echo "$LINE" | sed -E 's/.*>(.*)<.*/\1/')
 
           echo "round=$ROUND" >> $GITHUB_OUTPUT
-          echo "roundName=$ROUNDNAME" >> $GITHUB_OUTPUT
+          echo "roundName=$RNAME" >> $GITHUB_OUTPUT
 
       - name: Extract areaMap
-        id: areamap
         run: |
           mkdir -p meta
-
           echo "{" > meta/areaMap.json
-          pup 'div.SelectArea--inner1 select:first-of-type option:not([value="all"])' < page.html \
-            | pup 'option json{}' \
-            | jq -r '.[] | "\"\(.value|tonumber|tostring|lpad(2;"0"))\": \"\(.text)\","' >> meta/areaMap.json
+
+          grep -oP '<option value="[0-9]+">.*?</option>' page.html \
+            | sed -E 's/.*value="([0-9]+)">(.*)<.*/\1 \2/' \
+            | while read NUM NAME; do
+                PAD=$(printf "%02d" "$NUM")
+                echo "\"$PAD\": \"$NAME\"," >> meta/areaMap.json
+              done
 
           sed -i '$ s/,$//' meta/areaMap.json
           echo "}" >> meta/areaMap.json
 
       - name: Update roundMap.json
-        id: roundmap
         run: |
           mkdir -p meta
 
