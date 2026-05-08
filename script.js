@@ -2,7 +2,7 @@
    Initial DAC Round Data Viewer（auto-json-00 対応）
 --------------------------------------------------------- */
 
-const BASE_URL = "https://pand-github.github.io/initialdac-round-data-auto-json-00";
+const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
 
 const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
@@ -375,4 +375,20 @@ document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
 document.getElementById("allCsvBtn").onclick = exportAllCSV;
 document.getElementById("backBtn").onclick = () => {
   document.getElementById("detailView").style.display = "none";
-  document.getElementById("summaryView").style.display = "
+  document.getElementById("summaryView").style.display = "block";
+};
+
+/* ---------------------------------------------------------
+   Ruby星数フィルタ生成
+--------------------------------------------------------- */
+window.onload = () => {
+  const rubyBox = document.getElementById("rubyFilters");
+  rubyBox.innerHTML = [...Array(8).keys()]
+    .map(i => `<label><input type="checkbox" class="ruby-filter" value="${i+1}" checked> ☆${i+1}</label>`)
+    .join(" ");
+};
+
+/* ---------------------------------------------------------
+   実行
+--------------------------------------------------------- */
+init();
