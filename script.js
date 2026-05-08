@@ -8,11 +8,11 @@ const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
 
 const PRIDE_LEVELS = [
-  { level: "A=～99", min: 1, max: 99, icon: "ef788ee816773c454495ebf83e5ac380" },
-  { level: "B=100～", min: 100, max: 499, icon: "3c8cc917bb7a97d46ba35c93d898491c" },
-  { level: "C=500～", min: 500, max: 999, icon: "ec8f805c9de95c65c858d2e1341f76ab" },
-  { level: "D=1000～", min: 1000, max: 4999, icon: "58446a29e6c496139963728eea887349" },
-  { level: "E=5000～", min: 5000, max: 9999, icon: "5f88cb6a33355e7bc890d92576e36c94" },
+  { level: "A=～99",    min: 1,     max: 99,    icon: "ef788ee816773c454495ebf83e5ac380" },
+  { level: "B=100～",   min: 100,   max: 499,   icon: "3c8cc917bb7a97d46ba35c93d898491c" },
+  { level: "C=500～",   min: 500,   max: 999,   icon: "ec8f805c9de95c65c858d2e1341f76ab" },
+  { level: "D=1000～",  min: 1000,  max: 4999,  icon: "58446a29e6c496139963728eea887349" },
+  { level: "E=5000～",  min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
   { level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
   { level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
 ];
@@ -177,7 +177,7 @@ function renderSummary() {
     const percent = total ? Math.round((cnt / total) * 100) : 0;
 
     const points = r.list.map(p => Number(p.point ?? 0));
-    const avg = cnt ? Math.round(points.reduce((a,b)=>a+b,0) / cnt) : 0;
+    const avg = cnt ? Math.round(points.reduce((a, b) => a + b, 0) / cnt) : 0;
     const min = cnt ? Math.min(...points) : 0;
     const max = cnt ? Math.max(...points) : 0;
 
@@ -294,7 +294,7 @@ function exportSummaryCSV() {
     const percent = total ? Math.round((cnt / total) * 100) : 0;
 
     const points = r.list.map(p => Number(p.point ?? 0));
-    const avg = cnt ? Math.round(points.reduce((a,b)=>a+b,0) / cnt) : 0;
+    const avg = cnt ? Math.round(points.reduce((a, b) => a + b, 0) / cnt) : 0;
     const min = cnt ? Math.min(...points) : 0;
     const max = cnt ? Math.max(...points) : 0;
 
@@ -363,19 +363,23 @@ async function init() {
 }
 
 /* ---------------------------------------------------------
-   イベント
+   DOMContentLoaded 後にイベント登録＆初回 init 実行
 --------------------------------------------------------- */
-document.getElementById("reloadBtn").onclick = init;
-document.getElementById("filterBtn").onclick = () => {
-  applyFilters();
-  buildSummary();
-  renderSummary();
-};
-document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
-document.getElementById("allCsvBtn").onclick = exportAllCSV;
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("reloadBtn").onclick = init;
+  document.getElementById("filterBtn").onclick = () => {
+    applyFilters();
+    buildSummary();
+    renderSummary();
+  };
+  document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
+  document.getElementById("allCsvBtn").onclick = exportAllCSV;
 
-/* ★★★ 修復済み：ここが途中で切れていた ★★★ */
-document.getElementById("backBtn").onclick = () => {
-  document.getElementById("detailView").style.display = "none";
-  document.getElementById("summaryView").style.display = "block";
-};
+  document.getElementById("backBtn").onclick = () => {
+    document.getElementById("detailView").style.display = "none";
+    document.getElementById("summaryView").style.display = "block";
+  };
+
+  // ★ 初回起動
+  init();
+});
