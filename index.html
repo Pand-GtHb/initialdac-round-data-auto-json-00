@@ -20,8 +20,8 @@ body {
     height: 200px;
     overflow-y: auto;
     border-radius: 6px;
-    margin-top: 20px;   /* ← ボタンとの間隔 */
-    margin-bottom: 20px; /* ← サマリとの間隔 */
+    margin-top: 20px;   /* ボタンとの間隔 */
+    margin-bottom: 20px; /* サマリとの間隔 */
 }
 table {
     border-collapse: collapse;
@@ -71,14 +71,17 @@ td.center { text-align: center; }
 <div style="margin-top:10px;">
   <b>時間フィルタ：</b>
   <select id="rangeSelect">
+      <option value="15">15分</option>
       <option value="30" selected>30分</option>
       <option value="60">1時間</option>
       <option value="120">2時間</option>
       <option value="180">3時間</option>
   </select>
 
-  <b style="margin-left:20px;">JSON更新日時：</b>
-  <span id="jsonUpdateTime">読み込み中…</span>
+  <b style="margin-left:20px;">JSON更新ー表示開始：</b>
+  <span id="jsonUpdateTime">-</span>
+  <span> ー </span>
+  <span id="filterStartTime">-</span>
 </div>
 
 <div style="margin-top:10px;">
