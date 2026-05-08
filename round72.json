@@ -1,6 +1,6 @@
 {
   "round": "72",
-  "generatedAt": "2026/05/09 03:46:02",
+  "generatedAt": "2026/05/09 07:01:02",
   "records": [
     {
       "rank": "1",
@@ -48261,7 +48261,7 @@
     {
       "rank": "584",
       "name": "テラパゴス",
-      "shopname": "英傑大戦キャラバン大阪",
+      "shopname": "温泉むすめ",
       "updateDate": "2026/05/08 19:40:32",
       "carname": "86トレノ2[DH]",
       "point": "1640",
@@ -248616,19 +248616,6 @@
     },
     {
       "rank": "42",
-      "name": "ムラサメ",
-      "shopname": "YURAKUCHO",
-      "updateDate": "2026/04/24 14:52:35",
-      "carname": "AP1[AR]",
-      "point": "180",
-      "mytitleId": "4fe479b7f167b5371f46cb9623afca0d",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
-      "starCnt": 4
-    },
-    {
-      "rank": "43",
       "name": "毒島　冴子",
       "shopname": "ASIA CITY AMUSEMENT GAME",
       "updateDate": "2026/05/02 18:31:38",
@@ -248641,7 +248628,7 @@
       "starCnt": 8
     },
     {
-      "rank": "44",
+      "rank": "43",
       "name": "・ＭＩ",
       "shopname": "GAME WORLD(CHIAO KUONG)",
       "updateDate": "2026/05/06 01:27:00",
@@ -248654,7 +248641,7 @@
       "starCnt": 3
     },
     {
-      "rank": "45",
+      "rank": "44",
       "name": "Ｃ・Ｈ",
       "shopname": "ASIA CITY AMUSEMENT GAME",
       "updateDate": "2026/04/30 20:55:10",
@@ -248667,7 +248654,7 @@
       "starCnt": 1
     },
     {
-      "rank": "46",
+      "rank": "45",
       "name": "星奈ひかる",
       "shopname": "GAME WORLD(CHIAO KUONG)",
       "updateDate": "2026/05/03 15:37:51",
@@ -248678,6 +248665,19 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78b49ea4af21de42fa72062961ba565479",
       "starCnt": 5
+    },
+    {
+      "rank": "46",
+      "name": "ムラサメ",
+      "shopname": "YURAKUCHO",
+      "updateDate": "2026/05/09 03:52:37",
+      "carname": "GC8[AR]",
+      "point": "120",
+      "mytitleId": "4fe479b7f167b5371f46cb9623afca0d",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
+      "starCnt": 4
     },
     {
       "rank": "47",
@@ -273355,6 +273355,19 @@
     },
     {
       "rank": "669",
+      "name": "Ｋ・ＤＩＮＧ",
+      "shopname": "TOM'S WORLD(KSCY 1)",
+      "updateDate": "2026/05/09 03:52:37",
+      "carname": "ZN6[AR]",
+      "point": "240",
+      "mytitleId": "093a1f24f00475a1dfe146d8508dc515",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
+      "starCnt": 6
+    },
+    {
+      "rank": "670",
       "name": "ＫＥＬＬＹ？",
       "shopname": "ESLITE WUCHANG",
       "updateDate": "2026/04/25 14:41:22",
@@ -273367,7 +273380,7 @@
       "starCnt": 3
     },
     {
-      "rank": "670",
+      "rank": "671",
       "name": "ヨーロネコ",
       "shopname": "ESLITE WUCHANG",
       "updateDate": "2026/04/27 18:18:08",
@@ -273380,7 +273393,7 @@
       "starCnt": 1
     },
     {
-      "rank": "671",
+      "rank": "672",
       "name": "プレイヤー",
       "shopname": "TOM'S WORLD(JHENGUANG@TAINAN)",
       "updateDate": "2026/05/01 16:18:24",
@@ -273393,7 +273406,7 @@
       "starCnt": 4
     },
     {
-      "rank": "672",
+      "rank": "673",
       "name": "ワゥッパ",
       "shopname": "TOM'S WORLD(DREAM MALL@KAOHSIUNG)",
       "updateDate": "2026/05/02 16:13:52",
@@ -273406,7 +273419,7 @@
       "starCnt": 5
     },
     {
-      "rank": "673",
+      "rank": "674",
       "name": "ＢＡＮＡＮＡ",
       "shopname": "GiGO MITSUI OUTLET PARK Lin Kou",
       "updateDate": "2026/05/02 16:24:21",
@@ -273419,7 +273432,7 @@
       "starCnt": 3
     },
     {
-      "rank": "674",
+      "rank": "675",
       "name": "ＬＪＷ＿××",
       "shopname": "TOM'S WORLD(JHENGUANG@TAINAN)",
       "updateDate": "2026/05/02 16:27:34",
@@ -273432,7 +273445,7 @@
       "starCnt": 4
     },
     {
-      "rank": "675",
+      "rank": "676",
       "name": "ＷＪ",
       "shopname": "TOM'S WORLD(DREAM MALL@KAOHSIUNG)",
       "updateDate": "2026/05/02 18:47:04",
@@ -273445,7 +273458,7 @@
       "starCnt": 5
     },
     {
-      "rank": "676",
+      "rank": "677",
       "name": "許師父",
       "shopname": "GiGO MITSUI OUTLET PARK Lin Kou",
       "updateDate": "2026/04/23 20:21:11",
@@ -273458,7 +273471,7 @@
       "starCnt": 8
     },
     {
-      "rank": "677",
+      "rank": "678",
       "name": "星野　　露露",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/04/23 20:33:47",
@@ -273471,7 +273484,7 @@
       "starCnt": 3
     },
     {
-      "rank": "678",
+      "rank": "679",
       "name": "玲奈",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/04/23 20:49:48",
@@ -273484,7 +273497,7 @@
       "starCnt": 3
     },
     {
-      "rank": "679",
+      "rank": "680",
       "name": "可可",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/04/25 14:45:46",
@@ -273497,7 +273510,7 @@
       "starCnt": 1
     },
     {
-      "rank": "680",
+      "rank": "681",
       "name": "ＡＫＩ",
       "shopname": "TOM'S WORLD(CWS)",
       "updateDate": "2026/04/25 19:54:29",
@@ -273510,7 +273523,7 @@
       "starCnt": 3
     },
     {
-      "rank": "681",
+      "rank": "682",
       "name": "越南慶中秋＠",
       "shopname": "HALA (FENGJIA)",
       "updateDate": "2026/04/26 15:23:14",
@@ -273523,7 +273536,7 @@
       "starCnt": 3
     },
     {
-      "rank": "682",
+      "rank": "683",
       "name": "Ｒｏｓё♪",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/04/26 17:19:30",
@@ -273536,7 +273549,7 @@
       "starCnt": 3
     },
     {
-      "rank": "683",
+      "rank": "684",
       "name": "ＧＵＭＭＹ",
       "shopname": "ESLITE WUCHANG",
       "updateDate": "2026/04/28 15:30:36",
@@ -273549,7 +273562,7 @@
       "starCnt": 2
     },
     {
-      "rank": "684",
+      "rank": "685",
       "name": "ＢＬＡＣＫ",
       "shopname": "TOM'S WORLD (HUILAI@CHANGHUA)",
       "updateDate": "2026/04/28 18:52:49",
@@ -273562,7 +273575,7 @@
       "starCnt": 2
     },
     {
-      "rank": "685",
+      "rank": "686",
       "name": "羅傑",
       "shopname": "TOM'S WORLD(MING YAO)",
       "updateDate": "2026/04/28 23:36:36",
@@ -273575,7 +273588,7 @@
       "starCnt": 7
     },
     {
-      "rank": "686",
+      "rank": "687",
       "name": "小蒜頭塩蘇鶏",
       "shopname": "TOM'S WORLD(MITSUI OUTLET@TAINAN)",
       "updateDate": "2026/04/29 22:51:02",
@@ -273588,7 +273601,7 @@
       "starCnt": 8
     },
     {
-      "rank": "687",
+      "rank": "688",
       "name": "好了阿超大杯",
       "shopname": "TOM'S WORLD(E SKY LAND@KAOHSIUNG)",
       "updateDate": "2026/04/30 20:15:01",
@@ -273601,7 +273614,7 @@
       "starCnt": 4
     },
     {
-      "rank": "688",
+      "rank": "689",
       "name": "水橋舞",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/04/30 22:39:26",
@@ -273614,7 +273627,7 @@
       "starCnt": 4
     },
     {
-      "rank": "689",
+      "rank": "690",
       "name": "ＳＬ１５８＠",
       "shopname": "HALA (FENGJIA)",
       "updateDate": "2026/05/01 01:02:53",
@@ -273627,7 +273640,7 @@
       "starCnt": 1
     },
     {
-      "rank": "690",
+      "rank": "691",
       "name": "プレイヤー",
       "shopname": "HALA PLANET (XIMEN)",
       "updateDate": "2026/05/01 15:51:26",
@@ -273640,7 +273653,7 @@
       "starCnt": 1
     },
     {
-      "rank": "691",
+      "rank": "692",
       "name": "我的刀盾",
       "shopname": "GUOBIN AMUSEMENT PARK",
       "updateDate": "2026/05/01 18:25:23",
@@ -273653,7 +273666,7 @@
       "starCnt": 8
     },
     {
-      "rank": "692",
+      "rank": "693",
       "name": "ＳＰＥＮＥＲ",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/05/01 22:33:42",
@@ -273666,7 +273679,7 @@
       "starCnt": 4
     },
     {
-      "rank": "693",
+      "rank": "694",
       "name": "ＨＥＮＲＹ　",
       "shopname": "CHAMELEON (CHIAYI)",
       "updateDate": "2026/05/02 20:48:42",
@@ -273679,7 +273692,7 @@
       "starCnt": 2
     },
     {
-      "rank": "694",
+      "rank": "695",
       "name": "ささなはえけ",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/05/03 00:08:33",
@@ -273692,7 +273705,7 @@
       "starCnt": 3
     },
     {
-      "rank": "695",
+      "rank": "696",
       "name": "杜雷斯保険套",
       "shopname": "MAX GAME CENTER",
       "updateDate": "2026/05/03 19:28:20",
@@ -273705,7 +273718,7 @@
       "starCnt": 1
     },
     {
-      "rank": "696",
+      "rank": "697",
       "name": "木乃Ｙｅｅ",
       "shopname": "TOM'S WORLD(FE21 MEGA@KAOHSIUNG)",
       "updateDate": "2026/05/04 03:13:07",
@@ -273718,7 +273731,7 @@
       "starCnt": 6
     },
     {
-      "rank": "697",
+      "rank": "698",
       "name": "ダニこちゃん",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/05/06 21:50:54",
@@ -273731,7 +273744,7 @@
       "starCnt": 1
     },
     {
-      "rank": "698",
+      "rank": "699",
       "name": "ＭＲＫＲＢＹ",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/05/07 16:42:12",
@@ -273744,7 +273757,7 @@
       "starCnt": 1
     },
     {
-      "rank": "699",
+      "rank": "700",
       "name": "プレイヤー",
       "shopname": "SIN YI CITY (HUWEI)",
       "updateDate": "2026/05/07 19:43:34",
@@ -273757,7 +273770,7 @@
       "starCnt": 1
     },
     {
-      "rank": "700",
+      "rank": "701",
       "name": "・・芭ＧＧ・",
       "shopname": "TOM'S WORLD(LIHPAOHIMALL@BANCIAO)",
       "updateDate": "2026/05/07 20:40:48",
@@ -273770,7 +273783,7 @@
       "starCnt": 1
     },
     {
-      "rank": "701",
+      "rank": "702",
       "name": "金好運娯楽城",
       "shopname": "NEW CITY(ZHONGLI)",
       "updateDate": "2026/05/08 23:36:04",
@@ -273783,7 +273796,7 @@
       "starCnt": 8
     },
     {
-      "rank": "702",
+      "rank": "703",
       "name": "日立変頻冷気",
       "shopname": "HALA PLANET(TAOYUAN)",
       "updateDate": "2026/05/09 00:35:52",
@@ -273796,7 +273809,7 @@
       "starCnt": 7
     },
     {
-      "rank": "703",
+      "rank": "704",
       "name": "胡　錦　涛　",
       "shopname": "TOM'S WORLD(JHENGUANG@PINGTUNG)",
       "updateDate": "2026/04/24 16:20:44",
@@ -273809,7 +273822,7 @@
       "starCnt": 4
     },
     {
-      "rank": "704",
+      "rank": "705",
       "name": "ＤＥＡＭＯ",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/04/24 18:39:50",
@@ -273822,7 +273835,7 @@
       "starCnt": 2
     },
     {
-      "rank": "705",
+      "rank": "706",
       "name": "優しさの行方",
       "shopname": "HALA(XINYANG)",
       "updateDate": "2026/04/24 22:25:31",
@@ -273835,7 +273848,7 @@
       "starCnt": 4
     },
     {
-      "rank": "706",
+      "rank": "707",
       "name": "星街すいせい",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/04/25 18:01:46",
@@ -273848,7 +273861,7 @@
       "starCnt": 5
     },
     {
-      "rank": "707",
+      "rank": "708",
       "name": "ＢＯＯ",
       "shopname": "TOM'S WORLD(GLOBAMALL@JHONGHE)",
       "updateDate": "2026/04/25 22:49:33",
@@ -273861,7 +273874,7 @@
       "starCnt": 1
     },
     {
-      "rank": "708",
+      "rank": "709",
       "name": "天上　ウテナ",
       "shopname": "SIN YI CITY (HUWEI)",
       "updateDate": "2026/04/26 01:40:49",
@@ -273874,7 +273887,7 @@
       "starCnt": 1
     },
     {
-      "rank": "709",
+      "rank": "710",
       "name": "愛木須龍",
       "shopname": "TOM'S WORLD(FE21 MEGA@KAOHSIUNG)",
       "updateDate": "2026/04/26 14:30:38",
@@ -273887,7 +273900,7 @@
       "starCnt": 7
     },
     {
-      "rank": "710",
+      "rank": "711",
       "name": "ねね",
       "shopname": "TOM'S WORLD(HONHUI PLAZA@NEW TAIPEI)",
       "updateDate": "2026/04/29 18:20:35",
@@ -273900,7 +273913,7 @@
       "starCnt": 6
     },
     {
-      "rank": "711",
+      "rank": "712",
       "name": "竹南Ｅｓｏ",
       "shopname": "DREAM HEROES",
       "updateDate": "2026/04/30 16:44:34",
@@ -273913,7 +273926,7 @@
       "starCnt": 4
     },
     {
-      "rank": "712",
+      "rank": "713",
       "name": "歌岸似声ラＫ",
       "shopname": "TOM'S WORLD(JHONGSING@HSINCHU)",
       "updateDate": "2026/05/01 14:36:54",
@@ -273926,7 +273939,7 @@
       "starCnt": 2
     },
     {
-      "rank": "713",
+      "rank": "714",
       "name": "椅ＴＯＹＺ",
       "shopname": "DOLL EMPIRE (WENHUA)",
       "updateDate": "2026/05/01 15:31:49",
@@ -273939,7 +273952,7 @@
       "starCnt": 1
     },
     {
-      "rank": "714",
+      "rank": "715",
       "name": "セーフティカ",
       "shopname": "LOVEJIS LION TAOYUAN",
       "updateDate": "2026/05/01 23:46:08",
@@ -273952,7 +273965,7 @@
       "starCnt": 5
     },
     {
-      "rank": "715",
+      "rank": "716",
       "name": "だつそうくん",
       "shopname": "TOM'S WORLD(HONHUI PLAZA@NEW TAIPEI)",
       "updateDate": "2026/05/02 21:43:00",
@@ -273965,7 +273978,7 @@
       "starCnt": 2
     },
     {
-      "rank": "716",
+      "rank": "717",
       "name": "Ｏ・Ｍ・Ｇ",
       "shopname": "TOM'S WORLD(FE21 MEGA@KAOHSIUNG)",
       "updateDate": "2026/05/02 22:03:31",
@@ -273978,7 +273991,7 @@
       "starCnt": 2
     },
     {
-      "rank": "717",
+      "rank": "718",
       "name": "神奈　延年",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/05/03 10:38:06",
@@ -273991,7 +274004,7 @@
       "starCnt": 5
     },
     {
-      "rank": "718",
+      "rank": "719",
       "name": "ＴＩＭ２４４",
       "shopname": "HALA PLANET (XIMEN)",
       "updateDate": "2026/05/03 17:47:35",
@@ -274004,7 +274017,7 @@
       "starCnt": 1
     },
     {
-      "rank": "719",
+      "rank": "720",
       "name": "るしあぁ",
       "shopname": "HALA PLANET(TAOYUAN)",
       "updateDate": "2026/05/03 17:55:23",
@@ -274017,7 +274030,7 @@
       "starCnt": 5
     },
     {
-      "rank": "720",
+      "rank": "721",
       "name": "チママ",
       "shopname": "GiGO MITSUI OUTLET PARK Lin Kou",
       "updateDate": "2026/05/03 18:27:03",
@@ -274030,7 +274043,7 @@
       "starCnt": 1
     },
     {
-      "rank": "721",
+      "rank": "722",
       "name": "＜ＬＵＣＹ＞",
       "shopname": "TOM'S WORLD(FE21 MEGA@KAOHSIUNG)",
       "updateDate": "2026/05/03 19:56:48",
@@ -274043,7 +274056,7 @@
       "starCnt": 5
     },
     {
-      "rank": "722",
+      "rank": "723",
       "name": "Ｊ先生",
       "shopname": "DOLL EMPIRE (WENHUA)",
       "updateDate": "2026/05/04 03:43:54",
@@ -274056,7 +274069,7 @@
       "starCnt": 2
     },
     {
-      "rank": "723",
+      "rank": "724",
       "name": "ＣＡＴ＞＜．",
       "shopname": "HALA (FENGJIA)",
       "updateDate": "2026/05/04 10:39:21",
@@ -274069,7 +274082,7 @@
       "starCnt": 1
     },
     {
-      "rank": "724",
+      "rank": "725",
       "name": "ＶＩＳ＞",
       "shopname": "HALA (FENGJIA)",
       "updateDate": "2026/05/05 09:02:18",
@@ -274082,7 +274095,7 @@
       "starCnt": 5
     },
     {
-      "rank": "725",
+      "rank": "726",
       "name": "（ｏдｏ）♪",
       "shopname": "TOM'S WORLD(JHONGSING@HSINCHU)",
       "updateDate": "2026/05/06 18:39:58",
@@ -274095,7 +274108,7 @@
       "starCnt": 4
     },
     {
-      "rank": "726",
+      "rank": "727",
       "name": "ぉぉぉぉぉ",
       "shopname": "MAX GAME CENTER",
       "updateDate": "2026/05/08 01:48:05",
@@ -274108,7 +274121,7 @@
       "starCnt": 1
     },
     {
-      "rank": "727",
+      "rank": "728",
       "name": "日輪　早夜",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/05/08 12:30:05",
@@ -274121,7 +274134,7 @@
       "starCnt": 3
     },
     {
-      "rank": "728",
+      "rank": "729",
       "name": "○＿○",
       "shopname": "GiGO TIGER CITY",
       "updateDate": "2026/05/08 14:08:27",
@@ -274134,7 +274147,7 @@
       "starCnt": 3
     },
     {
-      "rank": "729",
+      "rank": "730",
       "name": "☆狐狸狐塗☆",
       "shopname": "CHAMELEON (CHIAYI)",
       "updateDate": "2026/05/08 15:29:02",
@@ -274147,7 +274160,7 @@
       "starCnt": 4
     },
     {
-      "rank": "730",
+      "rank": "731",
       "name": "ＣＨＵＮＴＷ",
       "shopname": "HALA PLANET (XIMEN)",
       "updateDate": "2026/05/08 20:36:23",
@@ -274160,7 +274173,7 @@
       "starCnt": 7
     },
     {
-      "rank": "731",
+      "rank": "732",
       "name": "ＪＯ",
       "shopname": "TOM'S WORLD(FE21 MEGA@KAOHSIUNG)",
       "updateDate": "2026/05/08 21:04:34",
@@ -274173,7 +274186,7 @@
       "starCnt": 5
     },
     {
-      "rank": "732",
+      "rank": "733",
       "name": "ＡＡ１９０",
       "shopname": "HALA PLANET (RAOHE)",
       "updateDate": "2026/05/09 00:58:14",
@@ -274186,7 +274199,7 @@
       "starCnt": 3
     },
     {
-      "rank": "733",
+      "rank": "734",
       "name": "○ＭＡＸＯ○",
       "shopname": "TOM'S WORLD (HUILAI@CHANGHUA)",
       "updateDate": "2026/04/23 16:54:41",
@@ -274199,7 +274212,7 @@
       "starCnt": 4
     },
     {
-      "rank": "734",
+      "rank": "735",
       "name": "ＪＡＳＯＮＺ",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/04/23 19:11:54",
@@ -274212,7 +274225,7 @@
       "starCnt": 2
     },
     {
-      "rank": "735",
+      "rank": "736",
       "name": "前有測速照相",
       "shopname": "NEW CITY(ZHONGLI)",
       "updateDate": "2026/04/24 20:17:29",
@@ -274225,7 +274238,7 @@
       "starCnt": 1
     },
     {
-      "rank": "736",
+      "rank": "737",
       "name": "ＨＨＭ",
       "shopname": "TOM'S WORLD(FOCUS@TAINAN)",
       "updateDate": "2026/04/24 21:12:25",
@@ -274238,7 +274251,7 @@
       "starCnt": 2
     },
     {
-      "rank": "737",
+      "rank": "738",
       "name": "神魔",
       "shopname": "TOM'S WORLD(CWS)",
       "updateDate": "2026/04/25 08:27:24",
@@ -274251,7 +274264,7 @@
       "starCnt": 3
     },
     {
-      "rank": "738",
+      "rank": "739",
       "name": "君の名は夏瑞",
       "shopname": "SIN YI CITY (HUWEI)",
       "updateDate": "2026/04/25 14:17:41",
@@ -274264,7 +274277,7 @@
       "starCnt": 6
     },
     {
-      "rank": "739",
+      "rank": "740",
       "name": "千鳥　かなめ",
       "shopname": "SIN YI CITY (HUWEI)",
       "updateDate": "2026/04/26 01:27:59",
@@ -274277,7 +274290,7 @@
       "starCnt": 6
     },
     {
-      "rank": "740",
+      "rank": "741",
       "name": "＝白氷　桜＝",
       "shopname": "SIN YI CITY (HUWEI)",
       "updateDate": "2026/04/26 02:18:27",
@@ -274290,7 +274303,7 @@
       "starCnt": 1
     },
     {
-      "rank": "741",
+      "rank": "742",
       "name": "倉田　ましろ",
       "shopname": "LOVEJIS LION KEELUNG",
       "updateDate": "2026/04/27 22:44:01",
@@ -274303,7 +274316,7 @@
       "starCnt": 7
     },
     {
-      "rank": "742",
+      "rank": "743",
       "name": "ＲＹＡＯ",
       "shopname": "TOM'S WORLD(TCST)",
       "updateDate": "2026/04/29 18:12:11",
@@ -274316,7 +274329,7 @@
       "starCnt": 1
     },
     {
-      "rank": "743",
+      "rank": "744",
       "name": "湾道情人ＦＤ",
       "shopname": "DREAM HEROES",
       "updateDate": "2026/04/30 17:10:28",
@@ -274329,7 +274342,7 @@
       "starCnt": 3
     },
     {
-      "rank": "744",
+      "rank": "745",
       "name": "ＮＡＮＤＯ",
       "shopname": "HALA PLANET",
       "updateDate": "2026/05/01 15:01:46",
@@ -274342,7 +274355,7 @@
       "starCnt": 1
     },
     {
-      "rank": "745",
+      "rank": "746",
       "name": "滅泳駅葬村里",
       "shopname": "GiGO MITSUI OUTLET PARK-LINKOU 2",
       "updateDate": "2026/05/01 22:25:22",
@@ -274355,7 +274368,7 @@
       "starCnt": 4
     },
     {
-      "rank": "746",
+      "rank": "747",
       "name": "ＨＵＮＧ４１",
       "shopname": "TOM'S WORLD(JHONGSING@HSINCHU)",
       "updateDate": "2026/05/01 22:48:46",
@@ -274368,7 +274381,7 @@
       "starCnt": 4
     },
     {
-      "rank": "747",
+      "rank": "748",
       "name": "ｙｑｌｘ",
       "shopname": "HALA PLANET(TAOYUAN)",
       "updateDate": "2026/05/02 12:53:52",
@@ -274381,7 +274394,7 @@
       "starCnt": 2
     },
     {
-      "rank": "748",
+      "rank": "749",
       "name": "Ｔｏｗａｗａ",
       "shopname": "TOM'S WORLD(FOCUS@TAINAN)",
       "updateDate": "2026/05/02 14:15:54",
@@ -274394,7 +274407,7 @@
       "starCnt": 4
     },
     {
-      "rank": "749",
+      "rank": "750",
       "name": "ＤＡＶＩＤイ",
       "shopname": "NEW CITY(ZHONGLI)",
       "updateDate": "2026/05/02 17:41:31",
@@ -274407,7 +274420,7 @@
       "starCnt": 2
     },
     {
-      "rank": "750",
+      "rank": "751",
       "name": "＝弾劾鳳＝",
       "shopname": "DOLL EMPIRE (WENHUA)",
       "updateDate": "2026/05/03 21:12:28",
@@ -274420,7 +274433,7 @@
       "starCnt": 3
     },
     {
-      "rank": "751",
+      "rank": "752",
       "name": "ＯＡＯ＿＿",
       "shopname": "GiGO TIGER CITY",
       "updateDate": "2026/05/04 01:05:33",
@@ -274433,7 +274446,7 @@
       "starCnt": 5
     },
     {
-      "rank": "752",
+      "rank": "753",
       "name": "かききさささ",
       "shopname": "TOM'S WORLD (T.S. MALL@TAINAN)",
       "updateDate": "2026/05/04 02:29:47",
@@ -274446,7 +274459,7 @@
       "starCnt": 2
     },
     {
-      "rank": "753",
+      "rank": "754",
       "name": "ＫＡＺＮＮＡ",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/05/04 18:45:19",
@@ -274459,7 +274472,7 @@
       "starCnt": 1
     },
     {
-      "rank": "754",
+      "rank": "755",
       "name": "はうくん",
       "shopname": "HALA PLANET (NANYA)",
       "updateDate": "2026/05/05 02:30:35",
@@ -274472,7 +274485,7 @@
       "starCnt": 4
     },
     {
-      "rank": "755",
+      "rank": "756",
       "name": "歩爽上班",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/05/05 13:44:06",
@@ -274485,7 +274498,7 @@
       "starCnt": 4
     },
     {
-      "rank": "756",
+      "rank": "757",
       "name": "ＫＡＹＯＲＡ",
       "shopname": "TOM'S WORLD(FE21 MEGA@KAOHSIUNG)",
       "updateDate": "2026/05/05 20:36:46",
@@ -274498,7 +274511,7 @@
       "starCnt": 2
     },
     {
-      "rank": "757",
+      "rank": "758",
       "name": "頭上緑緑的",
       "shopname": "HALA PLANET (XIMEN)",
       "updateDate": "2026/05/07 01:30:48",
@@ -274511,7 +274524,7 @@
       "starCnt": 6
     },
     {
-      "rank": "758",
+      "rank": "759",
       "name": "エーペ",
       "shopname": "TOM'S WORLD (CITY PLAZA@TAMSUI)",
       "updateDate": "2026/05/07 15:51:47",
@@ -274524,7 +274537,7 @@
       "starCnt": 1
     },
     {
-      "rank": "759",
+      "rank": "760",
       "name": "ＸｚＤａｓｈ",
       "shopname": "TOM'S WORLD(JHENGUANG@PINGTUNG)",
       "updateDate": "2026/05/07 17:39:37",
@@ -274537,7 +274550,7 @@
       "starCnt": 5
     },
     {
-      "rank": "760",
+      "rank": "761",
       "name": "あまり",
       "shopname": "TOM'S WORLD(FOCUS@TAINAN)",
       "updateDate": "2026/05/07 20:28:44",
@@ -274550,7 +274563,7 @@
       "starCnt": 1
     },
     {
-      "rank": "761",
+      "rank": "762",
       "name": "ＣＨＵＮ",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/05/07 22:07:14",
@@ -274563,7 +274576,7 @@
       "starCnt": 4
     },
     {
-      "rank": "762",
+      "rank": "763",
       "name": "ＴＩＮＧ",
       "shopname": "TOM'S WORLD(BOAI@CHIAYI)",
       "updateDate": "2026/05/07 23:44:13",
@@ -274576,7 +274589,7 @@
       "starCnt": 2
     },
     {
-      "rank": "763",
+      "rank": "764",
       "name": "ＡＴＡＫＢＥ",
       "shopname": "TOM'S WORLD(JHONGSING@HSINCHU)",
       "updateDate": "2026/05/07 23:59:18",
@@ -274589,7 +274602,7 @@
       "starCnt": 1
     },
     {
-      "rank": "764",
+      "rank": "765",
       "name": "すいかままへ",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/05/08 10:25:32",
@@ -274602,7 +274615,7 @@
       "starCnt": 6
     },
     {
-      "rank": "765",
+      "rank": "766",
       "name": "きにゆりをゃ",
       "shopname": "TOM'S WORLD(E SKY LAND@KAOHSIUNG)",
       "updateDate": "2026/05/08 18:40:55",
@@ -274615,7 +274628,7 @@
       "starCnt": 3
     },
     {
-      "rank": "766",
+      "rank": "767",
       "name": "Ｍｉｋｏ",
       "shopname": "GUOBIN AMUSEMENT PARK",
       "updateDate": "2026/05/08 20:48:40",
@@ -274628,7 +274641,7 @@
       "starCnt": 5
     },
     {
-      "rank": "767",
+      "rank": "768",
       "name": "全車種の領域",
       "shopname": "TOM'S WORLD(JHONGSING@HSINCHU)",
       "updateDate": "2026/05/08 21:03:13",
@@ -274641,7 +274654,7 @@
       "starCnt": 1
     },
     {
-      "rank": "768",
+      "rank": "769",
       "name": "Ｓ９９９９Ｓ",
       "shopname": "TOM'S WORLD(LIHPAOHIMALL@BANCIAO)",
       "updateDate": "2026/05/09 01:56:21",
@@ -274654,7 +274667,7 @@
       "starCnt": 1
     },
     {
-      "rank": "769",
+      "rank": "770",
       "name": "鳶尾　カグヤ",
       "shopname": "TOM'S WORLD (SHOWTIME@KONG-SAN)",
       "updateDate": "2026/04/23 16:40:45",
@@ -274667,7 +274680,7 @@
       "starCnt": 7
     },
     {
-      "rank": "770",
+      "rank": "771",
       "name": "米津律師",
       "shopname": "HALA(XINYANG)",
       "updateDate": "2026/04/24 21:26:48",
@@ -274680,7 +274693,7 @@
       "starCnt": 3
     },
     {
-      "rank": "771",
+      "rank": "772",
       "name": "さむらいＳＳ",
       "shopname": "ESLITE WUCHANG",
       "updateDate": "2026/04/25 14:30:39",
@@ -274693,7 +274706,7 @@
       "starCnt": 5
     },
     {
-      "rank": "772",
+      "rank": "773",
       "name": "♪藤崎詩織♪",
       "shopname": "GiGO TIGER CITY",
       "updateDate": "2026/04/25 22:11:58",
@@ -274706,7 +274719,7 @@
       "starCnt": 2
     },
     {
-      "rank": "773",
+      "rank": "774",
       "name": "Ｌ",
       "shopname": "ESLITE WUCHANG",
       "updateDate": "2026/04/26 21:32:05",
@@ -274719,7 +274732,7 @@
       "starCnt": 5
     },
     {
-      "rank": "774",
+      "rank": "775",
       "name": "小烏遊六花　",
       "shopname": "TOM'S WORLD(JHENGUANG@TAINAN)",
       "updateDate": "2026/04/27 08:15:42",
@@ -274732,7 +274745,7 @@
       "starCnt": 4
     },
     {
-      "rank": "775",
+      "rank": "776",
       "name": "進藤　光",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/04/28 21:32:10",
@@ -274745,7 +274758,7 @@
       "starCnt": 2
     },
     {
-      "rank": "776",
+      "rank": "777",
       "name": "塔矢　亮",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/04/28 21:49:53",
@@ -274758,7 +274771,7 @@
       "starCnt": 2
     },
     {
-      "rank": "777",
+      "rank": "778",
       "name": "台湾ＷＯＬＦ",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/04/28 22:33:31",
@@ -274771,7 +274784,7 @@
       "starCnt": 4
     },
     {
-      "rank": "778",
+      "rank": "779",
       "name": "祥",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/05/01 18:06:23",
@@ -274784,7 +274797,7 @@
       "starCnt": 2
     },
     {
-      "rank": "779",
+      "rank": "780",
       "name": "ＲＡＹ１０３",
       "shopname": "GiGO METRO WALK",
       "updateDate": "2026/05/01 22:11:13",
@@ -274797,7 +274810,7 @@
       "starCnt": 4
     },
     {
-      "rank": "780",
+      "rank": "781",
       "name": "ＴＩＭＰＤ",
       "shopname": "HALA PLANET (XIMEN)",
       "updateDate": "2026/05/01 23:36:14",
@@ -274810,7 +274823,7 @@
       "starCnt": 1
     },
     {
-      "rank": "781",
+      "rank": "782",
       "name": "津瑞好可愛～",
       "shopname": "GiGO TIGER CITY",
       "updateDate": "2026/05/02 17:19:36",
@@ -274823,7 +274836,7 @@
       "starCnt": 7
     },
     {
-      "rank": "782",
+      "rank": "783",
       "name": "せせせせせせ",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/05/03 19:13:22",
@@ -274836,7 +274849,7 @@
       "starCnt": 1
     },
     {
-      "rank": "783",
+      "rank": "784",
       "name": "森羅・幽希",
       "shopname": "HALA (FENGJIA)",
       "updateDate": "2026/05/03 20:39:19",
@@ -274849,7 +274862,7 @@
       "starCnt": 5
     },
     {
-      "rank": "784",
+      "rank": "785",
       "name": "りるなぃょぅ",
       "shopname": "TOM'S WORLD(SKM PARK@KAOHSIUNG 3F)",
       "updateDate": "2026/05/06 14:02:00",
@@ -274862,7 +274875,7 @@
       "starCnt": 1
     },
     {
-      "rank": "785",
+      "rank": "786",
       "name": "魔鬼夢韻",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/05/06 21:42:46",
@@ -274875,7 +274888,7 @@
       "starCnt": 2
     },
     {
-      "rank": "786",
+      "rank": "787",
       "name": "ＦＫＹＵ",
       "shopname": "NEW CITY(ZHONGLI)",
       "updateDate": "2026/05/08 16:07:41",
@@ -274888,7 +274901,7 @@
       "starCnt": 2
     },
     {
-      "rank": "787",
+      "rank": "788",
       "name": "逆行者",
       "shopname": "TOM'S WORLD (T.S. MALL@TAINAN)",
       "updateDate": "2026/05/08 18:04:23",
@@ -274901,7 +274914,7 @@
       "starCnt": 2
     },
     {
-      "rank": "788",
+      "rank": "789",
       "name": "ＰＥＫＯ～～",
       "shopname": "HALA PLANET (NANYA)",
       "updateDate": "2026/05/08 18:49:41",
@@ -274914,7 +274927,7 @@
       "starCnt": 1
     },
     {
-      "rank": "789",
+      "rank": "790",
       "name": "ＪＯＳＥＰＨ",
       "shopname": "TOM'S WORLD(DREAM MALL@KAOHSIUNG)",
       "updateDate": "2026/05/08 19:32:24",
@@ -274927,7 +274940,7 @@
       "starCnt": 1
     },
     {
-      "rank": "790",
+      "rank": "791",
       "name": "ＴＯＹ",
       "shopname": "GiGO MITSUI OUTLET PARK Lin Kou",
       "updateDate": "2026/04/24 15:22:34",
@@ -274940,7 +274953,7 @@
       "starCnt": 2
     },
     {
-      "rank": "791",
+      "rank": "792",
       "name": "夜神狐",
       "shopname": "HALA PLANET (XIMEN)",
       "updateDate": "2026/04/24 18:56:22",
@@ -274953,7 +274966,7 @@
       "starCnt": 5
     },
     {
-      "rank": "792",
+      "rank": "793",
       "name": "ＫＮ６６６６",
       "shopname": "GUOBIN AMUSEMENT PARK",
       "updateDate": "2026/04/24 22:42:06",
@@ -274966,7 +274979,7 @@
       "starCnt": 5
     },
     {
-      "rank": "793",
+      "rank": "794",
       "name": "ＥＳＰ",
       "shopname": "TOM'S WORLD(JHONGSING@HSINCHU)",
       "updateDate": "2026/04/25 20:36:25",
@@ -274979,7 +274992,7 @@
       "starCnt": 3
     },
     {
-      "rank": "794",
+      "rank": "795",
       "name": "神・ＪＯＧＥ",
       "shopname": "ESLITE WUCHANG",
       "updateDate": "2026/04/26 17:01:37",
@@ -274992,7 +275005,7 @@
       "starCnt": 1
     },
     {
-      "rank": "795",
+      "rank": "796",
       "name": "Ｃａｌｌｉ☆",
       "shopname": "GiGO TIGER CITY",
       "updateDate": "2026/04/26 19:02:21",
@@ -275005,7 +275018,7 @@
       "starCnt": 3
     },
     {
-      "rank": "796",
+      "rank": "797",
       "name": "～ＳＨＵＮ～",
       "shopname": "HALA (FENGJIA)",
       "updateDate": "2026/04/26 21:57:54",
@@ -275018,7 +275031,7 @@
       "starCnt": 1
     },
     {
-      "rank": "797",
+      "rank": "798",
       "name": "Ｃ・Ｉ",
       "shopname": "DOLL EMPIRE (WENHUA)",
       "updateDate": "2026/04/26 22:03:25",
@@ -275031,7 +275044,7 @@
       "starCnt": 3
     },
     {
-      "rank": "798",
+      "rank": "799",
       "name": "Ａ",
       "shopname": "SIN YI CITY (MIAODONG)",
       "updateDate": "2026/04/28 17:52:06",
@@ -275044,7 +275057,7 @@
       "starCnt": 6
     },
     {
-      "rank": "799",
+      "rank": "800",
       "name": "ＬＥＯ９１３",
       "shopname": "GUOBIN AMUSEMENT PARK",
       "updateDate": "2026/04/28 21:25:35",
@@ -275057,7 +275070,7 @@
       "starCnt": 3
     },
     {
-      "rank": "800",
+      "rank": "801",
       "name": "東帝星奈",
       "shopname": "TOM'S WORLD(FOCUS@TAINAN)",
       "updateDate": "2026/04/29 19:36:16",
@@ -275070,7 +275083,7 @@
       "starCnt": 6
     },
     {
-      "rank": "801",
+      "rank": "802",
       "name": "みるぼ",
       "shopname": "HALA(XINYANG)",
       "updateDate": "2026/05/01 15:56:15",
@@ -275083,7 +275096,7 @@
       "starCnt": 2
     },
     {
-      "rank": "802",
+      "rank": "803",
       "name": "播種叔叔",
       "shopname": "TOM'S WORLD (T.S. MALL@TAINAN)",
       "updateDate": "2026/05/01 21:32:47",
@@ -275096,7 +275109,7 @@
       "starCnt": 2
     },
     {
-      "rank": "803",
+      "rank": "804",
       "name": "ほー",
       "shopname": "TOM'S WORLD(E SKY LAND@KAOHSIUNG)",
       "updateDate": "2026/05/01 23:10:30",
@@ -275109,7 +275122,7 @@
       "starCnt": 4
     },
     {
-      "rank": "804",
+      "rank": "805",
       "name": "♪初音未来♪",
       "shopname": "SIN YI CITY (HUWEI)",
       "updateDate": "2026/05/01 23:47:38",
@@ -275122,7 +275135,7 @@
       "starCnt": 1
     },
     {
-      "rank": "805",
+      "rank": "806",
       "name": "ＭＯＲＥ",
       "shopname": "MAX GAME CENTER",
       "updateDate": "2026/05/02 02:02:19",
@@ -275135,7 +275148,7 @@
       "starCnt": 3
     },
     {
-      "rank": "806",
+      "rank": "807",
       "name": "ＣＨＥＮ",
       "shopname": "HALA PLANET",
       "updateDate": "2026/05/02 16:04:20",
@@ -275148,7 +275161,7 @@
       "starCnt": 6
     },
     {
-      "rank": "807",
+      "rank": "808",
       "name": "叶崎奈奈～",
       "shopname": "TOM'S WORLD(JHONGSING@HSINCHU)",
       "updateDate": "2026/05/02 17:12:25",
@@ -275161,7 +275174,7 @@
       "starCnt": 3
     },
     {
-      "rank": "808",
+      "rank": "809",
       "name": "ＷＥＩ",
       "shopname": "GiGO METRO WALK",
       "updateDate": "2026/05/02 20:26:18",
@@ -275174,7 +275187,7 @@
       "starCnt": 4
     },
     {
-      "rank": "809",
+      "rank": "810",
       "name": "：３",
       "shopname": "GiGO TIGER CITY",
       "updateDate": "2026/05/03 17:19:22",
@@ -275187,7 +275200,7 @@
       "starCnt": 3
     },
     {
-      "rank": "810",
+      "rank": "811",
       "name": "５５６８８",
       "shopname": "TOM'S WORLD(FENGSHAN@KAOHSIUNG)",
       "updateDate": "2026/05/04 14:53:15",
@@ -275200,7 +275213,7 @@
       "starCnt": 1
     },
     {
-      "rank": "811",
+      "rank": "812",
       "name": "葵・＞×＜・",
       "shopname": "CHAMELEON (CHIAYI)",
       "updateDate": "2026/05/05 20:52:48",
@@ -275213,7 +275226,7 @@
       "starCnt": 2
     },
     {
-      "rank": "812",
+      "rank": "813",
       "name": "ＬＥＯＨ１６",
       "shopname": "HALA PLANET",
       "updateDate": "2026/05/08 00:21:22",
@@ -275226,7 +275239,7 @@
       "starCnt": 5
     },
     {
-      "rank": "813",
+      "rank": "814",
       "name": "ＨＥＮＲＹ",
       "shopname": "TOM'S WORLD(DREAM MALL@KAOHSIUNG)",
       "updateDate": "2026/05/08 15:39:30",
@@ -275239,7 +275252,7 @@
       "starCnt": 5
     },
     {
-      "rank": "814",
+      "rank": "815",
       "name": "０７２４１２",
       "shopname": "TOM'S WORLD (T.S. MALL@TAINAN)",
       "updateDate": "2026/05/08 20:16:37",
@@ -275252,7 +275265,7 @@
       "starCnt": 1
     },
     {
-      "rank": "815",
+      "rank": "816",
       "name": "ＣＨ．",
       "shopname": "TOM'S WORLD(FOCUS@TAINAN)",
       "updateDate": "2026/04/25 01:03:34",
@@ -275265,7 +275278,7 @@
       "starCnt": 4
     },
     {
-      "rank": "816",
+      "rank": "817",
       "name": "ラリヲァサ",
       "shopname": "GiGO MITSUI OUTLET PARK Lin Kou",
       "updateDate": "2026/04/25 11:13:58",
@@ -275278,7 +275291,7 @@
       "starCnt": 3
     },
     {
-      "rank": "817",
+      "rank": "818",
       "name": "ＹＥＮ１７３",
       "shopname": "TOM'S WORLD (HAIDIAN-LI@TAINAN))",
       "updateDate": "2026/04/26 02:13:19",
@@ -275291,7 +275304,7 @@
       "starCnt": 1
     },
     {
-      "rank": "818",
+      "rank": "819",
       "name": "ＡＲＩＣ",
       "shopname": "TOM'S WORLD(FE21 MEGA@KAOHSIUNG)",
       "updateDate": "2026/04/26 19:25:02",
@@ -275304,7 +275317,7 @@
       "starCnt": 4
     },
     {
-      "rank": "819",
+      "rank": "820",
       "name": "はせかわさん",
       "shopname": "TOM'S WORLD(E SKY LAND@KAOHSIUNG)",
       "updateDate": "2026/04/26 19:34:08",
@@ -275317,7 +275330,7 @@
       "starCnt": 4
     },
     {
-      "rank": "820",
+      "rank": "821",
       "name": "　北原　望　",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/04/26 19:50:06",
@@ -275330,7 +275343,7 @@
       "starCnt": 3
     },
     {
-      "rank": "821",
+      "rank": "822",
       "name": "○＿＿＿○",
       "shopname": "TOM'S WORLD (T.S. MALL@TAINAN)",
       "updateDate": "2026/04/27 20:22:18",
@@ -275343,7 +275356,7 @@
       "starCnt": 2
     },
     {
-      "rank": "822",
+      "rank": "823",
       "name": "あおい",
       "shopname": "TOM'S WORLD (SHOWTIME@KONG-SAN)",
       "updateDate": "2026/04/27 21:56:09",
@@ -275356,7 +275369,7 @@
       "starCnt": 3
     },
     {
-      "rank": "823",
+      "rank": "824",
       "name": "＄Ｌｉαйｇ",
       "shopname": "TOM'S WORLD(FE21 MEGA@KAOHSIUNG)",
       "updateDate": "2026/04/28 14:56:00",
@@ -275369,7 +275382,7 @@
       "starCnt": 3
     },
     {
-      "rank": "824",
+      "rank": "825",
       "name": "ＣＨＡＲＬＹ",
       "shopname": "TOM'S WORLD(MITSUI OUTLET@TAINAN)",
       "updateDate": "2026/04/29 02:45:03",
@@ -275382,7 +275395,7 @@
       "starCnt": 4
     },
     {
-      "rank": "825",
+      "rank": "826",
       "name": "ＪＩＡＨＡＯ",
       "shopname": "GUOBIN AMUSEMENT PARK",
       "updateDate": "2026/04/29 18:20:28",
@@ -275395,7 +275408,7 @@
       "starCnt": 3
     },
     {
-      "rank": "826",
+      "rank": "827",
       "name": "ＡＲＣＥＲＭ",
       "shopname": "TOM'S WORLD(SKM PARK@KAOHSIUNG 3F)",
       "updateDate": "2026/04/29 22:06:48",
@@ -275408,7 +275421,7 @@
       "starCnt": 1
     },
     {
-      "rank": "827",
+      "rank": "828",
       "name": "ＷＩ８７８７",
       "shopname": "TOM'S WORLD(LIHPAOHIMALL@BANCIAO)",
       "updateDate": "2026/04/30 20:04:27",
@@ -275421,7 +275434,7 @@
       "starCnt": 2
     },
     {
-      "rank": "828",
+      "rank": "829",
       "name": "ＥＮＴＥ",
       "shopname": "HALA(XINYANG)",
       "updateDate": "2026/04/30 22:49:45",
@@ -275434,7 +275447,7 @@
       "starCnt": 1
     },
     {
-      "rank": "829",
+      "rank": "830",
       "name": "ああああああ",
       "shopname": "TOM'S WORLD(DREAM MALL@KAOHSIUNG)",
       "updateDate": "2026/05/01 13:25:55",
@@ -275447,7 +275460,7 @@
       "starCnt": 3
     },
     {
-      "rank": "830",
+      "rank": "831",
       "name": "　ＭＩＫＵ　",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/05/01 22:10:23",
@@ -275460,7 +275473,7 @@
       "starCnt": 3
     },
     {
-      "rank": "831",
+      "rank": "832",
       "name": "ＪＡＳＯＮ２",
       "shopname": "TOM'S WORLD(FE21 MEGA@KAOHSIUNG)",
       "updateDate": "2026/05/01 22:36:17",
@@ -275473,7 +275486,7 @@
       "starCnt": 3
     },
     {
-      "rank": "832",
+      "rank": "833",
       "name": "＝藤原千花＝",
       "shopname": "SIN YI CITY (HUWEI)",
       "updateDate": "2026/05/01 22:37:10",
@@ -275486,7 +275499,7 @@
       "starCnt": 1
     },
     {
-      "rank": "833",
+      "rank": "834",
       "name": "＝星野瑠璃＝",
       "shopname": "SIN YI CITY (HUWEI)",
       "updateDate": "2026/05/01 22:48:37",
@@ -275499,7 +275512,7 @@
       "starCnt": 1
     },
     {
-      "rank": "834",
+      "rank": "835",
       "name": "☆Ｍ∀ＲＳ☆",
       "shopname": "SIN YI CITY (MIAODONG)",
       "updateDate": "2026/05/02 23:50:24",
@@ -275512,7 +275525,7 @@
       "starCnt": 3
     },
     {
-      "rank": "835",
+      "rank": "836",
       "name": "Ａｌｙｓｓａ",
       "shopname": "TOM'S WORLD(FENGSHAN@KAOHSIUNG)",
       "updateDate": "2026/05/03 15:00:56",
@@ -275525,7 +275538,7 @@
       "starCnt": 2
     },
     {
-      "rank": "836",
+      "rank": "837",
       "name": "安和　すはる",
       "shopname": "TOM'S WORLD MITSUI OUTLET PARK-TAICHUNG",
       "updateDate": "2026/05/03 16:54:22",
@@ -275538,7 +275551,7 @@
       "starCnt": 1
     },
     {
-      "rank": "837",
+      "rank": "838",
       "name": "プレイヤー",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/05/03 20:21:16",
@@ -275551,7 +275564,7 @@
       "starCnt": 2
     },
     {
-      "rank": "838",
+      "rank": "839",
       "name": "朝倉　さなみ",
       "shopname": "GiGO METRO WALK",
       "updateDate": "2026/05/03 20:57:46",
@@ -275564,7 +275577,7 @@
       "starCnt": 2
     },
     {
-      "rank": "839",
+      "rank": "840",
       "name": "＝不動明＝",
       "shopname": "SIN YI CITY (HUWEI)",
       "updateDate": "2026/05/03 21:31:58",
@@ -275577,7 +275590,7 @@
       "starCnt": 3
     },
     {
-      "rank": "840",
+      "rank": "841",
       "name": "○×○／～～",
       "shopname": "TOM'S WORLD(JHENGUANG@TAINAN)",
       "updateDate": "2026/05/04 22:53:29",
@@ -275590,7 +275603,7 @@
       "starCnt": 1
     },
     {
-      "rank": "841",
+      "rank": "842",
       "name": "ＹＡ２６６６",
       "shopname": "CHAMELEON (CHIAYI)",
       "updateDate": "2026/05/06 15:27:53",
@@ -275603,7 +275616,7 @@
       "starCnt": 2
     },
     {
-      "rank": "842",
+      "rank": "843",
       "name": "あいいいいい",
       "shopname": "TOM'S WORLD(BOAI@CHIAYI)",
       "updateDate": "2026/05/06 15:29:41",
@@ -275616,7 +275629,7 @@
       "starCnt": 1
     },
     {
-      "rank": "843",
+      "rank": "844",
       "name": "プレイヤー",
       "shopname": "GUOBIN AMUSEMENT PARK",
       "updateDate": "2026/05/06 16:51:45",
@@ -275629,7 +275642,7 @@
       "starCnt": 5
     },
     {
-      "rank": "844",
+      "rank": "845",
       "name": "ＣＯＯＰＥＲ",
       "shopname": "TOM'S WORLD(JHENGUANG@PINGTUNG)",
       "updateDate": "2026/05/06 17:24:50",
@@ -275642,7 +275655,7 @@
       "starCnt": 1
     },
     {
-      "rank": "845",
+      "rank": "846",
       "name": "ＡＬＥＸ３５",
       "shopname": "MAX GAME CENTER",
       "updateDate": "2026/05/07 21:17:30",
@@ -275655,7 +275668,7 @@
       "starCnt": 2
     },
     {
-      "rank": "846",
+      "rank": "847",
       "name": "ＴＩＦＡ１Ｕ",
       "shopname": "CHAMELEON (CHIAYI)",
       "updateDate": "2026/05/08 18:38:53",
@@ -275668,7 +275681,7 @@
       "starCnt": 2
     },
     {
-      "rank": "847",
+      "rank": "848",
       "name": "ＨＡＭ弟子",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/05/08 21:01:43",
@@ -275681,7 +275694,7 @@
       "starCnt": 1
     },
     {
-      "rank": "848",
+      "rank": "849",
       "name": "マエ＠ハシ",
       "shopname": "GiGO METRO WALK",
       "updateDate": "2026/05/08 23:16:02",
@@ -275694,7 +275707,7 @@
       "starCnt": 4
     },
     {
-      "rank": "849",
+      "rank": "850",
       "name": "ちる",
       "shopname": "TOM'S WORLD(FOCUS@TAINAN)",
       "updateDate": "2026/05/08 23:30:01",
@@ -275707,7 +275720,7 @@
       "starCnt": 1
     },
     {
-      "rank": "850",
+      "rank": "851",
       "name": "ＸＩＮ",
       "shopname": "TOM'S WORLD(SKM PARK@KAOHSIUNG 3F)",
       "updateDate": "2026/05/08 23:37:16",
@@ -275720,7 +275733,7 @@
       "starCnt": 2
     },
     {
-      "rank": "851",
+      "rank": "852",
       "name": "ＬＵＶ：３",
       "shopname": "GiGO TIGER CITY",
       "updateDate": "2026/04/25 17:11:14",
@@ -275733,7 +275746,7 @@
       "starCnt": 2
     },
     {
-      "rank": "852",
+      "rank": "853",
       "name": "☆重音テト☆",
       "shopname": "SHARK CATCHER",
       "updateDate": "2026/04/27 17:14:47",
@@ -275746,7 +275759,7 @@
       "starCnt": 3
     },
     {
-      "rank": "853",
+      "rank": "854",
       "name": "桜京塚葬卍☆",
       "shopname": "DOLL EMPIRE (WENHUA)",
       "updateDate": "2026/04/30 22:09:57",
@@ -275759,7 +275772,7 @@
       "starCnt": 4
     },
     {
-      "rank": "854",
+      "rank": "855",
       "name": "結城明日奈",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/05/01 14:58:53",
@@ -275772,7 +275785,7 @@
       "starCnt": 8
     },
     {
-      "rank": "855",
+      "rank": "856",
       "name": "没我の愛",
       "shopname": "LOVEJIS LION TAOYUAN",
       "updateDate": "2026/05/03 19:31:17",
@@ -275785,7 +275798,7 @@
       "starCnt": 7
     },
     {
-      "rank": "856",
+      "rank": "857",
       "name": "ＱＵＡＣＫ",
       "shopname": "HALA PLANET(TAICHUNG YIZHONG)",
       "updateDate": "2026/05/03 23:21:27",
@@ -275798,7 +275811,7 @@
       "starCnt": 1
     },
     {
-      "rank": "857",
+      "rank": "858",
       "name": "もも",
       "shopname": "SHARK CATCHER",
       "updateDate": "2026/05/04 12:09:10",
@@ -275811,7 +275824,7 @@
       "starCnt": 5
     },
     {
-      "rank": "858",
+      "rank": "859",
       "name": "阿道夫希特肋",
       "shopname": "TOM'S WORLD(JHENGUANG@PINGTUNG)",
       "updateDate": "2026/05/05 02:17:21",
@@ -275824,7 +275837,7 @@
       "starCnt": 1
     },
     {
-      "rank": "859",
+      "rank": "860",
       "name": "はるがいいな",
       "shopname": "TOM'S WORLD(LIUHE@KAOHSIUNG)",
       "updateDate": "2026/05/07 20:37:05",
@@ -275837,7 +275850,7 @@
       "starCnt": 6
     },
     {
-      "rank": "860",
+      "rank": "861",
       "name": "プレイヤー",
       "shopname": "TOM'S WORLD(FOCUS@TAINAN)",
       "updateDate": "2026/04/25 15:40:00",
@@ -275850,7 +275863,7 @@
       "starCnt": 3
     },
     {
-      "rank": "861",
+      "rank": "862",
       "name": "ＨＵＡ",
       "shopname": "TOM'S WORLD(CHIN CHIN@TAICHUNG)",
       "updateDate": "2026/04/26 02:49:35",
@@ -275863,7 +275876,7 @@
       "starCnt": 5
     },
     {
-      "rank": "862",
+      "rank": "863",
       "name": "かける",
       "shopname": "TOM'S WORLD(LIUHE@KAOHSIUNG)",
       "updateDate": "2026/04/26 18:24:05",
@@ -275876,7 +275889,7 @@
       "starCnt": 5
     },
     {
-      "rank": "863",
+      "rank": "864",
       "name": "ＥＡＴ７７７",
       "shopname": "GUOBIN AMUSEMENT PARK",
       "updateDate": "2026/04/26 21:11:41",
@@ -275889,7 +275902,7 @@
       "starCnt": 1
     },
     {
-      "rank": "864",
+      "rank": "865",
       "name": "ＴＱ４５",
       "shopname": "HALA PLANET (NANYA)",
       "updateDate": "2026/04/26 22:47:11",
@@ -275902,7 +275915,7 @@
       "starCnt": 2
     },
     {
-      "rank": "865",
+      "rank": "866",
       "name": "○林南○",
       "shopname": "TOM'S WORLD(DREAM MALL@KAOHSIUNG)",
       "updateDate": "2026/05/02 16:51:01",
@@ -275915,7 +275928,7 @@
       "starCnt": 3
     },
     {
-      "rank": "866",
+      "rank": "867",
       "name": "ＢＲＥ",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/05/07 13:11:26",
@@ -275928,7 +275941,7 @@
       "starCnt": 2
     },
     {
-      "rank": "867",
+      "rank": "868",
       "name": "けんた　桜",
       "shopname": "TOM'S WORLD(SKM PARK@KAOHSIUNG 3F)",
       "updateDate": "2026/04/23 15:51:22",
@@ -275941,7 +275954,7 @@
       "starCnt": 4
     },
     {
-      "rank": "868",
+      "rank": "869",
       "name": "藤原　豪",
       "shopname": "TOM'S WORLD (SHOWTIME@KONG-SAN)",
       "updateDate": "2026/04/28 14:58:21",
@@ -275954,7 +275967,7 @@
       "starCnt": 2
     },
     {
-      "rank": "869",
+      "rank": "870",
       "name": "かわょょょょ",
       "shopname": "TOM'S WORLD(MITSUI OUTLET@TAINAN)",
       "updateDate": "2026/04/30 22:56:43",
@@ -275967,7 +275980,7 @@
       "starCnt": 3
     },
     {
-      "rank": "870",
+      "rank": "871",
       "name": "うさぎ",
       "shopname": "TOM'S WORLD(LIVEYOUNG-ZHONGLI)",
       "updateDate": "2026/05/02 15:57:05",
@@ -275980,7 +275993,7 @@
       "starCnt": 1
     },
     {
-      "rank": "871",
+      "rank": "872",
       "name": "ＪＩＭＭＹ",
       "shopname": "TOM'S WORLD(JHENGUANG@PINGTUNG)",
       "updateDate": "2026/05/03 20:42:08",
@@ -275993,7 +276006,7 @@
       "starCnt": 1
     },
     {
-      "rank": "872",
+      "rank": "873",
       "name": "櫻倒美娩酪",
       "shopname": "TOM'S WORLD(LIUHE@KAOHSIUNG)",
       "updateDate": "2026/05/06 11:49:55",
@@ -276006,7 +276019,7 @@
       "starCnt": 3
     },
     {
-      "rank": "873",
+      "rank": "874",
       "name": "ＳＡＬＭＯＮ",
       "shopname": "TOM'S WORLD(JINWANNIAN@TAIPEI)",
       "updateDate": "2026/05/08 18:55:46",
@@ -276019,7 +276032,7 @@
       "starCnt": 4
     },
     {
-      "rank": "874",
+      "rank": "875",
       "name": "Ｇａｓｌｙ",
       "shopname": "TOM'S WORLD(SKM PARK@KAOHSIUNG 3F)",
       "updateDate": "2026/04/25 17:45:52",
@@ -276032,7 +276045,7 @@
       "starCnt": 3
     },
     {
-      "rank": "875",
+      "rank": "876",
       "name": "Ｉｖａｎ",
       "shopname": "TOM'S WORLD(FE21@TAOYUAN)",
       "updateDate": "2026/05/02 00:57:13",
@@ -276045,7 +276058,7 @@
       "starCnt": 1
     },
     {
-      "rank": "876",
+      "rank": "877",
       "name": "Ａｌｉｃｅ",
       "shopname": "NEW CITY(ZHONGLI)",
       "updateDate": "2026/05/02 19:27:33",
