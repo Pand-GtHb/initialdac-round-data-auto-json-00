@@ -1,0 +1,143 @@
+name: Auto Fetch InitialDAC JSON
+
+on:
+  schedule:
+    - cron: "5,25,45 * * * *"   # 毎時 5分・25分・45分に実行
+  workflow_dispatch:
+
+jobs:
+  fetch-and-merge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      # ---------------------------------------------------------
+      # ① SEGA公式 round-all JSON から最新ラウンドを自動検出
+      # ---------------------------------------------------------
+      - name: Determine latest round from SEGA
+        id: round
+        run: |
+          URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-all_area-all.json"
+          echo "Fetching latest round info from $URL"
+
+          curl -s "$URL" -o round-all.json
+
+          if ! jq empty round-all.json 2>/dev/null; then
+            echo "❌ Failed to parse round-all.json"
+            exit 1
+          fi
+
+          LATEST=$(jq -r '.round' round-all.json)
+
+          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+            echo "❌ Could not detect latest round"
+            exit 1
+          fi
+
+          echo "Detected latest round = $LATEST"
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+
+      # ---------------------------------------------------------
+      # ② 63エリアの JSON を取得
+      # ---------------------------------------------------------
+      - name: Fetch 63 JSON files
+        run: |
+          mkdir -p tmp
+          ROUND=${{ steps.round.outputs.latest }}
+
+          echo "Fetching round $ROUND ..."
+
+          for i in $(seq 0 62); do
+            URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${i}.json"
+            OUT="tmp/$i.json"
+
+            echo "Fetching $URL"
+            curl -s "$URL" -o "$OUT"
+
+            if ! jq empty "$OUT" 2>/dev/null; then
+              echo "❌ JSON parse error at area $i"
+              exit 1
+            fi
+          done
+
+      # ---------------------------------------------------------
+      # ③ JSON結合 ＋ area追加（2桁化）＋ carname削除 ＋ 必要項目だけ抽出
+      # ---------------------------------------------------------
+      - name: Merge JSON
+        run: |
+          ROUND=${{ steps.round.outputs.latest }}
+
+          # 全 records を結合
+          jq -s 'map(.records) | add' tmp/*.json > merged_records_raw.json
+
+          # area番号付与・carname削除・必要項目だけ抽出
+          jq '
+            to_entries | map(
+              .value
+              | .area = (.key | tostring | lpad(2; "0"))
+              | del(.carname)
+              | {
+                  rank,
+                  name,
+                  shopname,
+                  updateDate,
+                  point,
+                  mytitleId,
+                  prideId,
+                  onlineBattleRankId,
+                  pridePoint,
+                  starCnt,
+                  area
+                }
+            )
+          ' merged_records_raw.json > merged_records.json
+
+          # updateDate の最大値
+          MAX_DATE=$(jq -r '.[].updateDate' merged_records.json | sort -r | head -n 1)
+
+          GEN_DATE=$(TZ='Asia/Tokyo' date +"%Y/%m/%d %H:%M:%S")
+
+          # roundXX.json を生成
+          jq -n \
+            --arg round "$ROUND" \
+            --arg update "$MAX_DATE" \
+            --arg gen "$GEN_DATE" \
+            --slurpfile rec merged_records.json '
+            {
+              round: ($round | tonumber),
+              updateDate: $update,
+              generatedAt: $gen,
+              records: $rec[0]
+            }
+          ' > "round${ROUND}.json"
+
+          # latest.json を生成
+          jq -n \
+            --arg round "$ROUND" \
+            --arg update "$MAX_DATE" \
+            --arg gen "$GEN_DATE" '
+            {
+              latestRound: ($round | tonumber),
+              updateDate: $update,
+              generatedAt: $gen
+            }
+          ' > latest.json
+
+      # ---------------------------------------------------------
+      # ④ Commit & Push
+      # ---------------------------------------------------------
+      - name: Commit & Push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add latest.json round*.json
+          git commit -m "Auto update: round ${{ steps.round.outputs.latest }}" || echo "No changes"
+          git push
