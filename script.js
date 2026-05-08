@@ -75,39 +75,38 @@ async function loadRoundData() {
 }
 
 /* ---------------------------------------------------------
-   フィルタ
+   フィルタ（延べ人数基準）
 --------------------------------------------------------- */
 function applyFilters() {
   const minutes = Number(document.getElementById("rangeSelect").value);
 
-  // ★ JSON更新日時を基準にする
-  const baseMs = parseDateJST(generatedAt).getTime();
-  const filterStartMs = baseMs - minutes * 60 * 1000;
+  if (!generatedAt) {
+    logError("generatedAt が未取得のため、時間フィルタをスキップしました");
+    filteredData = [...allData];
+  } else {
+    const baseMs = parseDateJST(generatedAt).getTime();
+    const filterStartMs = baseMs - minutes * 60 * 1000;
 
-  // ★ フィルタ開始日時を表示
-  const d = new Date(filterStartMs);
-  const y = d.getFullYear();
-  const m = ("0" + (d.getMonth() + 1)).slice(-2);
-  const day = ("0" + d.getDate()).slice(-2);
-  const hh = ("0" + d.getHours()).slice(-2);
-  const mm = ("0" + d.getMinutes()).slice(-2);
+    const d = new Date(filterStartMs);
+    const y = d.getFullYear();
+    const m = ("0" + (d.getMonth() + 1)).slice(-2);
+    const day = ("0" + d.getDate()).slice(-2);
+    const hh = ("0" + d.getHours()).slice(-2);
+    const mm = ("0" + d.getMinutes()).slice(-2);
 
-  document.getElementById("filterStartTime").textContent =
-    `${y}/${m}/${day} ${hh}:${mm}`;
+    document.getElementById("filterStartTime").textContent =
+      `${y}/${m}/${day} ${hh}:${mm}`;
 
-  // ★ 時間フィルタ（generatedAt 基準）
-  filteredData = allData.filter(p => {
-    if (!p.updateDate) return false;
-    const t = parseDateJST(p.updateDate).getTime();
-    return t >= filterStartMs;
-  });
-
-  document.getElementById("summaryTitle").textContent =
-    `稼働プレイヤー（合計：${fmt(filteredData.length)}人）`;
+    filteredData = allData.filter(p => {
+      if (!p.updateDate) return false;
+      const t = parseDateJST(p.updateDate).getTime();
+      return t >= filterStartMs;
+    });
+  }
 }
 
 /* ---------------------------------------------------------
-   サマリ生成
+   サマリ生成（延べ人数基準）
 --------------------------------------------------------- */
 function buildSummary() {
   summaryRows = [];
@@ -115,14 +114,13 @@ function buildSummary() {
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
-  // ★ Ruby星数（選択された星だけ）
+  // Ruby帯
   for (let star of selectedStars) {
     const list = filteredData.filter(p =>
       p.onlineBattleRankId === RUBY_ID && p.starCnt === star
     );
 
     summaryRows.push({
-      type: "rank",
       key: `R${star}`,
       label: `☆${star}`,
       icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
@@ -130,14 +128,13 @@ function buildSummary() {
     });
   }
 
-  // ★ PRIDE帯（常に表示）
+  // PRIDE帯
   PRIDE_LEVELS.forEach(level => {
     const list = filteredData.filter(p =>
       p.pridePoint >= level.min && p.pridePoint <= level.max
     );
 
     summaryRows.push({
-      type: "pride",
       key: `P_${level.level}`,
       label: level.level,
       icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
@@ -147,11 +144,16 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   サマリ表示
+   サマリ表示（延べ人数基準）
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
-  const total = filteredData.length;
+
+  // 延べ人数合計
+  const total = summaryRows.reduce((sum, r) => sum + r.list.length, 0);
+
+  document.getElementById("summaryTitle").textContent =
+    `稼働プレイヤー（合計：${fmt(total)}人）`;
 
   const rows = summaryRows.map(r => {
     const cnt = r.list.length;
@@ -204,30 +206,52 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示
+   詳細表示（称号画像＋更新日時降順）
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = summaryRows.find(r => r.key === key);
-  detailList = row.list;
+  detailList = row.list.slice();
+
+  // 更新日時降順
+  detailList.sort((a, b) => {
+    const ta = parseDateJST(a.updateDate).getTime();
+    const tb = parseDateJST(b.updateDate).getTime();
+    return tb - ta;
+  });
 
   const area = document.getElementById("detailArea");
 
-  const rows = detailList.map(p => `
-    <tr>
-      <td class="right">${fmt(p.rank)}</td>
-      <td class="left">${p.name}</td>
-      <td class="right">${fmt(p.point)}</td>
-      <td class="left">${p.shopname}</td>
-      <td class="left">${p.updateDate}</td>
-    </tr>
-  `).join("");
+  const rows = detailList.map(p => {
+    const titleUrl = p.mytitleId
+      ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
+      : "";
+
+    const starLabel =
+      p.onlineBattleRankId === RUBY_ID && p.starCnt
+        ? `☆${p.starCnt}`
+        : "";
+
+    return `
+      <tr>
+        <td class="right">${fmt(p.rank)}</td>
+        <td class="left">${starLabel}</td>
+        <td class="left">${p.name}</td>
+        <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
+        <td class="right">${fmt(p.point)}</td>
+        <td class="left">${p.shopname}</td>
+        <td class="left">${p.updateDate}</td>
+      </tr>
+    `;
+  }).join("");
 
   area.innerHTML = `
     <div style="overflow-x:auto;">
     <table>
       <tr>
-        <th>順位</th>
+        <th>ランク</th>
+        <th>☆・Lv</th>
         <th>名前</th>
+        <th>称号</th>
         <th>RP</th>
         <th>店舗</th>
         <th>更新日時</th>
@@ -246,7 +270,8 @@ function showDetail(key) {
 --------------------------------------------------------- */
 function exportSummaryCSV() {
   const header = "帯,人数,%,平均RP,最小RP,最大RP";
-  const total = filteredData.length;
+
+  const total = summaryRows.reduce((sum, r) => sum + r.list.length, 0);
 
   const body = summaryRows.map(r => {
     const cnt = r.list.length;
@@ -331,23 +356,4 @@ document.getElementById("filterBtn").onclick = () => {
   renderSummary();
 };
 document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
-document.getElementById("allCsvBtn").onclick = exportAllCSV;
-document.getElementById("backBtn").onclick = () => {
-  document.getElementById("detailView").style.display = "none";
-  document.getElementById("summaryView").style.display = "block";
-};
-
-/* ---------------------------------------------------------
-   Ruby星数フィルタ生成
---------------------------------------------------------- */
-window.onload = () => {
-  const rubyBox = document.getElementById("rubyFilters");
-  rubyBox.innerHTML = [...Array(8).keys()]
-    .map(i => `<label><input type="checkbox" class="ruby-filter" value="${i+1}" checked> ☆${i+1}</label>`)
-    .join(" ");
-};
-
-/* ---------------------------------------------------------
-   実行
---------------------------------------------------------- */
-init();
+document.getElementById("allCsvBtn").onclick
