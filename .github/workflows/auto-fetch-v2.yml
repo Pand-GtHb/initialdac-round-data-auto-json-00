@@ -2,11 +2,6 @@ name: Auto Fetch InitialDAC JSON (v2)
 
 on:
   workflow_dispatch:
-    inputs:
-      round:
-        description: "Round number"
-        required: true
-        default: "72"
 
 jobs:
   fetch-and-merge:
@@ -19,29 +14,33 @@ jobs:
       - name: Install jq
         run: sudo apt-get install -y jq
 
-      - name: Determine round
-        id: round
+      - name: Read latest.json
+        id: latest
         run: |
-          # Cloudflare Worker から渡された round を使用
-          ROUND="${{ github.event.inputs.round }}"
+          if [ -f latest.json ]; then
+            ROUND=$(jq -r '.latestRound' latest.json)
+          else
+            ROUND=72
+          fi
           echo "round=$ROUND" >> $GITHUB_OUTPUT
 
       - name: Fetch JSON
         run: |
-          ROUND=${{ steps.round.outputs.round }}
+          ROUND=${{ steps.latest.outputs.round }}
           mkdir -p tmp
 
-          # 63エリア分を取得
-          for AREA in $(seq -w 1 63); do
+          # area-0 ～ area-61（62エリア）
+          for AREA in $(seq -w 0 61); do
             URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${AREA}.json"
             echo "Fetching $URL"
-            curl -s "$URL" -o "tmp/round-${ROUND}_area-${AREA}.json"
+            curl -f -s "$URL" -o "tmp/round-${ROUND}_area-${AREA}.json" \
+              || echo "{}" > "tmp/round-${ROUND}_area-${AREA}.json"
           done
 
       - name: Merge JSON
         run: |
-          ROUND=${{ steps.round.outputs.round }}
-          jq -s '{round: $ROUND, generatedAt: now, data: .}' tmp/*.json > latest.json
+          ROUND=${{ steps.latest.outputs.round }}
+          jq -s --arg round "$ROUND" '{round: $round, generatedAt: now, data: .}' tmp/*.json > latest.json
 
       - name: Commit & Push
         run: |
@@ -49,5 +48,5 @@ jobs:
           git config user.email "github-actions@github.com"
 
           git add latest.json tmp/
-          git commit -m "Auto update: round ${{ steps.round.outputs.round }}" || echo "No changes"
+          git commit -m "Auto update: round ${{ steps.latest.outputs.round }}" || echo "No changes"
           git push
