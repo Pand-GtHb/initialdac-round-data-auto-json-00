@@ -1,6 +1,6 @@
 {
   "round": "72",
-  "generatedAt": "2026/05/09 07:31:02",
+  "generatedAt": "2026/05/09 08:01:02",
   "records": [
     {
       "rank": "1",
@@ -30723,19 +30723,6 @@
     },
     {
       "rank": "235",
-      "name": "スカーレット",
-      "shopname": "ラウンドワンららぽーと新三郷店",
-      "updateDate": "2026/05/06 19:35:24",
-      "carname": "GDBF[AR]",
-      "point": "2380",
-      "mytitleId": "2004b284a721b42f6b04c992e2589f29",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 8
-    },
-    {
-      "rank": "236",
       "name": "ＷＯＷ",
       "shopname": "ラウンドワン上尾店",
       "updateDate": "2026/05/07 16:43:18",
@@ -30748,7 +30735,7 @@
       "starCnt": 1
     },
     {
-      "rank": "237",
+      "rank": "236",
       "name": "Ｒ",
       "shopname": "キャロム坂戸店",
       "updateDate": "2026/05/06 18:04:02",
@@ -30761,7 +30748,7 @@
       "starCnt": 1
     },
     {
-      "rank": "238",
+      "rank": "237",
       "name": "しーさん．",
       "shopname": "ＧｉＧＯ南越谷ラクーン",
       "updateDate": "2026/05/08 18:09:31",
@@ -30774,7 +30761,7 @@
       "starCnt": 4
     },
     {
-      "rank": "239",
+      "rank": "238",
       "name": "アヤカ",
       "shopname": "キャッツアイ狭山店",
       "updateDate": "2026/05/01 21:25:21",
@@ -30787,7 +30774,7 @@
       "starCnt": 1
     },
     {
-      "rank": "240",
+      "rank": "239",
       "name": "Ａｚｕｋｉ＊",
       "shopname": "キャッツアイ狭山店",
       "updateDate": "2026/05/03 18:34:54",
@@ -30800,7 +30787,7 @@
       "starCnt": 3
     },
     {
-      "rank": "241",
+      "rank": "240",
       "name": "ゆいと３",
       "shopname": "ＧｉＧＯフジモール吹上",
       "updateDate": "2026/05/05 16:23:47",
@@ -30813,7 +30800,7 @@
       "starCnt": 2
     },
     {
-      "rank": "242",
+      "rank": "241",
       "name": "今この瞬間を",
       "shopname": "アミューズメントフィールドバイヨン",
       "updateDate": "2026/05/06 20:19:44",
@@ -30826,7 +30813,7 @@
       "starCnt": 4
     },
     {
-      "rank": "243",
+      "rank": "242",
       "name": "ああああああ",
       "shopname": "ラウンドワンららぽーと新三郷店",
       "updateDate": "2026/05/07 20:17:48",
@@ -30839,7 +30826,7 @@
       "starCnt": 3
     },
     {
-      "rank": "244",
+      "rank": "243",
       "name": "ななさきあい",
       "shopname": "ラウンドワンさいたま・鴻巣店",
       "updateDate": "2026/05/05 23:21:34",
@@ -30852,13 +30839,26 @@
       "starCnt": 4
     },
     {
-      "rank": "245",
+      "rank": "244",
       "name": "一華八華",
       "shopname": "キャロム坂戸店",
       "updateDate": "2026/05/07 19:45:53",
       "carname": "GDBA[AR]",
       "point": "2320",
       "mytitleId": "ed0708b5c409692504adfbb82cb66c74",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 8
+    },
+    {
+      "rank": "245",
+      "name": "スカーレット",
+      "shopname": "ラウンドワンららぽーと新三郷店",
+      "updateDate": "2026/05/09 07:40:47",
+      "carname": "GDBF[AR]",
+      "point": "2320",
+      "mytitleId": "2004b284a721b42f6b04c992e2589f29",
       "prideId": "",
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
@@ -163804,6 +163804,19 @@
     },
     {
       "rank": "114",
+      "name": "ＲＡＩＤＥＮ",
+      "shopname": "ラウンドワン仙台苦竹店",
+      "updateDate": "2026/05/09 07:55:17",
+      "carname": "FL5[DH]",
+      "point": "3300",
+      "mytitleId": "feae522c15edd1da1e6b226a1ec5d93a",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
+      "starCnt": 6
+    },
+    {
+      "rank": "115",
       "name": "ひらたりょた",
       "shopname": "アミューズパーク名取りんくう",
       "updateDate": "2026/05/04 20:17:13",
@@ -163816,7 +163829,7 @@
       "starCnt": 4
     },
     {
-      "rank": "115",
+      "rank": "116",
       "name": "おちん珍宝館",
       "shopname": "ＧｉＧＯ仙台コロナワールド",
       "updateDate": "2026/04/30 23:47:19",
@@ -163829,7 +163842,7 @@
       "starCnt": 7
     },
     {
-      "rank": "116",
+      "rank": "117",
       "name": "めっちゃ出た",
       "shopname": "ゲームコーナー東部",
       "updateDate": "2026/05/04 23:27:52",
@@ -163842,7 +163855,7 @@
       "starCnt": 0
     },
     {
-      "rank": "117",
+      "rank": "118",
       "name": "るきあの弟子",
       "shopname": "プラサカプコン石巻店",
       "updateDate": "2026/05/08 12:44:28",
@@ -163855,7 +163868,7 @@
       "starCnt": 6
     },
     {
-      "rank": "118",
+      "rank": "119",
       "name": "高木さん＠",
       "shopname": "プラサカプコン石巻店",
       "updateDate": "2026/04/26 20:22:03",
@@ -163868,7 +163881,7 @@
       "starCnt": 7
     },
     {
-      "rank": "119",
+      "rank": "120",
       "name": "チヨ",
       "shopname": "タイトーステーション 仙台ベガロポリス店",
       "updateDate": "2026/04/29 13:58:11",
@@ -163881,7 +163894,7 @@
       "starCnt": 1
     },
     {
-      "rank": "120",
+      "rank": "121",
       "name": "阿部　杏奈",
       "shopname": "ユーズランド大河原店",
       "updateDate": "2026/05/03 16:46:15",
@@ -163894,7 +163907,7 @@
       "starCnt": 1
     },
     {
-      "rank": "121",
+      "rank": "122",
       "name": "コメ農家Ｔｖ",
       "shopname": "ＧｉＧＯ石巻",
       "updateDate": "2026/05/04 17:11:02",
@@ -163907,7 +163920,7 @@
       "starCnt": 3
     },
     {
-      "rank": "122",
+      "rank": "123",
       "name": "Ｔ．Ｏ",
       "shopname": "ＧＡＭＥＢＡＮＫ仙台泉店",
       "updateDate": "2026/05/08 20:31:34",
@@ -163920,7 +163933,7 @@
       "starCnt": 2
     },
     {
-      "rank": "123",
+      "rank": "124",
       "name": "ＭｒＫＫＱ",
       "shopname": "THE 3RD PLANET BiVi仙台店",
       "updateDate": "2026/05/03 15:12:57",
@@ -163933,7 +163946,7 @@
       "starCnt": 6
     },
     {
-      "rank": "124",
+      "rank": "125",
       "name": "†ｙｏｒｕ†",
       "shopname": "ＧＡＭＥＢＡＮＫ仙台泉店",
       "updateDate": "2026/05/01 22:56:30",
@@ -163946,7 +163959,7 @@
       "starCnt": 5
     },
     {
-      "rank": "125",
+      "rank": "126",
       "name": "７ｓＲｕα．",
       "shopname": "THE 3RD PLANET BiVi仙台店",
       "updateDate": "2026/05/07 21:46:15",
@@ -163959,7 +163972,7 @@
       "starCnt": 7
     },
     {
-      "rank": "126",
+      "rank": "127",
       "name": "ペラ",
       "shopname": "ＧｉＧＯ佐沼",
       "updateDate": "2026/05/08 15:24:50",
@@ -163972,7 +163985,7 @@
       "starCnt": 1
     },
     {
-      "rank": "127",
+      "rank": "128",
       "name": "Ｈｅｌｓｉｅ",
       "shopname": "ＭＳ多賀城店",
       "updateDate": "2026/05/05 17:40:08",
@@ -163985,7 +163998,7 @@
       "starCnt": 0
     },
     {
-      "rank": "128",
+      "rank": "129",
       "name": "七野　ひかる",
       "shopname": "プラサカプコン石巻店",
       "updateDate": "2026/05/08 20:00:10",
@@ -163998,7 +164011,7 @@
       "starCnt": 7
     },
     {
-      "rank": "129",
+      "rank": "130",
       "name": "オヴニル",
       "shopname": "ＳＯＹＵ　ＧＡＭＥ　ＦＩＥＬＤ古川店",
       "updateDate": "2026/05/05 13:39:54",
@@ -164011,7 +164024,7 @@
       "starCnt": 3
     },
     {
-      "rank": "130",
+      "rank": "131",
       "name": "はやいよＴＶ",
       "shopname": "ＧｉＧＯ石巻",
       "updateDate": "2026/05/04 16:33:13",
@@ -164024,7 +164037,7 @@
       "starCnt": 1
     },
     {
-      "rank": "131",
+      "rank": "132",
       "name": "おぼろん＞＜",
       "shopname": "ビーカム松森店",
       "updateDate": "2026/05/07 11:22:12",
@@ -164037,7 +164050,7 @@
       "starCnt": 1
     },
     {
-      "rank": "132",
+      "rank": "133",
       "name": "ギルティ炭酸",
       "shopname": "THE 3RD PLANET BiVi仙台店",
       "updateDate": "2026/05/07 17:34:53",
@@ -164050,7 +164063,7 @@
       "starCnt": 6
     },
     {
-      "rank": "133",
+      "rank": "134",
       "name": "かりんとう",
       "shopname": "プラサカプコン石巻店",
       "updateDate": "2026/04/29 14:07:08",
@@ -164063,7 +164076,7 @@
       "starCnt": 2
     },
     {
-      "rank": "134",
+      "rank": "135",
       "name": "Ｄａｖｉｄ",
       "shopname": "ＧｉＧＯ仙台",
       "updateDate": "2026/05/06 17:14:29",
@@ -164076,7 +164089,7 @@
       "starCnt": 8
     },
     {
-      "rank": "135",
+      "rank": "136",
       "name": "悠成",
       "shopname": "ＧｉＧＯ名取",
       "updateDate": "2026/04/29 12:41:09",
@@ -164089,7 +164102,7 @@
       "starCnt": 6
     },
     {
-      "rank": "136",
+      "rank": "137",
       "name": "ＮＥＥＴ＠",
       "shopname": "ＧＡＭＥＢＡＮＫ仙台泉店",
       "updateDate": "2026/05/03 13:02:16",
@@ -164102,7 +164115,7 @@
       "starCnt": 1
     },
     {
-      "rank": "137",
+      "rank": "138",
       "name": "ばんじょう",
       "shopname": "タイトーステーション 仙台ベガロポリス店",
       "updateDate": "2026/05/06 13:09:55",
@@ -164115,7 +164128,7 @@
       "starCnt": 3
     },
     {
-      "rank": "138",
+      "rank": "139",
       "name": "ひだりてＲ",
       "shopname": "タイトーステーション仙台名掛丁店",
       "updateDate": "2026/05/07 16:52:43",
@@ -164128,7 +164141,7 @@
       "starCnt": 6
     },
     {
-      "rank": "139",
+      "rank": "140",
       "name": "明日への扉",
       "shopname": "プラサカプコン石巻店",
       "updateDate": "2026/05/06 13:30:44",
@@ -164141,7 +164154,7 @@
       "starCnt": 7
     },
     {
-      "rank": "140",
+      "rank": "141",
       "name": "ＯＯＫＡＭＩ",
       "shopname": "ＧｉＧＯイオン仙台中山",
       "updateDate": "2026/05/08 18:46:40",
@@ -164154,7 +164167,7 @@
       "starCnt": 4
     },
     {
-      "rank": "141",
+      "rank": "142",
       "name": "ＪａｙＣｅｅ",
       "shopname": "ＧｉＧＯ仙台コロナワールド",
       "updateDate": "2026/05/06 18:25:30",
@@ -164167,7 +164180,7 @@
       "starCnt": 7
     },
     {
-      "rank": "142",
+      "rank": "143",
       "name": "ケイ",
       "shopname": "プラサカプコン石巻店",
       "updateDate": "2026/05/02 16:15:56",
@@ -164180,7 +164193,7 @@
       "starCnt": 1
     },
     {
-      "rank": "143",
+      "rank": "144",
       "name": "さとぅ",
       "shopname": "ゲームコーナー東部",
       "updateDate": "2026/05/06 21:54:43",
@@ -164193,7 +164206,7 @@
       "starCnt": 1
     },
     {
-      "rank": "144",
+      "rank": "145",
       "name": "エアリス",
       "shopname": "ユーズランド大河原店",
       "updateDate": "2026/05/08 10:31:02",
@@ -164206,7 +164219,7 @@
       "starCnt": 1
     },
     {
-      "rank": "145",
+      "rank": "146",
       "name": "ちょろきゅー",
       "shopname": "ユーズランド大河原店",
       "updateDate": "2026/05/08 14:07:01",
@@ -164217,19 +164230,6 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78b6e12126e2a1e4802ed8674342c946c2",
       "starCnt": 1
-    },
-    {
-      "rank": "146",
-      "name": "ＲＡＩＤＥＮ",
-      "shopname": "ラウンドワン仙台苦竹店",
-      "updateDate": "2026/05/06 13:32:38",
-      "carname": "FL5[DH]",
-      "point": "2540",
-      "mytitleId": "feae522c15edd1da1e6b226a1ec5d93a",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
-      "starCnt": 6
     },
     {
       "rank": "147",
@@ -197396,19 +197396,6 @@
     },
     {
       "rank": "71",
-      "name": "おがた",
-      "shopname": "ラウンドワン高松店",
-      "updateDate": "2026/05/06 18:01:36",
-      "carname": "DB42[AR]",
-      "point": "1240",
-      "mytitleId": "f861e55c8b5c29518d9b6104be80b6bf",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
-      "starCnt": 2
-    },
-    {
-      "rank": "72",
       "name": "ＹＡＮＫＵ",
       "shopname": "アミュージアム高松店",
       "updateDate": "2026/05/01 13:23:36",
@@ -197421,7 +197408,7 @@
       "starCnt": 2
     },
     {
-      "rank": "73",
+      "rank": "72",
       "name": "ＪＯＫＥＲ！",
       "shopname": "ラウンドワン高松店",
       "updateDate": "2026/05/03 15:51:01",
@@ -197434,7 +197421,7 @@
       "starCnt": 1
     },
     {
-      "rank": "74",
+      "rank": "73",
       "name": "中島よしみ",
       "shopname": "ラウンドワン高松店",
       "updateDate": "2026/05/04 20:46:08",
@@ -197447,7 +197434,7 @@
       "starCnt": 5
     },
     {
-      "rank": "75",
+      "rank": "74",
       "name": "４０４Ｋｉｉ",
       "shopname": "ラウンドワン高松店",
       "updateDate": "2026/05/08 21:00:31",
@@ -197460,7 +197447,7 @@
       "starCnt": 6
     },
     {
-      "rank": "76",
+      "rank": "75",
       "name": "ともずな",
       "shopname": "アミパラ丸亀店",
       "updateDate": "2026/05/04 15:33:12",
@@ -197471,6 +197458,19 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e781508dd5785ba6ef82abb079722176702",
       "starCnt": 4
+    },
+    {
+      "rank": "76",
+      "name": "おがた",
+      "shopname": "ラウンドワン高松店",
+      "updateDate": "2026/05/09 07:43:15",
+      "carname": "BRZ S[HC]",
+      "point": "1180",
+      "mytitleId": "f861e55c8b5c29518d9b6104be80b6bf",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
+      "starCnt": 2
     },
     {
       "rank": "77",
@@ -208537,6 +208537,19 @@
     },
     {
       "rank": "141",
+      "name": "圧倒的大地卍",
+      "shopname": "楽市街道箱崎店",
+      "updateDate": "2026/05/09 07:59:45",
+      "carname": "CT9Aエボ9[AR]",
+      "point": "3060",
+      "mytitleId": "2dca2402566f7cc8303a6e70fa29c50d",
+      "prideId": "",
+      "pridePoint": 0,
+      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
+      "starCnt": 5
+    },
+    {
+      "rank": "142",
       "name": "す",
       "shopname": "楽市楽座砂津店",
       "updateDate": "2026/04/25 14:54:14",
@@ -208549,7 +208562,7 @@
       "starCnt": 3
     },
     {
-      "rank": "142",
+      "rank": "143",
       "name": "実行役の漢",
       "shopname": "タイトーFステーションヨドバシ博多店",
       "updateDate": "2026/05/05 16:07:43",
@@ -208562,7 +208575,7 @@
       "starCnt": 0
     },
     {
-      "rank": "143",
+      "rank": "144",
       "name": "しょうき",
       "shopname": "タイトーステーション リバーウォーク店",
       "updateDate": "2026/05/06 16:45:20",
@@ -208575,7 +208588,7 @@
       "starCnt": 4
     },
     {
-      "rank": "144",
+      "rank": "145",
       "name": "出た！停滞！",
       "shopname": "楽市街道くるめ店",
       "updateDate": "2026/05/07 18:12:34",
@@ -208586,19 +208599,6 @@
       "pridePoint": 0,
       "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85",
       "starCnt": 7
-    },
-    {
-      "rank": "145",
-      "name": "圧倒的大地卍",
-      "shopname": "楽市街道箱崎店",
-      "updateDate": "2026/05/09 07:30:19",
-      "carname": "EA11R[DH]",
-      "point": "3000",
-      "mytitleId": "2dca2402566f7cc8303a6e70fa29c50d",
-      "prideId": "",
-      "pridePoint": 0,
-      "onlineBattleRankId": "dcb98f86f149cf71d3707a1592072e78f41e679a54f693d3574f499da9559173",
-      "starCnt": 5
     },
     {
       "rank": "146",
@@ -244861,9 +244861,9 @@
       "rank": "2",
       "name": "たーかー",
       "shopname": "ラウンドワン沖縄・宜野湾店",
-      "updateDate": "2026/05/06 18:45:56",
+      "updateDate": "2026/05/09 07:59:44",
       "carname": "ST205[AR]",
-      "point": "33960",
+      "point": "34320",
       "mytitleId": "2004b284a721b42f6b04c992e2589f29",
       "prideId": "",
       "pridePoint": 0,
@@ -301138,12 +301138,12 @@
       "rank": "4",
       "name": "サイト～さん",
       "shopname": "ＧｉＧＯ館林",
-      "updateDate": "2026/05/07 21:41:02",
-      "carname": "CP9Aエボ5[AR]",
-      "point": "51560",
+      "updateDate": "2026/05/09 07:46:23",
+      "carname": "CT9Aエボ9[AR]",
+      "point": "51760",
       "mytitleId": "2004b284a721b42f6b04c992e2589f29",
       "prideId": "58446a29e6c496139963728eea887349",
-      "pridePoint": 1426,
+      "pridePoint": 1425,
       "onlineBattleRankId": "",
       "starCnt": 0
     },
