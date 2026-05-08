@@ -1,14 +1,7 @@
 /* ---------------------------------------------------------
    Initial DAC Round Data Viewer（auto-json-00 対応）
-   - latest.json → 最新ラウンド取得
-   - roundXX.json → 統合JSON読み込み（配列 or {records:[]} 両対応）
-   - 時間フィルタ + Ruby星数フィルタ
-   - サマリCSV / 全データCSV
-   - generatedAt 表示
-   - ログ色分け（緑/赤）
 --------------------------------------------------------- */
 
-/* ★ 定義 */
 const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
 
@@ -22,9 +15,6 @@ const PRIDE_LEVELS = [
   { level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
 ];
 
-/* ---------------------------------------------------------
-   グローバル
---------------------------------------------------------- */
 let allData = [];
 let filteredData = [];
 let summaryRows = [];
@@ -43,73 +33,49 @@ function appendLog(msg, type = "normal") {
   box.appendChild(line);
   box.scrollTop = box.scrollHeight;
 }
-
-function log(msg) {
-  appendLog(msg, "normal");
-}
-
-function logError(msg) {
-  appendLog(msg, "error");
-}
+function log(msg) { appendLog(msg, "normal"); }
+function logError(msg) { appendLog(msg, "error"); }
 
 /* ---------------------------------------------------------
-   カンマ付きフォーマット
+   ユーティリティ
 --------------------------------------------------------- */
-function fmt(n) {
-  return Number(n).toLocaleString();
-}
-
-/* Safari 互換の日時パース */
-function parseDateJST(str) {
-  return new Date(str.replace(/-/g, "/"));
-}
+function fmt(n) { return Number(n).toLocaleString(); }
+function parseDateJST(str) { return new Date(str.replace(/-/g, "/")); }
 
 /* ---------------------------------------------------------
-   latest.json を取得
+   latest.json
 --------------------------------------------------------- */
 async function loadLatest() {
-  log("latest.json を取得中…");
+  log("latest.json 取得準備中");
 
-  try {
-    const res = await fetch("latest.json", { cache: "no-store" });
-    const json = await res.json();
+  const res = await fetch("latest.json", { cache: "no-store" });
+  const json = await res.json();
 
-    latestRound = json.latestRound;
-    document.getElementById("latestRound").textContent = latestRound;
+  latestRound = json.latestRound;
+  document.getElementById("latestRound").textContent = latestRound;
 
-    log("latest.json 読み込み完了");
-  } catch (e) {
-    logError("latest.json の取得に失敗");
-  }
+  log("latest.json 数読み込み完了");
 }
 
 /* ---------------------------------------------------------
-   roundXX.json を取得（配列 or {records:[]} 両対応）
+   roundXX.json
 --------------------------------------------------------- */
 async function loadRoundData() {
-  const url = `round${latestRound}.json?t=${Date.now()}`;
-  log(`round${latestRound}.json を取得中…`);
+  log(`round${latestRound}.json 取得準備中`);
 
-  try {
-    const res = await fetch(url, { cache: "no-store" });
-    const json = await res.json();
+  const res = await fetch(`round${latestRound}.json?t=${Date.now()}`, { cache: "no-store" });
+  const json = await res.json();
 
-    // ★ generatedAt を保存
-    generatedAt = json.generatedAt ?? "";
+  generatedAt = json.generatedAt ?? "";
+  document.getElementById("jsonUpdateTime").textContent = generatedAt;
 
-    // ★ 配列 or {records:[]} の両対応
-    allData = Array.isArray(json) ? json : json.records;
+  allData = Array.isArray(json) ? json : json.records;
 
-    document.getElementById("jsonUpdateTime").textContent = generatedAt;
-
-    log(`round${latestRound}.json 読み込み完了（${allData.length}件）`);
-  } catch (e) {
-    logError(`round${latestRound}.json の取得に失敗`);
-  }
+  log(`round${latestRound}.json 数読み込み完了 (${allData.length}件)`);
 }
 
 /* ---------------------------------------------------------
-   時間フィルタ
+   フィルタ
 --------------------------------------------------------- */
 function filterByTime(data) {
   const minutes = Number(document.getElementById("rangeSelect").value);
@@ -123,9 +89,6 @@ function filterByTime(data) {
   });
 }
 
-/* ---------------------------------------------------------
-   Ruby星数フィルタ
---------------------------------------------------------- */
 function filterByRuby(data) {
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
@@ -136,16 +99,12 @@ function filterByRuby(data) {
   });
 }
 
-/* ---------------------------------------------------------
-   フィルタ適用
---------------------------------------------------------- */
 function applyFilters() {
   let data = [...allData];
   data = filterByTime(data);
   data = filterByRuby(data);
   filteredData = data;
 
-  // サマリタイトル更新
   document.getElementById("summaryTitle").textContent =
     `稼働プレイヤー（合計：${fmt(filteredData.length)}人）`;
 }
@@ -156,8 +115,11 @@ function applyFilters() {
 function buildSummary() {
   summaryRows = [];
 
-  // ★ ランク帯
-  for (let star = 1; star <= 8; star++) {
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+
+  // ★ Ruby星数（選択された星だけ）
+  for (let star of selectedStars) {
     const list = filteredData.filter(p =>
       p.onlineBattleRankId === RUBY_ID && p.starCnt === star
     );
@@ -171,7 +133,7 @@ function buildSummary() {
     });
   }
 
-  // ★ PRIDE帯
+  // ★ PRIDE帯（常に表示）
   PRIDE_LEVELS.forEach(level => {
     const list = filteredData.filter(p =>
       p.pridePoint >= level.min && p.pridePoint <= level.max
@@ -192,11 +154,13 @@ function buildSummary() {
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
+  const total = filteredData.length;
 
   const rows = summaryRows.map(r => {
     const cnt = r.list.length;
-    const points = r.list.map(p => Number(p.point ?? 0));
+    const percent = total ? Math.round((cnt / total) * 100) : 0;
 
+    const points = r.list.map(p => Number(p.point ?? 0));
     const avg = cnt ? Math.round(points.reduce((a,b)=>a+b,0) / cnt) : 0;
     const min = cnt ? Math.min(...points) : 0;
     const max = cnt ? Math.max(...points) : 0;
@@ -206,6 +170,12 @@ function renderSummary() {
         <td class="center"><img src="${r.icon}" width="32"></td>
         <td class="left">${r.label}</td>
         <td class="right">${fmt(cnt)}</td>
+        <td class="right">${percent}%</td>
+        <td class="center">
+          <div class="bar-wrap">
+            <div class="bar" style="width:${percent}%;"></div>
+          </div>
+        </td>
         <td class="right">${fmt(avg)}</td>
         <td class="right">${fmt(min)}</td>
         <td class="right">${fmt(max)}</td>
@@ -217,12 +187,14 @@ function renderSummary() {
     <div style="overflow-x:auto;">
     <table>
       <tr>
-        <th>アイコン</th>
+        <th>ランク</th>
         <th>☆・Lv</th>
         <th>人数</th>
-        <th>平均RP</th>
-        <th>最小RP</th>
-        <th>最大RP</th>
+        <th>%</th>
+        <th>Bar</th>
+        <th>RP:Avg</th>
+        <th>RP:Min</th>
+        <th>RP:Max</th>
       </tr>
       ${rows}
     </table>
@@ -273,19 +245,22 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   CSV出力（サマリ）
+   CSV 出力（サマリ）
 --------------------------------------------------------- */
 function exportSummaryCSV() {
-  const header = "帯,人数,平均RP,最小RP,最大RP";
+  const header = "帯,人数,%,平均RP,最小RP,最大RP";
+  const total = filteredData.length;
 
   const body = summaryRows.map(r => {
     const cnt = r.list.length;
+    const percent = total ? Math.round((cnt / total) * 100) : 0;
+
     const points = r.list.map(p => Number(p.point ?? 0));
     const avg = cnt ? Math.round(points.reduce((a,b)=>a+b,0) / cnt) : 0;
     const min = cnt ? Math.min(...points) : 0;
     const max = cnt ? Math.max(...points) : 0;
 
-    return `${r.label},${cnt},${avg},${min},${max}`;
+    return `${r.label},${cnt},${percent},${avg},${min},${max}`;
   }).join("\n");
 
   const csv = "\ufeff" + header + "\n" + body;
@@ -302,7 +277,7 @@ function exportSummaryCSV() {
 }
 
 /* ---------------------------------------------------------
-   CSV出力（全データ）
+   CSV 出力（全データ）
 --------------------------------------------------------- */
 function exportAllCSV() {
   const columns = [
@@ -337,7 +312,7 @@ function exportAllCSV() {
    初期化
 --------------------------------------------------------- */
 async function init() {
-  log("=== Viewer 初期化開始 ===");
+  log("Viewer 初期化中");
 
   await loadLatest();
   await loadRoundData();
@@ -346,7 +321,7 @@ async function init() {
   buildSummary();
   renderSummary();
 
-  log("=== Viewer 初期化完了 ===");
+  log("Viewer 初期化完了");
 }
 
 /* ---------------------------------------------------------
