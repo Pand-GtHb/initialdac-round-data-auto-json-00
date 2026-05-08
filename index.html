@@ -111,8 +111,12 @@ td.center { text-align: center; }
   <div id="detailArea" style="margin-top:10px;"></div>
 </div>
 
-<!-- ★★★ キャッシュバスター付き script.js ★★★ -->
-<script src="script.js?v=20260509a"></script>
+<!-- ★★★ script.js を毎回必ず最新で読み込む（初回100%成功） ★★★ -->
+<script>
+  const s = document.createElement("script");
+  s.src = "script.js?v=" + Date.now();
+  document.body.appendChild(s);
+</script>
 
 </body>
 </html>
