@@ -8,13 +8,13 @@ const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
 
 const PRIDE_LEVELS = [
-  { level: "A=～99", min: 1, max: 99 },
-  { level: "B=100～", min: 100, max: 499 },
-  { level: "C=500～", min: 500, max: 999 },
-  { level: "D=1000～", min: 1000, max: 4999 },
-  { level: "E=5000～", min: 5000, max: 9999 },
-  { level: "F=10000～", min: 10000, max: 49999 },
-  { level: "G=50000～", min: 50000, max: Infinity }
+  { level: "A=～99", min: 1, max: 99, icon: "ef788ee816773c454495ebf83e5ac380" },
+  { level: "B=100～", min: 100, max: 499, icon: "3c8cc917bb7a97d46ba35c93d898491c" },
+  { level: "C=500～", min: 500, max: 999, icon: "ec8f805c9de95c65c858d2e1341f76ab" },
+  { level: "D=1000～", min: 1000, max: 4999, icon: "58446a29e6c496139963728eea887349" },
+  { level: "E=5000～", min: 5000, max: 9999, icon: "5f88cb6a33355e7bc890d92576e36c94" },
+  { level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
+  { level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
 ];
 
 let allData = [];
@@ -153,9 +153,7 @@ function buildSummary() {
     summaryRows.push({
       key: `R${star}`,
       label: `☆${star}`,
-      icon: list.length
-        ? `https://initiald.sega.jp/inidac/ranking-images/online/${list[0].onlineBattleRankId}.png`
-        : "",
+      icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
       list
     });
   }
@@ -169,9 +167,7 @@ function buildSummary() {
     summaryRows.push({
       key: `P_${level.level}`,
       label: level.level,
-      icon: list.length
-        ? `https://initiald.sega.jp/inidac/ranking-images/pride/${list[0].prideId}.png`
-        : "",
+      icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
       list
     });
   });
@@ -199,7 +195,7 @@ function renderSummary() {
 
     return `
       <tr class="clickable" data-key="${r.key}">
-        <td class="center">${r.icon ? `<img src="${r.icon}" width="32">` : ""}</td>
+        <td class="center"><img src="${r.icon}" width="32"></td>
         <td class="left">${r.label}</td>
         <td class="right">${fmt(cnt)}</td>
         <td class="right">${percent}%</td>
@@ -256,16 +252,26 @@ function showDetail(key) {
   const rows = detailList.map(p => {
     let rankIcon = "";
 
-    if (p.onlineBattleRankId) {
-      rankIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${p.onlineBattleRankId}.png`;
-    } else if (p.prideId) {
-      rankIcon = `https://initiald.sega.jp/inidac/ranking-images/pride/${p.prideId}.png`;
+    if (p.onlineBattleRankId === RUBY_ID) {
+      rankIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`;
+    } else {
+      const pride = PRIDE_LEVELS.find(x =>
+        p.pridePoint >= x.min && p.pridePoint <= x.max
+      );
+      if (pride) {
+        rankIcon = `https://initiald.sega.jp/inidac/ranking-images/pride/${pride.icon}.png`;
+      }
     }
 
-    const starLabel =
-      p.onlineBattleRankId === RUBY_ID && p.starCnt
-        ? `☆${p.starCnt}`
-        : "";
+    let lvLabel = "";
+    if (p.onlineBattleRankId === RUBY_ID) {
+      lvLabel = `☆${p.starCnt}`;
+    } else {
+      const pride = PRIDE_LEVELS.find(x =>
+        p.pridePoint >= x.min && p.pridePoint <= x.max
+      );
+      lvLabel = pride ? pride.level : "";
+    }
 
     const titleUrl = p.mytitleId
       ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
@@ -273,8 +279,8 @@ function showDetail(key) {
 
     return `
       <tr>
-        <td class="center">${rankIcon ? `<img src="${rankIcon}" width="32">` : ""}</td>
-        <td class="left">${starLabel}</td>
+        <td class="center"><img src="${rankIcon}" width="32"></td>
+        <td class="left">${lvLabel}</td>
         <td class="left">${p.name}</td>
         <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
         <td class="right">${fmt(p.point)}</td>
