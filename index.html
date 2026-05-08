@@ -111,11 +111,9 @@ td.center { text-align: center; }
   <div id="detailArea" style="margin-top:10px;"></div>
 </div>
 
-<!-- ★★★ script.js を毎回必ず最新で読み込む（初回100%成功） ★★★ -->
+<!-- ★★★ script.js を毎回最新で読み込む（DOMContentLoaded より前に読み込む） ★★★ -->
 <script>
-  const s = document.createElement("script");
-  s.src = "script.js?v=" + Date.now();
-  document.body.appendChild(s);
+  document.write('<script src="script.js?cb=' + Date.now() + '"><\/script>');
 </script>
 
 </body>
