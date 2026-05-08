@@ -8,13 +8,13 @@ const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
 
 const PRIDE_LEVELS = [
-  { level: "A=～99",    min: 1,     max: 99 },
-  { level: "B=100～",   min: 100,   max: 499 },
-  { level: "C=500～",   min: 500,   max: 999 },
-  { level: "D=1000～",  min: 1000,  max: 4999 },
-  { level: "E=5000～",  min: 5000,  max: 9999 },
-  { level: "F=10000～", min: 10000, max: 49999 },
-  { level: "G=50000～", min: 50000, max: Infinity }
+  { level: "A=～99",    min: 1,     max: 99,    icon: "ef788ee816773c454495ebf83e5ac380" },
+  { level: "B=100～",   min: 100,   max: 499,   icon: "3c8cc917bb7a97d46ba35c93d898491c" },
+  { level: "C=500～",   min: 500,   max: 999,   icon: "ec8f805c9de95c65c858d2e1341f76ab" },
+  { level: "D=1000～",  min: 1000,  max: 4999,  icon: "58446a29e6c496139963728eea887349" },
+  { level: "E=5000～",  min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
+  { level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
+  { level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
 ];
 
 let allData = [];
@@ -171,10 +171,9 @@ function buildSummary() {
       p.pridePoint >= level.min && p.pridePoint <= level.max
     );
 
+    // 0人でも帯アイコンは常に表示（icon ハッシュを使用）
     const prideIcon =
-      list.length > 0
-        ? `https://initiald.sega.jp/inidac/ranking-images/pride/${list[0].prideId}.png`
-        : "";
+      `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`;
 
     summaryRows.push({
       key: `P_${level.level}`,
@@ -253,6 +252,21 @@ function showDetail(key) {
   const row = summaryRows.find(r => r.key === key);
   detailList = row.list.slice();
 
+  const isRubyBand = key.startsWith("R");
+  const bandLabel = row.label;
+
+  // 帯アイコン（サマリと同じものを使う）
+  let bandIcon = "";
+  if (isRubyBand) {
+    bandIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`;
+  } else {
+    const levelInfo = PRIDE_LEVELS.find(l => l.level === bandLabel);
+    if (levelInfo) {
+      bandIcon =
+        `https://initiald.sega.jp/inidac/ranking-images/pride/${levelInfo.icon}.png`;
+    }
+  }
+
   detailList.sort((a, b) => {
     const ta = parseDateJST(a.updateDate).getTime();
     const tb = parseDateJST(b.updateDate).getTime();
@@ -266,15 +280,14 @@ function showDetail(key) {
       ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
       : "";
 
-    const starLabel =
-      p.onlineBattleRankId === RUBY_ID && p.starCnt
-        ? `☆${p.starCnt}`
-        : "";
+    const starOrLevel = isRubyBand
+      ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
+      : bandLabel; // PRIDE帯は Level 表記（G=50000～ など）
 
     return `
       <tr>
-        <td class="right">${fmt(p.rank)}</td>
-        <td class="left">${starLabel}</td>
+        <td class="center">${bandIcon ? `<img src="${bandIcon}" width="32">` : ""}</td>
+        <td class="left">${starOrLevel}</td>
         <td class="left">${p.name}</td>
         <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
         <td class="right">${fmt(p.point)}</td>
