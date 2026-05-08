@@ -1,8 +1,9 @@
 name: Auto Fetch InitialDAC JSON
 
 on:
+  # 毎時 5分・25分・45分に実行
   schedule:
-    - cron: "5,25,45 * * * *"   # 毎時 5分・25分・45分に実行
+    - cron: "5,25,45 * * * *"
   workflow_dispatch:
 
 jobs:
