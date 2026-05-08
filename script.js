@@ -8,13 +8,13 @@ const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
 
 const PRIDE_LEVELS = [
-  { level: "A=～99",    min: 1,     max: 99,    icon: "ef788ee816773c454495ebf83e5ac380" },
-  { level: "B=100～",   min: 100,   max: 499,   icon: "3c8cc917bb7a97d46ba35c93d898491c" },
-  { level: "C=500～",   min: 500,   max: 999,   icon: "ec8f805c9de95c65c858d2e1341f76ab" },
-  { level: "D=1000～",  min: 1000,  max: 4999,  icon: "58446a29e6c496139963728eea887349" },
-  { level: "E=5000～",  min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
-  { level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
-  { level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
+  { level: "A=～99",    min: 1,     max: 99 },
+  { level: "B=100～",   min: 100,   max: 499 },
+  { level: "C=500～",   min: 500,   max: 999 },
+  { level: "D=1000～",  min: 1000,  max: 4999 },
+  { level: "E=5000～",  min: 5000,  max: 9999 },
+  { level: "F=10000～", min: 10000, max: 49999 },
+  { level: "G=50000～", min: 50000, max: Infinity }
 ];
 
 let allData = [];
@@ -43,6 +43,25 @@ function logError(msg) { appendLog(msg, "error"); }
 --------------------------------------------------------- */
 function fmt(n) { return Number(n).toLocaleString(); }
 function parseDateJST(str) { return new Date(str.replace(/-/g, "/")); }
+
+/* ---------------------------------------------------------
+   Ruby星数フィルタ生成
+--------------------------------------------------------- */
+function buildRubyFilters() {
+  const area = document.getElementById("rubyFilters");
+  let html = "";
+
+  for (let i = 1; i <= 8; i++) {
+    html += `
+      <label style="margin-right:10px;">
+        <input type="checkbox" class="ruby-filter" value="${i}" checked>
+        ☆${i}
+      </label>
+    `;
+  }
+
+  area.innerHTML = html;
+}
 
 /* ---------------------------------------------------------
    latest.json
@@ -132,7 +151,7 @@ function buildSummary() {
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
-  // Ruby帯
+  /* ---------------- Ruby帯 ---------------- */
   for (let star of selectedStars) {
     const list = filteredData.filter(p =>
       p.onlineBattleRankId === RUBY_ID && p.starCnt === star
@@ -141,21 +160,26 @@ function buildSummary() {
     summaryRows.push({
       key: `R${star}`,
       label: `☆${star}`,
-      icon: `${BASE_URL}/icons/ruby.png`,
+      icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
       list
     });
   }
 
-  // PRIDE帯
+  /* ---------------- PRIDE帯 ---------------- */
   PRIDE_LEVELS.forEach(level => {
     const list = filteredData.filter(p =>
       p.pridePoint >= level.min && p.pridePoint <= level.max
     );
 
+    const prideIcon =
+      list.length > 0
+        ? `https://initiald.sega.jp/inidac/ranking-images/pride/${list[0].prideId}.png`
+        : "";
+
     summaryRows.push({
       key: `P_${level.level}`,
       label: level.level,
-      icon: `${BASE_URL}/icons/pride/${level.icon}.png`,
+      icon: prideIcon,
       list
     });
   });
@@ -352,6 +376,8 @@ function exportAllCSV() {
 async function init() {
   log("Viewer 初期化中");
 
+  buildRubyFilters();
+
   await loadLatest();
   await loadRoundData();
 
@@ -380,6 +406,5 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("summaryView").style.display = "block";
   };
 
-  // ★ 初回起動
   init();
 });
