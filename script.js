@@ -77,33 +77,30 @@ async function loadRoundData() {
 /* ---------------------------------------------------------
    フィルタ
 --------------------------------------------------------- */
-function filterByTime(data) {
+function applyFilters() {
   const minutes = Number(document.getElementById("rangeSelect").value);
-  const nowMs = Date.now();
-  const RANGE = minutes * 60 * 1000;
 
-  return data.filter(p => {
+  // ★ JSON更新日時を基準にする
+  const baseMs = parseDateJST(generatedAt).getTime();
+  const filterStartMs = baseMs - minutes * 60 * 1000;
+
+  // ★ フィルタ開始日時を表示
+  const d = new Date(filterStartMs);
+  const y = d.getFullYear();
+  const m = ("0" + (d.getMonth() + 1)).slice(-2);
+  const day = ("0" + d.getDate()).slice(-2);
+  const hh = ("0" + d.getHours()).slice(-2);
+  const mm = ("0" + d.getMinutes()).slice(-2);
+
+  document.getElementById("filterStartTime").textContent =
+    `${y}/${m}/${day} ${hh}:${mm}`;
+
+  // ★ 時間フィルタ（generatedAt 基準）
+  filteredData = allData.filter(p => {
     if (!p.updateDate) return false;
     const t = parseDateJST(p.updateDate).getTime();
-    return nowMs - t <= RANGE;
+    return t >= filterStartMs;
   });
-}
-
-function filterByRuby(data) {
-  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
-    .map(x => Number(x.value));
-
-  return data.filter(p => {
-    if (p.onlineBattleRankId !== RUBY_ID) return true;
-    return selectedStars.includes(p.starCnt);
-  });
-}
-
-function applyFilters() {
-  let data = [...allData];
-  data = filterByTime(data);
-  data = filterByRuby(data);
-  filteredData = data;
 
   document.getElementById("summaryTitle").textContent =
     `稼働プレイヤー（合計：${fmt(filteredData.length)}人）`;
