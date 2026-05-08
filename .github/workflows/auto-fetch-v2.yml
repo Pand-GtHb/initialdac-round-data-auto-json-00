@@ -1,9 +1,12 @@
-name: Auto Fetch InitialDAC JSON
+name: Auto Fetch InitialDAC JSON (v2)
 
 on:
-  schedule:
-    - cron: "5,25,45 * * * *"   # 毎時 5分・25分・45分に実行
   workflow_dispatch:
+    inputs:
+      round:
+        description: "Round number"
+        required: true
+        default: "72"
 
 jobs:
   fetch-and-merge:
@@ -16,75 +19,35 @@ jobs:
       - name: Install jq
         run: sudo apt-get install -y jq
 
-      - name: Determine latest round
+      - name: Determine round
         id: round
         run: |
-          if [ -f latest.json ]; then
-            LATEST=$(jq -r '.latestRound' latest.json)
-          else
-            LATEST=72
-          fi
-          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+          # Cloudflare Worker から渡された round を使用
+          ROUND="${{ github.event.inputs.round }}"
+          echo "round=$ROUND" >> $GITHUB_OUTPUT
 
-      - name: Fetch 63 JSON files
+      - name: Fetch JSON
         run: |
+          ROUND=${{ steps.round.outputs.round }}
           mkdir -p tmp
-          ROUND=${{ steps.round.outputs.latest }}
 
-          echo "Fetching round $ROUND ..."
-
-          for i in $(seq 0 62); do
-            URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${i}.json"
-            OUT="tmp/$i.json"
-
+          # 63エリア分を取得
+          for AREA in $(seq -w 1 63); do
+            URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${AREA}.json"
             echo "Fetching $URL"
-            curl -s "$URL" -o "$OUT"
-
-            if ! jq empty "$OUT" 2>/dev/null; then
-              echo "❌ JSON parse error at area $i"
-              exit 1
-            fi
+            curl -s "$URL" -o "tmp/round-${ROUND}_area-${AREA}.json"
           done
 
       - name: Merge JSON
         run: |
-          ROUND=${{ steps.round.outputs.latest }}
-
-          jq -s 'map(.records) | add' tmp/*.json > merged_records.json
-
-          MAX_DATE=$(jq -r '.[].updateDate' tmp/*.json | sort -r | head -n 1)
-
-          GEN_DATE=$(TZ='Asia/Tokyo' date +"%Y/%m/%d %H:%M:%S")
-
-          jq -n \
-            --arg round "$ROUND" \
-            --arg update "$MAX_DATE" \
-            --arg gen "$GEN_DATE" \
-            --slurpfile rec merged_records.json '
-            {
-              round: ($round | tonumber),
-              updateDate: $update,
-              generatedAt: $gen,
-              records: $rec[0]
-            }
-          ' > "round${ROUND}.json"
-
-          jq -n \
-            --arg round "$ROUND" \
-            --arg update "$MAX_DATE" \
-            --arg gen "$GEN_DATE" '
-            {
-              latestRound: ($round | tonumber),
-              updateDate: $update,
-              generatedAt: $gen
-            }
-          ' > latest.json
+          ROUND=${{ steps.round.outputs.round }}
+          jq -s '{round: $ROUND, generatedAt: now, data: .}' tmp/*.json > latest.json
 
       - name: Commit & Push
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add latest.json round*.json
-          git commit -m "Auto update: round ${{ steps.round.outputs.latest }}" || echo "No changes"
+          git add latest.json tmp/
+          git commit -m "Auto update: round ${{ steps.round.outputs.round }}" || echo "No changes"
           git push
