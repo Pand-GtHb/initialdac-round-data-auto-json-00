@@ -373,6 +373,9 @@ document.getElementById("filterBtn").onclick = () => {
 };
 document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
 document.getElementById("allCsvBtn").onclick = exportAllCSV;
+
+/* ★★★ 修復済み：ここが途中で切れていた ★★★ */
 document.getElementById("backBtn").onclick = () => {
   document.getElementById("detailView").style.display = "none";
-  document.getElementById("summaryView").
+  document.getElementById("summaryView").style.display = "block";
+};
