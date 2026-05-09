@@ -12,9 +12,9 @@ const PRIDE_LEVELS = [
   { level: "B=100～",   min: 100,   max: 499,   icon: "3c8cc917bb7a97d46ba35c93d898491c" },
   { level: "C=500～",   min: 500,   max: 999,   icon: "ec8f805c9de95c65c858d2e1341f76ab" },
   { level: "D=1000～",  min: 1000,  max: 4999,  icon: "58446a29e6c496139963728eea887349" },
-  { level: "E=5000～",  min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
-  { level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
-  { level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
+  { level: "E=5000～",   min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
+  { level: "F=10000～",  min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
+  { level: "G=50000～",  min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
 ];
 
 /* ---------------------------------------------------------
@@ -30,7 +30,7 @@ const State = {
 };
 
 /* ---------------------------------------------------------
-   ログ（緑/赤）
+   ログ
 --------------------------------------------------------- */
 function appendLog(msg, type = "normal") {
   const box = document.getElementById("logBox");
@@ -40,20 +40,14 @@ function appendLog(msg, type = "normal") {
   box.appendChild(line);
   box.scrollTop = box.scrollHeight;
 }
-function log(msg) { appendLog(msg, "normal"); }
-function logError(msg) { appendLog(msg, "error"); }
+const log = msg => appendLog(msg);
+const logError = msg => appendLog(msg, "error");
 
 /* ---------------------------------------------------------
    ユーティリティ
 --------------------------------------------------------- */
-function fmt(n) {
-  return Number(n).toLocaleString();
-}
-
-function parseDateJST(str) {
-  // 内部処理用：比較・フィルタ専用
-  return new Date(str.replace(/-/g, "/"));
-}
+const fmt = n => Number(n).toLocaleString();
+const parseDateJST = str => new Date(str.replace(/-/g, "/"));
 
 function formatYMDHM(date) {
   const y = date.getFullYear();
@@ -80,18 +74,15 @@ async function fetchJSON(path) {
 --------------------------------------------------------- */
 function buildRubyFilters() {
   const area = document.getElementById("rubyFilters");
-  let html = "";
-
-  for (let i = 1; i <= 8; i++) {
-    html += `
+  area.innerHTML = Array.from({ length: 8 }, (_, i) => {
+    const star = i + 1;
+    return `
       <label style="margin-right:10px;">
-        <input type="checkbox" class="ruby-filter" value="${i}" checked>
-        ☆${i}
+        <input type="checkbox" class="ruby-filter" value="${star}" checked>
+        ☆${star}
       </label>
     `;
-  }
-
-  area.innerHTML = html;
+  }).join("");
 }
 
 /* ---------------------------------------------------------
@@ -129,13 +120,11 @@ async function loadRoundData() {
 
     State.generatedAt = json.generatedAt ?? "";
 
-    // 表示用：終了時刻を hh:mm に統一
     if (State.generatedAt) {
-      const d = parseDateJST(State.generatedAt);
-      document.getElementById("jsonUpdateTime").textContent = formatYMDHM(d);
+      document.getElementById("jsonUpdateTime").textContent =
+        formatYMDHM(parseDateJST(State.generatedAt));
     }
 
-    // records 前提だが、配列そのものにも一応対応
     State.all = Array.isArray(json) ? json : (json.records || []);
 
     log(`round${State.latestRound}.json 読み込み完了 (${State.all.length}件)`);
@@ -145,7 +134,7 @@ async function loadRoundData() {
 }
 
 /* ---------------------------------------------------------
-   フィルタ（表示開始＝generatedAt − フィルタ時間）
+   フィルタ
 --------------------------------------------------------- */
 function applyFilters() {
   const minutes = Number(document.getElementById("rangeSelect").value);
@@ -159,59 +148,17 @@ function applyFilters() {
   const baseMs = parseDateJST(State.generatedAt).getTime();
   const filterStartMs = baseMs - minutes * 60 * 1000;
 
-  const d = new Date(filterStartMs);
-  document.getElementById("filterStartTime").textContent = formatYMDHM(d);
+  document.getElementById("filterStartTime").textContent =
+    formatYMDHM(new Date(filterStartMs));
 
   State.filtered = State.all.filter(p => {
     if (!p.updateDate) return false;
-    const t = parseDateJST(p.updateDate).getTime();
-    return t >= filterStartMs;
+    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
   });
 }
 
 /* ---------------------------------------------------------
-   サマリ生成（延べ人数基準）
---------------------------------------------------------- */
-function buildSummary() {
-  State.summary = [];
-
-  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
-    .map(x => Number(x.value));
-
-  /* ---------------- Ruby帯 ---------------- */
-  for (let star of selectedStars) {
-    const list = State.filtered.filter(p =>
-      p.onlineBattleRankId === RUBY_ID && p.starCnt === star
-    );
-
-    State.summary.push({
-      key: `R${star}`,
-      label: `☆${star}`,
-      icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
-      list
-    });
-  }
-
-  /* ---------------- PRIDE帯 ---------------- */
-  PRIDE_LEVELS.forEach(level => {
-    const list = State.filtered.filter(p =>
-      p.pridePoint >= level.min && p.pridePoint <= level.max
-    );
-
-    const prideIcon =
-      `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`;
-
-    State.summary.push({
-      key: `P_${level.level}`,
-      label: `${level.min}～${level.max === Infinity ? "∞" : level.max}`,
-      icon: prideIcon,
-      list
-    });
-  });
-}
-
-/* ---------------------------------------------------------
-   サマリ用統計計算
+   サマリ統計計算（共通化）
 --------------------------------------------------------- */
 function calcStats(list, total) {
   const cnt = list.length;
@@ -223,6 +170,53 @@ function calcStats(list, total) {
   const max = cnt ? Math.max(...points) : 0;
 
   return { cnt, percent, avg, min, max };
+}
+
+/* ---------------------------------------------------------
+   PRIDE レベル判定（共通化）
+--------------------------------------------------------- */
+function findPrideLevel(label) {
+  return PRIDE_LEVELS.find(
+    l => `${l.min}～${l.max === Infinity ? "∞" : l.max}` === label
+  );
+}
+
+/* ---------------------------------------------------------
+   サマリ生成
+--------------------------------------------------------- */
+function buildSummary() {
+  State.summary = [];
+
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+
+  /* Ruby帯 */
+  selectedStars.forEach(star => {
+    const list = State.filtered.filter(
+      p => p.onlineBattleRankId === RUBY_ID && p.starCnt === star
+    );
+
+    State.summary.push({
+      key: `R${star}`,
+      label: `☆${star}`,
+      icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
+      list
+    });
+  });
+
+  /* PRIDE帯 */
+  PRIDE_LEVELS.forEach(level => {
+    const list = State.filtered.filter(
+      p => p.pridePoint >= level.min && p.pridePoint <= level.max
+    );
+
+    State.summary.push({
+      key: `P_${level.level}`,
+      label: `${level.min}～${level.max === Infinity ? "∞" : level.max}`,
+      icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
+      list
+    });
+  });
 }
 
 /* ---------------------------------------------------------
@@ -299,9 +293,7 @@ function showDetail(key) {
   if (isRubyBand) {
     bandIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`;
   } else {
-    const levelInfo = PRIDE_LEVELS.find(
-      l => `${l.min}～${l.max === Infinity ? "∞" : l.max}` === bandLabel
-    );
+    const levelInfo = findPrideLevel(bandLabel);
     if (levelInfo) {
       bandIcon =
         `https://initiald.sega.jp/inidac/ranking-images/pride/${levelInfo.icon}.png`;
@@ -309,9 +301,7 @@ function showDetail(key) {
   }
 
   State.detail.sort((a, b) => {
-    const ta = parseDateJST(a.updateDate).getTime();
-    const tb = parseDateJST(b.updateDate).getTime();
-    return tb - ta;
+    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
 
   const area = document.getElementById("detailArea");
@@ -360,7 +350,7 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   共通 CSV ダウンロード
+   CSV ダウンロード（共通化）
 --------------------------------------------------------- */
 function downloadCSV(filename, header, body) {
   const csv = "\ufeff" + header + "\n" + body;
@@ -432,7 +422,7 @@ async function init() {
 }
 
 /* ---------------------------------------------------------
-   DOMContentLoaded 後にイベント登録＆初回 init 実行
+   DOMContentLoaded
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("reloadBtn").onclick = init;
