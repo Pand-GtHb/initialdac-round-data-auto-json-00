@@ -1,4 +1,4 @@
-name: Auto Fetch InitialDAC JSON (v2 - optimized)
+name: Auto Fetch InitialDAC JSON (v2 - optimized, no tmp commit)
 
 on:
   workflow_dispatch:
@@ -36,7 +36,6 @@ jobs:
           ROUND=${{ steps.round.outputs.round }}
 
           jq -s --arg round "$ROUND" '
-            # 最大 calcDate を取得
             (map(.calcDate // empty) | sort | last) as $max
             |
             {
@@ -57,6 +56,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
+          # tmp/ はコミットしない
           git add "round${ROUND}.json"
 
           # 変更がなければ終了
