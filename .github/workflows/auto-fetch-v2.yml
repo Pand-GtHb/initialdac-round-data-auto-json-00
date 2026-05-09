@@ -1,4 +1,4 @@
-name: Auto Fetch InitialDAC JSON (v2 - optimized, no tmp commit)
+name: Auto Fetch InitialDAC JSON (v2 - optimized + minify)
 
 on:
   workflow_dispatch:
@@ -39,7 +39,7 @@ jobs:
             (map(.calcDate // empty) | sort | last) as $max
             |
             {
-              round: $round,
+              round: ($round | tonumber),
               generatedAt: $max,
               records: (
                 map(.records // [])
@@ -49,6 +49,12 @@ jobs:
             }
           ' tmp/*.json > "round${ROUND}.json"
 
+      - name: Minify JSON
+        run: |
+          ROUND=${{ steps.round.outputs.round }}
+          jq -c '.' "round${ROUND}.json" > "round${ROUND}.min.json"
+          mv "round${ROUND}.min.json" "round${ROUND}.json"
+
       - name: Commit & Push (only if changed)
         run: |
           ROUND=${{ steps.round.outputs.round }}
@@ -56,11 +62,9 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # tmp/ はコミットしない
           git add "round${ROUND}.json"
 
-          # 変更がなければ終了
           git diff --cached --quiet && echo "No changes" && exit 0
 
-          git commit -m "Auto update: round ${ROUND}"
+          git commit -m "Auto update (minified): round ${ROUND}"
           git push
