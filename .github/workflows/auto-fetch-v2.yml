@@ -1,4 +1,4 @@
-name: Auto Fetch InitialDAC JSON (v2)
+name: Auto Fetch InitialDAC JSON (v2 - optimized)
 
 on:
   workflow_dispatch:
@@ -11,66 +11,56 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install jq
-        run: sudo apt-get install -y jq
-
       - name: Set round number (fixed for now)
         id: round
         run: |
           ROUND=72
           echo "round=$ROUND" >> $GITHUB_OUTPUT
 
-      - name: Fetch JSON
+      - name: Fetch JSON (parallel)
         run: |
           ROUND=${{ steps.round.outputs.round }}
           mkdir -p tmp
 
-          # area-0 ～ area-62（ゼロ埋めなし）
-          for AREA in $(seq 0 62); do
+          export ROUND
+
+          seq 0 62 | xargs -I{} -P 20 sh -c '
+            AREA={}
             URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${AREA}.json"
             echo "Fetching $URL"
-            curl -f -s "$URL" -o "tmp/area-${AREA}.json" \
-              || echo "{}" > "tmp/area-${AREA}.json"
-          done
+            curl -f -s "$URL" -o tmp/area-${AREA}.json || echo "{}" > tmp/area-${AREA}.json
+          '
 
-      - name: Determine max calcDate
-        id: calc
-        run: |
-          # 各 JSON の calcDate を抽出し、最大値を取得
-          MAX_DATE=$(jq -r '.calcDate // empty' tmp/*.json | sort -r | head -n 1)
-
-          # fallback（calcDate が全て空の場合）
-          if [ -z "$MAX_DATE" ]; then
-            MAX_DATE=""
-          fi
-
-          echo "maxCalcDate=$MAX_DATE" >> $GITHUB_OUTPUT
-
-      - name: Merge JSON
+      - name: Merge JSON (single jq pass)
         run: |
           ROUND=${{ steps.round.outputs.round }}
-          MAX_DATE="${{ steps.calc.outputs.maxCalcDate }}"
 
-          # 全エリアの records を結合し、calcDate を削除
-          jq -s --arg round "$ROUND" --arg gen "$MAX_DATE" '
+          jq -s --arg round "$ROUND" '
+            # 最大 calcDate を取得
+            (map(.calcDate // empty) | sort | last) as $max
+            |
             {
               round: $round,
-              generatedAt: $gen,
+              generatedAt: $max,
               records: (
-                map(.records // [])   # 各ファイルの records を取り出す
-                | add                 # 1つの配列に結合
-                | map(del(.calcDate)) # calcDate を削除
+                map(.records // [])
+                | add
+                | map(del(.calcDate))
               )
             }
           ' tmp/*.json > "round${ROUND}.json"
 
-      - name: Commit & Push
+      - name: Commit & Push (only if changed)
         run: |
           ROUND=${{ steps.round.outputs.round }}
 
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add "round${ROUND}.json" tmp/
-          git commit -m "Auto update: round ${ROUND}" || echo "No changes"
+          git add "round${ROUND}.json"
+
+          # 変更がなければ終了
+          git diff --cached --quiet && echo "No changes" && exit 0
+
+          git commit -m "Auto update: round ${ROUND}"
           git push
