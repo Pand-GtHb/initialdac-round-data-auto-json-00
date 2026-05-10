@@ -30,31 +30,36 @@ body {
     margin: 20px 0;
 }
 
-/* ▼ テーブル基本設定（collapse 罫線） */
+/* ▼ 表全体の罫線（セル間の線）は td/th に付ける */
 table {
     border-collapse: collapse;
     width: 100%;
     background: #fff;
 }
+
 th {
     background: #0078D4;
     color: white;
     padding: 6px;
 }
+
+/* ★ 罫線（セル間の境界線）はここで付く */
 td {
     border: 1px solid #ccc;
     padding: 6px;
+    background: transparent;
 }
+
+/* テキスト位置 */
 td.left { text-align:left; }
 td.right { text-align:right; }
 td.center { text-align:center; }
 
 .clickable { cursor: pointer; color: #0078d4; font-weight: bold; }
-
 #summaryView, #detailView { margin-top: 20px; }
 #detailView { display: none; }
 
-/* ▼ バーグラフ */
+/* バーグラフ */
 .bar-wrap {
     width: 100%;
     background: #ddd;
@@ -67,7 +72,7 @@ td.center { text-align:center; }
     border-radius: 4px;
 }
 
-/* ▼ 共通余白 */
+/* 共通余白 */
 .mt10 { margin-top:10px; }
 
 /* ★ プレイヤー名：スマホでも1行固定 */
@@ -76,22 +81,32 @@ td.center { text-align:center; }
     overflow: hidden;
 }
 
-/* ★ 店舗名：span に適用（td の罫線を壊さない） */
+/* ★ 店舗名セルのテキストボックス設定
+   - display:block に変更（vertical-align が効くようにする）
+   - 2行まで表示し、それ以上は省略
+   - 内側の線（文字ボックスの枠線）は消す
+*/
 .store-name {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;        /* 全角は2行固定 */
-    -webkit-box-orient: vertical;
+    display: block;
     overflow: hidden;
-
-    line-height: 1.2em;
-    max-height: calc(1.2em * 2);
+    text-overflow: ellipsis;
 
     white-space: normal;
     overflow-wrap: anywhere;
 
+    line-height: 1.2em;
+    max-height: calc(1.2em * 2);
+
     min-width: 150px;
 
-    /* ★ td の border を使うため border は付けない */
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+}
+
+/* ★ 店舗名セル（td）自体は上下中央揃えにする */
+td.store-name {
+    vertical-align: middle !important;
 }
 
 /* RP 列（広がりすぎ防止） */
