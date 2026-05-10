@@ -70,7 +70,7 @@ td.center{text-align:center;}
     overflow: hidden;
 }
 
-/* ★ 店舗名：2行固定＋折り返し＋高さ安定化 */
+/* ★ 店舗名：2行固定＋折り返し＋高さ安定化＋最小幅追加 */
 .store-name {
     display: -webkit-box;
     -webkit-line-clamp: 2;   /* 2行固定 */
@@ -79,6 +79,27 @@ td.center{text-align:center;}
     line-height: 1.2em;
     max-height: calc(1.2em * 2); /* 2行分の高さ */
     word-break: break-all;
+    min-width: 140px; /* ← スマホで潰れないための最重要ポイント */
+}
+
+/* ★ RP 列（広がりすぎ防止） */
+.rp-col {
+    max-width: 60px;
+    white-space: nowrap;
+}
+
+/* ★ 称号列（長文対策） */
+.title-col {
+    max-width: 90px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ★ LastUpdate 列（長文対策） */
+.update-col {
+    max-width: 110px;
+    white-space: nowrap;
 }
 </style>
 </head>
