@@ -158,7 +158,7 @@ function applyFilters() {
 }
 
 /* ---------------------------------------------------------
-   サマリ統計計算（共通化）
+   サマリ統計計算
 --------------------------------------------------------- */
 function calcStats(list, total) {
   const cnt = list.length;
@@ -173,7 +173,7 @@ function calcStats(list, total) {
 }
 
 /* ---------------------------------------------------------
-   PRIDE レベル判定（共通化）
+   PRIDE レベル判定
 --------------------------------------------------------- */
 function findPrideLevel(label) {
   return PRIDE_LEVELS.find(
@@ -220,15 +220,21 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   サマリ表示
+   ★ サマリ表示（修正版）
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
 
   const total = State.summary.reduce((sum, r) => sum + r.list.length, 0);
 
+  const rubyTotal = State.summary
+    .filter(r => r.key.startsWith("R"))
+    .reduce((s, r) => s + r.list.length, 0);
+
+  const prideTotal = total - rubyTotal;
+
   document.getElementById("summaryTitle").textContent =
-    `稼働プレイヤー（合計：${fmt(total)}人）`;
+    `合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人`;
 
   const rows = State.summary.map(r => {
     const { cnt, percent, avg, min, max } = calcStats(r.list, total);
@@ -278,7 +284,7 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示
+   ★ 詳細表示（修正版）
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
@@ -317,28 +323,31 @@ function showDetail(key) {
 
     return `
       <tr>
-        <td class="center">${bandIcon ? `<img src="${bandIcon}" width="32">` : ""}</td>
-        <td class="left">${starOrLevel}</td>
-        <td class="left">${p.name}</td>
-        <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
+        <td class="center">${starOrLevel}</td>
+        <td class="left name-cell clickable" onclick="copyToClipboard('${p.name}')">${p.name}</td>
         <td class="right">${fmt(p.point)}</td>
-        <td class="left">${p.shopname}</td>
+        <td class="left clickable" onclick="copyToClipboard('${p.shopname}')">${p.shopname}</td>
+        <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
         <td class="left">${p.updateDate}</td>
       </tr>
     `;
   }).join("");
 
   area.innerHTML = `
+    <h3>
+      <img src="${bandIcon}" width="32" style="vertical-align:middle;">
+      ${bandLabel}（${fmt(State.detail.length)}名）
+    </h3>
+
     <div style="overflow-x:auto;">
     <table>
       <tr>
-        <th>ランク</th>
-        <th>☆・Lv</th>
-        <th>名前</th>
-        <th>称号</th>
+        <th>☆・PRIDE</th>
+        <th>プレイヤー名</th>
         <th>RP</th>
-        <th>店舗</th>
-        <th>更新日時</th>
+        <th>店舗名</th>
+        <th>称号</th>
+        <th>Last Update</th>
       </tr>
       ${rows}
     </table>
@@ -350,7 +359,15 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   CSV ダウンロード（共通化）
+   クリックコピー
+--------------------------------------------------------- */
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text);
+  log(`コピー：${text}`);
+}
+
+/* ---------------------------------------------------------
+   CSV ダウンロード
 --------------------------------------------------------- */
 function downloadCSV(filename, header, body) {
   const csv = "\ufeff" + header + "\n" + body;
