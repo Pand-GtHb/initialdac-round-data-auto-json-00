@@ -185,15 +185,6 @@ async function loadRoundData() {
   }
 }
 /* ---------------------------------------------------------
-   ★ 店舗名 真ん中省略ユーティリティ
---------------------------------------------------------- */
-function shortenStoreName(full, head = 6, tail = 6) {
-  if (!full) return "";
-  if (full.length <= head + tail) return full;
-  return full.slice(0, head) + "…" + full.slice(-tail);
-}
-
-/* ---------------------------------------------------------
    サマリ生成
 --------------------------------------------------------- */
 function buildSummary() {
@@ -333,7 +324,7 @@ function showDetail(key) {
       ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
       : p.pridePoint;
 
-    /* ★ 店舗名：短縮表示＋フル名コピー対応 */
+    /* ★ 店舗名：短縮表示＋フル名コピー対応（安全版） */
     const fullShop = p.shopname ?? "";
     const shortShop = shortenStoreName(fullShop, 6, 6);
 
@@ -346,20 +337,19 @@ function showDetail(key) {
           ${p.name}
         </td>
 
-        <td class="right rp-col">${fmt(p.point)}</td>
+        <td class="right">${fmt(p.point)}</td>
 
-        <!-- ★ 店舗名セル：class="store-name" を必ず付与 -->
         <td class="left store-name clickable"
             data-fullname="${fullShop.replace(/"/g, "&quot;")}"
             onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
           ${shortShop}
         </td>
 
-        <td class="center title-col">
+        <td class="center">
           ${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}
         </td>
 
-        <td class="left update-col">${p.updateDate}</td>
+        <td class="left">${p.updateDate}</td>
       </tr>
     `;
   }).join("");
