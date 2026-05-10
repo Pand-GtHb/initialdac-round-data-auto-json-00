@@ -70,7 +70,7 @@ td.center{text-align:center;}
     overflow: hidden;
 }
 
-/* ★ 店舗名：半角英字でも2行使わせる＋最小幅強化 */
+/* ★ 店舗名：半角英字でも2行使わせる＋枠線除去＋最小幅強化 */
 .store-name {
     display: -webkit-box;
     -webkit-line-clamp: 2;   /* 2行固定 */
@@ -80,11 +80,15 @@ td.center{text-align:center;}
     line-height: 1.2em;
     max-height: calc(1.2em * 2);
 
-    /* ← 半角英字でも折り返すための最重要ポイント */
-    word-break: break-word;
+    /* ★ 半角英字でも折り返す最重要設定 */
     overflow-wrap: anywhere;
+    word-break: break-word;
 
-    min-width: 150px; /* スマホで潰れないように確保 */
+    /* ★ スマホで潰れないように確保 */
+    min-width: 150px;
+
+    /* ★ 店舗名セルの枠線を完全に消す */
+    border: none !important;
 }
 
 /* ★ RP 列（広がりすぎ防止） */
