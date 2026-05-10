@@ -30,10 +30,11 @@ body {
     margin: 20px 0;
 }
 
-/* ▼ 罫線を table/th/td に統一して付ける（今回の決定的修正） */
-table, th, td {
-    border: 1px solid #ccc;
+/* ▼ 表全体の罫線（セル間の線）は td/th に付ける */
+table {
     border-collapse: collapse;
+    width: 100%;
+    background: #fff;
 }
 
 th {
@@ -42,11 +43,15 @@ th {
     padding: 6px;
 }
 
+/* ★ 罫線（セル間の境界線）はここで付く */
 td {
+    border: 1px solid #ccc;
     padding: 6px;
-    background: transparent; /* 店舗名セルの白い箱を防ぐ */
+    background: transparent;
+    vertical-align: middle;
 }
 
+/* テキスト位置 */
 td.left { text-align:left; }
 td.right { text-align:right; }
 td.center { text-align:center; }
@@ -77,24 +82,22 @@ td.center { text-align:center; }
     overflow: hidden;
 }
 
-/* ★ 店舗名：全角は2行、半角は1行省略 */
+/* ★ 店舗名セル（2行固定・line-clamp） */
 .store-name {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
-    overflow: hidden;
 
+    overflow: hidden;
     line-height: 1.2em;
     max-height: calc(1.2em * 2);
 
     white-space: normal;
     overflow-wrap: anywhere;
 
-    min-width: 150px;
-
+    border: none !important;
     background: transparent !important;
-
-    border: none
+    box-shadow: none !important;
 }
 
 /* RP 列（広がりすぎ防止） */
