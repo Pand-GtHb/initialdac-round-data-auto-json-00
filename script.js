@@ -176,13 +176,11 @@ function calcStats(list, total) {
    PRIDE レベル判定
 --------------------------------------------------------- */
 function findPrideLevel(label) {
-  return PRIDE_LEVELS.find(
-    l => `${l.min}～${l.max === Infinity ? "∞" : l.max}` === label
-  );
+  return PRIDE_LEVELS.find(l => l.level === label);
 }
 
 /* ---------------------------------------------------------
-   サマリ生成
+   サマリ生成（PRIDE帯ラベル修正済）
 --------------------------------------------------------- */
 function buildSummary() {
   State.summary = [];
@@ -204,7 +202,7 @@ function buildSummary() {
     });
   });
 
-  /* PRIDE帯 */
+  /* PRIDE帯（label を level.level に修正） */
   PRIDE_LEVELS.forEach(level => {
     const list = State.filtered.filter(
       p => p.pridePoint >= level.min && p.pridePoint <= level.max
@@ -212,7 +210,7 @@ function buildSummary() {
 
     State.summary.push({
       key: `P_${level.level}`,
-      label: `${level.min}～${level.max === Infinity ? "∞" : level.max}`,
+      label: level.level,   // ← 修正ポイント
       icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
       list
     });
@@ -220,7 +218,7 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   ★ サマリ表示（修正版）
+   サマリ表示（人数表記は「人」で統一）
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
@@ -284,7 +282,7 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   ★ 詳細表示（修正版）
+   詳細表示（人数表記を「：1人」に修正）
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
