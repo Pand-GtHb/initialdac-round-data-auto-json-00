@@ -30,7 +30,7 @@ body {
 table {
     border-collapse: collapse;
     width: 100%;
-    background: #fff;
+    background: #fff; /* ← 表全体の背景は白でOK */
 }
 th {
     background: #0078D4;
@@ -40,6 +40,9 @@ th {
 td {
     border: 1px solid #ccc;
     padding: 6px;
+
+    /* ★ 店舗名セルだけ白いボックスに見える問題の根本解決 */
+    background: transparent;
 }
 td.left { text-align:left; }
 td.right { text-align:right; }
@@ -71,7 +74,7 @@ td.center { text-align:center; }
 }
 
 /* ★ 店舗名：全角は2行、半角は1行で最大幅省略 */
-/* ★ 内側の白いボックスを完全に消す（最重要） */
+/* ★ 内側の白いボックスを完全に消す（背景透明） */
 .store-name {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -86,7 +89,6 @@ td.center { text-align:center; }
 
     min-width: 150px;
 
-    /* ★ 内側の白いボックスを完全に消す */
     background: transparent !important;
     background-color: transparent !important;
     background-clip: padding-box !important;
