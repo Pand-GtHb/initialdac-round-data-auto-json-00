@@ -18,23 +18,10 @@ body {
     background: #f5f5f5;
 }
 
-/* ▼ ログ表示エリア */
-#logBox {
-    background: #222;
-    padding: 10px;
-    font-size: 13px;
-    white-space: pre-wrap;
-    height: 200px;
-    overflow-y: auto;
-    border-radius: 6px;
-    margin: 20px 0;
-}
-
-/* ▼ 表全体の罫線（セル間の線）は td/th に付ける */
-table {
+/* ▼ 罫線を table/th/td に統一して付ける（今回の決定的修正） */
+table, th, td {
+    border: 1px solid #ccc;
     border-collapse: collapse;
-    width: 100%;
-    background: #fff;
 }
 
 th {
@@ -43,14 +30,11 @@ th {
     padding: 6px;
 }
 
-/* ★ 罫線（セル間の境界線）はここで付く */
 td {
-    border: 1px solid #ccc;
     padding: 6px;
-    background: transparent;
+    background: transparent; /* 店舗名セルの白い箱を防ぐ */
 }
 
-/* テキスト位置 */
 td.left { text-align:left; }
 td.right { text-align:right; }
 td.center { text-align:center; }
@@ -81,32 +65,23 @@ td.center { text-align:center; }
     overflow: hidden;
 }
 
-/* ★ 店舗名セルのテキストボックス設定
-   - display:block に変更（vertical-align が効くようにする）
-   - 2行まで表示し、それ以上は省略
-   - 内側の線（文字ボックスの枠線）は消す
-*/
+/* ★ 店舗名：全角は2行、半角は1行省略 */
 .store-name {
-    display: block;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
-
-    white-space: normal;
-    overflow-wrap: anywhere;
 
     line-height: 1.2em;
     max-height: calc(1.2em * 2);
 
+    white-space: normal;
+    overflow-wrap: anywhere;
+
     min-width: 150px;
 
-    border: none !important;
-    box-shadow: none !important;
     background: transparent !important;
-}
-
-/* ★ 店舗名セル（td）自体は上下中央揃えにする */
-td.store-name {
-    vertical-align: middle !important;
+    border: none
 }
 
 /* RP 列（広がりすぎ防止） */
