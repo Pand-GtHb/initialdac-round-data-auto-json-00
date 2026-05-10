@@ -29,26 +29,21 @@ body {
     margin: 20px 0;
 }
 
-/* ▼ 罫線を table/th/td に統一して付ける（今回の決定的修正） */
-table, th, td {
-    border: 1px solid #ccc;
+/* ▼ 罫線は table/th/td に統一（今回の決定的修正） */
+table {
     border-collapse: collapse;
+    width: 100%;
+    background: #fff;
 }
-
-th {
-    background: #0078D4;
-    color: white;
-    padding: 6px;
-}
-
-td {
+th, td {
     border: 1px solid #ccc;
     padding: 6px;
+    background: transparent;
 }
 
-td.left{text-align:left;}
-td.right{text-align:right;}
-td.center{text-align:center;}
+td.left { text-align:left; }
+td.right { text-align:right; }
+td.center { text-align:center; }
 
 .clickable { cursor: pointer; color: #0078d4; font-weight: bold; }
 #summaryView, #detailView { margin-top: 20px; }
@@ -70,41 +65,42 @@ td.center{text-align:center;}
 /* 共通余白 */
 .mt10 { margin-top:10px; }
 
-/* ★ プレイヤー名をスマホでも1行表示にする */
+/* ★ プレイヤー名：スマホでも1行固定 */
 .player-name {
     white-space: nowrap;
     overflow: hidden;
 }
 
-/* ★ 店舗名：半角英字でも2行使わせる＋枠線除去＋最小幅強化 */
+/* ★ 店舗名：全角は2行、半角は1行省略 */
+/* ★ 内側の白い箱を完全に消す（border/box-shadow/背景を全無効化） */
 .store-name {
     display: -webkit-box;
-    -webkit-line-clamp: 2;   /* 2行固定 */
+    -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
 
     line-height: 1.2em;
     max-height: calc(1.2em * 2);
 
-    /* ★ 半角英字でも折り返す最重要設定 */
+    white-space: normal;
     overflow-wrap: anywhere;
-    word-break: break-word;
 
-    /* ★ スマホで潰れないように確保 */
     min-width: 150px;
 
-    /* ★ 店舗名セルの枠線を完全に消す */
     border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    background-color: transparent !important;
 }
 
-/* ★ RP 列（広がりすぎ防止） */
+/* RP 列（広がりすぎ防止） */
 .rp-col {
     max-width: 50px;
     white-space: nowrap;
     overflow: hidden;
 }
 
-/* ★ 称号列（長文対策） */
+/* 称号列（長文対策） */
 .title-col {
     max-width: 70px;
     overflow: hidden;
@@ -112,7 +108,7 @@ td.center{text-align:center;}
     white-space: nowrap;
 }
 
-/* ★ LastUpdate 列（長文対策） */
+/* LastUpdate 列（長文対策） */
 .update-col {
     max-width: 95px;
     white-space: nowrap;
