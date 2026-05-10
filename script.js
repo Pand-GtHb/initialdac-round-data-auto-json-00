@@ -336,7 +336,7 @@ function showDetail(key) {
   area.innerHTML = `
     <h3>
       <img src="${bandIcon}" width="32" style="vertical-align:middle;">
-      ${bandLabel}（${fmt(State.detail.length)}名）
+      ${bandLabel}：${fmt(State.detail.length)}人
     </h3>
 
     <div style="overflow-x:auto;">
