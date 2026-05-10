@@ -17,6 +17,8 @@ body {
     padding: 10px;
     background: #f5f5f5;
 }
+
+/* ▼ ログ表示エリア */
 #logBox {
     background: #222;
     padding: 10px;
@@ -27,26 +29,28 @@ body {
     border-radius: 6px;
     margin: 20px 0;
 }
-table {
+
+/* ▼ 罫線を table/th/td に統一して付ける（今回の決定的修正） */
+table, th, td {
+    border: 1px solid #ccc;
     border-collapse: collapse;
-    width: 100%;
-    background: #fff; /* ← 表全体の背景は白でOK */
 }
+
 th {
     background: #0078D4;
     color: white;
     padding: 6px;
 }
-td {
-    border: 1px solid #ccc;
-    padding: 6px;
 
-    /* ★ 店舗名セルだけ白いボックスに見える問題の根本解決 */
-    background: transparent;
+td {
+    padding: 6px;
+    background: transparent; /* 店舗名セルの白い箱を防ぐ */
 }
+
 td.left { text-align:left; }
 td.right { text-align:right; }
 td.center { text-align:center; }
+
 .clickable { cursor: pointer; color: #0078d4; font-weight: bold; }
 #summaryView, #detailView { margin-top: 20px; }
 #detailView { display: none; }
@@ -67,14 +71,13 @@ td.center { text-align:center; }
 /* 共通余白 */
 .mt10 { margin-top:10px; }
 
-/* ★ プレイヤー名をスマホでも1行表示にする */
+/* ★ プレイヤー名：スマホでも1行固定 */
 .player-name {
     white-space: nowrap;
     overflow: hidden;
 }
 
-/* ★ 店舗名：全角は2行、半角は1行で最大幅省略 */
-/* ★ 内側の白いボックスを完全に消す（背景透明） */
+/* ★ 店舗名：全角は2行、半角は1行省略 */
 .store-name {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -90,18 +93,18 @@ td.center { text-align:center; }
     min-width: 150px;
 
     background: transparent !important;
-    background-color: transparent !important;
-    background-clip: padding-box !important;
+
+    border: none
 }
 
-/* ★ RP 列（広がりすぎ防止） */
+/* RP 列（広がりすぎ防止） */
 .rp-col {
     max-width: 50px;
     white-space: nowrap;
     overflow: hidden;
 }
 
-/* ★ 称号列（長文対策） */
+/* 称号列（長文対策） */
 .title-col {
     max-width: 70px;
     overflow: hidden;
@@ -109,7 +112,7 @@ td.center { text-align:center; }
     white-space: nowrap;
 }
 
-/* ★ LastUpdate 列（長文対策） */
+/* LastUpdate 列（長文対策） */
 .update-col {
     max-width: 95px;
     white-space: nowrap;
