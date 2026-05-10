@@ -30,18 +30,76 @@ const State = {
 };
 
 /* ---------------------------------------------------------
-   ログ
+   ログ（日時付き）
 --------------------------------------------------------- */
 function appendLog(msg, type = "normal") {
   const box = document.getElementById("logBox");
+
+  const now = new Date();
+  const t = now.toLocaleString("ja-JP", {
+    hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit"
+  });
+
   const line = document.createElement("div");
-  line.textContent = msg;
+  line.textContent = `[${t}] ${msg}`;
   line.style.color = type === "error" ? "#ff5555" : "#00ff00";
+
   box.appendChild(line);
   box.scrollTop = box.scrollHeight;
 }
 const log = msg => appendLog(msg);
 const logError = msg => appendLog(msg, "error");
+
+/* ---------------------------------------------------------
+   進行中アニメーション（横バー・1行のみ）
+--------------------------------------------------------- */
+let progressTimer = null;
+let progressPos = 0;
+let progressLine = null;
+
+function startProgress() {
+  const box = document.getElementById("logBox");
+
+  // 既存の進行中行があれば削除
+  if (progressLine) {
+    box.removeChild(progressLine);
+  }
+
+  progressPos = 0;
+
+  // 進行中バー用の行（黄色）
+  progressLine = document.createElement("div");
+  progressLine.style.color = "#ffeb3b";
+  box.appendChild(progressLine);
+
+  updateProgressBar();
+
+  progressTimer = setInterval(() => {
+    progressPos = (progressPos + 1) % 20;
+    updateProgressBar();
+  }, 120);
+}
+
+function updateProgressBar() {
+  const total = 20;
+  const filled = "■".repeat(progressPos);
+  const empty = "□".repeat(total - progressPos);
+  progressLine.textContent = `進行中：${filled}${empty}`;
+}
+
+function stopProgress() {
+  if (progressTimer) {
+    clearInterval(progressTimer);
+    progressTimer = null;
+  }
+  if (progressLine) {
+    progressLine.style.color = "#00ff00"; // 完了は緑
+    progressLine.textContent = "完了";
+    progressLine = null;
+  }
+}
 
 /* ---------------------------------------------------------
    ユーティリティ
@@ -57,7 +115,6 @@ function formatYMDHM(date) {
   const mm = ("0" + date.getMinutes()).slice(-2);
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
-
 /* ---------------------------------------------------------
    共通 fetch
 --------------------------------------------------------- */
@@ -180,7 +237,7 @@ function findPrideLevel(label) {
 }
 
 /* ---------------------------------------------------------
-   サマリ生成（PRIDE帯ラベル修正済）
+   サマリ生成
 --------------------------------------------------------- */
 function buildSummary() {
   State.summary = [];
@@ -202,7 +259,7 @@ function buildSummary() {
     });
   });
 
-  /* PRIDE帯（label を level.level に修正） */
+  /* PRIDE帯 */
   PRIDE_LEVELS.forEach(level => {
     const list = State.filtered.filter(
       p => p.pridePoint >= level.min && p.pridePoint <= level.max
@@ -210,7 +267,7 @@ function buildSummary() {
 
     State.summary.push({
       key: `P_${level.level}`,
-      label: level.level,   // ← 修正ポイント
+      label: level.level,
       icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
       list
     });
@@ -218,7 +275,7 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   サマリ表示（人数表記は「人」で統一）
+   サマリ表示
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
@@ -280,9 +337,8 @@ function renderSummary() {
   document.getElementById("summaryView").style.display = "block";
   document.getElementById("detailView").style.display = "none";
 }
-
 /* ---------------------------------------------------------
-   詳細表示（人数表記を「：1人」に修正）
+   詳細表示
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
@@ -424,6 +480,8 @@ function exportAllCSV() {
 async function init() {
   log("Viewer 初期化中");
 
+  startProgress();
+
   buildRubyFilters();
 
   await loadLatest();
@@ -433,6 +491,8 @@ async function init() {
   buildSummary();
   renderSummary();
 
+  stopProgress();
+
   log("Viewer 初期化完了");
 }
 
@@ -440,12 +500,17 @@ async function init() {
    DOMContentLoaded
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("reloadBtn").onclick = init;
+  document.getElementById("reloadBtn").onclick = () => {
+    startProgress();
+    init().then(stopProgress);
+  };
 
   document.getElementById("filterBtn").onclick = () => {
+    startProgress();
     applyFilters();
     buildSummary();
     renderSummary();
+    stopProgress();
   };
 
   document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
