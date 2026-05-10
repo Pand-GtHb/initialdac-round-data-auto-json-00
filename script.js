@@ -333,7 +333,7 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示
+   詳細表示（プレイヤー名セルは .player-name に変更）
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
@@ -373,9 +373,18 @@ function showDetail(key) {
     return `
       <tr>
         <td class="center">${starOrLevel}</td>
-        <td class="left name-cell clickable" onclick="copyToClipboard('${p.name}')">${p.name}</td>
+
+        <!-- ★ プレイヤー名セル：class="player-name" に変更 -->
+        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
+          ${p.name}
+        </td>
+
         <td class="right">${fmt(p.point)}</td>
-        <td class="left clickable" onclick="copyToClipboard('${p.shopname}')">${p.shopname}</td>
+
+        <td class="left clickable" onclick="copyToClipboard('${p.shopname}')">
+          ${p.shopname}
+        </td>
+
         <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
         <td class="left">${p.updateDate}</td>
       </tr>
@@ -479,8 +488,8 @@ async function init() {
 
   buildRubyFilters();
 
-  await loadLatest();      // latest.json → latestRound
-  await loadRoundData();   // roundXX.json → 最新ラウンドを自動取得
+  await loadLatest();
+  await loadRoundData();
 
   applyFilters();
   buildSummary();
