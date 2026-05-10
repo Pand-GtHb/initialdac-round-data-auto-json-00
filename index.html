@@ -82,25 +82,23 @@ td.center { text-align:center; }
 }
 
 /* ★ 店舗名セルのテキストボックス設定
-   - display:-webkit-box により高さ可変の2行表示
-   - これは「内側のボックス」であり、セルの罫線とは別物
-   - 内側の線（ボックスの枠線）は消す
+   - display:block に変更（vertical-align が効くようにする）
+   - 2行まで表示し、それ以上は省略
+   - 内側の線（文字ボックスの枠線）は消す
 */
 .store-name {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
+    display: block;
     overflow: hidden;
-
-    line-height: 1.2em;
-    max-height: calc(1.2em * 2);
+    text-overflow: ellipsis;
 
     white-space: normal;
     overflow-wrap: anywhere;
 
+    line-height: 1.2em;
+    max-height: calc(1.2em * 2);
+
     min-width: 150px;
 
-    /* ★ 内側の線（文字ボックスの枠線）を消す */
     border: none !important;
     box-shadow: none !important;
     background: transparent !important;
