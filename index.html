@@ -69,6 +69,17 @@ td.center{text-align:center;}
     white-space: nowrap;
     overflow: hidden;
 }
+
+/* ★ 店舗名：2行固定＋折り返し＋高さ安定化 */
+.store-name {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;   /* 2行固定 */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.2em;
+    max-height: calc(1.2em * 2); /* 2行分の高さ */
+    word-break: break-all;
+}
 </style>
 </head>
 
