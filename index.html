@@ -70,25 +70,25 @@ td.center{text-align:center;}
     overflow: hidden;
 }
 
-/* ★ 店舗名：半角英字でも2行使わせる＋枠線除去＋最小幅強化 */
+/* ★ 店舗名：全角は2行、半角は1行で最大幅省略＋罫線維持 */
 .store-name {
     display: -webkit-box;
-    -webkit-line-clamp: 2;   /* 2行固定 */
+    -webkit-line-clamp: 2;   /* 全角は2行固定 */
     -webkit-box-orient: vertical;
     overflow: hidden;
 
     line-height: 1.2em;
     max-height: calc(1.2em * 2);
 
-    /* ★ 半角英字でも折り返す最重要設定 */
+    /* ★ 半角英字は折り返せない → 1行で最大幅を使って省略 */
+    white-space: normal;
     overflow-wrap: anywhere;
-    word-break: break-word;
 
-    /* ★ スマホで潰れないように確保 */
+    /* スマホで潰れないように最低幅を確保 */
     min-width: 150px;
 
-    /* ★ 店舗名セルの枠線を完全に消す */
-    border: none !important;
+    /* ★ 罫線は残す（td の border をそのまま使う） */
+    border: 1px solid #ccc;
 }
 
 /* ★ RP 列（広がりすぎ防止） */
