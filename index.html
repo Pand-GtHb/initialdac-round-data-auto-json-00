@@ -71,25 +71,25 @@ td.center { text-align:center; }
 }
 
 /* ★ 店舗名：全角は2行、半角は1行で最大幅省略 */
-/* ★ 罫線は td の border のみを使用（内側の白ボックスを消す） */
+/* ★ 内側の白いボックスを完全に消す（最重要） */
 .store-name {
     display: -webkit-box;
-    -webkit-line-clamp: 2;   /* 全角は2行固定 */
+    -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
 
     line-height: 1.2em;
     max-height: calc(1.2em * 2);
 
-    /* 半角は折り返しにくいが、最大幅まで使って省略される */
     white-space: normal;
     overflow-wrap: anywhere;
 
-    /* スマホで潰れないように最低幅を確保 */
     min-width: 150px;
 
-    /* ★ 内側の白いボックスを完全に消す（最重要） */
-    background: transparent;
+    /* ★ 内側の白いボックスを完全に消す */
+    background: transparent !important;
+    background-color: transparent !important;
+    background-clip: padding-box !important;
 }
 
 /* ★ RP 列（広がりすぎ防止） */
