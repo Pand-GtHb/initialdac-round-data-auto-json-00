@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------
-   Initial DAC Round Data Viewer（auto-json-00 対応・最適化版）
+   Initial DAC Round Data Viewer（latest.json 対応・最適化版）
 --------------------------------------------------------- */
 
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
@@ -53,7 +53,7 @@ const log = msg => appendLog(msg);
 const logError = msg => appendLog(msg, "error");
 
 /* ---------------------------------------------------------
-   進行中アニメーション（横バー・1行のみ）
+   進行中アニメーション
 --------------------------------------------------------- */
 let progressTimer = null;
 let progressPos = 0;
@@ -62,14 +62,9 @@ let progressLine = null;
 function startProgress() {
   const box = document.getElementById("logBox");
 
-  // 既存の進行中行があれば削除
-  if (progressLine) {
-    box.removeChild(progressLine);
-  }
+  if (progressLine) box.removeChild(progressLine);
 
   progressPos = 0;
-
-  // 進行中バー用の行（黄色）
   progressLine = document.createElement("div");
   progressLine.style.color = "#ffeb3b";
   box.appendChild(progressLine);
@@ -90,12 +85,11 @@ function updateProgressBar() {
 }
 
 function stopProgress() {
-  if (progressTimer) {
-    clearInterval(progressTimer);
-    progressTimer = null;
-  }
+  if (progressTimer) clearInterval(progressTimer);
+  progressTimer = null;
+
   if (progressLine) {
-    progressLine.style.color = "#00ff00"; // 完了は緑
+    progressLine.style.color = "#00ff00";
     progressLine.textContent = "完了";
     progressLine = null;
   }
@@ -115,6 +109,7 @@ function formatYMDHM(date) {
   const mm = ("0" + date.getMinutes()).slice(-2);
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
+
 /* ---------------------------------------------------------
    共通 fetch
 --------------------------------------------------------- */
@@ -143,7 +138,7 @@ function buildRubyFilters() {
 }
 
 /* ---------------------------------------------------------
-   latest.json
+   latest.json 読み込み
 --------------------------------------------------------- */
 async function loadLatest() {
   log("latest.json 取得準備中");
@@ -162,7 +157,7 @@ async function loadLatest() {
 }
 
 /* ---------------------------------------------------------
-   roundXX.json
+   roundXX.json 読み込み
 --------------------------------------------------------- */
 async function loadRoundData() {
   if (!State.latestRound) {
@@ -235,7 +230,6 @@ function calcStats(list, total) {
 function findPrideLevel(label) {
   return PRIDE_LEVELS.find(l => l.level === label);
 }
-
 /* ---------------------------------------------------------
    サマリ生成
 --------------------------------------------------------- */
@@ -337,6 +331,7 @@ function renderSummary() {
   document.getElementById("summaryView").style.display = "block";
   document.getElementById("detailView").style.display = "none";
 }
+
 /* ---------------------------------------------------------
    詳細表示
 --------------------------------------------------------- */
@@ -484,8 +479,8 @@ async function init() {
 
   buildRubyFilters();
 
-  await loadLatest();
-  await loadRoundData();
+  await loadLatest();      // latest.json → latestRound
+  await loadRoundData();   // roundXX.json → 最新ラウンドを自動取得
 
   applyFilters();
   buildSummary();
