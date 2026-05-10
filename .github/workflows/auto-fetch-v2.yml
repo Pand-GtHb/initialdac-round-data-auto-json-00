@@ -1,4 +1,4 @@
-name: Auto Fetch InitialDAC JSON (v2 - optimized + minify)
+name: Auto Fetch InitialDAC JSON (v3 - latest.json based)
 
 on:
   workflow_dispatch:
@@ -11,12 +11,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set round number (fixed for now)
+      # ▼ ① latest.json を GitHub から取得
+      - name: Fetch latest.json
+        run: |
+          curl -s -o latest.json \
+            https://pand-gthb.github.io/initialdac-round-data-auto-json-00/latest.json
+
+      # ▼ ② latestRound を読み取る
+      - name: Read latest round
         id: round
         run: |
-          ROUND=72
+          ROUND=$(jq -r '.latestRound' latest.json)
+          echo "Latest round = $ROUND"
           echo "round=$ROUND" >> $GITHUB_OUTPUT
 
+      # ▼ ③ 全エリア JSON を並列取得
       - name: Fetch JSON (parallel)
         run: |
           ROUND=${{ steps.round.outputs.round }}
@@ -31,6 +40,7 @@ jobs:
             curl -f -s "$URL" -o tmp/area-${AREA}.json || echo "{}" > tmp/area-${AREA}.json
           '
 
+      # ▼ ④ jq で統合（Pさんの v2 と同じ）
       - name: Merge JSON (single jq pass)
         run: |
           ROUND=${{ steps.round.outputs.round }}
@@ -49,12 +59,14 @@ jobs:
             }
           ' tmp/*.json > "round${ROUND}.json"
 
+      # ▼ ⑤ minify（v2 と同じ）
       - name: Minify JSON
         run: |
           ROUND=${{ steps.round.outputs.round }}
           jq -c '.' "round${ROUND}.json" > "round${ROUND}.min.json"
           mv "round${ROUND}.min.json" "round${ROUND}.json"
 
+      # ▼ ⑥ 変更があれば commit & push
       - name: Commit & Push (only if changed)
         run: |
           ROUND=${{ steps.round.outputs.round }}
