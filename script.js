@@ -155,6 +155,90 @@ async function loadLatest() {
     logError("latest.json の取得に失敗：" + e.message);
   }
 }
+
+/* ---------------------------------------------------------
+   roundXX.json 読み込み
+--------------------------------------------------------- */
+async function loadRoundData() {
+  if (!State.latestRound) {
+    logError("latestRound が未取得のため、roundXX.json を読み込めません");
+    return;
+  }
+
+  log(`round${State.latestRound}.json 取得準備中`);
+
+  try {
+    const json = await fetchJSON(`round${State.latestRound}.json`);
+
+    State.generatedAt = json.generatedAt ?? "";
+
+    if (State.generatedAt) {
+      document.getElementById("jsonUpdateTime").textContent =
+        formatYMDHM(parseDateJST(State.generatedAt));
+    }
+
+    State.all = Array.isArray(json) ? json : (json.records || []);
+
+    log(`round${State.latestRound}.json 読み込み完了 (${State.all.length}件)`);
+  } catch (e) {
+    logError("roundXX.json の取得に失敗：" + e.message);
+  }
+}
+
+/* ---------------------------------------------------------
+   フィルタ
+--------------------------------------------------------- */
+function applyFilters() {
+  const minutes = Number(document.getElementById("rangeSelect").value);
+
+  if (!State.generatedAt) {
+    logError("generatedAt が未取得のため、時間フィルタをスキップしました");
+    State.filtered = [...State.all];
+    return;
+  }
+
+  const baseMs = parseDateJST(State.generatedAt).getTime();
+  const filterStartMs = baseMs - minutes * 60 * 1000;
+
+  document.getElementById("filterStartTime").textContent =
+    formatYMDHM(new Date(filterStartMs));
+
+  State.filtered = State.all.filter(p => {
+    if (!p.updateDate) return false;
+    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
+  });
+}
+
+/* ---------------------------------------------------------
+   サマリ統計計算
+--------------------------------------------------------- */
+function calcStats(list, total) {
+  const cnt = list.length;
+  const percent = total ? Math.round((cnt / total) * 100) : 0;
+
+  const points = list.map(p => Number(p.point ?? 0));
+  const avg = cnt ? Math.round(points.reduce((a, b) => a + b, 0) / cnt) : 0;
+  const min = cnt ? Math.min(...points) : 0;
+  const max = cnt ? Math.max(...points) : 0;
+
+  return { cnt, percent, avg, min, max };
+}
+
+/* ---------------------------------------------------------
+   PRIDE レベル判定
+--------------------------------------------------------- */
+function findPrideLevel(label) {
+  return PRIDE_LEVELS.find(l => l.level === label);
+}
+/* ---------------------------------------------------------
+   ★ 店舗名 真ん中省略ユーティリティ
+--------------------------------------------------------- */
+function shortenStoreName(full, head = 6, tail = 6) {
+  if (!full) return "";
+  if (full.length <= head + tail) return full;
+  return full.slice(0, head) + "…" + full.slice(-tail);
+}
+
 /* ---------------------------------------------------------
    サマリ生成
 --------------------------------------------------------- */
@@ -258,7 +342,7 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示（★ 店舗名セル：修正版）
+   詳細表示（店舗名セル：真ん中省略＋2行固定対応）
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
@@ -295,7 +379,7 @@ function showDetail(key) {
       ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
       : p.pridePoint;
 
-    /* ★ 店舗名：短縮表示＋フル名コピー対応（修正版） */
+    /* ★ 店舗名：短縮表示＋フル名コピー対応 */
     const fullShop = p.shopname ?? "";
     const shortShop = shortenStoreName(fullShop, 6, 6);
 
@@ -303,18 +387,17 @@ function showDetail(key) {
       <tr>
         <td class="center">${starOrLevel}</td>
 
-        <td class="left player-name clickable"
-            onclick="copyToClipboard('${p.name}')">
+        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
           ${p.name}
         </td>
 
         <td class="right">${fmt(p.point)}</td>
 
-        <!-- ★ 修正：td から store-name を外し、span に付ける -->
-        <td class="left clickable"
+        <!-- ★ 店舗名セル：2行固定CSSと連動 -->
+        <td class="left store-name clickable"
             data-fullname="${fullShop.replace(/"/g, "&quot;")}"
             onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
-          <span class="store-name">${shortShop}</span>
+          ${shortShop}
         </td>
 
         <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
@@ -354,6 +437,22 @@ function showDetail(key) {
 function copyToClipboard(text) {
   navigator.clipboard.writeText(text);
   log(`コピー：${text}`);
+}
+
+/* ---------------------------------------------------------
+   CSV ダウンロード
+--------------------------------------------------------- */
+function downloadCSV(filename, header, body) {
+  const csv = "\ufeff" + header + "\n" + body;
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+
+  URL.revokeObjectURL(url);
 }
 
 /* ---------------------------------------------------------
