@@ -239,9 +239,99 @@ function shortenStoreName(full, head = 6, tail = 6) {
   if (full.length <= head + tail) return full;
   return full.slice(0, head) + "…" + full.slice(-tail);
 }
+/* ---------------------------------------------------------
+   サマリ生成
+--------------------------------------------------------- */
+function buildSummary() {
+  State.summary = [];
+
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+
+  /* Ruby帯 */
+  selectedStars.forEach(star => {
+    const list = State.filtered.filter(
+      p => p.onlineBattleRankId === RUBY_ID && p.starCnt === star
+    );
+
+    State.summary.push({
+      key: `R${star}`,
+      label: `☆${star}`,
+      icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
+      list
+    });
+  });
+
+  /* PRIDE帯 */
+  PRIDE_LEVELS.forEach(level => {
+    const list = State.filtered.filter(
+      p => p.pridePoint >= level.min && p.pridePoint <= level.max
+    );
+
+    State.summary.push({
+      key: `P_${level.level}`,
+      label: level.level,
+      icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
+      list
+    });
+  });
+}
+
+/* ---------------------------------------------------------
+   サマリ表示
+--------------------------------------------------------- */
+function renderSummary() {
+  const area = document.getElementById("summaryArea");
+
+  const total = State.summary.reduce((sum, r) => sum + r.list.length, 0);
+
+  const rubyTotal = State.summary
+    .filter(r => r.key.startsWith("R"))
+    .reduce((s, r) => s + r.list.length, 0);
+
+  const prideTotal = total - rubyTotal;
+
+  document.getElementById("summaryTitle").textContent =
+    `合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人`;
+
+  const rows = State.summary.map(r => {
+    const { cnt, percent, avg, min, max } = calcStats(r.list, total);
+
+    return `
+      <tr class="clickable" data-key="${r.key}">
+        <td class="center"><img src="${r.icon}" width="32"></td>
+        <td class="left">${r.label}</td>
+        <td class="right">${fmt(cnt)}</td>
+        <td class="right">${percent}%</td>
+        <td class="center">
+          <div class="bar-wrap">
+            <div class="bar" style="width:${percent}%;"></div>
+          </div>
+        </td>
+        <td class="right">${fmt(avg)}</td>
+        <td class="right">${fmt(min)}</td>
+        <td class="right">${fmt(max)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  area.innerHTML = `
+    <div style="overflow-x:auto;">
+    <table>
+      <tr>
+        <th>ランク</th>
+        <th>☆・Lv</th>
+        <th>人数</th>
+        <th>%</th>
+        <th>Bar</th>
+        <th>RP:Avg</th>
+        <th>RP:Min</th>
+        <th>RP:Max</th>
+      </tr>
+      ${rows}
     </table>
     </div>
-  `;
+  `;  /* ← ★ ここが今回の修正ポイント（バッククォート閉じ忘れ修正済み） */
 
   document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
     tr.addEventListener("click", () => showDetail(tr.dataset.key));
@@ -252,7 +342,7 @@ function shortenStoreName(full, head = 6, tail = 6) {
 }
 
 /* ---------------------------------------------------------
-   詳細表示（店舗名セル：真ん中省略＋2行固定対応・罫線保持版）
+   詳細表示（店舗名セル：罫線保持版）
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
@@ -289,7 +379,6 @@ function showDetail(key) {
       ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
       : p.pridePoint;
 
-    /* ★ 店舗名：短縮表示＋フル名コピー対応 */
     const fullShop = p.shopname ?? "";
     const shortShop = shortenStoreName(fullShop, 6, 6);
 
@@ -303,7 +392,7 @@ function showDetail(key) {
 
         <td class="right">${fmt(p.point)}</td>
 
-        <!-- ★ 店舗名セル：<td> は素のまま、内側の <div class="store-name"> に2行固定CSSを適用 -->
+        <!-- ★ 店舗名セル：<td> は素のまま、内側の <div> に2行固定CSS -->
         <td class="left clickable"
             data-fullname="${fullShop.replace(/"/g, "&quot;")}"
             onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
@@ -336,9 +425,6 @@ function showDetail(key) {
     </table>
     </div>
   `;
-
-  document.getElementById("summaryView").style.display = "none";
-  document.getElementById("detailView").style.display = "block";
 }
 
 /* ---------------------------------------------------------
