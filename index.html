@@ -1,201 +1,303 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<title>InitialD Round Data Viewer（auto-json-00）</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+/* ---------------------------------------------------------
+   サマリ生成
+--------------------------------------------------------- */
+function buildSummary() {
+  State.summary = [];
 
-<!-- ★ スマホでのキャッシュ完全禁止（最重要） -->
-<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
 
-<style>
-body {
-    font-family: sans-serif;
-    margin: 0;
-    padding: 10px;
-    background: #f5f5f5;
+  /* Ruby帯 */
+  selectedStars.forEach(star => {
+    const list = State.filtered.filter(
+      p => p.onlineBattleRankId === RUBY_ID && p.starCnt === star
+    );
+
+    State.summary.push({
+      key: `R${star}`,
+      label: `☆${star}`,
+      icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
+      list
+    });
+  });
+
+  /* PRIDE帯 */
+  PRIDE_LEVELS.forEach(level => {
+    const list = State.filtered.filter(
+      p => p.pridePoint >= level.min && p.pridePoint <= level.max
+    );
+
+    State.summary.push({
+      key: `P_${level.level}`,
+      label: level.level,
+      icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
+      list
+    });
+  });
 }
 
-/* ▼ ログ表示エリア */
-#logBox {
-    background: #222;
-    padding: 10px;
-    font-size: 13px;
-    white-space: pre-wrap;
-    height: 200px;
-    overflow-y: auto;
-    border-radius: 6px;
-    margin: 20px 0;
+/* ---------------------------------------------------------
+   サマリ表示
+--------------------------------------------------------- */
+function renderSummary() {
+  const area = document.getElementById("summaryArea");
+
+  const total = State.summary.reduce((sum, r) => sum + r.list.length, 0);
+
+  const rubyTotal = State.summary
+    .filter(r => r.key.startsWith("R"))
+    .reduce((s, r) => s + r.list.length, 0);
+
+  const prideTotal = total - rubyTotal;
+
+  document.getElementById("summaryTitle").textContent =
+    `合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人`;
+
+  const rows = State.summary.map(r => {
+    const { cnt, percent, avg, min, max } = calcStats(r.list, total);
+
+    return `
+      <tr class="clickable" data-key="${r.key}">
+        <td class="center"><img src="${r.icon}" width="32"></td>
+        <td class="left">${r.label}</td>
+        <td class="right">${fmt(cnt)}</td>
+        <td class="right">${percent}%</td>
+        <td class="center">
+          <div class="bar-wrap">
+            <div class="bar" style="width:${percent}%;"></div>
+          </div>
+        </td>
+        <td class="right">${fmt(avg)}</td>
+        <td class="right">${fmt(min)}</td>
+        <td class="right">${fmt(max)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  area.innerHTML = `
+    <div style="overflow-x:auto;">
+    <table>
+      <tr>
+        <th>ランク</th>
+        <th>☆・Lv</th>
+        <th>人数</th>
+        <th>%</th>
+        <th>Bar</th>
+        <th>RP:Avg</th>
+        <th>RP:Min</th>
+        <th>RP:Max</th>
+      </tr>
+      ${rows}
+    </table>
+    </div>
+  `;
+
+  document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
+    tr.addEventListener("click", () => showDetail(tr.dataset.key));
+  });
+
+  document.getElementById("summaryView").style.display = "block";
+  document.getElementById("detailView").style.display = "none";
 }
 
-/* ▼ 罫線を table/th/td に統一して付ける（今回の決定的修正） */
-table, th, td {
-    border: 1px solid #ccc;
-    border-collapse: collapse;
-}
+/* ---------------------------------------------------------
+   詳細表示（店舗名セル：真ん中省略＋2行固定対応）
+--------------------------------------------------------- */
+function showDetail(key) {
+  const row = State.summary.find(r => r.key === key);
+  if (!row) return;
 
-th {
-    background: #0078D4;
-    color: white;
-    padding: 6px;
-}
+  State.detail = row.list.slice();
 
-td {
-    padding: 6px;
-    background: transparent; /* 店舗名セルの白い箱を防ぐ */
-}
+  const isRubyBand = key.startsWith("R");
+  const bandLabel = row.label;
 
-td.left { text-align:left; }
-td.right { text-align:right; }
-td.center { text-align:center; }
-
-.clickable { cursor: pointer; color: #0078d4; font-weight: bold; }
-#summaryView, #detailView { margin-top: 20px; }
-#detailView { display: none; }
-
-/* バーグラフ */
-.bar-wrap {
-    width: 100%;
-    background: #ddd;
-    height: 12px;
-    border-radius: 4px;
-}
-.bar {
-    height: 12px;
-    background: #0078D4;
-    border-radius: 4px;
-}
-
-/* 共通余白 */
-.mt10 { margin-top:10px; }
-
-/* ★ プレイヤー名：スマホでも1行固定 */
-.player-name {
-    white-space: nowrap;
-    overflow: hidden;
-}
-
-/* ★ 店舗名：全角は2行、半角は1行省略 */
-.store-name {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-
-    line-height: 1.2em;
-    max-height: calc(1.2em * 2);
-
-    white-space: normal;
-    overflow-wrap: anywhere;
-
-    min-width: 150px;
-
-    background: transparent !important;
-
-}
-
-/* RP 列（広がりすぎ防止） */
-.rp-col {
-    max-width: 50px;
-    white-space: nowrap;
-    overflow: hidden;
-}
-
-/* 称号列（長文対策） */
-.title-col {
-    max-width: 70px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* LastUpdate 列（長文対策） */
-.update-col {
-    max-width: 95px;
-    white-space: nowrap;
-}
-</style>
-</head>
-
-<body>
-
-<h2>InitialD Round Data Viewer（auto-json-00 対応）</h2>
-
-<div>
-  <b>最新ラウンド：</b>
-  <span id="latestRound">読み込み中…</span>
-</div>
-
-<!-- 時間フィルタ＋表示期間 -->
-<div class="mt10">
-  <b>時間フィルタ：</b>
-  <select id="rangeSelect">
-      <option value="15" selected>15分</option>
-      <option value="30">30分</option>
-      <option value="60">1時間</option>
-      <option value="120">2時間</option>
-      <option value="180">3時間</option>
-  </select>
-
-  <span style="margin-left:20px;">
-    <b>表示期間：</b>
-    <span id="filterStartTime">-</span>
-     ～ 
-    <span id="jsonUpdateTime">-</span>
-  </span>
-</div>
-
-<!-- Ruby星数フィルタ -->
-<div class="mt10">
-  <b>Ruby星数フィルタ：</b><br>
-  <span id="rubyFilters"></span>
-</div>
-
-<!-- ボタン群 -->
-<div class="mt10">
-  <button id="reloadBtn">最新データ取得</button>
-  <button id="filterBtn" style="margin-left:10px;">フィルタ適用</button>
-  <button id="summaryCsvBtn" style="margin-left:10px;">サマリCSV出力</button>
-  <button id="allCsvBtn" style="margin-left:10px;">全データCSV出力</button>
-</div>
-
-<div id="logBox"></div>
-
-<div id="summaryView">
-  <h3 id="summaryTitle">稼働プレイヤー（合計：0人）</h3>
-  <div id="summaryArea"></div>
-</div>
-
-<div id="detailView">
-  <h3>詳細一覧</h3>
-  <button id="backBtn">← サマリに戻る</button>
-  <div id="detailArea" class="mt10"></div>
-</div>
-
-<!-- ▼ latest.json を読み取って最新ラウンドを UI と script.js に渡す -->
-<script>
-(async () => {
-    try {
-        const res = await fetch("latest.json?cb=" + Date.now());
-        const data = await res.json();
-
-        const round = data.latestRound;
-        document.getElementById("latestRound").textContent = round;
-
-        // script.js から参照できるように保存
-        window.latestRound = round;
-
-    } catch (e) {
-        document.getElementById("latestRound").textContent = "取得失敗";
-        console.error("latest.json 読み込み失敗:", e);
+  let bandIcon = "";
+  if (isRubyBand) {
+    bandIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`;
+  } else {
+    const levelInfo = findPrideLevel(bandLabel);
+    if (levelInfo) {
+      bandIcon =
+        `https://initiald.sega.jp/inidac/ranking-images/pride/${levelInfo.icon}.png`;
     }
-})();
-</script>
+  }
 
-<!-- script.js 読み込み（キャッシュバスター付き） -->
-<script src="script.js?cb=1"></script>
+  State.detail.sort((a, b) => {
+    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
+  });
 
-</body>
-</html>
+  const area = document.getElementById("detailArea");
+
+  const rows = State.detail.map(p => {
+    const titleUrl = p.mytitleId
+      ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
+      : "";
+
+    const starOrLevel = isRubyBand
+      ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
+      : p.pridePoint;
+
+    /* ★ 店舗名：短縮表示＋フル名コピー対応 */
+    const fullShop = p.shopname ?? "";
+    const shortShop = shortenStoreName(fullShop, 6, 6);
+
+    return `
+      <tr>
+        <td class="center">${starOrLevel}</td>
+
+        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
+          ${p.name}
+        </td>
+
+        <td class="right">${fmt(p.point)}</td>
+
+        <!-- ★ 店舗名セル：2行固定CSSと連動 -->
+        <td class="left store-name clickable"
+            data-fullname="${fullShop.replace(/"/g, "&quot;")}"
+            onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
+          ${shortShop}
+        </td>
+
+        <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
+        <td class="left">${p.updateDate}</td>
+      </tr>
+    `;
+  }).join("");
+
+  area.innerHTML = `
+    <h3>
+      <img src="${bandIcon}" width="32" style="vertical-align:middle;">
+      ${bandLabel}：${fmt(State.detail.length)}人
+    </h3>
+
+    <div style="overflow-x:auto;">
+    <table>
+      <tr>
+        <th>☆・PRIDE</th>
+        <th>プレイヤー名</th>
+        <th>RP</th>
+        <th>店舗名</th>
+        <th>称号</th>
+        <th>Last Update</th>
+      </tr>
+      ${rows}
+    </table>
+    </div>
+  `;
+
+  document.getElementById("summaryView").style.display = "none";
+  document.getElementById("detailView").style.display = "block";
+}
+
+/* ---------------------------------------------------------
+   クリックコピー
+--------------------------------------------------------- */
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text);
+  log(`コピー：${text}`);
+}
+
+/* ---------------------------------------------------------
+   CSV ダウンロード
+--------------------------------------------------------- */
+function downloadCSV(filename, header, body) {
+  const csv = "\ufeff" + header + "\n" + body;
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+
+  URL.revokeObjectURL(url);
+}
+
+/* ---------------------------------------------------------
+   CSV 出力（サマリ）
+--------------------------------------------------------- */
+function exportSummaryCSV() {
+  const header = "帯,人数,%,平均RP,最小RP,最大RP";
+
+  const total = State.summary.reduce((sum, r) => sum + r.list.length, 0);
+
+  const body = State.summary.map(r => {
+    const { cnt, percent, avg, min, max } = calcStats(r.list, total);
+    return `${r.label},${cnt},${percent},${avg},${min},${max}`;
+  }).join("\n");
+
+  downloadCSV("summary.csv", header, body);
+}
+
+/* ---------------------------------------------------------
+   CSV 出力（全データ）
+--------------------------------------------------------- */
+function exportAllCSV() {
+  const columns = [
+    "rank","name","shopname","updateDate","point",
+    "mytitleId","prideId","pridePoint","onlineBattleRankId","starCnt"
+  ];
+
+  const header = columns.join(",");
+
+  const body = State.all
+    .map(p =>
+      columns
+        .map(col => `"${String(p[col] ?? "").replace(/"/g, '""')}"`)
+        .join(",")
+    )
+    .join("\n");
+
+  downloadCSV("all_records.csv", header, body);
+}
+
+/* ---------------------------------------------------------
+   初期化
+--------------------------------------------------------- */
+async function init() {
+  log("Viewer 初期化中");
+
+  startProgress();
+
+  buildRubyFilters();
+
+  await loadLatest();
+  await loadRoundData();
+
+  applyFilters();
+  buildSummary();
+  renderSummary();
+
+  stopProgress();
+
+  log("Viewer 初期化完了");
+}
+
+/* ---------------------------------------------------------
+   DOMContentLoaded
+--------------------------------------------------------- */
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("reloadBtn").onclick = () => {
+    startProgress();
+    init().then(stopProgress);
+  };
+
+  document.getElementById("filterBtn").onclick = () => {
+    startProgress();
+    applyFilters();
+    buildSummary();
+    renderSummary();
+    stopProgress();
+  };
+
+  document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
+  document.getElementById("allCsvBtn").onclick = exportAllCSV;
+
+  document.getElementById("backBtn").onclick = () => {
+    document.getElementById("detailView").style.display = "none";
+    document.getElementById("summaryView").style.display = "block";
+  };
+
+  init();
+});
