@@ -184,96 +184,61 @@ async function loadRoundData() {
     logError("roundXX.json の取得に失敗：" + e.message);
   }
 }
+
 /* ---------------------------------------------------------
-   サマリ生成
+   フィルタ
 --------------------------------------------------------- */
-function buildSummary() {
-  State.summary = [];
+function applyFilters() {
+  const minutes = Number(document.getElementById("rangeSelect").value);
 
-  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
-    .map(x => Number(x.value));
+  if (!State.generatedAt) {
+    logError("generatedAt が未取得のため、時間フィルタをスキップしました");
+    State.filtered = [...State.all];
+    return;
+  }
 
-  /* Ruby帯 */
-  selectedStars.forEach(star => {
-    const list = State.filtered.filter(
-      p => p.onlineBattleRankId === RUBY_ID && p.starCnt === star
-    );
+  const baseMs = parseDateJST(State.generatedAt).getTime();
+  const filterStartMs = baseMs - minutes * 60 * 1000;
 
-    State.summary.push({
-      key: `R${star}`,
-      label: `☆${star}`,
-      icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
-      list
-    });
-  });
+  document.getElementById("filterStartTime").textContent =
+    formatYMDHM(new Date(filterStartMs));
 
-  /* PRIDE帯 */
-  PRIDE_LEVELS.forEach(level => {
-    const list = State.filtered.filter(
-      p => p.pridePoint >= level.min && p.pridePoint <= level.max
-    );
-
-    State.summary.push({
-      key: `P_${level.level}`,
-      label: level.level,
-      icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
-      list
-    });
+  State.filtered = State.all.filter(p => {
+    if (!p.updateDate) return false;
+    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
   });
 }
 
 /* ---------------------------------------------------------
-   サマリ表示
+   サマリ統計計算
 --------------------------------------------------------- */
-function renderSummary() {
-  const area = document.getElementById("summaryArea");
+function calcStats(list, total) {
+  const cnt = list.length;
+  const percent = total ? Math.round((cnt / total) * 100) : 0;
 
-  const total = State.summary.reduce((sum, r) => sum + r.list.length, 0);
+  const points = list.map(p => Number(p.point ?? 0));
+  const avg = cnt ? Math.round(points.reduce((a, b) => a + b, 0) / cnt) : 0;
+  const min = cnt ? Math.min(...points) : 0;
+  const max = cnt ? Math.max(...points) : 0;
 
-  const rubyTotal = State.summary
-    .filter(r => r.key.startsWith("R"))
-    .reduce((s, r) => s + r.list.length, 0);
+  return { cnt, percent, avg, min, max };
+}
 
-  const prideTotal = total - rubyTotal;
+/* ---------------------------------------------------------
+   PRIDE レベル判定
+--------------------------------------------------------- */
+function findPrideLevel(label) {
+  return PRIDE_LEVELS.find(l => l.level === label);
+}
 
-  document.getElementById("summaryTitle").textContent =
-    `合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人`;
-
-  const rows = State.summary.map(r => {
-    const { cnt, percent, avg, min, max } = calcStats(r.list, total);
-
-    return `
-      <tr class="clickable" data-key="${r.key}">
-        <td class="center"><img src="${r.icon}" width="32"></td>
-        <td class="left">${r.label}</td>
-        <td class="right">${fmt(cnt)}</td>
-        <td class="right">${percent}%</td>
-        <td class="center">
-          <div class="bar-wrap">
-            <div class="bar" style="width:${percent}%;"></div>
-          </div>
-        </td>
-        <td class="right">${fmt(avg)}</td>
-        <td class="right">${fmt(min)}</td>
-        <td class="right">${fmt(max)}</td>
-      </tr>
-    `;
-  }).join("");
-
-  area.innerHTML = `
-    <div style="overflow-x:auto;">
-    <table>
-      <tr>
-        <th>ランク</th>
-        <th>☆・Lv</th>
-        <th>人数</th>
-        <th>%</th>
-        <th>Bar</th>
-        <th>RP:Avg</th>
-        <th>RP:Min</th>
-        <th>RP:Max</th>
-      </tr>
-      ${rows}
+/* ---------------------------------------------------------
+   ★ 店舗名 真ん中省略ユーティリティ
+--------------------------------------------------------- */
+function shortenStoreName(full, head = 6, tail = 6) {
+  if (!full) return "";
+  if (full.length <= head + tail) return full;
+  return full.slice(0, head) + "…" + full.slice(-tail);
+}
     </table>
     </div>
   `;
@@ -287,7 +252,7 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示（店舗名セル：真ん中省略＋2行固定対応）
+   詳細表示（店舗名セル：真ん中省略＋2行固定対応・罫線保持版）
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
@@ -332,18 +297,17 @@ function showDetail(key) {
       <tr>
         <td class="center">${starOrLevel}</td>
 
-        <td class="left player-name clickable"
-            onclick="copyToClipboard('${p.name}')">
+        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
           ${p.name}
         </td>
 
         <td class="right">${fmt(p.point)}</td>
 
-        <!-- ★ 修正版：td に store-name を付けない -->
-        <td class="left store-cell clickable"
+        <!-- ★ 店舗名セル：<td> は素のまま、内側の <div class="store-name"> に2行固定CSSを適用 -->
+        <td class="left clickable"
             data-fullname="${fullShop.replace(/"/g, "&quot;")}"
             onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
-          <span class="store-name">${shortShop}</span>
+          <div class="store-name">${shortShop}</div>
         </td>
 
         <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
