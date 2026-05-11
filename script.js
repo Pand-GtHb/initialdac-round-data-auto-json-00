@@ -184,61 +184,6 @@ async function loadRoundData() {
     logError("roundXX.json の取得に失敗：" + e.message);
   }
 }
-
-/* ---------------------------------------------------------
-   フィルタ
---------------------------------------------------------- */
-function applyFilters() {
-  const minutes = Number(document.getElementById("rangeSelect").value);
-
-  if (!State.generatedAt) {
-    logError("generatedAt が未取得のため、時間フィルタをスキップしました");
-    State.filtered = [...State.all];
-    return;
-  }
-
-  const baseMs = parseDateJST(State.generatedAt).getTime();
-  const filterStartMs = baseMs - minutes * 60 * 1000;
-
-  document.getElementById("filterStartTime").textContent =
-    formatYMDHM(new Date(filterStartMs));
-
-  State.filtered = State.all.filter(p => {
-    if (!p.updateDate) return false;
-    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
-  });
-}
-
-/* ---------------------------------------------------------
-   サマリ統計計算
---------------------------------------------------------- */
-function calcStats(list, total) {
-  const cnt = list.length;
-  const percent = total ? Math.round((cnt / total) * 100) : 0;
-
-  const points = list.map(p => Number(p.point ?? 0));
-  const avg = cnt ? Math.round(points.reduce((a, b) => a + b, 0) / cnt) : 0;
-  const min = cnt ? Math.min(...points) : 0;
-  const max = cnt ? Math.max(...points) : 0;
-
-  return { cnt, percent, avg, min, max };
-}
-
-/* ---------------------------------------------------------
-   PRIDE レベル判定
---------------------------------------------------------- */
-function findPrideLevel(label) {
-  return PRIDE_LEVELS.find(l => l.level === label);
-}
-/* ---------------------------------------------------------
-   ★ 店舗名 真ん中省略ユーティリティ
---------------------------------------------------------- */
-function shortenStoreName(full, head = 6, tail = 6) {
-  if (!full) return "";
-  if (full.length <= head + tail) return full;
-  return full.slice(0, head) + "…" + full.slice(-tail);
-}
-
 /* ---------------------------------------------------------
    サマリ生成
 --------------------------------------------------------- */
@@ -387,17 +332,18 @@ function showDetail(key) {
       <tr>
         <td class="center">${starOrLevel}</td>
 
-        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
+        <td class="left player-name clickable"
+            onclick="copyToClipboard('${p.name}')">
           ${p.name}
         </td>
 
         <td class="right">${fmt(p.point)}</td>
 
-        <!-- ★ 店舗名セル：2行固定CSSと連動 -->
-        <td class="left store-name clickable"
+        <!-- ★ 修正版：td に store-name を付けない -->
+        <td class="left store-cell clickable"
             data-fullname="${fullShop.replace(/"/g, "&quot;")}"
             onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
-          ${shortShop}
+          <span class="store-name">${shortShop}</span>
         </td>
 
         <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
