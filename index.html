@@ -1,1 +1,199 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>InitialD Round Data Viewer（auto-json-00）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 
+<!-- ★ スマホでのキャッシュ完全禁止（最重要） -->
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+
+<style>
+body {
+    font-family: sans-serif;
+    margin: 0;
+    padding: 10px;
+    background: #f5f5f5;
+}
+#logBox {
+    background: #222;
+    padding: 10px;
+    font-size: 13px;
+    white-space: pre-wrap;
+    height: 200px;
+    overflow-y: auto;
+    border-radius: 6px;
+    margin: 20px 0;
+}
+table {
+    border-collapse: collapse;
+    width: 100%;
+    background: #fff; /* ← 表全体の背景は白でOK */
+}
+th {
+    background: #0078D4;
+    color: white;
+    padding: 6px;
+}
+td {
+    border: 1px solid #ccc;
+    padding: 6px;
+
+    /* ★ 店舗名セルだけ白いボックスに見える問題の根本解決 */
+    background: transparent;
+}
+td.left { text-align:left; }
+td.right { text-align:right; }
+td.center { text-align:center; }
+.clickable { cursor: pointer; color: #0078d4; font-weight: bold; }
+#summaryView, #detailView { margin-top: 20px; }
+#detailView { display: none; }
+
+/* バーグラフ */
+.bar-wrap {
+    width: 100%;
+    background: #ddd;
+    height: 12px;
+    border-radius: 4px;
+}
+.bar {
+    height: 12px;
+    background: #0078D4;
+    border-radius: 4px;
+}
+
+/* 共通余白 */
+.mt10 { margin-top:10px; }
+
+/* ★ プレイヤー名をスマホでも1行表示にする */
+.player-name {
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+/* ★ 店舗名：全角は2行、半角は1行で最大幅省略 */
+/* ★ 内側の白いボックスを完全に消す（背景透明） */
+.store-name {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+
+    line-height: 1.2em;
+    max-height: calc(1.2em * 2);
+
+    white-space: normal;
+    overflow-wrap: anywhere;
+
+    min-width: 150px;
+
+    background: transparent !important;
+    background-color: transparent !important;
+    background-clip: padding-box !important;
+}
+
+/* ★ RP 列（広がりすぎ防止） */
+.rp-col {
+    max-width: 50px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+/* ★ 称号列（長文対策） */
+.title-col {
+    max-width: 70px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ★ LastUpdate 列（長文対策） */
+.update-col {
+    max-width: 95px;
+    white-space: nowrap;
+}
+</style>
+</head>
+
+<body>
+
+<h2>InitialD Round Data Viewer（auto-json-00 対応）</h2>
+
+<div>
+  <b>最新ラウンド：</b>
+  <span id="latestRound">読み込み中…</span>
+</div>
+
+<!-- 時間フィルタ＋表示期間 -->
+<div class="mt10">
+  <b>時間フィルタ：</b>
+  <select id="rangeSelect">
+      <option value="15" selected>15分</option>
+      <option value="30">30分</option>
+      <option value="60">1時間</option>
+      <option value="120">2時間</option>
+      <option value="180">3時間</option>
+  </select>
+
+  <span style="margin-left:20px;">
+    <b>表示期間：</b>
+    <span id="filterStartTime">-</span>
+     ～ 
+    <span id="jsonUpdateTime">-</span>
+  </span>
+</div>
+
+<!-- Ruby星数フィルタ -->
+<div class="mt10">
+  <b>Ruby星数フィルタ：</b><br>
+  <span id="rubyFilters"></span>
+</div>
+
+<!-- ボタン群 -->
+<div class="mt10">
+  <button id="reloadBtn">最新データ取得</button>
+  <button id="filterBtn" style="margin-left:10px;">フィルタ適用</button>
+  <button id="summaryCsvBtn" style="margin-left:10px;">サマリCSV出力</button>
+  <button id="allCsvBtn" style="margin-left:10px;">全データCSV出力</button>
+</div>
+
+<div id="logBox"></div>
+
+<div id="summaryView">
+  <h3 id="summaryTitle">稼働プレイヤー（合計：0人）</h3>
+  <div id="summaryArea"></div>
+</div>
+
+<div id="detailView">
+  <h3>詳細一覧</h3>
+  <button id="backBtn">← サマリに戻る</button>
+  <div id="detailArea" class="mt10"></div>
+</div>
+
+<!-- ▼ latest.json を読み取って最新ラウンドを UI と script.js に渡す -->
+<script>
+(async () => {
+    try {
+        const res = await fetch("latest.json?cb=" + Date.now());
+        const data = await res.json();
+
+        const round = data.latestRound;
+        document.getElementById("latestRound").textContent = round;
+
+        // script.js から参照できるように保存
+        window.latestRound = round;
+
+    } catch (e) {
+        document.getElementById("latestRound").textContent = "取得失敗";
+        console.error("latest.json 読み込み失敗:", e);
+    }
+})();
+</script>
+
+<!-- script.js 読み込み（キャッシュバスター付き） -->
+<script src="script.js?cb=1"></script>
+
+</body>
+</html>
