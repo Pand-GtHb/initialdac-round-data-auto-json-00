@@ -184,6 +184,61 @@ async function loadRoundData() {
     logError("roundXX.json の取得に失敗：" + e.message);
   }
 }
+
+/* ---------------------------------------------------------
+   フィルタ
+--------------------------------------------------------- */
+function applyFilters() {
+  const minutes = Number(document.getElementById("rangeSelect").value);
+
+  if (!State.generatedAt) {
+    logError("generatedAt が未取得のため、時間フィルタをスキップしました");
+    State.filtered = [...State.all];
+    return;
+  }
+
+  const baseMs = parseDateJST(State.generatedAt).getTime();
+  const filterStartMs = baseMs - minutes * 60 * 1000;
+
+  document.getElementById("filterStartTime").textContent =
+    formatYMDHM(new Date(filterStartMs));
+
+  State.filtered = State.all.filter(p => {
+    if (!p.updateDate) return false;
+    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
+  });
+}
+
+/* ---------------------------------------------------------
+   サマリ統計計算
+--------------------------------------------------------- */
+function calcStats(list, total) {
+  const cnt = list.length;
+  const percent = total ? Math.round((cnt / total) * 100) : 0;
+
+  const points = list.map(p => Number(p.point ?? 0));
+  const avg = cnt ? Math.round(points.reduce((a, b) => a + b, 0) / cnt) : 0;
+  const min = cnt ? Math.min(...points) : 0;
+  const max = cnt ? Math.max(...points) : 0;
+
+  return { cnt, percent, avg, min, max };
+}
+
+/* ---------------------------------------------------------
+   PRIDE レベル判定
+--------------------------------------------------------- */
+function findPrideLevel(label) {
+  return PRIDE_LEVELS.find(l => l.level === label);
+}
+
+/* ---------------------------------------------------------
+   ★ 店舗名 真ん中省略ユーティリティ
+--------------------------------------------------------- */
+function shortenStoreName(full, head = 6, tail = 6) {
+  if (!full) return "";
+  if (full.length <= head + tail) return full;
+  return full.slice(0, head) + "…" + full.slice(-tail);
+}
 /* ---------------------------------------------------------
    サマリ生成
 --------------------------------------------------------- */
@@ -287,7 +342,7 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示（★罫線問題の最小差分修正あり）
+   詳細表示（店舗名セル：罫線問題修正済み）
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
@@ -338,7 +393,7 @@ function showDetail(key) {
 
         <td class="right">${fmt(p.point)}</td>
 
-        <!-- ★ここだけ修正（最小差分） -->
+        <!-- ★ 修正箇所：罫線が消えない構造に変更 -->
         <td class="left clickable"
             data-fullname="${fullShop.replace(/"/g, "&quot;")}"
             onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
