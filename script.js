@@ -1,5 +1,7 @@
 /* ---------------------------------------------------------
    Initial DAC Round Data Viewer（Ruby＋PRIDE専用・前後ランク移動＋検索保持対応）
+   ★ サマリ検索＋詳細検索を normalize ベースで統一
+   ★ summaryFiltered を導入
 --------------------------------------------------------- */
 
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
@@ -70,13 +72,14 @@ function setupRankNavigation(currentKey) {
 const State = {
   all: [],
   filtered: [],
-  summary: [],
+  summary: [],            // 全ランク一覧
+  summaryFiltered: [],    // ★ サマリ検索後のランク一覧
   detailOriginal: [],
   latestRound: null,
   generatedAt: "",
 
-  summarySearchText: "",   // 🔍 サマリ検索
-  detailSearchText: ""     // 🔍 詳細検索（サマリ→詳細で引き継ぐ）
+  summarySearchText: "",  // 🔍 サマリ検索
+  detailSearchText: ""    // 🔍 詳細検索（サマリ→詳細で引き継ぐ）
 };
 
 /* ---------------------------------------------------------
@@ -180,7 +183,26 @@ function formatYMDHM(date) {
 }
 
 /* ---------------------------------------------------------
-   ★ 店舗名省略ロジック（全角18文字＋半角幅判定）
+   ★ normalize（半角→全角＋ひらがな→カタカナ＋小文字化＋スペース除去）
+--------------------------------------------------------- */
+function normalize(s) {
+  if (!s) return "";
+
+  s = s.replace(/\u3000/g, " "); // 全角スペース → 半角
+  s = s.replace(/[A-Za-z0-9]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
+  );
+  s = s.toLowerCase();
+  s = s.replace(/[\u3041-\u3096]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0x60)
+  );
+  s = s.replace(/ /g, "");
+
+  return s;
+}
+
+/* ---------------------------------------------------------
+   ★ 店舗名省略ロジック（旧版のまま）
 --------------------------------------------------------- */
 function getZenkakuLength(str) {
   if (!str) return 0;
@@ -392,35 +414,7 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   ★ normalize（半角→全角＋スペース除去）
---------------------------------------------------------- */
-function normalize(s) {
-  if (!s) return "";
-
-  // 全角スペース → 半角
-  s = s.replace(/\u3000/g, " ");
-
-  // 半角英数 → 全角英数
-  s = s.replace(/[A-Za-z0-9]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
-  );
-
-  // 大文字 → 小文字
-  s = s.toLowerCase();
-
-  // ひらがな → カタカナ
-  s = s.replace(/[\u3041-\u3096]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) + 0x60)
-  );
-
-  // スペース除去
-  s = s.replace(/ /g, "");
-
-  return s;
-}
-
-/* ---------------------------------------------------------
-   ★ サマリ検索フィルタ（ランク横断検索）
+   ★ サマリ検索フィルタ（normalize ベース）
 --------------------------------------------------------- */
 function filterSummaryBySearch() {
   const text = normalize(State.summarySearchText);
@@ -442,7 +436,9 @@ function filterSummaryBySearch() {
 function renderSummary() {
   const area = document.getElementById("summaryArea");
 
-  const filteredSummary = filterSummaryBySearch();
+  /* ★ サマリ検索結果を State に反映 */
+  State.summaryFiltered = filterSummaryBySearch();
+  const filteredSummary = State.summaryFiltered;
 
   const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
 
@@ -526,6 +522,45 @@ function renderSummary() {
   document.getElementById("summaryView").style.display = "block";
   document.getElementById("detailView").style.display = "none";
 }
+/* ---------------------------------------------------------
+   詳細表示（前後ランク移動＋検索再実行対応）
+--------------------------------------------------------- */
+function showDetail(key) {
+  const row = State.summaryFiltered.find(r => r.key === key);
+  if (!row) {
+    logError("詳細データが見つかりません: " + key);
+    return;
+  }
+
+  /* ★ 前後ランク移動ボタン制御 */
+  setupRankNavigation(key);
+
+  const isRubyBand = key.startsWith("R");
+  const bandLabel = row.label;
+
+  let bandIcon = "";
+  if (isRubyBand) {
+    bandIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`;
+  } else {
+    const levelInfo = findPrideLevel(bandLabel);
+    if (levelInfo) {
+      bandIcon =
+        `https://initiald.sega.jp/inidac/ranking-images/pride/${levelInfo.icon}.png`;
+    }
+  }
+
+  /* ★ ランクの元データを更新（更新日時の新しい順） */
+  State.detailOriginal = row.list.slice().sort((a, b) => {
+    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
+  });
+
+  /* ★ 詳細テーブル描画（検索欄の復元もここで行う） */
+  renderDetailTable(isRubyBand, bandLabel, bandIcon);
+
+  document.getElementById("summaryView").style.display = "none";
+  document.getElementById("detailView").style.display = "block";
+}
+
 /* ---------------------------------------------------------
    詳細テーブル（検索文字列復元＋再検索対応）
 --------------------------------------------------------- */
@@ -708,6 +743,10 @@ async function init() {
 
   applyFilters();
   buildSummary();
+
+  /* ★ サマリ検索反映 */
+  State.summaryFiltered = filterSummaryBySearch();
+
   renderSummary();
 
   stopProgress();
@@ -728,6 +767,7 @@ document.addEventListener("DOMContentLoaded", () => {
     startProgress();
     applyFilters();
     buildSummary();
+    State.summaryFiltered = filterSummaryBySearch();
     renderSummary();
     stopProgress();
   };
