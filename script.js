@@ -507,22 +507,26 @@ function renderSummary() {
 }
 /* ---------------------------------------------------------
    詳細表示（前後ランク移動＋検索再実行対応）
+   ★ サマリのフィルタに縛られず rankOrder に従って移動
+   ★ row が無くても空表を表示して次へ進める
 --------------------------------------------------------- */
 function showDetail(key) {
-  const row = State.summaryFiltered.find(r => r.key === key);
+  // ★ サマリフィルタではなく「全ランク一覧」から探す
+  const row = State.summary.find(r => r.key === key);
 
   /* ★ row が無い場合でもエラーを出さず空表を表示 */
   if (!row) {
     State.detailOriginal = [];
     State.currentView = "detail";
     State.currentIsRubyBand = key.startsWith("R");
+
     renderDetailTable(State.currentIsRubyBand, key, "");
     document.getElementById("summaryView").style.display = "none";
     document.getElementById("detailView").style.display = "block";
     return;
   }
 
-  /* ★ 前後ランク移動ボタン制御 */
+  /* ★ 前後ランク移動ボタン制御（rankOrder に従う） */
   setupRankNavigation(key);
 
   const isRubyBand = key.startsWith("R");
