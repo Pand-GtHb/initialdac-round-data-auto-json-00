@@ -30,7 +30,7 @@ body {
 table {
     border-collapse: collapse;
     width: 100%;
-    background: #fff; /* ← 表全体の背景は白でOK */
+    background: #fff;
 }
 th {
     background: #0078D4;
@@ -40,8 +40,6 @@ th {
 td {
     border: 1px solid #ccc;
     padding: 6px;
-
-    /* ★ 店舗名セルだけ白いボックスに見える問題の根本解決 */
     background: transparent;
 }
 td.left { text-align:left; }
@@ -74,7 +72,6 @@ td.center { text-align:center; }
 }
 
 /* ★ 店舗名：全角は2行、半角は1行で最大幅省略 */
-/* ★ 内側の白いボックスを完全に消す（背景透明） */
 .store-name {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -167,12 +164,10 @@ td.center { text-align:center; }
 </div>
 
 <div id="detailView">
-  <h3>詳細一覧</h3>
   <button id="backBtn">← サマリに戻る</button>
   <div id="detailArea" class="mt10"></div>
 </div>
 
-<!-- ▼ latest.json を読み取って最新ラウンドを UI と script.js に渡す -->
 <script>
 (async () => {
     try {
@@ -182,9 +177,7 @@ td.center { text-align:center; }
         const round = data.latestRound;
         document.getElementById("latestRound").textContent = round;
 
-        // script.js から参照できるように保存
         window.latestRound = round;
-
     } catch (e) {
         document.getElementById("latestRound").textContent = "取得失敗";
         console.error("latest.json 読み込み失敗:", e);
@@ -192,7 +185,6 @@ td.center { text-align:center; }
 })();
 </script>
 
-<!-- script.js 読み込み（キャッシュバスター付き） -->
 <script src="script.js?cb=1"></script>
 
 </body>
