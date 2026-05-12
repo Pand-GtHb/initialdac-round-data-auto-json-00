@@ -2,6 +2,7 @@
    Initial DAC Round Data Viewer（Ruby＋PRIDE専用・前後ランク移動＋検索保持対応）
    ★ サマリ検索＋詳細検索を normalize ベースで統一
    ★ summaryFiltered を導入
+   ★ 詳細 → サマリ戻る時に検索クリア
 --------------------------------------------------------- */
 
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
@@ -775,7 +776,11 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
   document.getElementById("allCsvBtn").onclick = exportAllCSV;
 
+  /* ★ 詳細 → サマリ戻る時に検索クリア */
   document.getElementById("backBtn").onclick = () => {
+    State.summarySearchText = "";   // ★ 検索クリア
+    renderSummary();                // ★ 再描画（検索窓も空になる）
+
     document.getElementById("detailView").style.display = "none";
     document.getElementById("summaryView").style.display = "block";
   };
