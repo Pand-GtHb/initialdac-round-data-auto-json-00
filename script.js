@@ -1,9 +1,10 @@
 /* ---------------------------------------------------------
    Initial DAC Round Data Viewer（Ruby＋PRIDE専用・前後ランク移動＋検索保持対応）
-   ★ サマリ検索窓は HTML 側に固定配置（IME 完全安定）
-   ★ サマリ検索＋詳細検索を normalize ベースで統一
+   ★ 検索窓は searchInput に統一（サマリ・詳細共通）
+   ★ IME 完全安定
    ★ summaryFiltered を導入
    ★ 詳細 → サマリ戻る時に検索クリア
+   ★ currentView / currentIsRubyBand を追加
 --------------------------------------------------------- */
 
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
@@ -69,7 +70,7 @@ function setupRankNavigation(currentKey) {
 }
 
 /* ---------------------------------------------------------
-   状態管理（検索文字列保持を追加）
+   状態管理（検索文字列保持＋画面状態追加）
 --------------------------------------------------------- */
 const State = {
   all: [],
@@ -80,8 +81,11 @@ const State = {
   latestRound: null,
   generatedAt: "",
 
-  summarySearchText: "",  // 🔍 サマリ検索（HTML 固定検索窓と同期）
-  detailSearchText: ""    // 🔍 詳細検索（サマリ→詳細で引き継ぐ）
+  summarySearchText: "",  // 🔍 サマリ検索
+  detailSearchText: "",   // 🔍 詳細検索
+
+  currentView: "summary",     // ★ "summary" or "detail"
+  currentIsRubyBand: true     // ★ 詳細画面で Ruby帯かどうか
 };
 
 /* ---------------------------------------------------------
@@ -433,7 +437,7 @@ function filterSummaryBySearch() {
 }
 
 /* ---------------------------------------------------------
-   ★ 修正版：サマリ表示（検索窓は HTML 固定、ここではテーブルのみ描画）
+   ★ 修正版：サマリ表示（検索窓は searchInput に統一）
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
@@ -448,7 +452,7 @@ function renderSummary() {
     .reduce((s, r) => s + r.list.length, 0);
   const prideTotal = total - rubyTotal;
 
-  /* ★ 検索窓は HTML 側に固定したため、ここではテーブルのみ描画 */
+  /* ★ テーブルのみ描画（検索窓は searchInput） */
   area.innerHTML = `
     <h3>合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人</h3>
 
@@ -495,6 +499,9 @@ function renderSummary() {
     });
   });
 
+  /* ★ 現在の画面を summary として記録 */
+  State.currentView = "summary";
+
   document.getElementById("summaryView").style.display = "block";
   document.getElementById("detailView").style.display = "none";
 }
@@ -503,8 +510,15 @@ function renderSummary() {
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summaryFiltered.find(r => r.key === key);
+
+  /* ★ row が無い場合でもエラーを出さず空表を表示 */
   if (!row) {
-    logError("詳細データが見つかりません: " + key);
+    State.detailOriginal = [];
+    State.currentView = "detail";
+    State.currentIsRubyBand = key.startsWith("R");
+    renderDetailTable(State.currentIsRubyBand, key, "");
+    document.getElementById("summaryView").style.display = "none";
+    document.getElementById("detailView").style.display = "block";
     return;
   }
 
@@ -530,7 +544,11 @@ function showDetail(key) {
     return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
 
-  /* ★ 詳細テーブル描画（検索欄の復元もここで行う） */
+  /* ★ 現在の画面状態を記録 */
+  State.currentView = "detail";
+  State.currentIsRubyBand = isRubyBand;
+
+  /* ★ 詳細テーブル描画 */
   renderDetailTable(isRubyBand, bandLabel, bandIcon);
 
   document.getElementById("summaryView").style.display = "none";
@@ -538,7 +556,7 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   詳細テーブル（検索文字列復元＋再検索対応）
+   詳細テーブル（検索窓は searchInput を使用）
 --------------------------------------------------------- */
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   const area = document.getElementById("detailArea");
@@ -548,21 +566,6 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
       <img src="${bandIcon}" width="32" style="vertical-align:middle;">
       ${bandLabel}：${fmt(State.detailOriginal.length)}人
     </h3>
-
-    <div style="margin:8px 0;">
-      <input
-        id="playerFilterInput"
-        type="text"
-        placeholder="プレイヤー名で絞り込み（あいうえお順）"
-        style="
-          width: 95%;
-          padding: 6px 8px;
-          font-size: 14px;
-          border: 1px solid #ccc;
-          border-radius: 4px;
-        "
-      />
-    </div>
 
     <div style="overflow-x:auto;">
       <table>
@@ -580,17 +583,6 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
       </table>
     </div>
   `;
-
-  const input = document.getElementById("playerFilterInput");
-
-  /* ★ サマリ検索 → 詳細検索へ引き継ぎ済み */
-  input.value = State.detailSearchText;
-
-  /* ★ 入力イベントで State を更新 */
-  input.addEventListener("input", e => {
-    State.detailSearchText = e.target.value;
-    applyPlayerFilter(State.detailSearchText, isRubyBand);
-  });
 
   /* ★ 初期描画時も検索を適用（ランク移動後の再検索） */
   applyPlayerFilter(State.detailSearchText, isRubyBand);
@@ -720,7 +712,6 @@ async function init() {
   applyFilters();
   buildSummary();
 
-  /* ★ サマリ検索反映 */
   State.summaryFiltered = filterSummaryBySearch();
 
   renderSummary();
@@ -731,7 +722,7 @@ async function init() {
 }
 
 /* ---------------------------------------------------------
-   DOMContentLoaded（★ サマリ検索窓のイベント登録をここに移動）
+   DOMContentLoaded（検索窓は searchInput に統一）
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("reloadBtn").onclick = () => {
@@ -751,21 +742,27 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
   document.getElementById("allCsvBtn").onclick = exportAllCSV;
 
-  /* ★ サマリ検索窓のイベント登録（IME 完全安定） */
-  const summaryInput = document.getElementById("summarySearchInput");
-  summaryInput.addEventListener("input", e => {
-    State.summarySearchText = e.target.value;
-    renderSummary();
+  /* ★ 検索窓（searchInput） */
+  const searchInput = document.getElementById("searchInput");
+
+  searchInput.addEventListener("input", e => {
+    const text = e.target.value;
+
+    if (State.currentView === "summary") {
+      State.summarySearchText = text;
+      renderSummary();
+    } else {
+      State.detailSearchText = text;
+      applyPlayerFilter(text, State.currentIsRubyBand);
+    }
   });
 
-  /* ★ 詳細 → サマリ戻る時に検索クリア（HTML 側の input もクリア） */
+  /* ★ 詳細 → サマリ戻る時に検索クリア */
   document.getElementById("backBtn").onclick = () => {
     State.summarySearchText = "";
-    document.getElementById("summarySearchInput").value = ""; // ★ HTML 側もクリア
+    State.detailSearchText = "";
+    searchInput.value = "";
     renderSummary();
-
-    document.getElementById("detailView").style.display = "none";
-    document.getElementById("summaryView").style.display = "block";
   };
 
   init();
