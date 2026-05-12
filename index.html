@@ -185,11 +185,10 @@ td.center { text-align:center; }
 
 <div id="logBox"></div>
 
-<!-- ★★★ ここが今回の重要変更点 ★★★ -->
-<!-- ★ サマリ検索窓を summaryArea の外に固定配置 -->
-<div id="summarySearchArea" class="mt10">
+<!-- ★★★ 検索窓（サマリ・詳細共通） ★★★ -->
+<div id="searchArea" class="mt10">
   <input
-    id="summarySearchInput"
+    id="searchInput"
     type="text"
     placeholder="プレイヤー名で絞り込み（ランク横断）"
     style="
@@ -201,9 +200,8 @@ td.center { text-align:center; }
     "
   />
 </div>
-<!-- ★★★ ここまで ★★★ -->
 
-<!-- サマリ画面（テーブルだけ script.js が描画） -->
+<!-- サマリ画面 -->
 <div id="summaryView">
   <div id="summaryArea"></div>
 </div>
