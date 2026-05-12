@@ -37,15 +37,12 @@ const MAX_LOG_LINES = 200;
 function appendLog(msg, type = "info") {
   const box = document.getElementById("logBox");
 
-  // ★ 既存ログを「過去色」に変更
   [...box.children].forEach(line => {
     const t = line.dataset.type;
     if (t === "info") line.style.color = "#66aa66";
     if (t === "warn") line.style.color = "#bbaa55";
-    // error は常に赤のまま
   });
 
-  // ★ 新規ログ行
   const now = new Date();
   const t = now.toLocaleString("ja-JP", {
     hour12: false,
@@ -57,19 +54,16 @@ function appendLog(msg, type = "info") {
   line.textContent = `[${t}] ${msg}`;
   line.dataset.type = type;
 
-  // ★ 色分け
   if (type === "error") {
     line.style.color = "#ff5555";
   } else if (type === "warn") {
-    line.style.color = "#ffcc00"; // 最新 warn
+    line.style.color = "#ffcc00";
   } else {
-    line.style.color = "#00ff00"; // 最新 info
+    line.style.color = "#00ff00";
   }
 
-  // ★ 最新を上に
   box.prepend(line);
 
-  // ★ 最大行数制限
   while (box.children.length > MAX_LOG_LINES) {
     box.removeChild(box.lastChild);
   }
@@ -80,7 +74,7 @@ const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
 
 /* ---------------------------------------------------------
-   進行中アニメーション（最新が上）
+   進行中アニメーション
 --------------------------------------------------------- */
 let progressTimer = null;
 let progressPos = 0;
@@ -93,7 +87,7 @@ function startProgress() {
 
   progressPos = 0;
   progressLine = document.createElement("div");
-  progressLine.style.color = "#ffeb3b"; // 進行中（黄色）
+  progressLine.style.color = "#ffeb3b";
 
   box.prepend(progressLine);
 
@@ -121,7 +115,6 @@ function stopProgress() {
     progressLine = null;
   }
 
-  // ★ 完了ログを統一
   log("Viewer フィルタ完了");
 }
 
@@ -138,6 +131,69 @@ function formatYMDHM(date) {
   const hh = ("0" + date.getHours()).slice(-2);
   const mm = ("0" + date.getMinutes()).slice(-2);
   return `${y}/${m}/${d} ${hh}:${mm}`;
+}
+
+/* ---------------------------------------------------------
+   ★ 店舗名省略ロジック（全角18文字＋半角幅判定）
+--------------------------------------------------------- */
+
+// 全角換算長さ（全角=1, 半角=0.5）
+function getZenkakuLength(str) {
+  if (!str) return 0;
+  const len = str.replace(/[^\x00-\x7F]/g, "xx").length;
+  return len / 2;
+}
+
+// 半角主体かどうか
+function isMostlyAscii(str) {
+  if (!str) return true;
+  const asciiCount = (str.match(/[\x00-\x7F]/g) || []).length;
+  return asciiCount / str.length >= 0.7;
+}
+
+// テキスト幅測定
+function getTextWidth(text, font) {
+  const canvas = getTextWidth.canvas || (getTextWidth.canvas = document.createElement("canvas"));
+  const ctx = canvas.getContext("2d");
+  ctx.font = font;
+  return ctx.measureText(text).width;
+}
+
+/* ---------------------------------------------------------
+   店舗名 真ん中省略（完全版）
+--------------------------------------------------------- */
+function shortenStoreName(full) {
+  if (!full) return "";
+
+  // 1) 全角主体 → 全角18文字までは省略しない
+  if (!isMostlyAscii(full)) {
+    const zLen = getZenkakuLength(full);
+    if (zLen <= 18) return full;
+
+    const head = 6;
+    const tail = 6;
+    if (full.length <= head + tail) return full;
+    return full.slice(0, head) + "…" + full.slice(-tail);
+  }
+
+  // 2) 半角主体 → 幅判定（220px）
+  const font = "14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  const maxWidth = 220;
+
+  if (getTextWidth(full, font) <= maxWidth) return full;
+
+  let head = 10;
+  let tail = 10;
+
+  while (head + tail > 2) {
+    const candidate = full.slice(0, head) + "…" + full.slice(-tail);
+    if (getTextWidth(candidate, font) <= maxWidth) return candidate;
+
+    if (head >= tail) head--;
+    else tail--;
+  }
+
+  return full.slice(0, 1) + "…" + full.slice(-1);
 }
 
 /* ---------------------------------------------------------
@@ -166,7 +222,6 @@ function buildRubyFilters() {
     `;
   }).join("");
 }
-
 /* ---------------------------------------------------------
    latest.json 読み込み
 --------------------------------------------------------- */
@@ -262,15 +317,6 @@ function findPrideLevel(label) {
 }
 
 /* ---------------------------------------------------------
-   店舗名 真ん中省略
---------------------------------------------------------- */
-function shortenStoreName(full, head = 6, tail = 6) {
-  if (!full) return "";
-  if (full.length <= head + tail) return full;
-  return full.slice(0, head) + "…" + full.slice(-tail);
-}
-
-/* ---------------------------------------------------------
    サマリ生成
 --------------------------------------------------------- */
 function buildSummary() {
@@ -307,6 +353,7 @@ function buildSummary() {
     });
   });
 }
+
 /* ---------------------------------------------------------
    サマリ表示
 --------------------------------------------------------- */
@@ -372,7 +419,7 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示＋プレイヤー名フィルタ
+   詳細表示
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
@@ -403,7 +450,7 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   詳細テーブル本体
+   詳細テーブル
 --------------------------------------------------------- */
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   const area = document.getElementById("detailArea");
@@ -420,7 +467,7 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
         type="text"
         placeholder="プレイヤー名で絞り込み（あいうえお順）"
         style="
-          width: 100%;
+          width: 95%;
           padding: 6px 8px;
           font-size: 14px;
           border: 1px solid #ccc;
@@ -473,7 +520,7 @@ function applyPlayerFilter(keyword, isRubyBand) {
 }
 
 /* ---------------------------------------------------------
-   詳細行描画
+   詳細行描画（★ 店舗名省略ロジック適用）
 --------------------------------------------------------- */
 function renderDetailRows(list, isRubyBand) {
   const tbody = document.getElementById("detailTableBody");
@@ -489,7 +536,7 @@ function renderDetailRows(list, isRubyBand) {
       : p.pridePoint;
 
     const fullShop = p.shopname ?? "";
-    const shortShop = shortenStoreName(fullShop, 6, 6);
+    const shortShop = shortenStoreName(fullShop);
 
     return `
       <tr>
@@ -522,22 +569,6 @@ function renderDetailRows(list, isRubyBand) {
 function copyToClipboard(text) {
   navigator.clipboard.writeText(text);
   log(`コピー：${text}`);
-}
-
-/* ---------------------------------------------------------
-   CSV ダウンロード
---------------------------------------------------------- */
-function downloadCSV(filename, header, body) {
-  const csv = "\ufeff" + header + "\n" + body;
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-
-  URL.revokeObjectURL(url);
 }
 
 /* ---------------------------------------------------------
