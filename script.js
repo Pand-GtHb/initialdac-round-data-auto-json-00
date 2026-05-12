@@ -24,13 +24,13 @@ const State = {
   all: [],
   filtered: [],
   summary: [],
-  detailOriginal: [], // ★ 詳細ビューの元データ（フィルタ前）
+  detailOriginal: [],
   latestRound: null,
   generatedAt: ""
 };
 
 /* ---------------------------------------------------------
-   ログ（日時付き）
+   ログ（最新が上）
 --------------------------------------------------------- */
 function appendLog(msg, type = "normal") {
   const box = document.getElementById("logBox");
@@ -46,14 +46,15 @@ function appendLog(msg, type = "normal") {
   line.textContent = `[${t}] ${msg}`;
   line.style.color = type === "error" ? "#ff5555" : "#00ff00";
 
-  box.appendChild(line);
-  box.scrollTop = box.scrollHeight;
+  /* ★ 最新ログを上に表示 */
+  box.prepend(line);
 }
+
 const log = msg => appendLog(msg);
 const logError = msg => appendLog(msg, "error");
 
 /* ---------------------------------------------------------
-   進行中アニメーション
+   進行中アニメーション（最新が上）
 --------------------------------------------------------- */
 let progressTimer = null;
 let progressPos = 0;
@@ -62,12 +63,14 @@ let progressLine = null;
 function startProgress() {
   const box = document.getElementById("logBox");
 
-  if (progressLine) box.removeChild(progressLine);
+  if (progressLine) progressLine.remove();
 
   progressPos = 0;
   progressLine = document.createElement("div");
   progressLine.style.color = "#ffeb3b";
-  box.appendChild(progressLine);
+
+  /* ★ 最新が上なので prepend */
+  box.prepend(progressLine);
 
   updateProgressBar();
 
@@ -232,7 +235,7 @@ function findPrideLevel(label) {
 }
 
 /* ---------------------------------------------------------
-   ★ 店舗名 真ん中省略ユーティリティ
+   店舗名 真ん中省略
 --------------------------------------------------------- */
 function shortenStoreName(full, head = 6, tail = 6) {
   if (!full) return "";
@@ -277,7 +280,6 @@ function buildSummary() {
     });
   });
 }
-
 /* ---------------------------------------------------------
    サマリ表示
 --------------------------------------------------------- */
@@ -349,7 +351,6 @@ function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
   if (!row) return;
 
-  // 元データを保持（時間順ソート）
   const isRubyBand = key.startsWith("R");
   const bandLabel = row.label;
 
@@ -375,7 +376,7 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   詳細テーブル本体（フィルタ入力＋tbody）
+   詳細テーブル本体
 --------------------------------------------------------- */
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   const area = document.getElementById("detailArea");
@@ -423,12 +424,11 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
     applyPlayerFilter(e.target.value, isRubyBand);
   });
 
-  // 初期表示（フィルタなし）
   applyPlayerFilter("", isRubyBand);
 }
 
 /* ---------------------------------------------------------
-   プレイヤー名フィルタ適用（五十音順ソート）
+   プレイヤー名フィルタ
 --------------------------------------------------------- */
 function applyPlayerFilter(keyword, isRubyBand) {
   const base = State.detailOriginal || [];
@@ -438,7 +438,6 @@ function applyPlayerFilter(keyword, isRubyBand) {
     ? base.filter(p => p.name && p.name.includes(trimmed))
     : base;
 
-  // 五十音順ソート
   list = [...list].sort((a, b) =>
     String(a.name).localeCompare(String(b.name), "ja")
   );
@@ -447,7 +446,7 @@ function applyPlayerFilter(keyword, isRubyBand) {
 }
 
 /* ---------------------------------------------------------
-   詳細行描画（クリックコピー・店舗名挙動維持）
+   詳細行描画
 --------------------------------------------------------- */
 function renderDetailRows(list, isRubyBand) {
   const tbody = document.getElementById("detailTableBody");
