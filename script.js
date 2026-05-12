@@ -24,7 +24,7 @@ const State = {
   all: [],
   filtered: [],
   summary: [],
-  detail: [],
+  detailOriginal: [], // ★ 詳細ビューの元データ（フィルタ前）
   latestRound: null,
   generatedAt: ""
 };
@@ -239,6 +239,7 @@ function shortenStoreName(full, head = 6, tail = 6) {
   if (full.length <= head + tail) return full;
   return full.slice(0, head) + "…" + full.slice(-tail);
 }
+
 /* ---------------------------------------------------------
    サマリ生成
 --------------------------------------------------------- */
@@ -331,7 +332,7 @@ function renderSummary() {
       ${rows}
     </table>
     </div>
-  `;
+ `;
 
   document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
     tr.addEventListener("click", () => showDetail(tr.dataset.key));
@@ -342,14 +343,13 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示（店舗名セル：罫線問題修正済み）
+   詳細表示＋プレイヤー名フィルタ
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
   if (!row) return;
 
-  State.detail = row.list.slice();
-
+  // 元データを保持（時間順ソート）
   const isRubyBand = key.startsWith("R");
   const bandLabel = row.label;
 
@@ -364,13 +364,96 @@ function showDetail(key) {
     }
   }
 
-  State.detail.sort((a, b) => {
+  State.detailOriginal = row.list.slice().sort((a, b) => {
     return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
 
+  renderDetailTable(isRubyBand, bandLabel, bandIcon);
+
+  document.getElementById("summaryView").style.display = "none";
+  document.getElementById("detailView").style.display = "block";
+}
+
+/* ---------------------------------------------------------
+   詳細テーブル本体（フィルタ入力＋tbody）
+--------------------------------------------------------- */
+function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   const area = document.getElementById("detailArea");
 
-  const rows = State.detail.map(p => {
+  area.innerHTML = `
+    <h3>
+      <img src="${bandIcon}" width="32" style="vertical-align:middle;">
+      ${bandLabel}：${fmt(State.detailOriginal.length)}人
+    </h3>
+
+    <div style="margin:8px 0;">
+      <input
+        id="playerFilterInput"
+        type="text"
+        placeholder="プレイヤー名で絞り込み（あいうえお順）"
+        style="
+          width: 100%;
+          padding: 6px 8px;
+          font-size: 14px;
+          border: 1px solid #ccc;
+          border-radius: 4px;
+        "
+      />
+    </div>
+
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>☆・PRIDE</th>
+            <th>プレイヤー名</th>
+            <th>RP</th>
+            <th>店舗名</th>
+            <th>称号</th>
+            <th>Last Update</th>
+          </tr>
+        </thead>
+        <tbody id="detailTableBody"></tbody>
+      </table>
+    </div>
+  `;
+
+  const input = document.getElementById("playerFilterInput");
+  input.addEventListener("input", e => {
+    applyPlayerFilter(e.target.value, isRubyBand);
+  });
+
+  // 初期表示（フィルタなし）
+  applyPlayerFilter("", isRubyBand);
+}
+
+/* ---------------------------------------------------------
+   プレイヤー名フィルタ適用（五十音順ソート）
+--------------------------------------------------------- */
+function applyPlayerFilter(keyword, isRubyBand) {
+  const base = State.detailOriginal || [];
+  const trimmed = keyword.trim();
+
+  let list = trimmed
+    ? base.filter(p => p.name && p.name.includes(trimmed))
+    : base;
+
+  // 五十音順ソート
+  list = [...list].sort((a, b) =>
+    String(a.name).localeCompare(String(b.name), "ja")
+  );
+
+  renderDetailRows(list, isRubyBand);
+}
+
+/* ---------------------------------------------------------
+   詳細行描画（クリックコピー・店舗名挙動維持）
+--------------------------------------------------------- */
+function renderDetailRows(list, isRubyBand) {
+  const tbody = document.getElementById("detailTableBody");
+  if (!tbody) return;
+
+  const rows = list.map(p => {
     const titleUrl = p.mytitleId
       ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
       : "";
@@ -379,7 +462,6 @@ function showDetail(key) {
       ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
       : p.pridePoint;
 
-    /* ★ 店舗名：短縮表示＋フル名コピー対応 */
     const fullShop = p.shopname ?? "";
     const shortShop = shortenStoreName(fullShop, 6, 6);
 
@@ -393,7 +475,6 @@ function showDetail(key) {
 
         <td class="right">${fmt(p.point)}</td>
 
-        <!-- ★ 修正箇所：罫線が消えない構造に変更 -->
         <td class="left clickable"
             data-fullname="${fullShop.replace(/"/g, "&quot;")}"
             onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
@@ -406,29 +487,7 @@ function showDetail(key) {
     `;
   }).join("");
 
-  area.innerHTML = `
-    <h3>
-      <img src="${bandIcon}" width="32" style="vertical-align:middle;">
-      ${bandLabel}：${fmt(State.detail.length)}人
-    </h3>
-
-    <div style="overflow-x:auto;">
-    <table>
-      <tr>
-        <th>☆・PRIDE</th>
-        <th>プレイヤー名</th>
-        <th>RP</th>
-        <th>店舗名</th>
-        <th>称号</th>
-        <th>Last Update</th>
-      </tr>
-      ${rows}
-    </table>
-    </div>
-  `;
-
-  document.getElementById("summaryView").style.display = "none";
-  document.getElementById("detailView").style.display = "block";
+  tbody.innerHTML = rows;
 }
 
 /* ---------------------------------------------------------
