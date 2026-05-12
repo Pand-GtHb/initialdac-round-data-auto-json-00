@@ -30,11 +30,22 @@ const State = {
 };
 
 /* ---------------------------------------------------------
-   ログ（最新が上）
+   ログ（最新が上）＋色分け＋最大行数制限
 --------------------------------------------------------- */
-function appendLog(msg, type = "normal") {
+const MAX_LOG_LINES = 200;
+
+function appendLog(msg, type = "info") {
   const box = document.getElementById("logBox");
 
+  // ★ 既存ログを「過去色」に変更
+  [...box.children].forEach(line => {
+    const t = line.dataset.type;
+    if (t === "info") line.style.color = "#66aa66";
+    if (t === "warn") line.style.color = "#bbaa55";
+    // error は常に赤のまま
+  });
+
+  // ★ 新規ログ行
   const now = new Date();
   const t = now.toLocaleString("ja-JP", {
     hour12: false,
@@ -44,13 +55,28 @@ function appendLog(msg, type = "normal") {
 
   const line = document.createElement("div");
   line.textContent = `[${t}] ${msg}`;
-  line.style.color = type === "error" ? "#ff5555" : "#00ff00";
+  line.dataset.type = type;
 
-  /* ★ 最新ログを上に表示 */
+  // ★ 色分け
+  if (type === "error") {
+    line.style.color = "#ff5555";
+  } else if (type === "warn") {
+    line.style.color = "#ffcc00"; // 最新 warn
+  } else {
+    line.style.color = "#00ff00"; // 最新 info
+  }
+
+  // ★ 最新を上に
   box.prepend(line);
+
+  // ★ 最大行数制限
+  while (box.children.length > MAX_LOG_LINES) {
+    box.removeChild(box.lastChild);
+  }
 }
 
-const log = msg => appendLog(msg);
+const log = msg => appendLog(msg, "info");
+const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
 
 /* ---------------------------------------------------------
@@ -67,9 +93,8 @@ function startProgress() {
 
   progressPos = 0;
   progressLine = document.createElement("div");
-  progressLine.style.color = "#ffeb3b";
+  progressLine.style.color = "#ffeb3b"; // 進行中（黄色）
 
-  /* ★ 最新が上なので prepend */
   box.prepend(progressLine);
 
   updateProgressBar();
@@ -92,10 +117,12 @@ function stopProgress() {
   progressTimer = null;
 
   if (progressLine) {
-    progressLine.style.color = "#00ff00";
-    progressLine.textContent = "完了";
+    progressLine.remove();
     progressLine = null;
   }
+
+  // ★ 完了ログを統一
+  log("Viewer フィルタ完了");
 }
 
 /* ---------------------------------------------------------
