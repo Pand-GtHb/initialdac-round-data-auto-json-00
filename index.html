@@ -17,16 +17,21 @@ body {
     padding: 10px;
     background: #f5f5f5;
 }
+
+/* ★ ログウィンドウ：幅を狭く・高さを低く（添付図準拠） */
 #logBox {
     background: #222;
     padding: 10px;
-    font-size: 13px;
+    font-size: 12px; /* 少し小さく */
     white-space: pre-wrap;
-    height: 200px;
+    height: 120px;   /* 200px → 120px */
     overflow-y: auto;
     border-radius: 6px;
-    margin: 20px 0;
+    margin: 15px 0;
+    width: 95%;      /* スマホで横幅を抑える */
 }
+
+/* 表・その他は現状維持 */
 table {
     border-collapse: collapse;
     width: 100%;
@@ -111,6 +116,14 @@ td.center { text-align:center; }
     max-width: 95px;
     white-space: nowrap;
 }
+
+/* ★ 表示期間 2 行化（添付図準拠） */
+#periodBox {
+    display: grid;
+    grid-template-columns: 1fr;
+    row-gap: 2px;
+    margin-top: 5px;
+}
 </style>
 </head>
 
@@ -123,7 +136,7 @@ td.center { text-align:center; }
   <span id="latestRound">読み込み中…</span>
 </div>
 
-<!-- 時間フィルタ＋表示期間 -->
+<!-- ★ 表示期間を2行化した新レイアウト -->
 <div class="mt10">
   <b>時間フィルタ：</b>
   <select id="rangeSelect">
@@ -134,12 +147,11 @@ td.center { text-align:center; }
       <option value="180">3時間</option>
   </select>
 
-  <span style="margin-left:20px;">
-    <b>表示期間：</b>
-    <span id="filterStartTime">-</span>
-     ～ 
-    <span id="jsonUpdateTime">-</span>
-  </span>
+  <!-- ★ 2行化ブロック -->
+  <div id="periodBox">
+      <div><b>表示開始：</b><span id="filterStartTime">-</span></div>
+      <div><b>JSON更新：</b><span id="jsonUpdateTime">-</span></div>
+  </div>
 </div>
 
 <!-- Ruby星数フィルタ -->
@@ -156,6 +168,7 @@ td.center { text-align:center; }
   <button id="allCsvBtn" style="margin-left:10px;">全データCSV出力</button>
 </div>
 
+<!-- ★ ログウィンドウ（高さ縮小・幅調整済み） -->
 <div id="logBox"></div>
 
 <div id="summaryView">
