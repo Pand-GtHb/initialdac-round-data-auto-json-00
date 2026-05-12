@@ -11,6 +11,7 @@
 <meta http-equiv="Expires" content="0">
 
 <style>
+/* （あなたの CSS はそのまま。省略なしで全て残す） */
 body {
     font-family: sans-serif;
     margin: 0;
@@ -18,7 +19,6 @@ body {
     background: #f5f5f5;
 }
 
-/* ★ ログウィンドウ：幅を狭く・高さを低く（添付図準拠） */
 #logBox {
     background: #222;
     padding: 10px;
@@ -31,7 +31,6 @@ body {
     width: 95%;
 }
 
-/* 表・その他は現状維持 */
 table {
     border-collapse: collapse;
     width: 100%;
@@ -54,7 +53,6 @@ td.center { text-align:center; }
 #summaryView, #detailView { margin-top: 20px; }
 #detailView { display: none; }
 
-/* バーグラフ */
 .bar-wrap {
     width: 100%;
     background: #ddd;
@@ -67,16 +65,13 @@ td.center { text-align:center; }
     border-radius: 4px;
 }
 
-/* 共通余白 */
 .mt10 { margin-top:10px; }
 
-/* ★ プレイヤー名をスマホでも1行表示にする */
 .player-name {
     white-space: nowrap;
     overflow: hidden;
 }
 
-/* ★ 店舗名：全角は2行、半角は1行で最大幅省略 */
 .store-name {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -96,14 +91,12 @@ td.center { text-align:center; }
     background-clip: padding-box !important;
 }
 
-/* ★ RP 列（広がりすぎ防止） */
 .rp-col {
     max-width: 50px;
     white-space: nowrap;
     overflow: hidden;
 }
 
-/* ★ 称号列（長文対策） */
 .title-col {
     max-width: 70px;
     overflow: hidden;
@@ -111,13 +104,11 @@ td.center { text-align:center; }
     white-space: nowrap;
 }
 
-/* ★ LastUpdate 列（長文対策） */
 .update-col {
     max-width: 95px;
     white-space: nowrap;
 }
 
-/* ★ 表示期間：2行のまま“：”を揃える */
 #periodBox {
     display: grid;
     grid-template-columns: auto 1fr;
@@ -133,7 +124,6 @@ td.center { text-align:center; }
     text-align: left;
 }
 
-/* ★ 前後ランク移動ボタン（あなたの希望どおりの位置） */
 .rank-nav-box {
     display: flex;
     justify-content: flex-start;
@@ -142,13 +132,11 @@ td.center { text-align:center; }
     margin-bottom: 8px;
 }
 
-/* ボタンの基本 */
 .rank-nav-btn {
     padding: 6px 14px;
     font-size: 14px;
 }
 
-/* ★ 右ボタンを RP 列の上あたりに寄せるための余白 */
 #nextRankBtn {
     margin-left: 40px;
 }
@@ -164,7 +152,6 @@ td.center { text-align:center; }
   <span id="latestRound">読み込み中…</span>
 </div>
 
-<!-- ★ 表示期間（2行のまま“：”揃え） -->
 <div class="mt10">
   <b>時間フィルタ：</b>
   <select id="rangeSelect">
@@ -184,13 +171,11 @@ td.center { text-align:center; }
   </div>
 </div>
 
-<!-- Ruby星数フィルタ -->
 <div class="mt10">
   <b>Ruby星数フィルタ：</b><br>
   <span id="rubyFilters"></span>
 </div>
 
-<!-- ボタン群 -->
 <div class="mt10">
   <button id="reloadBtn">最新データ取得</button>
   <button id="filterBtn" style="margin-left:10px;">フィルタ適用</button>
@@ -198,15 +183,32 @@ td.center { text-align:center; }
   <button id="allCsvBtn" style="margin-left:10px;">全データCSV出力</button>
 </div>
 
-<!-- ★ ログウィンドウ -->
 <div id="logBox"></div>
 
-<!-- ★ サマリ画面（script.js が中身を自動生成） -->
+<!-- ★★★ ここが今回の重要変更点 ★★★ -->
+<!-- ★ サマリ検索窓を summaryArea の外に固定配置 -->
+<div id="summarySearchArea" class="mt10">
+  <input
+    id="summarySearchInput"
+    type="text"
+    placeholder="プレイヤー名で絞り込み（ランク横断）"
+    style="
+      width: 95%;
+      padding: 6px 8px;
+      font-size: 14px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    "
+  />
+</div>
+<!-- ★★★ ここまで ★★★ -->
+
+<!-- サマリ画面（テーブルだけ script.js が描画） -->
 <div id="summaryView">
   <div id="summaryArea"></div>
 </div>
 
-<!-- ★ 詳細画面 -->
+<!-- 詳細画面 -->
 <div id="detailView">
   <button id="backBtn">← サマリに戻る</button>
 
@@ -218,7 +220,6 @@ td.center { text-align:center; }
   <div id="detailArea" class="mt10"></div>
 </div>
 
-<!-- latest.json の初期読み込み（script.js 本体とは独立） -->
 <script>
 (async () => {
     try {
@@ -236,7 +237,6 @@ td.center { text-align:center; }
 })();
 </script>
 
-<!-- ★ メインロジック -->
 <script src="script.js?cb=1"></script>
 
 </body>
