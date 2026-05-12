@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------
-   Initial DAC Round Data Viewer（Ruby＋PRIDE専用・前後ランク移動対応）
+   Initial DAC Round Data Viewer（Ruby＋PRIDE専用・前後ランク移動＋検索保持対応）
 --------------------------------------------------------- */
 
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
@@ -65,7 +65,7 @@ function setupRankNavigation(currentKey) {
 }
 
 /* ---------------------------------------------------------
-   状態管理
+   状態管理（検索文字列保持を追加）
 --------------------------------------------------------- */
 const State = {
   all: [],
@@ -73,7 +73,8 @@ const State = {
   summary: [],
   detailOriginal: [],
   latestRound: null,
-  generatedAt: ""
+  generatedAt: "",
+  playerFilterText: ""   // 🔍 プレイヤー名フィルタの入力内容を保持
 };
 
 /* ---------------------------------------------------------
@@ -175,25 +176,22 @@ function formatYMDHM(date) {
   const mm = ("0" + date.getMinutes()).slice(-2);
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
+
 /* ---------------------------------------------------------
    ★ 店舗名省略ロジック（全角18文字＋半角幅判定）
 --------------------------------------------------------- */
-
-// 全角換算長さ（全角=1, 半角=0.5）
 function getZenkakuLength(str) {
   if (!str) return 0;
   const len = str.replace(/[^\x00-\x7F]/g, "xx").length;
   return len / 2;
 }
 
-// 半角主体かどうか
 function isMostlyAscii(str) {
   if (!str) return true;
   const asciiCount = (str.match(/[\x00-\x7F]/g) || []).length;
   return asciiCount / str.length >= 0.7;
 }
 
-// テキスト幅測定
 function getTextWidth(text, font) {
   const canvas = getTextWidth.canvas || (getTextWidth.canvas = document.createElement("canvas"));
   const ctx = canvas.getContext("2d");
@@ -201,13 +199,9 @@ function getTextWidth(text, font) {
   return ctx.measureText(text).width;
 }
 
-/* ---------------------------------------------------------
-   店舗名 真ん中省略（完全版）
---------------------------------------------------------- */
 function shortenStoreName(full) {
   if (!full) return "";
 
-  // 1) 全角主体 → 全角18文字までは省略しない
   if (!isMostlyAscii(full)) {
     const zLen = getZenkakuLength(full);
     if (zLen <= 18) return full;
@@ -218,7 +212,6 @@ function shortenStoreName(full) {
     return full.slice(0, head) + "…" + full.slice(-tail);
   }
 
-  // 2) 半角主体 → 幅判定（220px）
   const font = "14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
   const maxWidth = 220;
 
@@ -312,7 +305,6 @@ async function loadRoundData() {
     logError("roundXX.json の取得に失敗：" + e.message);
   }
 }
-
 /* ---------------------------------------------------------
    フィルタ
 --------------------------------------------------------- */
@@ -396,6 +388,7 @@ function buildSummary() {
     });
   });
 }
+
 /* ---------------------------------------------------------
    サマリ表示
 --------------------------------------------------------- */
@@ -453,7 +446,11 @@ function renderSummary() {
  `;
 
   document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
-    tr.addEventListener("click", () => showDetail(tr.dataset.key));
+    tr.addEventListener("click", () => {
+      // サマリから入るときは検索をクリアする
+      State.playerFilterText = "";
+      showDetail(tr.dataset.key);
+    });
   });
 
   document.getElementById("summaryView").style.display = "block";
@@ -461,7 +458,7 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示（前後ランク移動対応）
+   詳細表示（前後ランク移動＋検索再実行対応）
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
@@ -484,10 +481,12 @@ function showDetail(key) {
     }
   }
 
+  /* ★ ランクの元データを更新 */
   State.detailOriginal = row.list.slice().sort((a, b) => {
     return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
 
+  /* ★ 詳細テーブル描画（検索欄の復元もここで行う） */
   renderDetailTable(isRubyBand, bandLabel, bandIcon);
 
   document.getElementById("summaryView").style.display = "none";
@@ -495,7 +494,7 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   詳細テーブル
+   詳細テーブル（検索文字列復元＋再検索対応）
 --------------------------------------------------------- */
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   const area = document.getElementById("detailArea");
@@ -539,11 +538,18 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   `;
 
   const input = document.getElementById("playerFilterInput");
+
+  /* ★ 検索文字列を復元 */
+  input.value = State.playerFilterText;
+
+  /* ★ 入力イベントで State を更新 */
   input.addEventListener("input", e => {
-    applyPlayerFilter(e.target.value, isRubyBand);
+    State.playerFilterText = e.target.value;
+    applyPlayerFilter(State.playerFilterText, isRubyBand);
   });
 
-  applyPlayerFilter("", isRubyBand);
+  /* ★ 初期描画時も検索を適用（ランク移動後の再検索） */
+  applyPlayerFilter(State.playerFilterText, isRubyBand);
 }
 
 /* ---------------------------------------------------------
@@ -615,22 +621,6 @@ function copyToClipboard(text) {
   navigator.clipboard.writeText(text);
   log(`コピー：${text}`);
 }
-
-/* ---------------------------------------------------------
-   CSV ダウンロード（復活済み）
---------------------------------------------------------- */
-function downloadCSV(filename, header, body) {
-  const blob = new Blob([header + "\n" + body], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-
-  URL.revokeObjectURL(url);
-}
-
 /* ---------------------------------------------------------
    CSV 出力（サマリ）
 --------------------------------------------------------- */
