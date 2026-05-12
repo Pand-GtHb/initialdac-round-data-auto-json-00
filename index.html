@@ -133,18 +133,24 @@ td.center { text-align:center; }
     text-align: left;
 }
 
-/* ★ 前後ランク移動ボタン */
+/* ★ 前後ランク移動ボタン（最終調整版） */
 .rank-nav-box {
     display: flex;
-    justify-content: space-between;
+    justify-content: space-between; /* 左右に大きく離す */
+    align-items: center;
     margin-top: 10px;
+    margin-bottom: 8px; /* RP列の上に寄せる */
+    padding-right: 4px; /* 右ボタンがRP列上に来やすくなる微調整 */
 }
+
 .rank-nav-btn {
-    padding: 6px 12px;
+    padding: 6px 14px;
     font-size: 14px;
 }
-.rank-nav-btn:disabled {
-    opacity: 0.4;
+
+/* ボタン間隔を自然に広げるための余白 */
+#nextRankBtn {
+    margin-left: 20px;
 }
 </style>
 </head>
