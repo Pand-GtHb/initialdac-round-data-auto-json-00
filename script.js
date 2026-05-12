@@ -1,21 +1,68 @@
 /* ---------------------------------------------------------
-   Initial DAC Round Data Viewer（latest.json 対応・最適化版）
+   Initial DAC Round Data Viewer（Ruby＋PRIDE専用・前後ランク移動対応）
 --------------------------------------------------------- */
 
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
+
+/* ---------------------------------------------------------
+   Ruby帯・PRIDE帯 定義
+--------------------------------------------------------- */
 
 const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
 
 const PRIDE_LEVELS = [
-  { level: "A=～99",    min: 1,     max: 99,    icon: "ef788ee816773c454495ebf83e5ac380" },
-  { level: "B=100～",   min: 100,   max: 499,   icon: "3c8cc917bb7a97d46ba35c93d898491c" },
-  { level: "C=500～",   min: 500,   max: 999,   icon: "ec8f805c9de95c65c858d2e1341f76ab" },
-  { level: "D=1000～",  min: 1000,  max: 4999,  icon: "58446a29e6c496139963728eea887349" },
-  { level: "E=5000～",   min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
-  { level: "F=10000～",  min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
-  { level: "G=50000～",  min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
+  { key: "P_A", level: "A=～99",    min: 1,     max: 99,    icon: "ef788ee816773c454495ebf83e5ac380" },
+  { key: "P_B", level: "B=100～",   min: 100,   max: 499,   icon: "3c8cc917bb7a97d46ba35c93d898491c" },
+  { key: "P_C", level: "C=500～",   min: 500,   max: 999,   icon: "ec8f805c9de95c65c858d2e1341f76ab" },
+  { key: "P_D", level: "D=1000～",  min: 1000,  max: 4999,  icon: "58446a29e6c496139963728eea887349" },
+  { key: "P_E", level: "E=5000～",  min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
+  { key: "P_F", level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
+  { key: "P_G", level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
 ];
+
+/* ---------------------------------------------------------
+   ★ rankOrder（Ruby☆1〜☆8 → PRIDE A〜G）
+--------------------------------------------------------- */
+const rankOrder = [
+  "R1","R2","R3","R4","R5","R6","R7","R8",
+  "P_A","P_B","P_C","P_D","P_E","P_F","P_G"
+];
+
+/* ---------------------------------------------------------
+   ★ rankBadgeIdMap（Ruby＋PRIDE）
+--------------------------------------------------------- */
+const rankBadgeIdMap = {
+  R1: RUBY_ID, R2: RUBY_ID, R3: RUBY_ID, R4: RUBY_ID,
+  R5: RUBY_ID, R6: RUBY_ID, R7: RUBY_ID, R8: RUBY_ID,
+
+  P_A: PRIDE_LEVELS[0].icon,
+  P_B: PRIDE_LEVELS[1].icon,
+  P_C: PRIDE_LEVELS[2].icon,
+  P_D: PRIDE_LEVELS[3].icon,
+  P_E: PRIDE_LEVELS[4].icon,
+  P_F: PRIDE_LEVELS[5].icon,
+  P_G: PRIDE_LEVELS[6].icon
+};
+
+/* ---------------------------------------------------------
+   ★ 前後ランク移動ボタン制御
+--------------------------------------------------------- */
+function setupRankNavigation(currentKey) {
+  const idx = rankOrder.indexOf(currentKey);
+
+  const prev = idx > 0 ? rankOrder[idx - 1] : null;
+  const next = idx < rankOrder.length - 1 ? rankOrder[idx + 1] : null;
+
+  const prevBtn = document.getElementById("prevRankBtn");
+  const nextBtn = document.getElementById("nextRankBtn");
+
+  prevBtn.disabled = !prev;
+  nextBtn.disabled = !next;
+
+  prevBtn.onclick = () => prev && showDetail(prev);
+  nextBtn.onclick = () => next && showDetail(next);
+}
 
 /* ---------------------------------------------------------
    状態管理
@@ -54,13 +101,9 @@ function appendLog(msg, type = "info") {
   line.textContent = `[${t}] ${msg}`;
   line.dataset.type = type;
 
-  if (type === "error") {
-    line.style.color = "#ff5555";
-  } else if (type === "warn") {
-    line.style.color = "#ffcc00";
-  } else {
-    line.style.color = "#00ff00";
-  }
+  if (type === "error") line.style.color = "#ff5555";
+  else if (type === "warn") line.style.color = "#ffcc00";
+  else line.style.color = "#00ff00";
 
   box.prepend(line);
 
@@ -132,7 +175,6 @@ function formatYMDHM(date) {
   const mm = ("0" + date.getMinutes()).slice(-2);
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
-
 /* ---------------------------------------------------------
    ★ 店舗名省略ロジック（全角18文字＋半角幅判定）
 --------------------------------------------------------- */
@@ -222,6 +264,7 @@ function buildRubyFilters() {
     `;
   }).join("");
 }
+
 /* ---------------------------------------------------------
    latest.json 読み込み
 --------------------------------------------------------- */
@@ -317,7 +360,7 @@ function findPrideLevel(label) {
 }
 
 /* ---------------------------------------------------------
-   サマリ生成
+   サマリ生成（Ruby＋PRIDE）
 --------------------------------------------------------- */
 function buildSummary() {
   State.summary = [];
@@ -325,7 +368,7 @@ function buildSummary() {
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
-  /* Ruby帯 */
+  /* Ruby帯（R1〜R8） */
   selectedStars.forEach(star => {
     const list = State.filtered.filter(
       p => p.onlineBattleRankId === RUBY_ID && p.starCnt === star
@@ -339,21 +382,20 @@ function buildSummary() {
     });
   });
 
-  /* PRIDE帯 */
+  /* PRIDE帯（P_A〜P_G） */
   PRIDE_LEVELS.forEach(level => {
     const list = State.filtered.filter(
       p => p.pridePoint >= level.min && p.pridePoint <= level.max
     );
 
     State.summary.push({
-      key: `P_${level.level}`,
+      key: level.key,
       label: level.level,
       icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
       list
     });
   });
 }
-
 /* ---------------------------------------------------------
    サマリ表示
 --------------------------------------------------------- */
@@ -419,11 +461,14 @@ function renderSummary() {
 }
 
 /* ---------------------------------------------------------
-   詳細表示
+   詳細表示（前後ランク移動対応）
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key);
   if (!row) return;
+
+  /* ★ 前後ランク移動ボタン制御 */
+  setupRankNavigation(key);
 
   const isRubyBand = key.startsWith("R");
   const bandLabel = row.label;
@@ -520,7 +565,7 @@ function applyPlayerFilter(keyword, isRubyBand) {
 }
 
 /* ---------------------------------------------------------
-   詳細行描画（★ 店舗名省略ロジック適用）
+   詳細行描画
 --------------------------------------------------------- */
 function renderDetailRows(list, isRubyBand) {
   const tbody = document.getElementById("detailTableBody");
@@ -569,6 +614,21 @@ function renderDetailRows(list, isRubyBand) {
 function copyToClipboard(text) {
   navigator.clipboard.writeText(text);
   log(`コピー：${text}`);
+}
+
+/* ---------------------------------------------------------
+   CSV ダウンロード（復活済み）
+--------------------------------------------------------- */
+function downloadCSV(filename, header, body) {
+  const blob = new Blob([header + "\n" + body], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+
+  URL.revokeObjectURL(url);
 }
 
 /* ---------------------------------------------------------
