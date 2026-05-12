@@ -136,7 +136,7 @@ td.center { text-align:center; }
 /* ★ 前後ランク移動ボタン（あなたの希望どおりの位置） */
 .rank-nav-box {
     display: flex;
-    justify-content: flex-start; /* ★ 左寄せにする（右端に寄らない） */
+    justify-content: flex-start;
     align-items: center;
     margin-top: 10px;
     margin-bottom: 8px;
@@ -150,7 +150,7 @@ td.center { text-align:center; }
 
 /* ★ 右ボタンを RP 列の上あたりに寄せるための余白 */
 #nextRankBtn {
-    margin-left: 40px; /* ← ここで間隔を調整（画像の位置に合わせた） */
+    margin-left: 40px;
 }
 </style>
 </head>
@@ -201,15 +201,15 @@ td.center { text-align:center; }
 <!-- ★ ログウィンドウ -->
 <div id="logBox"></div>
 
+<!-- ★ サマリ画面（script.js が中身を自動生成） -->
 <div id="summaryView">
-  <h3 id="summaryTitle">稼働プレイヤー（合計：0人）</h3>
   <div id="summaryArea"></div>
 </div>
 
+<!-- ★ 詳細画面 -->
 <div id="detailView">
   <button id="backBtn">← サマリに戻る</button>
 
-  <!-- ★ 前後ランク移動ボタン（あなたの希望どおり） -->
   <div class="rank-nav-box">
       <button id="prevRankBtn" class="rank-nav-btn">← 前のランク</button>
       <button id="nextRankBtn" class="rank-nav-btn">次のランク →</button>
@@ -218,6 +218,7 @@ td.center { text-align:center; }
   <div id="detailArea" class="mt10"></div>
 </div>
 
+<!-- latest.json の初期読み込み（script.js 本体とは独立） -->
 <script>
 (async () => {
     try {
@@ -235,6 +236,7 @@ td.center { text-align:center; }
 })();
 </script>
 
+<!-- ★ メインロジック -->
 <script src="script.js?cb=1"></script>
 
 </body>
