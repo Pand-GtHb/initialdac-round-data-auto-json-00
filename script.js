@@ -74,7 +74,9 @@ const State = {
   detailOriginal: [],
   latestRound: null,
   generatedAt: "",
-  playerFilterText: ""   // 🔍 プレイヤー名フィルタの入力内容を保持
+
+  summarySearchText: "",   // 🔍 サマリ検索
+  detailSearchText: ""     // 🔍 詳細検索（サマリ→詳細で引き継ぐ）
 };
 
 /* ---------------------------------------------------------
@@ -230,7 +232,6 @@ function shortenStoreName(full) {
 
   return full.slice(0, 1) + "…" + full.slice(-1);
 }
-
 /* ---------------------------------------------------------
    共通 fetch
 --------------------------------------------------------- */
@@ -305,6 +306,7 @@ async function loadRoundData() {
     logError("roundXX.json の取得に失敗：" + e.message);
   }
 }
+
 /* ---------------------------------------------------------
    フィルタ
 --------------------------------------------------------- */
@@ -390,65 +392,133 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   サマリ表示
+   ★ normalize（半角→全角＋スペース除去）
+--------------------------------------------------------- */
+function normalize(s) {
+  if (!s) return "";
+
+  // 全角スペース → 半角
+  s = s.replace(/\u3000/g, " ");
+
+  // 半角英数 → 全角英数
+  s = s.replace(/[A-Za-z0-9]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
+  );
+
+  // 大文字 → 小文字
+  s = s.toLowerCase();
+
+  // ひらがな → カタカナ
+  s = s.replace(/[\u3041-\u3096]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0x60)
+  );
+
+  // スペース除去
+  s = s.replace(/ /g, "");
+
+  return s;
+}
+
+/* ---------------------------------------------------------
+   ★ サマリ検索フィルタ（ランク横断検索）
+--------------------------------------------------------- */
+function filterSummaryBySearch() {
+  const text = normalize(State.summarySearchText);
+
+  if (!text) {
+    return State.summary; // 全表示
+  }
+
+  return State.summary.filter(r => {
+    return r.list.some(p =>
+      normalize(p.name).includes(text)
+    );
+  });
+}
+
+/* ---------------------------------------------------------
+   サマリ表示（検索窓追加）
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
 
-  const total = State.summary.reduce((sum, r) => sum + r.list.length, 0);
+  const filteredSummary = filterSummaryBySearch();
 
-  const rubyTotal = State.summary
+  const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
+
+  const rubyTotal = filteredSummary
     .filter(r => r.key.startsWith("R"))
     .reduce((s, r) => s + r.list.length, 0);
 
   const prideTotal = total - rubyTotal;
 
-  document.getElementById("summaryTitle").textContent =
-    `合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人`;
-
-  const rows = State.summary.map(r => {
-    const { cnt, percent, avg, min, max } = calcStats(r.list, total);
-
-    return `
-      <tr class="clickable" data-key="${r.key}">
-        <td class="center"><img src="${r.icon}" width="32"></td>
-        <td class="left">${r.label}</td>
-        <td class="right">${fmt(cnt)}</td>
-        <td class="right">${percent}%</td>
-        <td class="center">
-          <div class="bar-wrap">
-            <div class="bar" style="width:${percent}%;"></div>
-          </div>
-        </td>
-        <td class="right">${fmt(avg)}</td>
-        <td class="right">${fmt(min)}</td>
-        <td class="right">${fmt(max)}</td>
-      </tr>
-    `;
-  }).join("");
-
   area.innerHTML = `
-    <div style="overflow-x:auto;">
-    <table>
-      <tr>
-        <th>ランク</th>
-        <th>☆・Lv</th>
-        <th>人数</th>
-        <th>%</th>
-        <th>Bar</th>
-        <th>RP:Avg</th>
-        <th>RP:Min</th>
-        <th>RP:Max</th>
-      </tr>
-      ${rows}
-    </table>
-    </div>
- `;
+    <h3>合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人</h3>
 
+    <div style="margin:8px 0;">
+      <input
+        id="summarySearchInput"
+        type="text"
+        placeholder="プレイヤー名で絞り込み（ランク横断）"
+        style="
+          width: 95%;
+          padding: 6px 8px;
+          font-size: 14px;
+          border: 1px solid #ccc;
+          border-radius: 4px;
+        "
+      />
+    </div>
+
+    <div style="overflow-x:auto;">
+      <table>
+        <tr>
+          <th>ランク</th>
+          <th>☆・Lv</th>
+          <th>人数</th>
+          <th>%</th>
+          <th>Bar</th>
+          <th>RP:Avg</th>
+          <th>RP:Min</th>
+          <th>RP:Max</th>
+        </tr>
+        ${filteredSummary.map(r => {
+          const { cnt, percent, avg, min, max } = calcStats(r.list, total);
+          return `
+            <tr class="clickable" data-key="${r.key}">
+              <td class="center"><img src="${r.icon}" width="32"></td>
+              <td class="left">${r.label}</td>
+              <td class="right">${fmt(cnt)}</td>
+              <td class="right">${percent}%</td>
+              <td class="center">
+                <div class="bar-wrap">
+                  <div class="bar" style="width:${percent}%;"></div>
+                </div>
+              </td>
+              <td class="right">${fmt(avg)}</td>
+              <td class="right">${fmt(min)}</td>
+              <td class="right">${fmt(max)}</td>
+            </tr>
+          `;
+        }).join("")}
+      </table>
+    </div>
+  `;
+
+  /* ★ 検索窓の復元 */
+  const input = document.getElementById("summarySearchInput");
+  input.value = State.summarySearchText;
+
+  /* ★ 入力イベント */
+  input.addEventListener("input", e => {
+    State.summarySearchText = e.target.value;
+    renderSummary(); // 再描画
+  });
+
+  /* ★ ランククリックで詳細へ（検索引き継ぎ） */
   document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
     tr.addEventListener("click", () => {
-      // サマリから入るときは検索をクリアする
-      State.playerFilterText = "";
+      State.detailSearchText = State.summarySearchText; // ★ 引き継ぎ
       showDetail(tr.dataset.key);
     });
   });
@@ -456,43 +526,6 @@ function renderSummary() {
   document.getElementById("summaryView").style.display = "block";
   document.getElementById("detailView").style.display = "none";
 }
-
-/* ---------------------------------------------------------
-   詳細表示（前後ランク移動＋検索再実行対応）
---------------------------------------------------------- */
-function showDetail(key) {
-  const row = State.summary.find(r => r.key === key);
-  if (!row) return;
-
-  /* ★ 前後ランク移動ボタン制御 */
-  setupRankNavigation(key);
-
-  const isRubyBand = key.startsWith("R");
-  const bandLabel = row.label;
-
-  let bandIcon = "";
-  if (isRubyBand) {
-    bandIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`;
-  } else {
-    const levelInfo = findPrideLevel(bandLabel);
-    if (levelInfo) {
-      bandIcon =
-        `https://initiald.sega.jp/inidac/ranking-images/pride/${levelInfo.icon}.png`;
-    }
-  }
-
-  /* ★ ランクの元データを更新 */
-  State.detailOriginal = row.list.slice().sort((a, b) => {
-    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
-  });
-
-  /* ★ 詳細テーブル描画（検索欄の復元もここで行う） */
-  renderDetailTable(isRubyBand, bandLabel, bandIcon);
-
-  document.getElementById("summaryView").style.display = "none";
-  document.getElementById("detailView").style.display = "block";
-}
-
 /* ---------------------------------------------------------
    詳細テーブル（検索文字列復元＋再検索対応）
 --------------------------------------------------------- */
@@ -539,28 +572,28 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
 
   const input = document.getElementById("playerFilterInput");
 
-  /* ★ 検索文字列を復元 */
-  input.value = State.playerFilterText;
+  /* ★ サマリ検索 → 詳細検索へ引き継ぎ済み */
+  input.value = State.detailSearchText;
 
   /* ★ 入力イベントで State を更新 */
   input.addEventListener("input", e => {
-    State.playerFilterText = e.target.value;
-    applyPlayerFilter(State.playerFilterText, isRubyBand);
+    State.detailSearchText = e.target.value;
+    applyPlayerFilter(State.detailSearchText, isRubyBand);
   });
 
   /* ★ 初期描画時も検索を適用（ランク移動後の再検索） */
-  applyPlayerFilter(State.playerFilterText, isRubyBand);
+  applyPlayerFilter(State.detailSearchText, isRubyBand);
 }
 
 /* ---------------------------------------------------------
-   プレイヤー名フィルタ
+   プレイヤー名フィルタ（normalize ベース）
 --------------------------------------------------------- */
 function applyPlayerFilter(keyword, isRubyBand) {
   const base = State.detailOriginal || [];
-  const trimmed = keyword.trim();
+  const normKey = normalize(keyword);
 
-  let list = trimmed
-    ? base.filter(p => p.name && p.name.includes(trimmed))
+  let list = normKey
+    ? base.filter(p => normalize(p.name).includes(normKey))
     : base;
 
   list = [...list].sort((a, b) =>
@@ -621,6 +654,7 @@ function copyToClipboard(text) {
   navigator.clipboard.writeText(text);
   log(`コピー：${text}`);
 }
+
 /* ---------------------------------------------------------
    CSV 出力（サマリ）
 --------------------------------------------------------- */
