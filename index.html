@@ -133,24 +133,24 @@ td.center { text-align:center; }
     text-align: left;
 }
 
-/* ★ 前後ランク移動ボタン（最終調整版） */
+/* ★ 前後ランク移動ボタン（あなたの希望どおりの位置） */
 .rank-nav-box {
     display: flex;
-    justify-content: space-between; /* 左右に大きく離す */
+    justify-content: flex-start; /* ★ 左寄せにする（右端に寄らない） */
     align-items: center;
     margin-top: 10px;
-    margin-bottom: 8px; /* RP列の上に寄せる */
-    padding-right: 4px; /* 右ボタンがRP列上に来やすくなる微調整 */
+    margin-bottom: 8px;
 }
 
+/* ボタンの基本 */
 .rank-nav-btn {
     padding: 6px 14px;
     font-size: 14px;
 }
 
-/* ボタン間隔を自然に広げるための余白 */
+/* ★ 右ボタンを RP 列の上あたりに寄せるための余白 */
 #nextRankBtn {
-    margin-left: 20px;
+    margin-left: 40px; /* ← ここで間隔を調整（画像の位置に合わせた） */
 }
 </style>
 </head>
@@ -209,7 +209,7 @@ td.center { text-align:center; }
 <div id="detailView">
   <button id="backBtn">← サマリに戻る</button>
 
-  <!-- ★ 前後ランク移動ボタン（追加） -->
+  <!-- ★ 前後ランク移動ボタン（あなたの希望どおり） -->
   <div class="rank-nav-box">
       <button id="prevRankBtn" class="rank-nav-btn">← 前のランク</button>
       <button id="nextRankBtn" class="rank-nav-btn">次のランク →</button>
