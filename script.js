@@ -1,5 +1,6 @@
 /* ---------------------------------------------------------
    Initial DAC Round Data Viewer（Ruby＋PRIDE専用・前後ランク移動＋検索保持対応）
+   ★ サマリ検索窓は HTML 側に固定配置（IME 完全安定）
    ★ サマリ検索＋詳細検索を normalize ベースで統一
    ★ summaryFiltered を導入
    ★ 詳細 → サマリ戻る時に検索クリア
@@ -79,7 +80,7 @@ const State = {
   latestRound: null,
   generatedAt: "",
 
-  summarySearchText: "",  // 🔍 サマリ検索
+  summarySearchText: "",  // 🔍 サマリ検索（HTML 固定検索窓と同期）
   detailSearchText: ""    // 🔍 詳細検索（サマリ→詳細で引き継ぐ）
 };
 
@@ -432,7 +433,7 @@ function filterSummaryBySearch() {
 }
 
 /* ---------------------------------------------------------
-   サマリ表示（検索窓追加）
+   ★ 修正版：サマリ表示（検索窓は HTML 固定、ここではテーブルのみ描画）
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
@@ -442,30 +443,14 @@ function renderSummary() {
   const filteredSummary = State.summaryFiltered;
 
   const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
-
   const rubyTotal = filteredSummary
     .filter(r => r.key.startsWith("R"))
     .reduce((s, r) => s + r.list.length, 0);
-
   const prideTotal = total - rubyTotal;
 
+  /* ★ 検索窓は HTML 側に固定したため、ここではテーブルのみ描画 */
   area.innerHTML = `
     <h3>合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人</h3>
-
-    <div style="margin:8px 0;">
-      <input
-        id="summarySearchInput"
-        type="text"
-        placeholder="プレイヤー名で絞り込み（ランク横断）"
-        style="
-          width: 95%;
-          padding: 6px 8px;
-          font-size: 14px;
-          border: 1px solid #ccc;
-          border-radius: 4px;
-        "
-      />
-    </div>
 
     <div style="overflow-x:auto;">
       <table>
@@ -502,20 +487,10 @@ function renderSummary() {
     </div>
   `;
 
-  /* ★ 検索窓の復元 */
-  const input = document.getElementById("summarySearchInput");
-  input.value = State.summarySearchText;
-
-  /* ★ 入力イベント */
-  input.addEventListener("input", e => {
-    State.summarySearchText = e.target.value;
-    renderSummary(); // 再描画
-  });
-
   /* ★ ランククリックで詳細へ（検索引き継ぎ） */
   document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
     tr.addEventListener("click", () => {
-      State.detailSearchText = State.summarySearchText; // ★ 引き継ぎ
+      State.detailSearchText = State.summarySearchText;
       showDetail(tr.dataset.key);
     });
   });
@@ -756,7 +731,7 @@ async function init() {
 }
 
 /* ---------------------------------------------------------
-   DOMContentLoaded
+   DOMContentLoaded（★ サマリ検索窓のイベント登録をここに移動）
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("reloadBtn").onclick = () => {
@@ -776,10 +751,18 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
   document.getElementById("allCsvBtn").onclick = exportAllCSV;
 
-  /* ★ 詳細 → サマリ戻る時に検索クリア */
+  /* ★ サマリ検索窓のイベント登録（IME 完全安定） */
+  const summaryInput = document.getElementById("summarySearchInput");
+  summaryInput.addEventListener("input", e => {
+    State.summarySearchText = e.target.value;
+    renderSummary();
+  });
+
+  /* ★ 詳細 → サマリ戻る時に検索クリア（HTML 側の input もクリア） */
   document.getElementById("backBtn").onclick = () => {
-    State.summarySearchText = "";   // ★ 検索クリア
-    renderSummary();                // ★ 再描画（検索窓も空になる）
+    State.summarySearchText = "";
+    document.getElementById("summarySearchInput").value = ""; // ★ HTML 側もクリア
+    renderSummary();
 
     document.getElementById("detailView").style.display = "none";
     document.getElementById("summaryView").style.display = "block";
