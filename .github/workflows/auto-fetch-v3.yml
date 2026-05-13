@@ -28,24 +28,19 @@ jobs:
       # ▼ ③ 全エリア JSON を並列取得（0〜62）
       - name: Fetch JSON (parallel)
         run: |
-          ROUND=${{ steps.round.outputs.round }}
           mkdir -p tmp
-
-          export ROUND
-
-          seq 0 62 | xargs -I{} -P 20 sh -c '
-            AREA={}
-            URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${AREA}.json"
+          for AREA in $(seq 0 62); do
+            URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${{ steps.round.outputs.round }}_area-${AREA}.json"
             echo "Fetching $URL"
-            curl -f -s "$URL" -o tmp/area-${AREA}.json || echo "{}" > tmp/area-${AREA}.json
-          '
+            curl -s -o "tmp/area-${AREA}.json" "$URL"
+          done
 
-      # ▼ ④ jq で統合（area 付与 & carname 削除）
-      - name: Merge JSON (single jq pass)
+      # ▼ ④ jq で統合（slurp モードで filename を正しく取得）
+      - name: Merge JSON
         run: |
-          jq -n '
-            # tmp/*.json を読み込み、ファイル名と内容をセットで保持
-            [inputs | {filename: input_filename, data: .}] as $files
+          jq -s '
+            # $files = [{filename, data}, ...]
+            map({filename: input_filename, data: .}) as $files
             |
             # 最新 calcDate を取得
             ($files | map(.data.calcDate // empty) | sort | last) as $max
@@ -80,8 +75,8 @@ jobs:
           jq -c '.' integrated_data.json > integrated_data.min.json
           mv integrated_data.min.json integrated_data.json
 
-      # ▼ ⑥ commit & push
-      - name: Commit & Push (only if changed)
+      # ▼ ⑥ GitHub へコミット
+      - name: Commit integrated_data.json
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
