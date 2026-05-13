@@ -1,4 +1,4 @@
-name: Auto Integrate InitialDAC JSON (latest_round.json based)
+name: Auto Integrate InitialDAC JSON (reduce optimized)
 
 on:
   workflow_dispatch:
@@ -25,8 +25,8 @@ jobs:
           echo "Latest round = $ROUND"
           echo "round=$ROUND" >> $GITHUB_OUTPUT
 
-      # ▼ ③ 全エリア JSON を並列取得（0〜62）
-      - name: Fetch JSON (parallel)
+      # ▼ ③ 全エリア JSON を取得（0〜62）
+      - name: Fetch JSON
         run: |
           mkdir -p tmp
           for AREA in $(seq 0 62); do
@@ -35,11 +35,11 @@ jobs:
             curl -s -o "tmp/area-${AREA}.json" "$URL"
           done
 
-      # ▼ ④ jq で統合（input_filename を正しく取得）
-      - name: Merge JSON
+      # ▼ ④ jq reduce で高速統合
+      - name: Merge JSON (reduce optimized)
         run: |
           jq -n '
-            # $files = [{filename, data}, ...]
+            # すべてのファイルを読み込み、{filename, data} の配列にする
             [inputs | {filename: input_filename, data: .}] as $files
             |
             # 最新 calcDate を取得
@@ -47,26 +47,28 @@ jobs:
             |
             {
               generatedAt: $max,
-              records: (
-                $files
-                | map(
-                    . as $f
-                    | $f.data.records // []
-                    | map(
-                        . + {
-                          area: (
-                            $f.filename
-                            | split("/")[-1]        # area-XX.json
-                            | split("-")[1]
-                            | split(".")[0]
-                            | tonumber
-                          )
-                        }
+              records:
+                reduce $files[] as $f (
+                  [];
+                  . + (
+                    reduce ($f.data.records // [])[] as $r (
+                      [];
+                      . + [
+                        $r
+                        + {
+                            area:
+                              ($f.filename
+                                | split("/")[-1]
+                                | split("-")[1]
+                                | split(".")[0]
+                                | tonumber
+                              )
+                          }
                         | del(.carname)
+                      ]
                     )
                   )
-                | add
-              )
+                )
             }
           ' tmp/*.json > integrated_data.json
 
