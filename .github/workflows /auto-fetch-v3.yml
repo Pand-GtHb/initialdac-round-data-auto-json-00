@@ -1,0 +1,84 @@
+name: Auto Integrate InitialDAC JSON (latest_round.json based)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch-and-merge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ▼ ① latest_round.json を取得
+      - name: Fetch latest_round.json
+        run: |
+          curl -s -o latest_round.json \
+            https://pand-gthb.github.io/initialdac-round-data-auto-json-00/latest_round.json
+
+      # ▼ ② latestRound を読み取る
+      - name: Read latest round
+        id: round
+        run: |
+          ROUND=$(jq -r '.latestRound' latest_round.json)
+          echo "Latest round = $ROUND"
+          echo "round=$ROUND" >> $GITHUB_OUTPUT
+
+      # ▼ ③ 全エリア JSON を並列取得（0〜62）
+      - name: Fetch JSON (parallel)
+        run: |
+          ROUND=${{ steps.round.outputs.round }}
+          mkdir -p tmp
+
+          export ROUND
+
+          seq 0 62 | xargs -I{} -P 20 sh -c '
+            AREA={}
+            URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${AREA}.json"
+            echo "Fetching $URL"
+            curl -f -s "$URL" -o tmp/area-${AREA}.json || echo "{}" > tmp/area-${AREA}.json
+          '
+
+      # ▼ ④ jq で統合（area 付与 & carname 削除）
+      - name: Merge JSON (single jq pass)
+        run: |
+          jq -s '
+            # 最新 calcDate を取得
+            (map(.calcDate // empty) | sort | last) as $max
+            |
+            {
+              generatedAt: $max,
+              records: (
+                # 各エリア JSON の records を抽出
+                to_entries
+                | map(
+                    .value.records // [] 
+                    | map(
+                        . + { area: (.value.area // (.key | tonumber)) }  # area 付与
+                        | del(.carname)                                   # carname 削除
+                    )
+                  )
+                | add
+              )
+            }
+          ' tmp/*.json > integrated_data.json
+
+      # ▼ ⑤ minify
+      - name: Minify JSON
+        run: |
+          jq -c '.' integrated_data.json > integrated_data.min.json
+          mv integrated_data.min.json integrated_data.json
+
+      # ▼ ⑥ commit & push
+      - name: Commit & Push (only if changed)
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add integrated_data.json
+
+          git diff --cached --quiet && echo "No changes" && exit 0
+
+          git commit -m "Auto update integrated_data.json (round ${{ steps.round.outputs.round }})"
+          git push
