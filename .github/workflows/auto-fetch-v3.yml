@@ -35,12 +35,12 @@ jobs:
             curl -s -o "tmp/area-${AREA}.json" "$URL"
           done
 
-      # ▼ ④ jq で統合（slurp モードで filename を正しく取得）
+      # ▼ ④ jq で統合（input_filename を正しく取得）
       - name: Merge JSON
         run: |
-          jq -s '
+          jq -n '
             # $files = [{filename, data}, ...]
-            map({filename: input_filename, data: .}) as $files
+            [inputs | {filename: input_filename, data: .}] as $files
             |
             # 最新 calcDate を取得
             ($files | map(.data.calcDate // empty) | sort | last) as $max
@@ -50,11 +50,12 @@ jobs:
               records: (
                 $files
                 | map(
-                    .data.records // []
+                    . as $f
+                    | $f.data.records // []
                     | map(
                         . + {
                           area: (
-                            .filename
+                            $f.filename
                             | split("/")[-1]        # area-XX.json
                             | split("-")[1]
                             | split(".")[0]
