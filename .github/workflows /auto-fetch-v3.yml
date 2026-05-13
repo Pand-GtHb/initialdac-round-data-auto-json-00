@@ -50,13 +50,13 @@ jobs:
             {
               generatedAt: $max,
               records: (
-                # 各エリア JSON の records を抽出
                 to_entries
                 | map(
-                    .value.records // [] 
+                    .value.records // []
                     | map(
-                        . + { area: (.value.area // (.key | tonumber)) }  # area 付与
-                        | del(.carname)                                   # carname 削除
+                        # area-XX.json の XX を抽出して area に付与
+                        . + { area: (.key | split("-")[1] | split(".")[0] | tonumber) }
+                        | del(.carname)   # carname 削除
                     )
                   )
                 | add
