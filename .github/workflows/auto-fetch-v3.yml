@@ -1,4 +1,4 @@
-name: Auto Integrate InitialDAC JSON (reduce optimized)
+name: Auto Integrate InitialDAC JSON (reduce + parallel fetch)
 
 on:
   workflow_dispatch:
@@ -25,17 +25,20 @@ jobs:
           echo "Latest round = $ROUND"
           echo "round=$ROUND" >> $GITHUB_OUTPUT
 
-      # ▼ ③ 全エリア JSON を取得（0〜62）
-      - name: Fetch JSON
+      # ▼ ③ 全エリア JSON を 20 並列で取得（最速）
+      - name: Fetch JSON (parallel 20)
         run: |
           mkdir -p tmp
-          for AREA in $(seq 0 62); do
-            URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${{ steps.round.outputs.round }}_area-${AREA}.json"
-            echo "Fetching $URL"
-            curl -s -o "tmp/area-${AREA}.json" "$URL"
-          done
+          export ROUND=${{ steps.round.outputs.round }}
 
-      # ▼ ④ jq reduce で高速統合
+          seq 0 62 | xargs -I{} -P 20 sh -c '
+            AREA={}
+            URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${AREA}.json"
+            echo "Fetching $URL"
+            curl -s -o tmp/area-${AREA}.json "$URL"
+          '
+
+      # ▼ ④ jq reduce で高速統合（1パス処理）
       - name: Merge JSON (reduce optimized)
         run: |
           jq -n '
