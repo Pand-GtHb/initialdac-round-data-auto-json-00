@@ -43,20 +43,30 @@ jobs:
       # ▼ ④ jq で統合（area 付与 & carname 削除）
       - name: Merge JSON (single jq pass)
         run: |
-          jq -s '
+          jq -n '
+            # tmp/*.json を読み込み、ファイル名と内容をセットで保持
+            [inputs | {filename: input_filename, data: .}] as $files
+            |
             # 最新 calcDate を取得
-            (map(.calcDate // empty) | sort | last) as $max
+            ($files | map(.data.calcDate // empty) | sort | last) as $max
             |
             {
               generatedAt: $max,
               records: (
-                to_entries
+                $files
                 | map(
-                    .value.records // []
+                    .data.records // []
                     | map(
-                        # area-XX.json の XX を抽出して area に付与
-                        . + { area: (.key | split("-")[1] | split(".")[0] | tonumber) }
-                        | del(.carname)   # carname 削除
+                        . + {
+                          area: (
+                            .filename
+                            | split("/")[-1]        # area-XX.json
+                            | split("-")[1]
+                            | split(".")[0]
+                            | tonumber
+                          )
+                        }
+                        | del(.carname)
                     )
                   )
                 | add
