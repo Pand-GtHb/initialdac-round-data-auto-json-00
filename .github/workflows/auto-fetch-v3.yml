@@ -47,28 +47,31 @@ jobs:
             |
             {
               generatedAt: $max,
-              records:
+              records: (
                 reduce $files[] as $f (
                   [];
                   . + (
                     reduce ($f.data.records // [])[] as $r (
                       [];
                       . + [
-                        $r
-                        + {
-                            area:
-                              ($f.filename
-                                | split("/")[-1]
-                                | split("-")[1]
-                                | split(".")[0]
-                                | tonumber
-                              )
-                          }
-                        | del(.carname)
+                        (
+                          $r
+                          + {
+                              area:
+                                ($f.filename
+                                  | split("/")[-1]
+                                  | split("-")[1]
+                                  | split(".")[0]
+                                  | tonumber
+                                )
+                            }
+                          | del(.carname)
+                        )
                       ]
                     )
                   )
                 )
+              )
             }
           ' tmp/*.json > integrated_data.json
 
