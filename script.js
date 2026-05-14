@@ -2,9 +2,8 @@
    Initial DAC Round Data Viewer（Ruby＋PRIDE専用・前後ランク移動＋検索保持対応）
    ★ 検索窓は searchInput に統一（サマリ・詳細共通）
    ★ IME 完全安定
-   ★ summaryFiltered を導入
-   ★ 詳細 → サマリ戻る時に検索クリア
-   ★ currentView / currentIsRubyBand を追加
+   ★ State.searchText 1本化
+   ★ normalize は読み込み時に前処理
 --------------------------------------------------------- */
 
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
@@ -27,37 +26,49 @@ const PRIDE_LEVELS = [
 ];
 
 /* ---------------------------------------------------------
-   ★ rankOrder（Ruby☆1〜☆8 → PRIDE A〜G）
+   ★ RANKS（Ruby☆1〜8 + PRIDE A〜G を完全統合）
 --------------------------------------------------------- */
-const rankOrder = [
-  "R1","R2","R3","R4","R5","R6","R7","R8",
-  "P_A","P_B","P_C","P_D","P_E","P_F","P_G"
+const RANKS = [
+  // Ruby ☆1〜8
+  ...Array.from({ length: 8 }, (_, i) => ({
+    key: `R${i + 1}`,
+    type: "ruby",
+    star: i + 1,
+    label: `☆${i + 1}`,
+    badgeId: RUBY_ID,
+    icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
+    order: i
+  })),
+
+  // PRIDE A〜G
+  ...PRIDE_LEVELS.map((p, idx) => ({
+    key: p.key,
+    type: "pride",
+    min: p.min,
+    max: p.max,
+    label: p.level,
+    badgeId: p.icon,
+    icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${p.icon}.png`,
+    order: 8 + idx
+  }))
 ];
 
-/* ---------------------------------------------------------
-   ★ rankBadgeIdMap（Ruby＋PRIDE）
---------------------------------------------------------- */
-const rankBadgeIdMap = {
-  R1: RUBY_ID, R2: RUBY_ID, R3: RUBY_ID, R4: RUBY_ID,
-  R5: RUBY_ID, R6: RUBY_ID, R7: RUBY_ID, R8: RUBY_ID,
+function getRankIndex(key) {
+  return RANKS.findIndex(r => r.key === key);
+}
 
-  P_A: PRIDE_LEVELS[0].icon,
-  P_B: PRIDE_LEVELS[1].icon,
-  P_C: PRIDE_LEVELS[2].icon,
-  P_D: PRIDE_LEVELS[3].icon,
-  P_E: PRIDE_LEVELS[4].icon,
-  P_F: PRIDE_LEVELS[5].icon,
-  P_G: PRIDE_LEVELS[6].icon
-};
+function getRankInfo(key) {
+  return RANKS.find(r => r.key === key) || null;
+}
 
 /* ---------------------------------------------------------
-   ★ 前後ランク移動ボタン制御
+   ★ 前後ランク移動ボタン制御（RANKS.order ベース）
 --------------------------------------------------------- */
 function setupRankNavigation(currentKey) {
-  const idx = rankOrder.indexOf(currentKey);
+  const idx = getRankIndex(currentKey);
 
-  const prev = idx > 0 ? rankOrder[idx - 1] : null;
-  const next = idx < rankOrder.length - 1 ? rankOrder[idx + 1] : null;
+  const prev = idx > 0 ? RANKS[idx - 1].key : null;
+  const next = idx >= 0 && idx < RANKS.length - 1 ? RANKS[idx + 1].key : null;
 
   const prevBtn = document.getElementById("prevRankBtn");
   const nextBtn = document.getElementById("nextRankBtn");
@@ -70,22 +81,20 @@ function setupRankNavigation(currentKey) {
 }
 
 /* ---------------------------------------------------------
-   状態管理（検索文字列保持＋画面状態追加）
+   状態管理（検索文字列保持＋画面状態）
 --------------------------------------------------------- */
 const State = {
-  all: [],
-  filtered: [],
-  summary: [],            // 全ランク一覧
-  summaryFiltered: [],    // ★ サマリ検索後のランク一覧
-  detailOriginal: [],
+  all: [],             // 全レコード（normalizedName 付き）
+  filtered: [],        // 時間フィルタ後
+  summary: [],         // ランク帯ごとの集計
+  detailOriginal: [],  // 詳細表示用の元データ
   latestRound: null,
   generatedAt: "",
 
-  summarySearchText: "",  // 🔍 サマリ検索
-  detailSearchText: "",   // 🔍 詳細検索
+  searchText: "",      // 🔍 サマリ・詳細共通の検索文字列
 
-  currentView: "summary",     // ★ "summary" or "detail"
-  currentIsRubyBand: true     // ★ 詳細画面で Ruby帯かどうか
+  currentView: "summary",   // "summary" or "detail"
+  currentIsRubyBand: true   // 詳細画面で Ruby帯かどうか
 };
 
 /* ---------------------------------------------------------
@@ -190,6 +199,7 @@ function formatYMDHM(date) {
 
 /* ---------------------------------------------------------
    ★ normalize（半角→全角＋ひらがな→カタカナ＋小文字化＋スペース除去）
+   ※ 検索時は基本的に normalizedName を利用
 --------------------------------------------------------- */
 function normalize(s) {
   if (!s) return "";
@@ -208,7 +218,7 @@ function normalize(s) {
 }
 
 /* ---------------------------------------------------------
-   ★ 店舗名省略ロジック（旧版のまま）
+   ★ 店舗名省略ロジック（旧版を整理）
 --------------------------------------------------------- */
 function getZenkakuLength(str) {
   if (!str) return 0;
@@ -307,7 +317,7 @@ async function loadLatest() {
 }
 
 /* ---------------------------------------------------------
-   roundXX.json 読み込み
+   roundXX.json 読み込み（normalizedName 付与）
 --------------------------------------------------------- */
 async function loadRoundData() {
   if (!State.latestRound) {
@@ -327,7 +337,16 @@ async function loadRoundData() {
         formatYMDHM(parseDateJST(State.generatedAt));
     }
 
-    State.all = Array.isArray(json) ? json : (json.records || []);
+    const records = Array.isArray(json) ? json : (json.records || []);
+
+    // ★ 読み込み時に normalizedName を付与
+    State.all = records.map(p => ({
+      ...p,
+      normalizedName: normalize(p.name)
+    }));
+
+    // 初期状態では filtered は全件
+    State.filtered = [...State.all];
 
     log(`round${State.latestRound}.json 読み込み完了 (${State.all.length}件)`);
   } catch (e) {
@@ -336,7 +355,7 @@ async function loadRoundData() {
 }
 
 /* ---------------------------------------------------------
-   フィルタ
+   フィルタ（時間フィルタ）
 --------------------------------------------------------- */
 function applyFilters() {
   const minutes = Number(document.getElementById("rangeSelect").value);
@@ -375,14 +394,7 @@ function calcStats(list, total) {
 }
 
 /* ---------------------------------------------------------
-   PRIDE レベル判定
---------------------------------------------------------- */
-function findPrideLevel(label) {
-  return PRIDE_LEVELS.find(l => l.level === label);
-}
-
-/* ---------------------------------------------------------
-   サマリ生成（Ruby＋PRIDE）
+   サマリ生成（Ruby＋PRIDE：1ループ分類）
 --------------------------------------------------------- */
 function buildSummary() {
   State.summary = [];
@@ -390,61 +402,53 @@ function buildSummary() {
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
-  /* Ruby帯（R1〜R8） */
-  selectedStars.forEach(star => {
-    const list = State.filtered.filter(
-      p => p.onlineBattleRankId === RUBY_ID && p.starCnt === star
-    );
+  const base = State.filtered && State.filtered.length ? State.filtered : State.all;
 
-    State.summary.push({
-      key: `R${star}`,
-      label: `☆${star}`,
-      icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
-      list
+  State.summary = RANKS
+    .filter(rank => rank.type === "pride" || selectedStars.includes(rank.star))
+    .map(rank => {
+      const list = base.filter(p => {
+        if (rank.type === "ruby") {
+          return p.onlineBattleRankId === RUBY_ID && p.starCnt === rank.star;
+        } else {
+          const pt = Number(p.pridePoint ?? 0);
+          return pt >= rank.min && pt <= rank.max;
+        }
+      });
+
+      return {
+        key: rank.key,
+        label: rank.label,
+        icon: rank.icon,
+        list
+      };
     });
-  });
-
-  /* PRIDE帯（P_A〜P_G） */
-  PRIDE_LEVELS.forEach(level => {
-    const list = State.filtered.filter(
-      p => p.pridePoint >= level.min && p.pridePoint <= level.max
-    );
-
-    State.summary.push({
-      key: level.key,
-      label: level.level,
-      icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${level.icon}.png`,
-      list
-    });
-  });
 }
 
 /* ---------------------------------------------------------
-   ★ サマリ検索フィルタ（normalize ベース）
+   ★ サマリ検索フィルタ（normalizedName ベース）
 --------------------------------------------------------- */
 function filterSummaryBySearch() {
-  const text = normalize(State.summarySearchText);
+  const norm = normalize(State.searchText);
 
-  if (!text) {
+  if (!norm) {
     return State.summary; // 全表示
   }
 
   return State.summary.filter(r => {
     return r.list.some(p =>
-      normalize(p.name).includes(text)
+      (p.normalizedName || "").includes(norm)
     );
   });
 }
 
 /* ---------------------------------------------------------
-   ★ 修正版：サマリ表示（検索窓は searchInput に統一）
+   ★ サマリ表示（検索窓は searchInput に統一）
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
 
-  /* ★ サマリ検索結果を State に反映 */
-  State.summaryFiltered = filterSummaryBySearch();
-  const filteredSummary = State.summaryFiltered;
+  const filteredSummary = filterSummaryBySearch();
 
   const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
   const rubyTotal = filteredSummary
@@ -452,7 +456,6 @@ function renderSummary() {
     .reduce((s, r) => s + r.list.length, 0);
   const prideTotal = total - rubyTotal;
 
-  /* ★ テーブルのみ描画（検索窓は searchInput） */
   area.innerHTML = `
     <h3>合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人</h3>
 
@@ -491,15 +494,15 @@ function renderSummary() {
     </div>
   `;
 
-  /* ★ ランククリックで詳細へ（検索引き継ぎ） */
+  // ランククリックで詳細へ（検索は State.searchText をそのまま引き継ぐ）
   document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
     tr.addEventListener("click", () => {
-      State.detailSearchText = State.summarySearchText;
-      showDetail(tr.dataset.key);
+      const key = tr.dataset.key;
+      State.currentIsRubyBand = key.startsWith("R");
+      showDetail(key);
     });
   });
 
-  /* ★ 現在の画面を summary として記録 */
   State.currentView = "summary";
 
   document.getElementById("summaryView").style.display = "block";
@@ -507,52 +510,39 @@ function renderSummary() {
 }
 /* ---------------------------------------------------------
    詳細表示（前後ランク移動＋検索再実行対応）
-   ★ サマリのフィルタに縛られず rankOrder に従って移動
-   ★ row が無くても空表を表示して次へ進める
+   ★ RANKS に従って移動
+   ★ row が無くても空表を表示
 --------------------------------------------------------- */
 function showDetail(key) {
-  // ★ サマリフィルタではなく「全ランク一覧」から探す
-  const row = State.summary.find(r => r.key === key);
+  const row = State.summary.find(r => r.key === key) || null;
+  const rankInfo = getRankInfo(key);
 
-  /* ★ row が無い場合でもエラーを出さず空表を表示 */
+  const isRubyBand = rankInfo ? rankInfo.type === "ruby" : key.startsWith("R");
+  const bandLabel = rankInfo ? rankInfo.label : (row ? row.label : key);
+  const bandIcon = rankInfo ? rankInfo.icon : "";
+
+  // 前後ランク移動ボタン制御
+  setupRankNavigation(key);
+
   if (!row) {
     State.detailOriginal = [];
     State.currentView = "detail";
-    State.currentIsRubyBand = key.startsWith("R");
+    State.currentIsRubyBand = isRubyBand;
 
-    renderDetailTable(State.currentIsRubyBand, key, "");
+    renderDetailTable(isRubyBand, bandLabel, bandIcon);
     document.getElementById("summaryView").style.display = "none";
     document.getElementById("detailView").style.display = "block";
     return;
   }
 
-  /* ★ 前後ランク移動ボタン制御（rankOrder に従う） */
-  setupRankNavigation(key);
-
-  const isRubyBand = key.startsWith("R");
-  const bandLabel = row.label;
-
-  let bandIcon = "";
-  if (isRubyBand) {
-    bandIcon = `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`;
-  } else {
-    const levelInfo = findPrideLevel(bandLabel);
-    if (levelInfo) {
-      bandIcon =
-        `https://initiald.sega.jp/inidac/ranking-images/pride/${levelInfo.icon}.png`;
-    }
-  }
-
-  /* ★ ランクの元データを更新（更新日時の新しい順） */
+  // ランクの元データを更新（更新日時の新しい順）
   State.detailOriginal = row.list.slice().sort((a, b) => {
     return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
 
-  /* ★ 現在の画面状態を記録 */
   State.currentView = "detail";
   State.currentIsRubyBand = isRubyBand;
 
-  /* ★ 詳細テーブル描画 */
   renderDetailTable(isRubyBand, bandLabel, bandIcon);
 
   document.getElementById("summaryView").style.display = "none";
@@ -588,19 +578,19 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
     </div>
   `;
 
-  /* ★ 初期描画時も検索を適用（ランク移動後の再検索） */
-  applyPlayerFilter(State.detailSearchText, isRubyBand);
+  // 初期描画時も検索を適用（ランク移動後の再検索）
+  applyPlayerFilter(State.searchText, isRubyBand);
 }
 
 /* ---------------------------------------------------------
-   プレイヤー名フィルタ（normalize ベース）
+   プレイヤー名フィルタ（normalizedName ベース）
 --------------------------------------------------------- */
 function applyPlayerFilter(keyword, isRubyBand) {
   const base = State.detailOriginal || [];
   const normKey = normalize(keyword);
 
   let list = normKey
-    ? base.filter(p => normalize(p.name).includes(normKey))
+    ? base.filter(p => (p.normalizedName || "").includes(normKey))
     : base;
 
   list = [...list].sort((a, b) =>
@@ -715,9 +705,6 @@ async function init() {
 
   applyFilters();
   buildSummary();
-
-  State.summaryFiltered = filterSummaryBySearch();
-
   renderSummary();
 
   stopProgress();
@@ -738,7 +725,6 @@ document.addEventListener("DOMContentLoaded", () => {
     startProgress();
     applyFilters();
     buildSummary();
-    State.summaryFiltered = filterSummaryBySearch();
     renderSummary();
     stopProgress();
   };
@@ -746,25 +732,22 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
   document.getElementById("allCsvBtn").onclick = exportAllCSV;
 
-  /* ★ 検索窓（searchInput） */
   const searchInput = document.getElementById("searchInput");
 
+  // ★ 検索窓（searchText 1本化）
   searchInput.addEventListener("input", e => {
-    const text = e.target.value;
+    State.searchText = e.target.value;
 
     if (State.currentView === "summary") {
-      State.summarySearchText = text;
       renderSummary();
     } else {
-      State.detailSearchText = text;
-      applyPlayerFilter(text, State.currentIsRubyBand);
+      applyPlayerFilter(State.searchText, State.currentIsRubyBand);
     }
   });
 
-  /* ★ 詳細 → サマリ戻る時に検索クリア */
+  // ★ 詳細 → サマリ戻る時に検索クリア
   document.getElementById("backBtn").onclick = () => {
-    State.summarySearchText = "";
-    State.detailSearchText = "";
+    State.searchText = "";
     searchInput.value = "";
     renderSummary();
   };
