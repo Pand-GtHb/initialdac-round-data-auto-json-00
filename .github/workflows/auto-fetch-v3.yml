@@ -94,3 +94,58 @@ jobs:
 
           git commit -m "Auto update integrated_data.json (round ${{ steps.round.outputs.round }})"
           git push
+
+      # ▼ ⑦ GitHub Pages のビルド完了を待つ（最大 60 回 = 約 3 分）
+      - name: Wait for GitHub Pages build to finish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          REPO="${{ github.event.repository.name }}"
+
+          echo "Waiting for GitHub Pages build to finish..."
+
+          for i in {1..60}; do
+            STATUS=$(curl -s \
+              -H "Authorization: token $GH_TOKEN" \
+              https://api.github.com/repos/$OWNER/$REPO/pages/builds/latest \
+              | jq -r '.status')
+
+            echo "Current status: $STATUS"
+
+            if [ "$STATUS" = "built" ]; then
+              echo "GitHub Pages build completed."
+              break
+            fi
+
+            if [ "$STATUS" = "errored" ]; then
+              echo "GitHub Pages build failed."
+              exit 1
+            fi
+
+            sleep 3
+          done
+
+      # ▼ ⑧ latest_update.json を生成（JST）
+      - name: Generate latest_update.json
+        run: |
+          NOW_JST=$(TZ=Asia/Tokyo date +"%Y-%m-%d %H:%M:%S")
+          ROUND=${{ steps.round.outputs.round }}
+
+          echo "{
+            \"lastUpdated\": \"${NOW_JST}\",
+            \"round\": ${ROUND}
+          }" > latest_update.json
+
+      # ▼ ⑨ latest_update.json をコミット
+      - name: Commit latest_update.json
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add latest_update.json
+
+          git diff --cached --quiet && echo "No changes" && exit 0
+
+          git commit -m "Update latest_update.json after Pages build"
+          git push
