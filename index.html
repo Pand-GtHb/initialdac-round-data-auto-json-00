@@ -11,7 +11,6 @@
 <meta http-equiv="Expires" content="0">
 
 <style>
-/* （あなたの CSS はそのまま。省略なしで全て残す） */
 body {
     font-family: sans-serif;
     margin: 0;
@@ -218,22 +217,7 @@ td.center { text-align:center; }
   <div id="detailArea" class="mt10"></div>
 </div>
 
-<script>
-(async () => {
-    try {
-        const res = await fetch("latest.json?cb=" + Date.now());
-        const data = await res.json();
-
-        const round = data.latestRound;
-        document.getElementById("latestRound").textContent = round;
-
-        window.latestRound = round;
-    } catch (e) {
-        document.getElementById("latestRound").textContent = "取得失敗";
-        console.error("latest.json 読み込み失敗:", e);
-    }
-})();
-</script>
+<!-- ★ 不要になった latest.json 即時読み込みスクリプトは削除済み ★ -->
 
 <script src="script.js?cb=1"></script>
 
