@@ -1,0 +1,49 @@
+name: Update latest_update.json after Pages deploy
+
+on:
+  deployment_status:
+    types: [success]
+
+jobs:
+  update-latest-update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ▼ デプロイ対象コミットのメッセージを取得
+      - name: Get commit message
+        id: commit
+        run: |
+          MSG=$(git log -1 --pretty=%B ${{ github.event.deployment.sha }})
+          echo "message=$MSG" >> $GITHUB_OUTPUT
+          echo "Commit message: $MSG"
+
+      # ▼ Auto Integrate InitialDAC JSON のコミット以外は無視
+      - name: Check if this is integrated_data update
+        if: ${{ !contains(steps.commit.outputs.message, 'Auto update integrated_data.json') }}
+        run: |
+          echo "Not an integrated_data.json update. Skipping."
+          exit 0
+
+      # ▼ latest_update.json を生成（JST）
+      - name: Generate latest_update.json
+        run: |
+          NOW_JST=$(TZ=Asia/Tokyo date +"%Y-%m-%d %H:%M:%S")
+          echo "{
+            \"lastUpdated\": \"${NOW_JST}\"
+          }" > latest_update.json
+
+      # ▼ コミット
+      - name: Commit latest_update.json
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add latest_update.json
+
+          git diff --cached --quiet && echo "No changes" && exit 0
+
+          git commit -m "Update latest_update.json after Pages deploy"
+          git push
