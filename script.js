@@ -84,17 +84,17 @@ function setupRankNavigation(currentKey) {
    状態管理（検索文字列保持＋画面状態）
 --------------------------------------------------------- */
 const State = {
-  all: [],             // 全レコード（normalizedName 付き）
-  filtered: [],        // 時間フィルタ後
-  summary: [],         // ランク帯ごとの集計
-  detailOriginal: [],  // 詳細表示用の元データ
+  all: [],
+  filtered: [],
+  summary: [],
+  detailOriginal: [],
   latestRound: null,
   generatedAt: "",
 
-  searchText: "",      // 🔍 サマリ・詳細共通の検索文字列
+  searchText: "",
 
-  currentView: "summary",   // "summary" or "detail"
-  currentIsRubyBand: true   // 詳細画面で Ruby帯かどうか
+  currentView: "summary",
+  currentIsRubyBand: true
 };
 
 /* ---------------------------------------------------------
@@ -199,12 +199,11 @@ function formatYMDHM(date) {
 
 /* ---------------------------------------------------------
    ★ normalize（半角→全角＋ひらがな→カタカナ＋小文字化＋スペース除去）
-   ※ 検索時は基本的に normalizedName を利用
 --------------------------------------------------------- */
 function normalize(s) {
   if (!s) return "";
 
-  s = s.replace(/\u3000/g, " "); // 全角スペース → 半角
+  s = s.replace(/\u3000/g, " ");
   s = s.replace(/[A-Za-z0-9]/g, ch =>
     String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
   );
@@ -218,7 +217,7 @@ function normalize(s) {
 }
 
 /* ---------------------------------------------------------
-   ★ 店舗名省略ロジック（旧版を整理）
+   ★ 店舗名省略ロジック
 --------------------------------------------------------- */
 function getZenkakuLength(str) {
   if (!str) return 0;
@@ -535,9 +534,11 @@ function showDetail(key) {
     return;
   }
 
-  // ランクの元データを更新（更新日時の新しい順）
+  // ★★★ 修正：updateDate を ISO8601 に変換して完全な時間降順にする
   State.detailOriginal = row.list.slice().sort((a, b) => {
-    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
+    const da = new Date(a.updateDate.replace(" ", "T"));
+    const db = new Date(b.updateDate.replace(" ", "T"));
+    return db - da; // 降順
   });
 
   State.currentView = "detail";
@@ -584,6 +585,7 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
 
 /* ---------------------------------------------------------
    プレイヤー名フィルタ（normalizedName ベース）
+   ★★★ 修正：検索後も updateDate 降順を維持
 --------------------------------------------------------- */
 function applyPlayerFilter(keyword, isRubyBand) {
   const base = State.detailOriginal || [];
@@ -593,9 +595,12 @@ function applyPlayerFilter(keyword, isRubyBand) {
     ? base.filter(p => (p.normalizedName || "").includes(normKey))
     : base;
 
-  list = [...list].sort((a, b) =>
-    String(a.name).localeCompare(String(b.name), "ja")
-  );
+  // ★★★ 修正：名前順ソートを廃止 → updateDate 降順で統一
+  list = [...list].sort((a, b) => {
+    const da = new Date(a.updateDate.replace(" ", "T"));
+    const db = new Date(b.updateDate.replace(" ", "T"));
+    return db - da;
+  });
 
   renderDetailRows(list, isRubyBand);
 }
