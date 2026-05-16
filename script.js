@@ -29,7 +29,6 @@ const PRIDE_LEVELS = [
    ★ RANKS（Ruby☆1〜8 + PRIDE A〜G を完全統合）
 --------------------------------------------------------- */
 const RANKS = [
-  // Ruby ☆1〜8
   ...Array.from({ length: 8 }, (_, i) => ({
     key: `R${i + 1}`,
     type: "ruby",
@@ -40,7 +39,6 @@ const RANKS = [
     order: i
   })),
 
-  // PRIDE A〜G
   ...PRIDE_LEVELS.map((p, idx) => ({
     key: p.key,
     type: "pride",
@@ -62,7 +60,7 @@ function getRankInfo(key) {
 }
 
 /* ---------------------------------------------------------
-   ★ 前後ランク移動ボタン制御（RANKS.order ベース）
+   ★ 前後ランク移動ボタン制御
 --------------------------------------------------------- */
 function setupRankNavigation(currentKey) {
   const idx = getRankIndex(currentKey);
@@ -81,7 +79,7 @@ function setupRankNavigation(currentKey) {
 }
 
 /* ---------------------------------------------------------
-   状態管理（検索文字列保持＋画面状態）
+   状態管理
 --------------------------------------------------------- */
 const State = {
   all: [],
@@ -90,15 +88,13 @@ const State = {
   detailOriginal: [],
   latestRound: null,
   generatedAt: "",
-
   searchText: "",
-
   currentView: "summary",
   currentIsRubyBand: true
 };
 
 /* ---------------------------------------------------------
-   ログ（最新が上）＋色分け＋最大行数制限
+   ログ
 --------------------------------------------------------- */
 const MAX_LOG_LINES = 200;
 
@@ -198,7 +194,7 @@ function formatYMDHM(date) {
 }
 
 /* ---------------------------------------------------------
-   ★ normalize（半角→全角＋ひらがな→カタカナ＋小文字化＋スペース除去）
+   normalize
 --------------------------------------------------------- */
 function normalize(s) {
   if (!s) return "";
@@ -217,7 +213,7 @@ function normalize(s) {
 }
 
 /* ---------------------------------------------------------
-   ★ 店舗名省略ロジック
+   店舗名省略
 --------------------------------------------------------- */
 function getZenkakuLength(str) {
   if (!str) return 0;
@@ -493,7 +489,6 @@ function renderSummary() {
     </div>
   `;
 
-  // ランククリックで詳細へ（検索は State.searchText をそのまま引き継ぐ）
   document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
     tr.addEventListener("click", () => {
       const key = tr.dataset.key;
@@ -509,8 +504,6 @@ function renderSummary() {
 }
 /* ---------------------------------------------------------
    詳細表示（前後ランク移動＋検索再実行対応）
-   ★ RANKS に従って移動
-   ★ row が無くても空表を表示
 --------------------------------------------------------- */
 function showDetail(key) {
   const row = State.summary.find(r => r.key === key) || null;
@@ -520,7 +513,6 @@ function showDetail(key) {
   const bandLabel = rankInfo ? rankInfo.label : (row ? row.label : key);
   const bandIcon = rankInfo ? rankInfo.icon : "";
 
-  // 前後ランク移動ボタン制御
   setupRankNavigation(key);
 
   if (!row) {
@@ -534,11 +526,9 @@ function showDetail(key) {
     return;
   }
 
-  // ★★★ 修正：updateDate を ISO8601 に変換して完全な時間降順にする
+  // ★ updateDate の降順でソート（ここが基準）
   State.detailOriginal = row.list.slice().sort((a, b) => {
-    const da = new Date(a.updateDate.replace(" ", "T"));
-    const db = new Date(b.updateDate.replace(" ", "T"));
-    return db - da; // 降順
+    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
 
   State.currentView = "detail";
@@ -551,7 +541,7 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   詳細テーブル（検索窓は searchInput を使用）
+   詳細テーブル
 --------------------------------------------------------- */
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   const area = document.getElementById("detailArea");
@@ -579,29 +569,23 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
     </div>
   `;
 
-  // 初期描画時も検索を適用（ランク移動後の再検索）
   applyPlayerFilter(State.searchText, isRubyBand);
 }
 
 /* ---------------------------------------------------------
-   プレイヤー名フィルタ（normalizedName ベース）
-   ★★★ 修正：検索後も updateDate 降順を維持
+   ★★★ プレイヤー名フィルタ（名前順ソートを完全削除）
+   → detailOriginal の updateDate 降順をそのまま維持
 --------------------------------------------------------- */
 function applyPlayerFilter(keyword, isRubyBand) {
   const base = State.detailOriginal || [];
   const normKey = normalize(keyword);
 
-  let list = normKey
+  // ★ フィルタのみ。ソートは絶対にしない。
+  const list = normKey
     ? base.filter(p => (p.normalizedName || "").includes(normKey))
     : base;
 
-  // ★★★ 修正：名前順ソートを廃止 → updateDate 降順で統一
-  list = [...list].sort((a, b) => {
-    const da = new Date(a.updateDate.replace(" ", "T"));
-    const db = new Date(b.updateDate.replace(" ", "T"));
-    return db - da;
-  });
-
+  // ★ detailOriginal は showDetail() で updateDate 降順にソート済み
   renderDetailRows(list, isRubyBand);
 }
 
@@ -718,7 +702,7 @@ async function init() {
 }
 
 /* ---------------------------------------------------------
-   DOMContentLoaded（検索窓は searchInput に統一）
+   DOMContentLoaded
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("reloadBtn").onclick = () => {
@@ -739,7 +723,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const searchInput = document.getElementById("searchInput");
 
-  // ★ 検索窓（searchText 1本化）
   searchInput.addEventListener("input", e => {
     State.searchText = e.target.value;
 
@@ -750,7 +733,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // ★ 詳細 → サマリ戻る時に検索クリア
   document.getElementById("backBtn").onclick = () => {
     State.searchText = "";
     searchInput.value = "";
