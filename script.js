@@ -526,7 +526,7 @@ function showDetail(key) {
     return;
   }
 
-  // ★ updateDate の降順でソート（ここが基準）
+  // ★ updateDate の降順でソート（基準）
   State.detailOriginal = row.list.slice().sort((a, b) => {
     return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
@@ -541,15 +541,15 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   詳細テーブル
+   詳細テーブル（人数表示は applyPlayerFilter で更新）
 --------------------------------------------------------- */
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   const area = document.getElementById("detailArea");
 
   area.innerHTML = `
-    <h3>
+    <h3 id="detailCountHeader">
       <img src="${bandIcon}" width="32" style="vertical-align:middle;">
-      ${bandLabel}：${fmt(State.detailOriginal.length)}人
+      ${bandLabel}：<span id="detailCount"></span>人
     </h3>
 
     <div style="overflow-x:auto;">
@@ -573,8 +573,7 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
 }
 
 /* ---------------------------------------------------------
-   ★★★ プレイヤー名フィルタ（名前順ソートを完全削除）
-   → detailOriginal の updateDate 降順をそのまま維持
+   ★★★ プレイヤー名フィルタ（人数表示修正＋名前順ソート削除）
 --------------------------------------------------------- */
 function applyPlayerFilter(keyword, isRubyBand) {
   const base = State.detailOriginal || [];
@@ -585,7 +584,10 @@ function applyPlayerFilter(keyword, isRubyBand) {
     ? base.filter(p => (p.normalizedName || "").includes(normKey))
     : base;
 
-  // ★ detailOriginal は showDetail() で updateDate 降順にソート済み
+  // ★ 検索後の人数を正しく表示
+  const countEl = document.getElementById("detailCount");
+  if (countEl) countEl.textContent = fmt(list.length);
+
   renderDetailRows(list, isRubyBand);
 }
 
