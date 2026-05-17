@@ -1,9 +1,8 @@
 /* ---------------------------------------------------------
-   Initial DAC Round Data Viewer（Ruby＋PRIDE専用・前後ランク移動＋検索保持対応）
-   ★ 検索窓は searchInput に統一（サマリ・詳細共通）
-   ★ IME 完全安定
-   ★ State.searchText 1本化
-   ★ normalize は読み込み時に前処理
+   Initial DAC Round Data Viewer（integrated_data.json 対応版）
+   ★ latest_round.json / roundXX.json は完全廃止
+   ★ integrated_data.json のみで動作
+   ★ normalize 前処理・検索保持・前後ランク移動対応
 --------------------------------------------------------- */
 
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
@@ -26,7 +25,7 @@ const PRIDE_LEVELS = [
 ];
 
 /* ---------------------------------------------------------
-   ★ RANKS（Ruby☆1〜8 + PRIDE A〜G を完全統合）
+   ★ RANKS（Ruby☆1〜8 + PRIDE A〜G）
 --------------------------------------------------------- */
 const RANKS = [
   ...Array.from({ length: 8 }, (_, i) => ({
@@ -86,7 +85,6 @@ const State = {
   filtered: [],
   summary: [],
   detailOriginal: [],
-  latestRound: null,
   generatedAt: "",
   searchText: "",
   currentView: "summary",
@@ -205,39 +203,15 @@ function buildRubyFilters() {
 }
 
 /* ---------------------------------------------------------
-   latest_round.json 読み込み（latestRound に合わせた版）
---------------------------------------------------------- */
-async function loadLatest() {
-  log("latest_round.json 取得準備中");
-
-  try {
-    const json = await fetchJSON("latest_round.json");
-
-    if (!json.latestRound) throw new Error("latestRound が存在しません");
-
-    State.latestRound = json.latestRound;
-    document.getElementById("latestRound").textContent = State.latestRound;
-
-    log("latest_round.json 読み込み完了");
-  } catch (e) {
-    logError("latest_round.json の取得に失敗：" + e.message);
-  }
-}
-
-/* ---------------------------------------------------------
-   roundXX.json 読み込み（normalizedName 付与）
+   integrated_data.json 読み込み（★新方式）
 --------------------------------------------------------- */
 async function loadRoundData() {
-  if (!State.latestRound) {
-    logError("latestRound が未取得のため、roundXX.json を読み込めません");
-    return;
-  }
-
-  log(`round${State.latestRound}.json 取得準備中`);
+  log("integrated_data.json 取得準備中");
 
   try {
-    const json = await fetchJSON(`round${State.latestRound}.json`);
+    const json = await fetchJSON("integrated_data.json");
 
+    // JSON の generatedAt をそのまま使用
     State.generatedAt = json.generatedAt ?? "";
 
     if (State.generatedAt) {
@@ -245,9 +219,9 @@ async function loadRoundData() {
         formatYMDHM(parseDateJST(State.generatedAt));
     }
 
-    const records = Array.isArray(json) ? json : (json.records || []);
+    const records = json.records || [];
 
-    // ★ 読み込み時に normalizedName を付与
+    // ★ normalizedName を付与
     State.all = records.map(p => ({
       ...p,
       normalizedName: normalize(p.name)
@@ -255,9 +229,9 @@ async function loadRoundData() {
 
     State.filtered = [...State.all];
 
-    log(`round${State.latestRound}.json 読み込み完了 (${State.all.length}件)`);
+    log(`integrated_data.json 読み込み完了 (${State.all.length}件)`);
   } catch (e) {
-    logError("roundXX.json の取得に失敗：" + e.message);
+    logError("integrated_data.json の取得に失敗：" + e.message);
   }
 }
 
@@ -333,35 +307,27 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   ★★★ サマリ検索フィルタ（人数が検索後に正しくなる修正版）
+   ★★★ サマリ検索フィルタ（検索後人数が正しく反映）
 --------------------------------------------------------- */
 function filterSummaryBySearch() {
   const norm = normalize(State.searchText);
 
-  // 検索なし → そのまま
-  if (!norm) {
-    return State.summary;
-  }
+  if (!norm) return State.summary;
 
-  // ★ 各帯ごとに list を検索後のプレイヤーだけに絞り込む
   const filtered = State.summary
     .map(r => {
       const filteredList = r.list.filter(p =>
         (p.normalizedName || "").includes(norm)
       );
-      return {
-        ...r,
-        list: filteredList
-      };
+      return { ...r, list: filteredList };
     })
-    // ★ 1人もいない帯は除外
     .filter(r => r.list.length > 0);
 
   return filtered;
 }
 
 /* ---------------------------------------------------------
-   ★ サマリ表示（検索後人数が正しく反映される）
+   ★ サマリ表示
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
@@ -605,7 +571,7 @@ function exportAllCSV() {
 }
 
 /* ---------------------------------------------------------
-   初期化
+   初期化（★ integrated_data.json のみ）
 --------------------------------------------------------- */
 async function init() {
   log("Viewer 初期化中");
@@ -614,8 +580,7 @@ async function init() {
 
   buildRubyFilters();
 
-  await loadLatest();
-  await loadRoundData();
+  await loadRoundData();   // ← これだけでOK
 
   applyFilters();
   buildSummary();
