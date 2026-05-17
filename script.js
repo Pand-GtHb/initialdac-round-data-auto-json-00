@@ -85,6 +85,7 @@ const State = {
   generatedAt: "",
   latestRound: null,
 
+  // ★ latest_update.json の生文字列
   latestUpdateAt: "",
 
   searchText: "",
@@ -187,7 +188,7 @@ function formatYMDHM(date) {
 }
 
 /* ---------------------------------------------------------
-   normalize（★欠落していたため復元）
+   normalize
 --------------------------------------------------------- */
 function normalize(s) {
   if (!s) return "";
@@ -206,229 +207,319 @@ function normalize(s) {
 }
 
 /* ---------------------------------------------------------
-   ★ Ruby星の2行表示
+   店舗名省略
+--------------------------------------------------------- */
+function getZenkakuLength(str) {
+  if (!str) return 0;
+  const len = str.replace(/[^\x00-\x7F]/g, "xx").length;
+  return len / 2;
+}
+
+function isMostlyAscii(str) {
+  if (!str) return true;
+  const asciiCount = (str.match(/[\x00-\x7F]/g) || []).length;
+  return asciiCount / str.length >= 0.7;
+}
+
+function getTextWidth(text, font) {
+  const canvas = getTextWidth.canvas || (getTextWidth.canvas = document.createElement("canvas"));
+  const ctx = canvas.getContext("2d");
+  ctx.font = font;
+  return ctx.measureText(text).width;
+}
+
+function shortenStoreName(full) {
+  if (!full) return "";
+
+  if (!isMostlyAscii(full)) {
+    const zLen = getZenkakuLength(full);
+    if (zLen <= 18) return full;
+
+    const head = 6;
+    const tail = 6;
+    if (full.length <= head + tail) return full;
+    return full.slice(0, head) + "…" + full.slice(-tail);
+  }
+
+  const font = "14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  const maxWidth = 220;
+
+  if (getTextWidth(full, font) <= maxWidth) return full;
+
+  let head = 10;
+  let tail = 10;
+
+  while (head + tail > 2) {
+    const candidate = full.slice(0, head) + "…" + full.slice(-tail);
+    if (getTextWidth(candidate, font) <= maxWidth) return candidate;
+
+    if (head >= tail) head--;
+    else tail--;
+  }
+
+  return full.slice(0, 1) + "…" + full.slice(-1);
+}
+
+/* ---------------------------------------------------------
+   ★ Ruby星 → ★★★★★ 表示変換（4文字×2行）
 --------------------------------------------------------- */
 function renderStars(starCount) {
-  const full = "★".repeat(starCount);
-  return full.length > 4
-    ? full.slice(0, 4) + "<br>" + full.slice(4)
-    : full;
+  if (!starCount || starCount < 1) return "";
+
+  const stars = "★".repeat(starCount);
+
+  return stars.length > 4
+    ? stars.slice(0, 4) + "<br>" + stars.slice(4)
+    : stars;
 }
 /* ---------------------------------------------------------
-   Initial DAC Round Data Viewer（integrated_data.json + latest_round.json 対応）
+   共通 fetch
 --------------------------------------------------------- */
-
-const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
-
-/* ---------------------------------------------------------
-   Ruby帯・PRIDE帯 定義
---------------------------------------------------------- */
-
-const RUBY_ID =
-  "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
-
-const PRIDE_LEVELS = [
-  { key: "P_A", level: "A=～99",    min: 1,     max: 99,    icon: "ef788ee816773c454495ebf83e5ac380" },
-  { key: "P_B", level: "B=100～",   min: 100,   max: 499,   icon: "3c8cc917bb7a97d46ba35c93d898491c" },
-  { key: "P_C", level: "C=500～",   min: 500,   max: 999,   icon: "ec8f805c9de95c65c858d2e1341f76ab" },
-  { key: "P_D", level: "D=1000～",  min: 1000,  max: 4999,  icon: "58446a29e6c496139963728eea887349" },
-  { key: "P_E", level: "E=5000～",  min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
-  { key: "P_F", level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
-  { key: "P_G", level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
-];
-
-/* ---------------------------------------------------------
-   ★ RANKS（Ruby☆1〜8 + PRIDE A〜G）
---------------------------------------------------------- */
-const RANKS = [
-  ...Array.from({ length: 8 }, (_, i) => ({
-    key: `R${i + 1}`,
-    type: "ruby",
-    star: i + 1,
-    label: `☆${i + 1}`,
-    badgeId: RUBY_ID,
-    icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
-    order: i
-  })),
-
-  ...PRIDE_LEVELS.map((p, idx) => ({
-    key: p.key,
-    type: "pride",
-    min: p.min,
-    max: p.max,
-    label: p.level,
-    badgeId: p.icon,
-    icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${p.icon}.png`,
-    order: 8 + idx
-  }))
-];
-
-function getRankIndex(key) {
-  return RANKS.findIndex(r => r.key === key);
-}
-
-function getRankInfo(key) {
-  return RANKS.find(r => r.key === key) || null;
+async function fetchJSON(path) {
+  const res = await fetch(`${BASE_URL}/${path}?t=${Date.now()}`, {
+    cache: "no-store"
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
 }
 
 /* ---------------------------------------------------------
-   ★ 前後ランク移動ボタン制御
+   latest_round.json 読み込み（ラウンド番号表示用）
 --------------------------------------------------------- */
-function setupRankNavigation(currentKey) {
-  const idx = getRankIndex(currentKey);
+async function loadLatestRound() {
+  log("latest_round.json 取得準備中");
 
-  const prev = idx > 0 ? RANKS[idx - 1].key : null;
-  const next = idx >= 0 && idx < RANKS.length - 1 ? RANKS[idx + 1].key : null;
+  try {
+    const json = await fetchJSON("latest_round.json");
 
-  const prevBtn = document.getElementById("prevRankBtn");
-  const nextBtn = document.getElementById("nextRankBtn");
+    if (!json.latestRound) throw new Error("latestRound が存在しません");
 
-  prevBtn.disabled = !prev;
-  nextBtn.disabled = !next;
+    State.latestRound = json.latestRound;
 
-  prevBtn.onclick = () => prev && showDetail(prev);
-  nextBtn.onclick = () => next && showDetail(next);
+    const el = document.getElementById("latestRound");
+    if (el) el.textContent = State.latestRound;
+
+    log("latest_round.json 読み込み完了");
+  } catch (e) {
+    logError("latest_round.json の取得に失敗：" + e.message);
+  }
 }
 
 /* ---------------------------------------------------------
-   状態管理
+   Ruby星数フィルタ生成
 --------------------------------------------------------- */
-const State = {
-  all: [],
-  filtered: [],
-  summary: [],
-  detailOriginal: [],
-  generatedAt: "",
-  latestRound: null,
-
-  latestUpdateAt: "",
-
-  searchText: "",
-  currentView: "summary",
-  currentIsRubyBand: true
-};
+function buildRubyFilters() {
+  const area = document.getElementById("rubyFilters");
+  area.innerHTML = Array.from({ length: 8 }, (_, i) => {
+    const star = i + 1;
+    return `
+      <label style="margin-right:10px;">
+        <input type="checkbox" class="ruby-filter" value="${star}" checked>
+        ☆${star}
+      </label>
+    `;
+  }).join("");
+}
 
 /* ---------------------------------------------------------
-   ログ
+   integrated_data.json 読み込み
 --------------------------------------------------------- */
-const MAX_LOG_LINES = 200;
+async function loadRoundData() {
+  log("integrated_data.json 取得準備中");
 
-function appendLog(msg, type = "info") {
-  const box = document.getElementById("logBox");
+  try {
+    const json = await fetchJSON("integrated_data.json");
 
-  const now = new Date();
-  const t = now.toLocaleString("ja-JP", {
-    hour12: false,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit"
+    State.generatedAt = json.generatedAt ?? "";
+
+    if (State.generatedAt) {
+      document.getElementById("jsonUpdateTime").textContent =
+        formatYMDHM(parseDateJST(State.generatedAt));
+    }
+
+    const records = json.records || [];
+
+    State.all = records.map(p => ({
+      ...p,
+      normalizedName: normalize(p.name)
+    }));
+
+    State.filtered = [...State.all];
+
+    /* ★ 修正ポイント：generatedAt をログに追加 */
+    const genTime = State.generatedAt
+      ? formatYMDHM(parseDateJST(State.generatedAt))
+      : "-";
+
+    log(`integrated_data.json 読み込み完了 (${State.all.length}件：${genTime})`);
+
+    /* ★ 最新データ取得後は通常色へ戻す（標準グレー） */
+    const btn = document.getElementById("reloadBtn");
+    if (btn) {
+      btn.classList.remove("update-alert");
+      btn.style.cssText = ""; // 標準ボタンに戻す
+    }
+
+  } catch (e) {
+    logError("integrated_data.json の取得に失敗：" + e.message);
+  }
+}
+
+/* ---------------------------------------------------------
+   フィルタ（時間フィルタ）
+--------------------------------------------------------- */
+function applyFilters() {
+  const minutes = Number(document.getElementById("rangeSelect").value);
+
+  if (!State.generatedAt) {
+    logError("generatedAt が未取得のため、時間フィルタをスキップしました");
+    State.filtered = [...State.all];
+    return;
+  }
+
+  const baseMs = parseDateJST(State.generatedAt).getTime();
+  const filterStartMs = baseMs - minutes * 60 * 1000;
+
+  document.getElementById("filterStartTime").textContent =
+    formatYMDHM(new Date(filterStartMs));
+
+  State.filtered = State.all.filter(p => {
+    if (!p.updateDate) return false;
+    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
+  });
+}
+
+/* ---------------------------------------------------------
+   サマリ統計計算
+--------------------------------------------------------- */
+function calcStats(list, total) {
+  const cnt = list.length;
+  const percent = total ? Math.round((cnt / total) * 100) : 0;
+
+  const points = list.map(p => Number(p.point ?? 0));
+  const avg = cnt ? Math.round(points.reduce((a, b) => a + b, 0) / cnt) : 0;
+  const min = cnt ? Math.min(...points) : 0;
+  const max = cnt ? Math.max(...points) : 0;
+
+  return { cnt, percent, avg, min, max };
+}
+
+/* ---------------------------------------------------------
+   サマリ生成
+--------------------------------------------------------- */
+function buildSummary() {
+  State.summary = [];
+
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+
+  const base = State.filtered.length ? State.filtered : State.all;
+
+  State.summary = RANKS
+    .filter(rank => rank.type === "pride" || selectedStars.includes(rank.star))
+    .map(rank => {
+      const list = base.filter(p => {
+        if (rank.type === "ruby") {
+          return p.onlineBattleRankId === RUBY_ID && p.starCnt === rank.star;
+        } else {
+          const pt = Number(p.pridePoint ?? 0);
+          return pt >= rank.min && pt <= rank.max;
+        }
+      });
+
+      return {
+        key: rank.key,
+        label: rank.label,
+        icon: rank.icon,
+        list
+      };
+    });
+}
+
+/* ---------------------------------------------------------
+   サマリ検索フィルタ
+--------------------------------------------------------- */
+function filterSummaryBySearch() {
+  const norm = normalize(State.searchText);
+
+  if (!norm) return State.summary;
+
+  const filtered = State.summary
+    .map(r => {
+      const filteredList = r.list.filter(p =>
+        (p.normalizedName || "").includes(norm)
+      );
+      return { ...r, list: filteredList };
+    })
+    .filter(r => r.list.length > 0);
+
+  return filtered;
+}
+
+/* ---------------------------------------------------------
+   サマリ表示
+--------------------------------------------------------- */
+function renderSummary() {
+  const area = document.getElementById("summaryArea");
+
+  const filteredSummary = filterSummaryBySearch();
+
+  const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
+  const rubyTotal = filteredSummary
+    .filter(r => r.key.startsWith("R"))
+    .reduce((s, r) => s + r.list.length, 0);
+  const prideTotal = total - rubyTotal;
+
+  area.innerHTML = `
+    <h3>合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人</h3>
+
+    <div style="overflow-x:auto;">
+      <table>
+        <tr>
+          <th>ランク</th>
+          <th>☆・Lv</th>
+          <th>人数</th>
+          <th>%</th>
+          <th>Bar</th>
+          <th>RP:Avg</th>
+          <th>RP:Min</th>
+          <th>RP:Max</th>
+        </tr>
+        ${filteredSummary.map(r => {
+          const { cnt, percent, avg, min, max } = calcStats(r.list, total);
+          return `
+            <tr class="clickable" data-key="${r.key}">
+              <td class="center"><img src="${r.icon}" width="32"></td>
+              <td class="left">${r.label}</td>
+              <td class="right">${fmt(cnt)}</td>
+              <td class="right">${percent}%</td>
+              <td class="center">
+                <div class="bar-wrap">
+                  <div class="bar" style="width:${percent}%;"></div>
+                </div>
+              </td>
+              <td class="right">${fmt(avg)}</td>
+              <td class="right">${fmt(min)}</td>
+              <td class="right">${fmt(max)}</td>
+            </tr>
+          `;
+        }).join("")}
+      </table>
+    </div>
+  `;
+
+  document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const key = tr.dataset.key;
+      State.currentIsRubyBand = key.startsWith("R");
+      showDetail(key);
+    });
   });
 
-  const line = document.createElement("div");
-  line.textContent = `[${t}] ${msg}`;
-  line.dataset.type = type;
+  State.currentView = "summary";
 
-  if (type === "error") line.style.color = "#ff5555";
-  else if (type === "warn") line.style.color = "#ffeb3b";
-  else line.style.color = "#00ff00";
-
-  box.prepend(line);
-
-  while (box.children.length > MAX_LOG_LINES) {
-    box.removeChild(box.lastChild);
-  }
-}
-
-const log = msg => appendLog(msg, "info");
-const logWarn = msg => appendLog(msg, "warn");
-const logError = msg => appendLog(msg, "error");
-
-/* ---------------------------------------------------------
-   進行中アニメーション
---------------------------------------------------------- */
-let progressTimer = null;
-let progressPos = 0;
-let progressLine = null;
-
-function startProgress() {
-  const box = document.getElementById("logBox");
-
-  if (progressLine) progressLine.remove();
-
-  progressPos = 0;
-  progressLine = document.createElement("div");
-  progressLine.style.color = "#ffeb3b";
-
-  box.prepend(progressLine);
-
-  updateProgressBar();
-
-  progressTimer = setInterval(() => {
-    progressPos = (progressPos + 1) % 20;
-    updateProgressBar();
-  }, 120);
-}
-
-function updateProgressBar() {
-  const total = 20;
-  const filled = "■".repeat(progressPos);
-  const empty = "□".repeat(total - progressPos);
-  progressLine.textContent = `進行中：${filled}${empty}`;
-}
-
-function stopProgress() {
-  if (progressTimer) clearInterval(progressTimer);
-  progressTimer = null;
-
-  if (progressLine) {
-    progressLine.remove();
-    progressLine = null;
-  }
-
-  log("Viewer フィルタ完了");
-}
-
-/* ---------------------------------------------------------
-   ユーティリティ
---------------------------------------------------------- */
-const fmt = n => Number(n).toLocaleString();
-const parseDateJST = str => new Date(str.replace(/-/g, "/"));
-
-function formatYMDHM(date) {
-  const y = date.getFullYear();
-  const m = ("0" + (date.getMonth() + 1)).slice(-2);
-  const d = ("0" + date.getDate()).slice(-2);
-  const hh = ("0" + date.getHours()).slice(-2);
-  const mm = ("0" + date.getMinutes()).slice(-2);
-  return `${y}/${m}/${d} ${hh}:${mm}`;
-}
-
-/* ---------------------------------------------------------
-   normalize（★欠落していたため復元）
---------------------------------------------------------- */
-function normalize(s) {
-  if (!s) return "";
-
-  s = s.replace(/\u3000/g, " ");
-  s = s.replace(/[A-Za-z0-9]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
-  );
-  s = s.toLowerCase();
-  s = s.replace(/[\u3041-\u3096]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) + 0x60)
-  );
-  s = s.replace(/ /g, "");
-
-  return s;
-}
-
-/* ---------------------------------------------------------
-   ★ Ruby星の2行表示
---------------------------------------------------------- */
-function renderStars(starCount) {
-  const full = "★".repeat(starCount);
-  return full.length > 4
-    ? full.slice(0, 4) + "<br>" + full.slice(4)
-    : full;
+  document.getElementById("summaryView").style.display = "block";
+  document.getElementById("detailView").style.display = "none";
 }
 /* ---------------------------------------------------------
    詳細表示（前後ランク移動＋検索再実行対応）
@@ -517,7 +608,7 @@ function applyPlayerFilter(keyword, isRubyBand) {
 }
 
 /* ---------------------------------------------------------
-   ★★★ 詳細行描画（★表示変更＋クリックコピー対応）
+   詳細行描画（★ここだけ修正あり）
 --------------------------------------------------------- */
 function renderDetailRows(list, isRubyBand) {
   const tbody = document.getElementById("detailTableBody");
@@ -528,51 +619,33 @@ function renderDetailRows(list, isRubyBand) {
       ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
       : "";
 
-    /* ---------------------------------------------------------
-       ★ Ruby帯 → ★表示（2行対応）
-       ★ PRIDE帯 → 数値表示
-       ★ クリックコピー用 data-* を付与
-    --------------------------------------------------------- */
-    let starOrLevelHtml = "";
-    let starOrLevelAttr = "";
+    /* ★ 修正前：
+       const starOrLevel = isRubyBand
+         ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
+         : p.pridePoint;
+    */
 
-    if (isRubyBand) {
-      const star = p.starCnt ?? 0;
-      starOrLevelHtml = renderStars(star);
-      starOrLevelAttr = `data-type="star" data-star="${star}"`;
-    } else {
-      const pride = p.pridePoint ?? 0;
-      starOrLevelHtml = pride;
-      starOrLevelAttr = `data-type="pride" data-pride="${pride}"`;
-    }
+    /* ★ 修正後（今回の唯一の変更行） */
+    const starOrLevel = isRubyBand
+      ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? renderStars(p.starCnt) : "")
+      : p.pridePoint;
 
     const fullShop = p.shopname ?? "";
     const shortShop = shortenStoreName(fullShop);
 
     return `
       <tr data-updated="${p.updateDate}">
-        
-        <!-- ★・PRIDE 列 -->
-        <td class="center clickable star-pride-col"
-            ${starOrLevelAttr}
-            data-name="${p.name}">
-          ${starOrLevelHtml}
-        </td>
+        <td class="center">${starOrLevel}</td>
 
-        <!-- 名前（名前単独コピー） -->
-        <td class="left player-name clickable"
-            data-type="name"
-            data-name="${p.name}">
+        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
           ${p.name}
         </td>
 
         <td class="right">${fmt(p.point)}</td>
 
-        <!-- 店舗名（従来通り店舗名単独コピー） -->
         <td class="left clickable"
-            data-type="shop"
-            data-name="${p.name}"
-            data-fullname="${fullShop.replace(/"/g, "&quot;")}">
+            data-fullname="${fullShop.replace(/"/g, "&quot;")}"
+            onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
           <div class="store-name">${shortShop}</div>
         </td>
 
@@ -585,7 +658,7 @@ function renderDetailRows(list, isRubyBand) {
   tbody.innerHTML = rows;
 
   /* ---------------------------------------------------------
-     ★ 5分刻みマッチング可能性 → 行を淡いピンクに
+     ★ 追加：5分刻みマッチング可能性 → 行を淡いピンクに
   --------------------------------------------------------- */
   const now = new Date();
 
@@ -603,12 +676,13 @@ function renderDetailRows(list, isRubyBand) {
 }
 
 /* ---------------------------------------------------------
-   クリックコピー（共通）
+   クリックコピー
 --------------------------------------------------------- */
 function copyToClipboard(text) {
   navigator.clipboard.writeText(text);
   log(`コピー：${text}`);
 }
+
 /* ---------------------------------------------------------
    CSV 出力（サマリ）
 --------------------------------------------------------- */
@@ -705,40 +779,6 @@ async function init() {
   setInterval(checkUpdate, 60000);
   checkUpdate(); // 即時1回
 }
-
-/* ---------------------------------------------------------
-   ★ クリックコピー（★・PRIDE・名前・店舗名）
---------------------------------------------------------- */
-document.getElementById("detailArea").addEventListener("click", e => {
-  const cell = e.target.closest(".clickable");
-  if (!cell) return;
-
-  const type = cell.dataset.type;
-  const name = cell.dataset.name;
-
-  if (type === "star") {
-    const star = cell.dataset.star;
-    copyToClipboard(`★${star}\t${name}`);
-    return;
-  }
-
-  if (type === "pride") {
-    const pride = cell.dataset.pride;
-    copyToClipboard(`PRIDE${pride}\t${name}`);
-    return;
-  }
-
-  if (type === "name") {
-    copyToClipboard(name);
-    return;
-  }
-
-  if (type === "shop") {
-    const shop = cell.dataset.fullname;
-    copyToClipboard(shop);
-    return;
-  }
-});
 
 /* ---------------------------------------------------------
    DOMContentLoaded
