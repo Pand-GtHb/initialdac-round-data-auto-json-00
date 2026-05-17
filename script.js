@@ -88,11 +88,8 @@ const State = {
   generatedAt: "",
   latestRound: null,
 
-  // ★ latest_update.json の生文字列（lastUpdated / generatedAt）
+  // latest_update.json の生文字列
   latestUpdateAt: "",
-
-  // ★ 監視ハートビート（●/○）
-  watchBeat: false,
 
   searchText: "",
   currentView: "summary",
@@ -347,11 +344,10 @@ async function loadRoundData() {
 
     log(`integrated_data.json 読み込み完了 (${State.all.length}件)`);
 
-    /* ★ 最新データ取得後は通常色へ戻す */
+    /* ★ 最新データ取得後は通常色へ戻す（標準グレー） */
     const btn = document.getElementById("reloadBtn");
     if (btn) {
       btn.classList.remove("update-alert");
-      btn.classList.add("reload-normal");
       btn.style.cssText = "";
     }
 
@@ -517,303 +513,246 @@ function renderSummary() {
   document.getElementById("detailView").style.display = "none";
 }
 /* ---------------------------------------------------------
-   詳細表示（前後ランク移動＋検索再実行対応）
+   共通 fetch
 --------------------------------------------------------- */
-function showDetail(key) {
-  const row = State.summary.find(r => r.key === key) || null;
-  const rankInfo = getRankInfo(key);
-
-  const isRubyBand = rankInfo ? rankInfo.type === "ruby" : key.startsWith("R");
-  const bandLabel = rankInfo ? rankInfo.label : (row ? row.label : key);
-  const bandIcon = rankInfo ? rankInfo.icon : "";
-
-  setupRankNavigation(key);
-
-  if (!row) {
-    State.detailOriginal = [];
-    State.currentView = "detail";
-    State.currentIsRubyBand = isRubyBand;
-
-    renderDetailTable(isRubyBand, bandLabel, bandIcon);
-    document.getElementById("summaryView").style.display = "none";
-    document.getElementById("detailView").style.display = "block";
-    return;
-  }
-
-  State.detailOriginal = row.list.slice().sort((a, b) => {
-    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
+async function fetchJSON(path) {
+  const res = await fetch(`${BASE_URL}/${path}?t=${Date.now()}`, {
+    cache: "no-store"
   });
-
-  State.currentView = "detail";
-  State.currentIsRubyBand = isRubyBand;
-
-  renderDetailTable(isRubyBand, bandLabel, bandIcon);
-
-  document.getElementById("summaryView").style.display = "none";
-  document.getElementById("detailView").style.display = "block";
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
 }
 
 /* ---------------------------------------------------------
-   詳細テーブル
+   latest_round.json 読み込み（ラウンド番号表示用）
 --------------------------------------------------------- */
-function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
-  const area = document.getElementById("detailArea");
+async function loadLatestRound() {
+  log("latest_round.json 取得準備中");
+
+  try {
+    const json = await fetchJSON("latest_round.json");
+
+    if (!json.latestRound) throw new Error("latestRound が存在しません");
+
+    State.latestRound = json.latestRound;
+
+    const el = document.getElementById("latestRound");
+    if (el) el.textContent = State.latestRound;
+
+    log("latest_round.json 読み込み完了");
+  } catch (e) {
+    logError("latest_round.json の取得に失敗：" + e.message);
+  }
+}
+
+/* ---------------------------------------------------------
+   Ruby星数フィルタ生成
+--------------------------------------------------------- */
+function buildRubyFilters() {
+  const area = document.getElementById("rubyFilters");
+  area.innerHTML = Array.from({ length: 8 }, (_, i) => {
+    const star = i + 1;
+    return `
+      <label style="margin-right:10px;">
+        <input type="checkbox" class="ruby-filter" value="${star}" checked>
+        ☆${star}
+      </label>
+    `;
+  }).join("");
+}
+
+/* ---------------------------------------------------------
+   integrated_data.json 読み込み
+--------------------------------------------------------- */
+async function loadRoundData() {
+  log("integrated_data.json 取得準備中");
+
+  try {
+    const json = await fetchJSON("integrated_data.json");
+
+    State.generatedAt = json.generatedAt ?? "";
+
+    if (State.generatedAt) {
+      document.getElementById("jsonUpdateTime").textContent =
+        formatYMDHM(parseDateJST(State.generatedAt));
+    }
+
+    const records = json.records || [];
+
+    State.all = records.map(p => ({
+      ...p,
+      normalizedName: normalize(p.name)
+    }));
+
+    State.filtered = [...State.all];
+
+    log(`integrated_data.json 読み込み完了 (${State.all.length}件)`);
+
+    /* ★ 最新データ取得後は通常色へ戻す（標準グレー） */
+    const btn = document.getElementById("reloadBtn");
+    if (btn) {
+      btn.classList.remove("update-alert");
+      btn.style.cssText = "";
+    }
+
+  } catch (e) {
+    logError("integrated_data.json の取得に失敗：" + e.message);
+  }
+}
+
+/* ---------------------------------------------------------
+   フィルタ（時間フィルタ）
+--------------------------------------------------------- */
+function applyFilters() {
+  const minutes = Number(document.getElementById("rangeSelect").value);
+
+  if (!State.generatedAt) {
+    logError("generatedAt が未取得のため、時間フィルタをスキップしました");
+    State.filtered = [...State.all];
+    return;
+  }
+
+  const baseMs = parseDateJST(State.generatedAt).getTime();
+  const filterStartMs = baseMs - minutes * 60 * 1000;
+
+  document.getElementById("filterStartTime").textContent =
+    formatYMDHM(new Date(filterStartMs));
+
+  State.filtered = State.all.filter(p => {
+    if (!p.updateDate) return false;
+    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
+  });
+}
+
+/* ---------------------------------------------------------
+   サマリ統計計算
+--------------------------------------------------------- */
+function calcStats(list, total) {
+  const cnt = list.length;
+  const percent = total ? Math.round((cnt / total) * 100) : 0;
+
+  const points = list.map(p => Number(p.point ?? 0));
+  const avg = cnt ? Math.round(points.reduce((a, b) => a + b, 0) / cnt) : 0;
+  const min = cnt ? Math.min(...points) : 0;
+  const max = cnt ? Math.max(...points) : 0;
+
+  return { cnt, percent, avg, min, max };
+}
+
+/* ---------------------------------------------------------
+   サマリ生成
+--------------------------------------------------------- */
+function buildSummary() {
+  State.summary = [];
+
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+
+  const base = State.filtered.length ? State.filtered : State.all;
+
+  State.summary = RANKS
+    .filter(rank => rank.type === "pride" || selectedStars.includes(rank.star))
+    .map(rank => {
+      const list = base.filter(p => {
+        if (rank.type === "ruby") {
+          return p.onlineBattleRankId === RUBY_ID && p.starCnt === rank.star;
+        } else {
+          const pt = Number(p.pridePoint ?? 0);
+          return pt >= rank.min && pt <= rank.max;
+        }
+      });
+
+      return {
+        key: rank.key,
+        label: rank.label,
+        icon: rank.icon,
+        list
+      };
+    });
+}
+
+/* ---------------------------------------------------------
+   サマリ検索フィルタ
+--------------------------------------------------------- */
+function filterSummaryBySearch() {
+  const norm = normalize(State.searchText);
+
+  if (!norm) return State.summary;
+
+  const filtered = State.summary
+    .map(r => {
+      const filteredList = r.list.filter(p =>
+        (p.normalizedName || "").includes(norm)
+      );
+      return { ...r, list: filteredList };
+    })
+    .filter(r => r.list.length > 0);
+
+  return filtered;
+}
+
+/* ---------------------------------------------------------
+   サマリ表示
+--------------------------------------------------------- */
+function renderSummary() {
+  const area = document.getElementById("summaryArea");
+
+  const filteredSummary = filterSummaryBySearch();
+
+  const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
+  const rubyTotal = filteredSummary
+    .filter(r => r.key.startsWith("R"))
+    .reduce((s, r) => s + r.list.length, 0);
+  const prideTotal = total - rubyTotal;
 
   area.innerHTML = `
-    <h3 id="detailCountHeader">
-      <img src="${bandIcon}" width="32" style="vertical-align:middle;">
-      ${bandLabel}：<span id="detailCount"></span>人
-    </h3>
+    <h3>合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人</h3>
 
     <div style="overflow-x:auto;">
       <table>
-        <thead>
-          <tr>
-            <th>☆・PRIDE</th>
-            <th>プレイヤー名</th>
-            <th>RP</th>
-            <th>店舗名</th>
-            <th>称号</th>
-            <th>Last Update</th>
-          </tr>
-        </thead>
-        <tbody id="detailTableBody"></tbody>
+        <tr>
+          <th>ランク</th>
+          <th>☆・Lv</th>
+          <th>人数</th>
+          <th>%</th>
+          <th>Bar</th>
+          <th>RP:Avg</th>
+          <th>RP:Min</th>
+          <th>RP:Max</th>
+        </tr>
+        ${filteredSummary.map(r => {
+          const { cnt, percent, avg, min, max } = calcStats(r.list, total);
+          return `
+            <tr class="clickable" data-key="${r.key}">
+              <td class="center"><img src="${r.icon}" width="32"></td>
+              <td class="left">${r.label}</td>
+              <td class="right">${fmt(cnt)}</td>
+              <td class="right">${percent}%</td>
+              <td class="center">
+                <div class="bar-wrap">
+                  <div class="bar" style="width:${percent}%;"></div>
+                </div>
+              </td>
+              <td class="right">${fmt(avg)}</td>
+              <td class="right">${fmt(min)}</td>
+              <td class="right">${fmt(max)}</td>
+            </tr>
+          `;
+        }).join("")}
       </table>
     </div>
   `;
 
-  applyPlayerFilter(State.searchText, isRubyBand);
-}
-
-/* ---------------------------------------------------------
-   プレイヤー名フィルタ
---------------------------------------------------------- */
-function applyPlayerFilter(keyword, isRubyBand) {
-  const base = State.detailOriginal || [];
-  const normKey = normalize(keyword);
-
-  const list = normKey
-    ? base.filter(p => (p.normalizedName || "").includes(normKey))
-    : base;
-
-  const countEl = document.getElementById("detailCount");
-  if (countEl) countEl.textContent = fmt(list.length);
-
-  renderDetailRows(list, isRubyBand);
-}
-
-/* ---------------------------------------------------------
-   詳細行描画
---------------------------------------------------------- */
-function renderDetailRows(list, isRubyBand) {
-  const tbody = document.getElementById("detailTableBody");
-  if (!tbody) return;
-
-  const rows = list.map(p => {
-    const titleUrl = p.mytitleId
-      ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
-      : "";
-
-    const starOrLevel = isRubyBand
-      ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
-      : p.pridePoint;
-
-    const fullShop = p.shopname ?? "";
-    const shortShop = shortenStoreName(fullShop);
-
-    return `
-      <tr>
-        <td class="center">${starOrLevel}</td>
-
-        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
-          ${p.name}
-        </td>
-
-        <td class="right">${fmt(p.point)}</td>
-
-        <td class="left clickable"
-            data-fullname="${fullShop.replace(/"/g, "&quot;")}"
-            onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
-          <div class="store-name">${shortShop}</div>
-        </td>
-
-        <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
-        <td class="left">${p.updateDate}</td>
-      </tr>
-    `;
-  }).join("");
-
-  tbody.innerHTML = rows;
-}
-
-/* ---------------------------------------------------------
-   クリックコピー
---------------------------------------------------------- */
-function copyToClipboard(text) {
-  navigator.clipboard.writeText(text);
-  log(`コピー：${text}`);
-}
-
-/* ---------------------------------------------------------
-   CSV 出力（サマリ）
---------------------------------------------------------- */
-function exportSummaryCSV() {
-  const header = "帯,人数,%,平均RP,最小RP,最大RP";
-
-  const total = State.summary.reduce((sum, r) => sum + r.list.length, 0);
-
-  const body = State.summary.map(r => {
-    const { cnt, percent, avg, min, max } = calcStats(r.list, total);
-    return `${r.label},${cnt},${percent},${avg},${min},${max}`;
-  }).join("\n");
-
-  downloadCSV("summary.csv", header, body);
-}
-
-/* ---------------------------------------------------------
-   CSV 出力（全データ）
---------------------------------------------------------- */
-function exportAllCSV() {
-  const columns = [
-    "rank","name","shopname","updateDate","point",
-    "mytitleId","prideId","pridePoint","onlineBattleRankId","starCnt"
-  ];
-
-  const header = columns.join(",");
-
-  const body = State.all
-    .map(p =>
-      columns
-        .map(col => `"${String(p[col] ?? "").replace(/"/g, '""')}"`)
-        .join(",")
-    )
-    .join("\n");
-
-  downloadCSV("all_records.csv", header, body);
-}
-
-/* ---------------------------------------------------------
-   ★ latest_update.json の更新監視（案B：●/○ 点滅）
---------------------------------------------------------- */
-async function checkUpdate() {
-  try {
-    const json = await fetchJSON("latest_update.json");
-
-    // lastUpdated → generatedAt の順で参照
-    const raw = json.lastUpdated ?? json.generatedAt ?? "";
-    if (!raw) return;
-
-    const disp = formatYMDHM(parseDateJST(raw));
-
-    // ★ beat（●/○）を黄色で点滅
-    State.watchBeat = !State.watchBeat;
-    const beat = State.watchBeat ? "●" : "○";
-
-    appendLog(`監視中 ${beat}（latest_update：${disp}）`, "warn");
-
-    // 初回は保存だけ
-    if (!State.latestUpdateAt) {
-      State.latestUpdateAt = raw;
-      return;
-    }
-
-    // 生文字列で比較
-    if (raw !== State.latestUpdateAt) {
-      State.latestUpdateAt = raw;
-
-      const btn = document.getElementById("reloadBtn");
-      if (btn) {
-        btn.classList.remove("reload-normal");
-        btn.classList.add("update-alert");
-      }
-
-      logWarn("データ更新を検知しました（latest_update.json）");
-    }
-  } catch (e) {
-    logError("latest_update.json の監視に失敗：" + e.message);
-  }
-}
-
-/* ---------------------------------------------------------
-   初期化（★ init は1回のみ実行）
---------------------------------------------------------- */
-async function init() {
-  log("Viewer 初期化中");
-
-  startProgress();
-
-  buildRubyFilters();
-
-  await loadLatestRound();
-  await loadRoundData();
-
-  applyFilters();
-  buildSummary();
-  renderSummary();
-
-  stopProgress();
-
-  log("Viewer 初期化完了");
-
-  /* ★ 初期化完了時刻で監視開始 */
-  log("更新監視を開始しました（2分ごとにチェック）");
-  checkUpdate();                 // 即時 1 回
-  setInterval(checkUpdate, 120000); // 2 分ごと
-}
-
-/* ---------------------------------------------------------
-   DOMContentLoaded
---------------------------------------------------------- */
-document.addEventListener("DOMContentLoaded", () => {
-
-  /* ★ reloadBtn の初期色を filterBtn と揃える */
-  const reloadBtn = document.getElementById("reloadBtn");
-  if (reloadBtn) {
-    reloadBtn.classList.remove("update-alert");
-    reloadBtn.classList.add("reload-normal");
-    reloadBtn.style.cssText = "";
-  }
-
-  /* ★ 最新データ取得（init は再実行しない） */
-  document.getElementById("reloadBtn").onclick = async () => {
-    startProgress();
-    await loadRoundData();
-    applyFilters();
-    buildSummary();
-    renderSummary();
-    stopProgress();
-  };
-
-  document.getElementById("filterBtn").onclick = () => {
-    startProgress();
-    applyFilters();
-    buildSummary();
-    renderSummary();
-    stopProgress();
-  };
-
-  document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
-  document.getElementById("allCsvBtn").onclick = exportAllCSV;
-
-  const searchInput = document.getElementById("searchInput");
-
-  searchInput.addEventListener("input", e => {
-    State.searchText = e.target.value;
-
-    if (State.currentView === "summary") {
-      renderSummary();
-    } else {
-      applyPlayerFilter(State.searchText, State.currentIsRubyBand);
-    }
+  document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const key = tr.dataset.key;
+      State.currentIsRubyBand = key.startsWith("R");
+      showDetail(key);
+    });
   });
 
-  document.getElementById("backBtn").onclick = () => {
-    State.searchText = "";
-    searchInput.value = "";
-    renderSummary();
-  };
+  State.currentView = "summary";
 
-  /* ★ 監視開始は init() 内に移動済み */
-
-  init();
-});
+  document.getElementById("summaryView").style.display = "block";
+  document.getElementById("detailView").style.display = "none";
+}
