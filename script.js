@@ -187,7 +187,26 @@ function formatYMDHM(date) {
 }
 
 /* ---------------------------------------------------------
-   ★ 追加：Ruby星の2行表示
+   normalize（★欠落していたため復元）
+--------------------------------------------------------- */
+function normalize(s) {
+  if (!s) return "";
+
+  s = s.replace(/\u3000/g, " ");
+  s = s.replace(/[A-Za-z0-9]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
+  );
+  s = s.toLowerCase();
+  s = s.replace(/[\u3041-\u3096]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0x60)
+  );
+  s = s.replace(/ /g, "");
+
+  return s;
+}
+
+/* ---------------------------------------------------------
+   ★ Ruby星の2行表示
 --------------------------------------------------------- */
 function renderStars(starCount) {
   const full = "★".repeat(starCount);
@@ -196,251 +215,220 @@ function renderStars(starCount) {
     : full;
 }
 /* ---------------------------------------------------------
-   共通 fetch
+   Initial DAC Round Data Viewer（integrated_data.json + latest_round.json 対応）
 --------------------------------------------------------- */
-async function fetchJSON(path) {
-  const res = await fetch(`${BASE_URL}/${path}?t=${Date.now()}`, {
-    cache: "no-store"
-  });
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  return res.json();
+
+const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
+
+/* ---------------------------------------------------------
+   Ruby帯・PRIDE帯 定義
+--------------------------------------------------------- */
+
+const RUBY_ID =
+  "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
+
+const PRIDE_LEVELS = [
+  { key: "P_A", level: "A=～99",    min: 1,     max: 99,    icon: "ef788ee816773c454495ebf83e5ac380" },
+  { key: "P_B", level: "B=100～",   min: 100,   max: 499,   icon: "3c8cc917bb7a97d46ba35c93d898491c" },
+  { key: "P_C", level: "C=500～",   min: 500,   max: 999,   icon: "ec8f805c9de95c65c858d2e1341f76ab" },
+  { key: "P_D", level: "D=1000～",  min: 1000,  max: 4999,  icon: "58446a29e6c496139963728eea887349" },
+  { key: "P_E", level: "E=5000～",  min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
+  { key: "P_F", level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
+  { key: "P_G", level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
+];
+
+/* ---------------------------------------------------------
+   ★ RANKS（Ruby☆1〜8 + PRIDE A〜G）
+--------------------------------------------------------- */
+const RANKS = [
+  ...Array.from({ length: 8 }, (_, i) => ({
+    key: `R${i + 1}`,
+    type: "ruby",
+    star: i + 1,
+    label: `☆${i + 1}`,
+    badgeId: RUBY_ID,
+    icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
+    order: i
+  })),
+
+  ...PRIDE_LEVELS.map((p, idx) => ({
+    key: p.key,
+    type: "pride",
+    min: p.min,
+    max: p.max,
+    label: p.level,
+    badgeId: p.icon,
+    icon: `https://initiald.sega.jp/inidac/ranking-images/pride/${p.icon}.png`,
+    order: 8 + idx
+  }))
+];
+
+function getRankIndex(key) {
+  return RANKS.findIndex(r => r.key === key);
+}
+
+function getRankInfo(key) {
+  return RANKS.find(r => r.key === key) || null;
 }
 
 /* ---------------------------------------------------------
-   latest_round.json 読み込み（ラウンド番号表示用）
+   ★ 前後ランク移動ボタン制御
 --------------------------------------------------------- */
-async function loadLatestRound() {
-  log("latest_round.json 取得準備中");
+function setupRankNavigation(currentKey) {
+  const idx = getRankIndex(currentKey);
 
-  try {
-    const json = await fetchJSON("latest_round.json");
+  const prev = idx > 0 ? RANKS[idx - 1].key : null;
+  const next = idx >= 0 && idx < RANKS.length - 1 ? RANKS[idx + 1].key : null;
 
-    if (!json.latestRound) throw new Error("latestRound が存在しません");
+  const prevBtn = document.getElementById("prevRankBtn");
+  const nextBtn = document.getElementById("nextRankBtn");
 
-    State.latestRound = json.latestRound;
+  prevBtn.disabled = !prev;
+  nextBtn.disabled = !next;
 
-    const el = document.getElementById("latestRound");
-    if (el) el.textContent = State.latestRound;
+  prevBtn.onclick = () => prev && showDetail(prev);
+  nextBtn.onclick = () => next && showDetail(next);
+}
 
-    log("latest_round.json 読み込み完了");
-  } catch (e) {
-    logError("latest_round.json の取得に失敗：" + e.message);
+/* ---------------------------------------------------------
+   状態管理
+--------------------------------------------------------- */
+const State = {
+  all: [],
+  filtered: [],
+  summary: [],
+  detailOriginal: [],
+  generatedAt: "",
+  latestRound: null,
+
+  latestUpdateAt: "",
+
+  searchText: "",
+  currentView: "summary",
+  currentIsRubyBand: true
+};
+
+/* ---------------------------------------------------------
+   ログ
+--------------------------------------------------------- */
+const MAX_LOG_LINES = 200;
+
+function appendLog(msg, type = "info") {
+  const box = document.getElementById("logBox");
+
+  const now = new Date();
+  const t = now.toLocaleString("ja-JP", {
+    hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit"
+  });
+
+  const line = document.createElement("div");
+  line.textContent = `[${t}] ${msg}`;
+  line.dataset.type = type;
+
+  if (type === "error") line.style.color = "#ff5555";
+  else if (type === "warn") line.style.color = "#ffeb3b";
+  else line.style.color = "#00ff00";
+
+  box.prepend(line);
+
+  while (box.children.length > MAX_LOG_LINES) {
+    box.removeChild(box.lastChild);
   }
 }
 
+const log = msg => appendLog(msg, "info");
+const logWarn = msg => appendLog(msg, "warn");
+const logError = msg => appendLog(msg, "error");
+
 /* ---------------------------------------------------------
-   Ruby星数フィルタ生成
+   進行中アニメーション
 --------------------------------------------------------- */
-function buildRubyFilters() {
-  const area = document.getElementById("rubyFilters");
-  area.innerHTML = Array.from({ length: 8 }, (_, i) => {
-    const star = i + 1;
-    return `
-      <label style="margin-right:10px;">
-        <input type="checkbox" class="ruby-filter" value="${star}" checked>
-        ☆${star}
-      </label>
-    `;
-  }).join("");
+let progressTimer = null;
+let progressPos = 0;
+let progressLine = null;
+
+function startProgress() {
+  const box = document.getElementById("logBox");
+
+  if (progressLine) progressLine.remove();
+
+  progressPos = 0;
+  progressLine = document.createElement("div");
+  progressLine.style.color = "#ffeb3b";
+
+  box.prepend(progressLine);
+
+  updateProgressBar();
+
+  progressTimer = setInterval(() => {
+    progressPos = (progressPos + 1) % 20;
+    updateProgressBar();
+  }, 120);
 }
 
-/* ---------------------------------------------------------
-   integrated_data.json 読み込み
---------------------------------------------------------- */
-async function loadRoundData() {
-  log("integrated_data.json 取得準備中");
-
-  try {
-    const json = await fetchJSON("integrated_data.json");
-
-    State.generatedAt = json.generatedAt ?? "";
-
-    if (State.generatedAt) {
-      document.getElementById("jsonUpdateTime").textContent =
-        formatYMDHM(parseDateJST(State.generatedAt));
-    }
-
-    const records = json.records || [];
-
-    State.all = records.map(p => ({
-      ...p,
-      normalizedName: normalize(p.name)
-    }));
-
-    State.filtered = [...State.all];
-
-    const genTime = State.generatedAt
-      ? formatYMDHM(parseDateJST(State.generatedAt))
-      : "-";
-
-    log(`integrated_data.json 読み込み完了 (${State.all.length}件：${genTime})`);
-
-    const btn = document.getElementById("reloadBtn");
-    if (btn) {
-      btn.classList.remove("update-alert");
-      btn.style.cssText = "";
-    }
-
-  } catch (e) {
-    logError("integrated_data.json の取得に失敗：" + e.message);
-  }
+function updateProgressBar() {
+  const total = 20;
+  const filled = "■".repeat(progressPos);
+  const empty = "□".repeat(total - progressPos);
+  progressLine.textContent = `進行中：${filled}${empty}`;
 }
 
-/* ---------------------------------------------------------
-   フィルタ（時間フィルタ）
---------------------------------------------------------- */
-function applyFilters() {
-  const minutes = Number(document.getElementById("rangeSelect").value);
+function stopProgress() {
+  if (progressTimer) clearInterval(progressTimer);
+  progressTimer = null;
 
-  if (!State.generatedAt) {
-    logError("generatedAt が未取得のため、時間フィルタをスキップしました");
-    State.filtered = [...State.all];
-    return;
+  if (progressLine) {
+    progressLine.remove();
+    progressLine = null;
   }
 
-  const baseMs = parseDateJST(State.generatedAt).getTime();
-  const filterStartMs = baseMs - minutes * 60 * 1000;
-
-  document.getElementById("filterStartTime").textContent =
-    formatYMDHM(new Date(filterStartMs));
-
-  State.filtered = State.all.filter(p => {
-    if (!p.updateDate) return false;
-    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
-  });
+  log("Viewer フィルタ完了");
 }
 
 /* ---------------------------------------------------------
-   サマリ統計計算
+   ユーティリティ
 --------------------------------------------------------- */
-function calcStats(list, total) {
-  const cnt = list.length;
-  const percent = total ? Math.round((cnt / total) * 100) : 0;
+const fmt = n => Number(n).toLocaleString();
+const parseDateJST = str => new Date(str.replace(/-/g, "/"));
 
-  const points = list.map(p => Number(p.point ?? 0));
-  const avg = cnt ? Math.round(points.reduce((a, b) => a + b, 0) / cnt) : 0;
-  const min = cnt ? Math.min(...points) : 0;
-  const max = cnt ? Math.max(...points) : 0;
-
-  return { cnt, percent, avg, min, max };
+function formatYMDHM(date) {
+  const y = date.getFullYear();
+  const m = ("0" + (date.getMonth() + 1)).slice(-2);
+  const d = ("0" + date.getDate()).slice(-2);
+  const hh = ("0" + date.getHours()).slice(-2);
+  const mm = ("0" + date.getMinutes()).slice(-2);
+  return `${y}/${m}/${d} ${hh}:${mm}`;
 }
 
 /* ---------------------------------------------------------
-   サマリ生成
+   normalize（★欠落していたため復元）
 --------------------------------------------------------- */
-function buildSummary() {
-  State.summary = [];
+function normalize(s) {
+  if (!s) return "";
 
-  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
-    .map(x => Number(x.value));
+  s = s.replace(/\u3000/g, " ");
+  s = s.replace(/[A-Za-z0-9]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
+  );
+  s = s.toLowerCase();
+  s = s.replace(/[\u3041-\u3096]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0x60)
+  );
+  s = s.replace(/ /g, "");
 
-  const base = State.filtered.length ? State.filtered : State.all;
-
-  State.summary = RANKS
-    .filter(rank => rank.type === "pride" || selectedStars.includes(rank.star))
-    .map(rank => {
-      const list = base.filter(p => {
-        if (rank.type === "ruby") {
-          return p.onlineBattleRankId === RUBY_ID && p.starCnt === rank.star;
-        } else {
-          const pt = Number(p.pridePoint ?? 0);
-          return pt >= rank.min && pt <= rank.max;
-        }
-      });
-
-      return {
-        key: rank.key,
-        label: rank.label,
-        icon: rank.icon,
-        list
-      };
-    });
+  return s;
 }
 
 /* ---------------------------------------------------------
-   サマリ検索フィルタ
+   ★ Ruby星の2行表示
 --------------------------------------------------------- */
-function filterSummaryBySearch() {
-  const norm = normalize(State.searchText);
-
-  if (!norm) return State.summary;
-
-  const filtered = State.summary
-    .map(r => {
-      const filteredList = r.list.filter(p =>
-        (p.normalizedName || "").includes(norm)
-      );
-      return { ...r, list: filteredList };
-    })
-    .filter(r => r.list.length > 0);
-
-  return filtered;
-}
-
-/* ---------------------------------------------------------
-   サマリ表示
---------------------------------------------------------- */
-function renderSummary() {
-  const area = document.getElementById("summaryArea");
-
-  const filteredSummary = filterSummaryBySearch();
-
-  const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
-  const rubyTotal = filteredSummary
-    .filter(r => r.key.startsWith("R"))
-    .reduce((s, r) => s + r.list.length, 0);
-  const prideTotal = total - rubyTotal;
-
-  area.innerHTML = `
-    <h3>合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人</h3>
-
-    <div style="overflow-x:auto;">
-      <table>
-        <tr>
-          <th>ランク</th>
-          <th>☆・Lv</th>
-          <th>人数</th>
-          <th>%</th>
-          <th>Bar</th>
-          <th>RP:Avg</th>
-          <th>RP:Min</th>
-          <th>RP:Max</th>
-        </tr>
-        ${filteredSummary.map(r => {
-          const { cnt, percent, avg, min, max } = calcStats(r.list, total);
-          return `
-            <tr class="clickable" data-key="${r.key}">
-              <td class="center"><img src="${r.icon}" width="32"></td>
-              <td class="left">${r.label}</td>
-              <td class="right">${fmt(cnt)}</td>
-              <td class="right">${percent}%</td>
-              <td class="center">
-                <div class="bar-wrap">
-                  <div class="bar" style="width:${percent}%;"></div>
-                </div>
-              </td>
-              <td class="right">${fmt(avg)}</td>
-              <td class="right">${fmt(min)}</td>
-              <td class="right">${fmt(max)}</td>
-            </tr>
-          `;
-        }).join("")}
-      </table>
-    </div>
-  `;
-
-  document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
-    tr.addEventListener("click", () => {
-      const key = tr.dataset.key;
-      State.currentIsRubyBand = key.startsWith("R");
-      showDetail(key);
-    });
-  });
-
-  State.currentView = "summary";
-
-  document.getElementById("summaryView").style.display = "block";
-  document.getElementById("detailView").style.display = "none";
+function renderStars(starCount) {
+  const full = "★".repeat(starCount);
+  return full.length > 4
+    ? full.slice(0, 4) + "<br>" + full.slice(4)
+    : full;
 }
 /* ---------------------------------------------------------
    詳細表示（前後ランク移動＋検索再実行対応）
@@ -529,7 +517,7 @@ function applyPlayerFilter(keyword, isRubyBand) {
 }
 
 /* ---------------------------------------------------------
-   ★★★ 詳細行描画（今回の本丸：★表示変更＋クリックコピー対応）
+   ★★★ 詳細行描画（★表示変更＋クリックコピー対応）
 --------------------------------------------------------- */
 function renderDetailRows(list, isRubyBand) {
   const tbody = document.getElementById("detailTableBody");
@@ -669,17 +657,19 @@ async function checkUpdate() {
     const raw = json.lastUpdated ?? json.generatedAt ?? "";
     if (!raw) return;
 
+    // 初回は保存だけ
     if (!State.latestUpdateAt) {
       State.latestUpdateAt = raw;
       return;
     }
 
+    // 更新検知
     if (raw !== State.latestUpdateAt) {
       State.latestUpdateAt = raw;
 
       const btn = document.getElementById("reloadBtn");
       if (btn) {
-        btn.classList.add("update-alert");
+        btn.classList.add("update-alert"); // オレンジ化
       }
 
       logWarn("データ更新を検知しました（latest_update.json）");
@@ -711,8 +701,9 @@ async function init() {
 
   log("Viewer 初期化完了");
 
+  /* ★ 監視開始（監視ログは出さない） */
   setInterval(checkUpdate, 60000);
-  checkUpdate();
+  checkUpdate(); // 即時1回
 }
 
 /* ---------------------------------------------------------
@@ -754,12 +745,14 @@ document.getElementById("detailArea").addEventListener("click", e => {
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
 
+  /* ★ reloadBtn の初期色を標準グレーに戻す */
   const reloadBtn = document.getElementById("reloadBtn");
   if (reloadBtn) {
     reloadBtn.classList.remove("update-alert");
     reloadBtn.style.cssText = "";
   }
 
+  /* ★ 最新データ取得（init は再実行しない） */
   document.getElementById("reloadBtn").onclick = async () => {
     startProgress();
     await loadRoundData();
