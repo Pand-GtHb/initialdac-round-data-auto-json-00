@@ -608,7 +608,7 @@ function applyPlayerFilter(keyword, isRubyBand) {
 }
 
 /* ---------------------------------------------------------
-   詳細行描画（★ここだけ修正あり）
+   詳細行描画（★クリックコピー改善の唯一の変更箇所）
 --------------------------------------------------------- */
 function renderDetailRows(list, isRubyBand) {
   const tbody = document.getElementById("detailTableBody");
@@ -619,13 +619,7 @@ function renderDetailRows(list, isRubyBand) {
       ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
       : "";
 
-    /* ★ 修正前：
-       const starOrLevel = isRubyBand
-         ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
-         : p.pridePoint;
-    */
-
-    /* ★ 修正後（今回の唯一の変更行） */
+    /* ★ 星 or PRIDE 表示（前回の修正済み） */
     const starOrLevel = isRubyBand
       ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? renderStars(p.starCnt) : "")
       : p.pridePoint;
@@ -633,10 +627,21 @@ function renderDetailRows(list, isRubyBand) {
     const fullShop = p.shopname ?? "";
     const shortShop = shortenStoreName(fullShop);
 
+    /* ★ ここが今回のクリックコピー改善の変更点 */
+    const copyValue = isRubyBand
+      ? `★${"★".repeat(p.starCnt - 1)}\t${p.name}`
+      : `${p.pridePoint}\t${p.name}`;
+
     return `
       <tr data-updated="${p.updateDate}">
-        <td class="center">${starOrLevel}</td>
 
+        <!-- ★/PRIDE セル：クリックで「★×n + タブ + 名前」 or 「PRIDE + タブ + 名前」 -->
+        <td class="center clickable"
+            onclick="copyToClipboard('${copyValue}')">
+          ${starOrLevel}
+        </td>
+
+        <!-- 名前セル：名前単独コピー（現状維持） -->
         <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
           ${p.name}
         </td>
@@ -658,7 +663,7 @@ function renderDetailRows(list, isRubyBand) {
   tbody.innerHTML = rows;
 
   /* ---------------------------------------------------------
-     ★ 追加：5分刻みマッチング可能性 → 行を淡いピンクに
+     ★ 5分刻みマッチング可能性 → 行を淡いピンクに
   --------------------------------------------------------- */
   const now = new Date();
 
@@ -731,19 +736,17 @@ async function checkUpdate() {
     const raw = json.lastUpdated ?? json.generatedAt ?? "";
     if (!raw) return;
 
-    // 初回は保存だけ
     if (!State.latestUpdateAt) {
       State.latestUpdateAt = raw;
       return;
     }
 
-    // 更新検知
     if (raw !== State.latestUpdateAt) {
       State.latestUpdateAt = raw;
 
       const btn = document.getElementById("reloadBtn");
       if (btn) {
-        btn.classList.add("update-alert"); // オレンジ化
+        btn.classList.add("update-alert");
       }
 
       logWarn("データ更新を検知しました（latest_update.json）");
@@ -775,9 +778,8 @@ async function init() {
 
   log("Viewer 初期化完了");
 
-  /* ★ 監視開始（監視ログは出さない） */
   setInterval(checkUpdate, 60000);
-  checkUpdate(); // 即時1回
+  checkUpdate();
 }
 
 /* ---------------------------------------------------------
@@ -785,14 +787,12 @@ async function init() {
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
 
-  /* ★ reloadBtn の初期色を標準グレーに戻す */
   const reloadBtn = document.getElementById("reloadBtn");
   if (reloadBtn) {
     reloadBtn.classList.remove("update-alert");
     reloadBtn.style.cssText = "";
   }
 
-  /* ★ 最新データ取得（init は再実行しない） */
   document.getElementById("reloadBtn").onclick = async () => {
     startProgress();
     await loadRoundData();
