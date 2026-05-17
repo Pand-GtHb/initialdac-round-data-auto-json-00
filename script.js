@@ -293,21 +293,22 @@ function buildRubyFilters() {
 }
 
 /* ---------------------------------------------------------
-   latest.json 読み込み
+   latest_round.json 読み込み（修正済）
 --------------------------------------------------------- */
 async function loadLatest() {
-  log("latest.json 取得準備中");
+  log("latest_round.json 取得準備中");
 
   try {
-    const json = await fetchJSON("latest.json");
-    if (!json.latestRound) throw new Error("latestRound が存在しません");
+    const json = await fetchJSON("latest_round.json");
 
-    State.latestRound = json.latestRound;
+    if (!json.latest_round) throw new Error("latest_round が存在しません");
+
+    State.latestRound = json.latest_round;
     document.getElementById("latestRound").textContent = State.latestRound;
 
-    log("latest.json 読み込み完了");
+    log("latest_round.json 読み込み完了");
   } catch (e) {
-    logError("latest.json の取得に失敗：" + e.message);
+    logError("latest_round.json の取得に失敗：" + e.message);
   }
 }
 
