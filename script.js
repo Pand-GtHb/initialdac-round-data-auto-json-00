@@ -1,8 +1,8 @@
 /* ---------------------------------------------------------
-   Initial DAC Round Data Viewer（integrated_data.json 対応版）
-   ★ latest_round.json / roundXX.json は完全廃止
-   ★ integrated_data.json のみで動作
-   ★ normalize 前処理・検索保持・前後ランク移動対応
+   Initial DAC Round Data Viewer（integrated_data.json + latest_round.json 対応）
+   ★ データ本体：integrated_data.json
+   ★ 最新ラウンド番号：latest_round.json
+   ★ roundXX.json は完全廃止
 --------------------------------------------------------- */
 
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
@@ -86,6 +86,7 @@ const State = {
   summary: [],
   detailOriginal: [],
   generatedAt: "",
+  latestRound: null,
   searchText: "",
   currentView: "summary",
   currentIsRubyBand: true
@@ -273,6 +274,29 @@ async function fetchJSON(path) {
   });
   if (!res.ok) throw new Error("HTTP " + res.status);
   return res.json();
+}
+
+/* ---------------------------------------------------------
+   latest_round.json 読み込み（ラウンド番号表示用）
+--------------------------------------------------------- */
+async function loadLatestRound() {
+  log("latest_round.json 取得準備中");
+
+  try {
+    const json = await fetchJSON("latest_round.json");
+
+    if (!json.latestRound) throw new Error("latestRound が存在しません");
+
+    State.latestRound = json.latestRound;
+
+    // HTML に表示
+    const el = document.getElementById("latestRound");
+    if (el) el.textContent = State.latestRound;
+
+    log("latest_round.json 読み込み完了");
+  } catch (e) {
+    logError("latest_round.json の取得に失敗：" + e.message);
+  }
 }
 
 /* ---------------------------------------------------------
@@ -660,7 +684,7 @@ function exportAllCSV() {
 }
 
 /* ---------------------------------------------------------
-   初期化（★ integrated_data.json のみ）
+   初期化（★ latest_round.json → integrated_data.json の順）
 --------------------------------------------------------- */
 async function init() {
   log("Viewer 初期化中");
@@ -669,7 +693,8 @@ async function init() {
 
   buildRubyFilters();
 
-  await loadRoundData();   // ← これだけでOK
+  await loadLatestRound();   // ← 最新ラウンド番号だけ取得
+  await loadRoundData();     // ← データ本体を取得
 
   applyFilters();
   buildSummary();
