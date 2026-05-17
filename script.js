@@ -87,7 +87,7 @@ const State = {
   detailOriginal: [],
   generatedAt: "",
   latestRound: null,
-  latestUpdateAt: "",   // ★ 更新監視用
+  latestUpdateAt: "",
   searchText: "",
   currentView: "summary",
   currentIsRubyBand: true
@@ -191,6 +191,79 @@ function formatYMDHM(date) {
   const hh = ("0" + date.getHours()).slice(-2);
   const mm = ("0" + date.getMinutes()).slice(-2);
   return `${y}/${m}/${d} ${hh}:${mm}`;
+}
+
+/* ---------------------------------------------------------
+   normalize（★復活）
+--------------------------------------------------------- */
+function normalize(s) {
+  if (!s) return "";
+
+  s = s.replace(/\u3000/g, " ");
+  s = s.replace(/[A-Za-z0-9]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
+  );
+  s = s.toLowerCase();
+  s = s.replace(/[\u3041-\u3096]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) + 0x60)
+  );
+  s = s.replace(/ /g, "");
+
+  return s;
+}
+
+/* ---------------------------------------------------------
+   店舗名省略（★復活）
+--------------------------------------------------------- */
+function getZenkakuLength(str) {
+  if (!str) return 0;
+  const len = str.replace(/[^\x00-\x7F]/g, "xx").length;
+  return len / 2;
+}
+
+function isMostlyAscii(str) {
+  if (!str) return true;
+  const asciiCount = (str.match(/[\x00-\x7F]/g) || []).length;
+  return asciiCount / str.length >= 0.7;
+}
+
+function getTextWidth(text, font) {
+  const canvas = getTextWidth.canvas || (getTextWidth.canvas = document.createElement("canvas"));
+  const ctx = canvas.getContext("2d");
+  ctx.font = font;
+  return ctx.measureText(text).width;
+}
+
+function shortenStoreName(full) {
+  if (!full) return "";
+
+  if (!isMostlyAscii(full)) {
+    const zLen = getZenkakuLength(full);
+    if (zLen <= 18) return full;
+
+    const head = 6;
+    const tail = 6;
+    if (full.length <= head + tail) return full;
+    return full.slice(0, head) + "…" + full.slice(-tail);
+  }
+
+  const font = "14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  const maxWidth = 220;
+
+  if (getTextWidth(full, font) <= maxWidth) return full;
+
+  let head = 10;
+  let tail = 10;
+
+  while (head + tail > 2) {
+    const candidate = full.slice(0, head) + "…" + full.slice(-tail);
+    if (getTextWidth(candidate, font) <= maxWidth) return candidate;
+
+    if (head >= tail) head--;
+    else tail--;
+  }
+
+  return full.slice(0, 1) + "…" + full.slice(-1);
 }
 /* ---------------------------------------------------------
    共通 fetch
@@ -666,6 +739,13 @@ async function init() {
    DOMContentLoaded
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
+
+  /* ★ reloadBtn の初期色を filterBtn と揃える */
+  const reloadBtn = document.getElementById("reloadBtn");
+  const filterBtn = document.getElementById("filterBtn");
+  if (reloadBtn && filterBtn) {
+    reloadBtn.className = filterBtn.className;
+  }
 
   /* ★ 最新データ取得（init は再実行しない） */
   document.getElementById("reloadBtn").onclick = async () => {
