@@ -87,6 +87,7 @@ const State = {
   detailOriginal: [],
   generatedAt: "",
   latestRound: null,
+  latestUpdateAt: "",   // ★ 追加：latest_update.json の更新時刻
   searchText: "",
   currentView: "summary",
   currentIsRubyBand: true
@@ -343,6 +344,16 @@ async function loadRoundData() {
     State.filtered = [...State.all];
 
     log(`integrated_data.json 読み込み完了 (${State.all.length}件)`);
+
+    /* ---------------------------------------------------------
+       ★ 再取得したので Reload ボタン色を元に戻す
+    --------------------------------------------------------- */
+    const btn = document.getElementById("reloadBtn");
+    if (btn) {
+      btn.style.backgroundColor = "";
+      btn.style.color = "";
+    }
+
   } catch (e) {
     logError("integrated_data.json の取得に失敗：" + e.message);
   }
@@ -684,6 +695,38 @@ function exportAllCSV() {
 }
 
 /* ---------------------------------------------------------
+   ★ latest_update.json の更新監視
+--------------------------------------------------------- */
+async function checkUpdate() {
+  try {
+    const json = await fetchJSON("latest_update.json");
+    const newAt = json.generatedAt ?? "";
+    if (!newAt) return;
+
+    // 初回は保存だけ
+    if (!State.latestUpdateAt) {
+      State.latestUpdateAt = newAt;
+      return;
+    }
+
+    // 更新検知
+    if (newAt !== State.latestUpdateAt) {
+      State.latestUpdateAt = newAt;
+
+      const btn = document.getElementById("reloadBtn");
+      if (btn) {
+        btn.style.backgroundColor = "#ff8800"; // ★ オレンジ
+        btn.style.color = "#fff";
+      }
+
+      logWarn("データ更新を検知しました（latest_update.json）");
+    }
+  } catch (e) {
+    logError("latest_update.json の監視に失敗：" + e.message);
+  }
+}
+
+/* ---------------------------------------------------------
    初期化（★ latest_round.json → integrated_data.json の順）
 --------------------------------------------------------- */
 async function init() {
@@ -693,8 +736,8 @@ async function init() {
 
   buildRubyFilters();
 
-  await loadLatestRound();   // ← 最新ラウンド番号だけ取得
-  await loadRoundData();     // ← データ本体を取得
+  await loadLatestRound();   // 最新ラウンド番号
+  await loadRoundData();     // データ本体
 
   applyFilters();
   buildSummary();
@@ -703,6 +746,9 @@ async function init() {
   stopProgress();
 
   log("Viewer 初期化完了");
+
+  // ★ 2分ごとに更新チェック
+  setInterval(checkUpdate, 120000);
 }
 
 /* ---------------------------------------------------------
