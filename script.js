@@ -340,7 +340,6 @@ async function loadRoundData() {
       normalizedName: normalize(p.name)
     }));
 
-    // 初期状態では filtered は全件
     State.filtered = [...State.all];
 
     log(`round${State.latestRound}.json 読み込み完了 (${State.all.length}件)`);
@@ -397,7 +396,7 @@ function buildSummary() {
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
-  const base = State.filtered && State.filtered.length ? State.filtered : State.all;
+  const base = State.filtered.length ? State.filtered : State.all;
 
   State.summary = RANKS
     .filter(rank => rank.type === "pride" || selectedStars.includes(rank.star))
@@ -421,24 +420,35 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   ★ サマリ検索フィルタ（normalizedName ベース）
+   ★★★ サマリ検索フィルタ（人数が検索後に正しくなる修正版）
 --------------------------------------------------------- */
 function filterSummaryBySearch() {
   const norm = normalize(State.searchText);
 
+  // 検索なし → そのまま
   if (!norm) {
-    return State.summary; // 全表示
+    return State.summary;
   }
 
-  return State.summary.filter(r => {
-    return r.list.some(p =>
-      (p.normalizedName || "").includes(norm)
-    );
-  });
+  // ★ 各帯ごとに list を検索後のプレイヤーだけに絞り込む
+  const filtered = State.summary
+    .map(r => {
+      const filteredList = r.list.filter(p =>
+        (p.normalizedName || "").includes(norm)
+      );
+      return {
+        ...r,
+        list: filteredList
+      };
+    })
+    // ★ 1人もいない帯は除外
+    .filter(r => r.list.length > 0);
+
+  return filtered;
 }
 
 /* ---------------------------------------------------------
-   ★ サマリ表示（検索窓は searchInput に統一）
+   ★ サマリ表示（検索後人数が正しく反映される）
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
