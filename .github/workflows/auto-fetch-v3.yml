@@ -3,6 +3,13 @@ name: Auto Integrate InitialDAC JSON (reduce + parallel fetch)
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-integrate
+  cancel-in-progress: true
+
 jobs:
   fetch-and-merge:
     runs-on: ubuntu-latest
@@ -14,7 +21,7 @@ jobs:
       # ▼ ① latest_round.json を取得
       - name: Fetch latest_round.json
         run: |
-          curl -s -o latest_round.json \
+          curl -f -s -o latest_round.json \
             https://pand-gthb.github.io/initialdac-round-data-auto-json-00/latest_round.json
 
       # ▼ ② latestRound を読み取る
@@ -25,7 +32,7 @@ jobs:
           echo "Latest round = $ROUND"
           echo "round=$ROUND" >> $GITHUB_OUTPUT
 
-      # ▼ ③ 全エリア JSON を 20 並列で取得（最速）
+      # ▼ ③ 全エリア JSON を 20 並列で取得（失敗時は {} を書き込む）
       - name: Fetch JSON (parallel 20)
         run: |
           mkdir -p tmp
@@ -34,16 +41,33 @@ jobs:
           seq 0 62 | xargs -I{} -P 20 sh -c '
             AREA={}
             URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${AREA}.json"
+            OUT="tmp/area-${AREA}.json"
+
             echo "Fetching $URL"
-            curl -s -o tmp/area-${AREA}.json "$URL"
+
+            # 成功 → そのまま保存
+            # 失敗 → 空 JSON {} を保存（reduce が壊れない）
+            if curl -f -s "$URL" -o "$OUT"; then
+              echo "OK: area $AREA"
+            else
+              echo "{}" > "$OUT"
+              echo "FAILED: area $AREA → {} に置換"
+            fi
           '
 
-      # ▼ ④ jq reduce で高速統合（1パス処理）
+      # ▼ ④ jq reduce（area を fetch 時に埋め込んでいるので filename 解析不要）
       - name: Merge JSON (reduce optimized)
         run: |
           jq -n '
-            [inputs | {filename: input_filename, data: .}] as $files
+            # tmp/*.json を読み込み、ファイル名から area を抽出して埋め込む
+            [inputs as $data |
+              {
+                area: (input_filename | capture("area-(?<n>[0-9]+)\\.json").n | tonumber),
+                data: $data
+              }
+            ] as $files
             |
+            # calcDate の最大値を generatedAt にする
             ($files | map(.data.calcDate // empty) | sort | last) as $max
             |
             {
@@ -57,15 +81,7 @@ jobs:
                       . + [
                         (
                           $r
-                          + {
-                              area:
-                                ($f.filename
-                                  | split("/")[-1]
-                                  | split("-")[1]
-                                  | split(".")[0]
-                                  | tonumber
-                                )
-                            }
+                          + { area: $f.area }
                           | del(.carname)
                         )
                       ]
@@ -76,7 +92,7 @@ jobs:
             }
           ' tmp/*.json > integrated_data.json
 
-      # ▼ ⑤ minify
+      # ▼ ⑤ minify（差分最小化）
       - name: Minify JSON
         run: |
           jq -c '.' integrated_data.json > integrated_data.min.json
@@ -93,59 +109,4 @@ jobs:
           git diff --cached --quiet && echo "No changes" && exit 0
 
           git commit -m "Auto update integrated_data.json (round ${{ steps.round.outputs.round }})"
-          git push
-
-      # ▼ ⑦ GitHub Pages のビルド完了を待つ（最大 60 回 = 約 3 分）
-      - name: Wait for GitHub Pages build to finish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          OWNER="${{ github.repository_owner }}"
-          REPO="${{ github.event.repository.name }}"
-
-          echo "Waiting for GitHub Pages build to finish..."
-
-          for i in {1..60}; do
-            STATUS=$(curl -s \
-              -H "Authorization: token $GH_TOKEN" \
-              https://api.github.com/repos/$OWNER/$REPO/pages/builds/latest \
-              | jq -r '.status')
-
-            echo "Current status: $STATUS"
-
-            if [ "$STATUS" = "built" ]; then
-              echo "GitHub Pages build completed."
-              break
-            fi
-
-            if [ "$STATUS" = "errored" ]; then
-              echo "GitHub Pages build failed."
-              exit 1
-            fi
-
-            sleep 3
-          done
-
-      # ▼ ⑧ latest_update.json を生成（JST）
-      - name: Generate latest_update.json
-        run: |
-          NOW_JST=$(TZ=Asia/Tokyo date +"%Y-%m-%d %H:%M:%S")
-          ROUND=${{ steps.round.outputs.round }}
-
-          echo "{
-            \"lastUpdated\": \"${NOW_JST}\",
-            \"round\": ${ROUND}
-          }" > latest_update.json
-
-      # ▼ ⑨ latest_update.json をコミット
-      - name: Commit latest_update.json
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
-          git add latest_update.json
-
-          git diff --cached --quiet && echo "No changes" && exit 0
-
-          git commit -m "Update latest_update.json after Pages build"
           git push
