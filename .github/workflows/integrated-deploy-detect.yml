@@ -18,22 +18,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ▼ Pages がビルドしたコミット情報を取得
-      - name: Read page_build commit info
+      # ▼ Pages がビルドしたコミット SHA を取得
+      - name: Read page_build commit SHA
         id: buildinfo
         run: |
-          COMMIT_MSG=$(jq -r '.build.commit.message' "$GITHUB_EVENT_PATH")
           COMMIT_SHA=$(jq -r '.build.commit' "$GITHUB_EVENT_PATH")
-
-          echo "commit_message=$COMMIT_MSG" >> $GITHUB_OUTPUT
           echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
-
           echo "Pages built commit: $COMMIT_SHA"
-          echo "Message: $COMMIT_MSG"
+
+      # ▼ そのコミットのメッセージを取得
+      - name: Get commit message of built commit
+        id: commitmsg
+        run: |
+          MSG=$(git log -1 --pretty=%B ${{ steps.buildinfo.outputs.commit_sha }})
+          echo "message=$MSG" >> $GITHUB_OUTPUT
+          echo "Commit message: $MSG"
 
       # ▼ integrated_data.json 更新以外は無視
       - name: Check if this is integrated_data update
-        if: ${{ !contains(steps.buildinfo.outputs.commit_message, 'Auto update integrated_data.json') }}
+        if: ${{ !contains(steps.commitmsg.outputs.message, 'Auto update integrated_data.json') }}
         run: |
           echo "Not an integrated_data.json update. Skipping."
           exit 0
