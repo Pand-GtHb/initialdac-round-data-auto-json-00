@@ -272,6 +272,8 @@ function renderStars(starCount) {
     ? stars.slice(0, 4) + "<br>" + stars.slice(4)
     : stars;
 }
+Part 2/3：7,393/24,043文字
+
 /* ---------------------------------------------------------
    共通 fetch
 --------------------------------------------------------- */
@@ -663,7 +665,7 @@ function renderDetailRows(list, isRubyBand) {
   tbody.innerHTML = rows;
 
   /* ---------------------------------------------------------
-     ★ 5分刻みマッチング可能性 → 行を淡いピンクに
+     ★ 5分刻みマッチング可能性 → 行を淡いピンクに（5n±1分ロジックに変更）
   --------------------------------------------------------- */
   const now = new Date();
 
@@ -674,7 +676,9 @@ function renderDetailRows(list, isRubyBand) {
     const last = new Date(updated.replace(/-/g, "/"));
     const diffMin = Math.abs(Math.floor((now - last) / 60000));
 
-    if (diffMin % 5 === 0) {
+    /* ★ 5n±1分ロジック（最適な±1分判定） */
+    const nearest = Math.round(diffMin / 5) * 5;
+    if (Math.abs(diffMin - nearest) <= 1) {
       tr.classList.add("match-row-pink");
     }
   });
