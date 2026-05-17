@@ -1,8 +1,14 @@
 name: Update latest_update.json after Pages deploy
 
 on:
-  deployment_status:
-    types: [success]
+  page_build
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-latest-update
+  cancel-in-progress: true
 
 jobs:
   update-latest-update:
@@ -12,15 +18,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ▼ デプロイ対象コミットのメッセージを取得
+      # ▼ 最新コミットメッセージを取得
       - name: Get commit message
         id: commit
         run: |
-          MSG=$(git log -1 --pretty=%B ${{ github.event.deployment.sha }})
+          MSG=$(git log -1 --pretty=%B)
           echo "message=$MSG" >> $GITHUB_OUTPUT
           echo "Commit message: $MSG"
 
-      # ▼ Auto Integrate InitialDAC JSON のコミット以外は無視
+      # ▼ Auto update integrated_data.json のコミット以外は無視
       - name: Check if this is integrated_data update
         if: ${{ !contains(steps.commit.outputs.message, 'Auto update integrated_data.json') }}
         run: |
@@ -31,9 +37,7 @@ jobs:
       - name: Generate latest_update.json
         run: |
           NOW_JST=$(TZ=Asia/Tokyo date +"%Y-%m-%d %H:%M:%S")
-          echo "{
-            \"lastUpdated\": \"${NOW_JST}\"
-          }" > latest_update.json
+          echo "{\"lastUpdated\":\"${NOW_JST}\"}" > latest_update.json
 
       # ▼ コミット
       - name: Commit latest_update.json
@@ -45,5 +49,5 @@ jobs:
 
           git diff --cached --quiet && echo "No changes" && exit 0
 
-          git commit -m "Update latest_update.json after Pages deploy"
+          git commit -m "Update latest_update.json after Pages build"
           git push
