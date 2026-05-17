@@ -88,8 +88,11 @@ const State = {
   generatedAt: "",
   latestRound: null,
 
-  // ★ latest_update.json の「生文字列」を保持（lastUpdated / generatedAt）
+  // ★ latest_update.json の生文字列（lastUpdated / generatedAt）
   latestUpdateAt: "",
+
+  // ★ 監視ハートビート（●/○）
+  watchBeat: false,
 
   searchText: "",
   currentView: "summary",
@@ -107,7 +110,7 @@ function appendLog(msg, type = "info") {
   [...box.children].forEach(line => {
     const t = line.dataset.type;
     if (t === "info") line.style.color = "#66aa66";
-    if (t === "warn") line.style.color = "#ffeb3b"; // ★ warn は黄色に統一
+    if (t === "warn") line.style.color = "#ffeb3b";
   });
 
   const now = new Date();
@@ -122,7 +125,7 @@ function appendLog(msg, type = "info") {
   line.dataset.type = type;
 
   if (type === "error") line.style.color = "#ff5555";
-  else if (type === "warn") line.style.color = "#ffeb3b"; // ★ ここも黄色
+  else if (type === "warn") line.style.color = "#ffeb3b";
   else line.style.color = "#00ff00";
 
   box.prepend(line);
@@ -197,7 +200,7 @@ function formatYMDHM(date) {
 }
 
 /* ---------------------------------------------------------
-   normalize（★復活）
+   normalize
 --------------------------------------------------------- */
 function normalize(s) {
   if (!s) return "";
@@ -216,7 +219,7 @@ function normalize(s) {
 }
 
 /* ---------------------------------------------------------
-   店舗名省略（★復活）
+   店舗名省略
 --------------------------------------------------------- */
 function getZenkakuLength(str) {
   if (!str) return 0;
@@ -318,7 +321,7 @@ function buildRubyFilters() {
 }
 
 /* ---------------------------------------------------------
-   integrated_data.json 読み込み（★新方式）
+   integrated_data.json 読み込み
 --------------------------------------------------------- */
 async function loadRoundData() {
   log("integrated_data.json 取得準備中");
@@ -344,13 +347,12 @@ async function loadRoundData() {
 
     log(`integrated_data.json 読み込み完了 (${State.all.length}件)`);
 
-    /* ---------------------------------------------------------
-       ★ 最新データ取得後はオレンジ解除（通常色へ）
-    --------------------------------------------------------- */
+    /* ★ 最新データ取得後は通常色へ戻す */
     const btn = document.getElementById("reloadBtn");
     if (btn) {
-      btn.classList.remove("updated");
-      btn.style.cssText = ""; // ★ inline style もクリア
+      btn.classList.remove("update-alert");
+      btn.classList.add("reload-normal");
+      btn.style.cssText = "";
     }
 
   } catch (e) {
@@ -398,7 +400,7 @@ function calcStats(list, total) {
 }
 
 /* ---------------------------------------------------------
-   サマリ生成（Ruby＋PRIDE：1ループ分類）
+   サマリ生成
 --------------------------------------------------------- */
 function buildSummary() {
   State.summary = [];
@@ -430,7 +432,7 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   ★★★ サマリ検索フィルタ
+   サマリ検索フィルタ
 --------------------------------------------------------- */
 function filterSummaryBySearch() {
   const norm = normalize(State.searchText);
@@ -450,7 +452,7 @@ function filterSummaryBySearch() {
 }
 
 /* ---------------------------------------------------------
-   ★ サマリ表示
+   サマリ表示
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
@@ -691,35 +693,39 @@ function exportAllCSV() {
 }
 
 /* ---------------------------------------------------------
-   ★ latest_update.json の更新監視（修正版）
+   ★ latest_update.json の更新監視（案B：●/○ 点滅）
 --------------------------------------------------------- */
 async function checkUpdate() {
   try {
     const json = await fetchJSON("latest_update.json");
 
-    // ★ lastUpdated → generatedAt の順で参照
+    // lastUpdated → generatedAt の順で参照
     const raw = json.lastUpdated ?? json.generatedAt ?? "";
     if (!raw) return;
 
-    // ★ 表示用フォーマット
     const disp = formatYMDHM(parseDateJST(raw));
 
-    // ★ 希望フォーマットのログ＋黄色バー
-    log(`更新監視中（latest_update：${disp}）`);
-    appendLog("■■□□□□□□□□□□□□", "warn");
+    // ★ beat（●/○）を黄色で点滅
+    State.watchBeat = !State.watchBeat;
+    const beat = State.watchBeat ? "●" : "○";
 
-    // ★ 初回は保存だけ
+    appendLog(`監視中 ${beat}（latest_update：${disp}）`, "warn");
+
+    // 初回は保存だけ
     if (!State.latestUpdateAt) {
       State.latestUpdateAt = raw;
       return;
     }
 
-    // ★ 生文字列で比較（フォーマット差異を排除）
+    // 生文字列で比較
     if (raw !== State.latestUpdateAt) {
       State.latestUpdateAt = raw;
 
       const btn = document.getElementById("reloadBtn");
-      if (btn) btn.classList.add("updated");
+      if (btn) {
+        btn.classList.remove("reload-normal");
+        btn.classList.add("update-alert");
+      }
 
       logWarn("データ更新を検知しました（latest_update.json）");
     }
@@ -760,13 +766,12 @@ async function init() {
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
 
-  /* ★ reloadBtn の初期色を filterBtn と揃える（強化版） */
+  /* ★ reloadBtn の初期色を filterBtn と揃える */
   const reloadBtn = document.getElementById("reloadBtn");
-  const filterBtn = document.getElementById("filterBtn");
-  if (reloadBtn && filterBtn) {
-    reloadBtn.className = filterBtn.className; // class を完全コピー
-    reloadBtn.style.cssText = "";              // inline style をクリア
-    reloadBtn.classList.remove("updated");     // 念のため updated も削除
+  if (reloadBtn) {
+    reloadBtn.classList.remove("update-alert");
+    reloadBtn.classList.add("reload-normal");
+    reloadBtn.style.cssText = "";
   }
 
   /* ★ 最新データ取得（init は再実行しない） */
@@ -808,7 +813,7 @@ document.addEventListener("DOMContentLoaded", () => {
     renderSummary();
   };
 
-  /* ★ 監視開始ログ＋setInterval は init() に移動済み */
+  /* ★ 監視開始は init() 内に移動済み */
 
   init();
 });
