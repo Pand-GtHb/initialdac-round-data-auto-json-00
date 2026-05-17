@@ -595,7 +595,7 @@ function applyPlayerFilter(keyword, isRubyBand) {
 }
 
 /* ---------------------------------------------------------
-   詳細行描画
+   詳細行描画（★ここだけ修正あり）
 --------------------------------------------------------- */
 function renderDetailRows(list, isRubyBand) {
   const tbody = document.getElementById("detailTableBody");
@@ -614,7 +614,7 @@ function renderDetailRows(list, isRubyBand) {
     const shortShop = shortenStoreName(fullShop);
 
     return `
-      <tr>
+      <tr data-updated="${p.updateDate}">
         <td class="center">${starOrLevel}</td>
 
         <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
@@ -636,6 +636,23 @@ function renderDetailRows(list, isRubyBand) {
   }).join("");
 
   tbody.innerHTML = rows;
+
+  /* ---------------------------------------------------------
+     ★ 追加：5分刻みマッチング可能性 → 行を淡いピンクに
+  --------------------------------------------------------- */
+  const now = new Date();
+
+  tbody.querySelectorAll("tr").forEach(tr => {
+    const updated = tr.dataset.updated;
+    if (!updated) return;
+
+    const last = new Date(updated.replace(/-/g, "/"));
+    const diffMin = Math.abs(Math.floor((now - last) / 60000));
+
+    if (diffMin % 5 === 0) {
+      tr.classList.add("match-row-pink");
+    }
+  });
 }
 
 /* ---------------------------------------------------------
