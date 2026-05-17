@@ -333,7 +333,12 @@ async function loadRoundData() {
 
     State.filtered = [...State.all];
 
-    log(`integrated_data.json 読み込み完了 (${State.all.length}件)`);
+    /* ★ 修正ポイント：generatedAt をログに追加 */
+    const genTime = State.generatedAt
+      ? formatYMDHM(parseDateJST(State.generatedAt))
+      : "-";
+
+    log(`integrated_data.json 読み込み完了 (${State.all.length}件：${genTime})`);
 
     /* ★ 最新データ取得後は通常色へ戻す（標準グレー） */
     const btn = document.getElementById("reloadBtn");
@@ -734,7 +739,7 @@ async function init() {
   log("Viewer 初期化完了");
 
   /* ★ 監視開始（監視ログは出さない） */
-  setInterval(checkUpdate, 120000);
+  setInterval(checkUpdate, 60000);
   checkUpdate(); // 即時1回
 }
 
