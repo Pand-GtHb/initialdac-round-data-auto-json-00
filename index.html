@@ -143,10 +143,6 @@ td.center { text-align:center; }
 /* ---------------------------------------------------------
    ★ Reload ボタンの色制御（更新検知時のみオレンジ）
 --------------------------------------------------------- */
-
-/* 通常時はスタイル指定なし → ブラウザ標準グレー（filterBtn と同じ） */
-
-/* 更新検知時のオレンジ色 */
 .update-alert {
     background-color: #ff8800 !important;
     color: #fff !important;
@@ -157,6 +153,18 @@ td.center { text-align:center; }
 --------------------------------------------------------- */
 .match-row-pink {
     background-color: #FFE4EC !important;
+}
+
+/* ---------------------------------------------------------
+   ★ 新規追加：Ruby星・PRIDE 共通の列幅固定
+      全角4文字 × 2行に収めるための幅指定
+--------------------------------------------------------- */
+.star-pride-col {
+    width: 4em;
+    max-width: 4em;
+    text-align: center;
+    white-space: normal;
+    line-height: 1.2em;
 }
 </style>
 </head>
