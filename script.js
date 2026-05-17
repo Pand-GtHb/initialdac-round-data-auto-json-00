@@ -87,7 +87,7 @@ const State = {
   detailOriginal: [],
   generatedAt: "",
   latestRound: null,
-  latestUpdateAt: "",   // ★ 追加
+  latestUpdateAt: "",
   searchText: "",
   currentView: "summary",
   currentIsRubyBand: true
@@ -132,6 +132,7 @@ function appendLog(msg, type = "info") {
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
+
 /* ---------------------------------------------------------
    共通 fetch
 --------------------------------------------------------- */
@@ -144,7 +145,7 @@ async function fetchJSON(path) {
 }
 
 /* ---------------------------------------------------------
-   latest_round.json 読み込み（ラウンド番号表示用）
+   latest_round.json 読み込み
 --------------------------------------------------------- */
 async function loadLatestRound() {
   log("latest_round.json 取得準備中");
@@ -156,7 +157,6 @@ async function loadLatestRound() {
 
     State.latestRound = json.latestRound;
 
-    // HTML に表示
     const el = document.getElementById("latestRound");
     if (el) el.textContent = State.latestRound;
 
@@ -181,7 +181,6 @@ function buildRubyFilters() {
     `;
   }).join("");
 }
-
 /* ---------------------------------------------------------
    integrated_data.json 読み込み（★新方式）
 --------------------------------------------------------- */
@@ -191,7 +190,6 @@ async function loadRoundData() {
   try {
     const json = await fetchJSON("integrated_data.json");
 
-    // JSON の generatedAt をそのまま使用
     State.generatedAt = json.generatedAt ?? "";
 
     if (State.generatedAt) {
@@ -201,7 +199,6 @@ async function loadRoundData() {
 
     const records = json.records || [];
 
-    // ★ normalizedName を付与
     State.all = records.map(p => ({
       ...p,
       normalizedName: normalize(p.name)
@@ -211,12 +208,9 @@ async function loadRoundData() {
 
     log(`integrated_data.json 読み込み完了 (${State.all.length}件)`);
 
-    /* ---------------------------------------------------------
-       ★ 再取得したので Reload ボタン色を元に戻す
-    --------------------------------------------------------- */
     const btn = document.getElementById("reloadBtn");
     if (btn) {
-      btn.classList.remove("update-alert");   // ← 修正ポイント
+      btn.classList.remove("update-alert");
     }
 
   } catch (e) {
@@ -296,7 +290,7 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   ★★★ サマリ検索フィルタ（検索後人数が正しく反映）
+   ★★★ サマリ検索フィルタ
 --------------------------------------------------------- */
 function filterSummaryBySearch() {
   const norm = normalize(State.searchText);
@@ -380,95 +374,6 @@ function renderSummary() {
   document.getElementById("summaryView").style.display = "block";
   document.getElementById("detailView").style.display = "none";
 }
-/* ---------------------------------------------------------
-   詳細表示（前後ランク移動＋検索再実行対応）
---------------------------------------------------------- */
-function showDetail(key) {
-  const row = State.summary.find(r => r.key === key) || null;
-  const rankInfo = getRankInfo(key);
-
-  const isRubyBand = rankInfo ? rankInfo.type === "ruby" : key.startsWith("R");
-  const bandLabel = rankInfo ? rankInfo.label : (row ? row.label : key);
-  const bandIcon = rankInfo ? rankInfo.icon : "";
-
-  setupRankNavigation(key);
-
-  if (!row) {
-    State.detailOriginal = [];
-    State.currentView = "detail";
-    State.currentIsRubyBand = isRubyBand;
-
-    renderDetailTable(isRubyBand, bandLabel, bandIcon);
-    document.getElementById("summaryView").style.display = "none";
-    document.getElementById("detailView").style.display = "block";
-    return;
-  }
-
-  // ★ updateDate の降順でソート（基準）
-  State.detailOriginal = row.list.slice().sort((a, b) => {
-    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
-  });
-
-  State.currentView = "detail";
-  State.currentIsRubyBand = isRubyBand;
-
-  renderDetailTable(isRubyBand, bandLabel, bandIcon);
-
-  document.getElementById("summaryView").style.display = "none";
-  document.getElementById("detailView").style.display = "block";
-}
-
-/* ---------------------------------------------------------
-   詳細テーブル（人数表示は applyPlayerFilter で更新）
---------------------------------------------------------- */
-function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
-  const area = document.getElementById("detailArea");
-
-  area.innerHTML = `
-    <h3 id="detailCountHeader">
-      <img src="${bandIcon}" width="32" style="vertical-align:middle;">
-      ${bandLabel}：<span id="detailCount"></span>人
-    </h3>
-
-    <div style="overflow-x:auto;">
-      <table>
-        <thead>
-          <tr>
-            <th>☆・PRIDE</th>
-            <th>プレイヤー名</th>
-            <th>RP</th>
-            <th>店舗名</th>
-            <th>称号</th>
-            <th>Last Update</th>
-          </tr>
-        </thead>
-        <tbody id="detailTableBody"></tbody>
-      </table>
-    </div>
-  `;
-
-  applyPlayerFilter(State.searchText, isRubyBand);
-}
-
-/* ---------------------------------------------------------
-   ★★★ プレイヤー名フィルタ（人数表示修正＋名前順ソート削除）
---------------------------------------------------------- */
-function applyPlayerFilter(keyword, isRubyBand) {
-  const base = State.detailOriginal || [];
-  const normKey = normalize(keyword);
-
-  // ★ フィルタのみ。ソートは絶対にしない。
-  const list = normKey
-    ? base.filter(p => (p.normalizedName || "").includes(normKey))
-    : base;
-
-  // ★ 検索後の人数を正しく表示
-  const countEl = document.getElementById("detailCount");
-  if (countEl) countEl.textContent = fmt(list.length);
-
-  renderDetailRows(list, isRubyBand);
-}
-
 /* ---------------------------------------------------------
    詳細行描画
 --------------------------------------------------------- */
@@ -568,19 +473,17 @@ async function checkUpdate() {
     const newAt = json.generatedAt ?? "";
     if (!newAt) return;
 
-    // 初回は保存だけ
     if (!State.latestUpdateAt) {
       State.latestUpdateAt = newAt;
       return;
     }
 
-    // 更新検知
     if (newAt !== State.latestUpdateAt) {
       State.latestUpdateAt = newAt;
 
       const btn = document.getElementById("reloadBtn");
       if (btn) {
-        btn.classList.add("update-alert");   // ← ★ 修正ポイント
+        btn.classList.add("update-alert");
       }
 
       logWarn("データ更新を検知しました（latest_update.json）");
@@ -600,8 +503,8 @@ async function init() {
 
   buildRubyFilters();
 
-  await loadLatestRound();   // 最新ラウンド番号
-  await loadRoundData();     // データ本体
+  await loadLatestRound();
+  await loadRoundData();
 
   applyFilters();
   buildSummary();
@@ -611,14 +514,14 @@ async function init() {
 
   log("Viewer 初期化完了");
 
-  // ★ 2分ごとに更新チェック
   setInterval(checkUpdate, 120000);
 }
 
 /* ---------------------------------------------------------
-   DOMContentLoaded
+   DOMContentLoaded（★ init の二重実行バグ修正）
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
+
   document.getElementById("reloadBtn").onclick = () => {
     startProgress();
     init().then(stopProgress);
@@ -653,5 +556,6 @@ document.addEventListener("DOMContentLoaded", () => {
     renderSummary();
   };
 
-  init();
+  /* ★ 初回ロードは reloadBtn を押したのと同じ動作に統一 */
+  document.getElementById("reloadBtn").click();
 });
