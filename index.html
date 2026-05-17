@@ -141,9 +141,11 @@ td.center { text-align:center; }
 }
 
 /* ---------------------------------------------------------
-   ★ Reload ボタンの色制御（更新検知対応）
+   ★ Reload ボタンの色制御（class ベースに変更）
 --------------------------------------------------------- */
-#reloadBtn {
+
+/* 通常色（filterBtn と同じ青） */
+.reload-normal {
     background-color: #0078D4;
     color: white;
     padding: 6px 12px;
@@ -151,10 +153,25 @@ td.center { text-align:center; }
     border: none;
 }
 
-/* 更新検知時のオレンジ色（script.js から classList.add/remove） */
-#reloadBtn.update-alert {
+/* 更新検知時のオレンジ色 */
+.update-alert {
     background-color: #ff8800 !important;
     color: #fff !important;
+}
+
+/* フィルタ適用ボタン（比較用） */
+#filterBtn {
+    background-color: #0078D4;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: none;
+}
+
+/* 監視ログの beat（●/○）を黄色で */
+.log-beat {
+    color: #ffeb3b !important;
+    font-weight: bold;
 }
 </style>
 </head>
@@ -193,7 +210,7 @@ td.center { text-align:center; }
 </div>
 
 <div class="mt10">
-  <button id="reloadBtn">最新データ取得</button>
+  <button id="reloadBtn" class="reload-normal">最新データ取得</button>
   <button id="filterBtn" style="margin-left:10px;">フィルタ適用</button>
   <button id="summaryCsvBtn" style="margin-left:10px;">サマリCSV出力</button>
   <button id="allCsvBtn" style="margin-left:10px;">全データCSV出力</button>
@@ -234,8 +251,8 @@ td.center { text-align:center; }
   <div id="detailArea" class="mt10"></div>
 </div>
 
-<!-- ★ script.js のキャッシュバスターを cb=2 に更新 -->
-<script src="script.js?cb=2"></script>
+<!-- ★ script.js のキャッシュバスターを cb=3 に更新 -->
+<script src="script.js?cb=3"></script>
 
 </body>
 </html>
