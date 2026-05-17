@@ -85,7 +85,6 @@ const State = {
   generatedAt: "",
   latestRound: null,
 
-  // ★ latest_update.json の生文字列
   latestUpdateAt: "",
 
   searchText: "",
@@ -188,76 +187,13 @@ function formatYMDHM(date) {
 }
 
 /* ---------------------------------------------------------
-   normalize
+   ★ 追加：Ruby星の2行表示
 --------------------------------------------------------- */
-function normalize(s) {
-  if (!s) return "";
-
-  s = s.replace(/\u3000/g, " ");
-  s = s.replace(/[A-Za-z0-9]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
-  );
-  s = s.toLowerCase();
-  s = s.replace(/[\u3041-\u3096]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) + 0x60)
-  );
-  s = s.replace(/ /g, "");
-
-  return s;
-}
-
-/* ---------------------------------------------------------
-   店舗名省略
---------------------------------------------------------- */
-function getZenkakuLength(str) {
-  if (!str) return 0;
-  const len = str.replace(/[^\x00-\x7F]/g, "xx").length;
-  return len / 2;
-}
-
-function isMostlyAscii(str) {
-  if (!str) return true;
-  const asciiCount = (str.match(/[\x00-\x7F]/g) || []).length;
-  return asciiCount / str.length >= 0.7;
-}
-
-function getTextWidth(text, font) {
-  const canvas = getTextWidth.canvas || (getTextWidth.canvas = document.createElement("canvas"));
-  const ctx = canvas.getContext("2d");
-  ctx.font = font;
-  return ctx.measureText(text).width;
-}
-
-function shortenStoreName(full) {
-  if (!full) return "";
-
-  if (!isMostlyAscii(full)) {
-    const zLen = getZenkakuLength(full);
-    if (zLen <= 18) return full;
-
-    const head = 6;
-    const tail = 6;
-    if (full.length <= head + tail) return full;
-    return full.slice(0, head) + "…" + full.slice(-tail);
-  }
-
-  const font = "14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-  const maxWidth = 220;
-
-  if (getTextWidth(full, font) <= maxWidth) return full;
-
-  let head = 10;
-  let tail = 10;
-
-  while (head + tail > 2) {
-    const candidate = full.slice(0, head) + "…" + full.slice(-tail);
-    if (getTextWidth(candidate, font) <= maxWidth) return candidate;
-
-    if (head >= tail) head--;
-    else tail--;
-  }
-
-  return full.slice(0, 1) + "…" + full.slice(-1);
+function renderStars(starCount) {
+  const full = "★".repeat(starCount);
+  return full.length > 4
+    ? full.slice(0, 4) + "<br>" + full.slice(4)
+    : full;
 }
 /* ---------------------------------------------------------
    共通 fetch
@@ -333,18 +269,16 @@ async function loadRoundData() {
 
     State.filtered = [...State.all];
 
-    /* ★ 修正ポイント：generatedAt をログに追加 */
     const genTime = State.generatedAt
       ? formatYMDHM(parseDateJST(State.generatedAt))
       : "-";
 
     log(`integrated_data.json 読み込み完了 (${State.all.length}件：${genTime})`);
 
-    /* ★ 最新データ取得後は通常色へ戻す（標準グレー） */
     const btn = document.getElementById("reloadBtn");
     if (btn) {
       btn.classList.remove("update-alert");
-      btn.style.cssText = ""; // 標準ボタンに戻す
+      btn.style.cssText = "";
     }
 
   } catch (e) {
@@ -595,7 +529,7 @@ function applyPlayerFilter(keyword, isRubyBand) {
 }
 
 /* ---------------------------------------------------------
-   詳細行描画（★ここだけ修正あり）
+   ★★★ 詳細行描画（今回の本丸：★表示変更＋クリックコピー対応）
 --------------------------------------------------------- */
 function renderDetailRows(list, isRubyBand) {
   const tbody = document.getElementById("detailTableBody");
@@ -606,26 +540,51 @@ function renderDetailRows(list, isRubyBand) {
       ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
       : "";
 
-    const starOrLevel = isRubyBand
-      ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? `☆${p.starCnt}` : "")
-      : p.pridePoint;
+    /* ---------------------------------------------------------
+       ★ Ruby帯 → ★表示（2行対応）
+       ★ PRIDE帯 → 数値表示
+       ★ クリックコピー用 data-* を付与
+    --------------------------------------------------------- */
+    let starOrLevelHtml = "";
+    let starOrLevelAttr = "";
+
+    if (isRubyBand) {
+      const star = p.starCnt ?? 0;
+      starOrLevelHtml = renderStars(star);
+      starOrLevelAttr = `data-type="star" data-star="${star}"`;
+    } else {
+      const pride = p.pridePoint ?? 0;
+      starOrLevelHtml = pride;
+      starOrLevelAttr = `data-type="pride" data-pride="${pride}"`;
+    }
 
     const fullShop = p.shopname ?? "";
     const shortShop = shortenStoreName(fullShop);
 
     return `
       <tr data-updated="${p.updateDate}">
-        <td class="center">${starOrLevel}</td>
+        
+        <!-- ★・PRIDE 列 -->
+        <td class="center clickable star-pride-col"
+            ${starOrLevelAttr}
+            data-name="${p.name}">
+          ${starOrLevelHtml}
+        </td>
 
-        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
+        <!-- 名前（名前単独コピー） -->
+        <td class="left player-name clickable"
+            data-type="name"
+            data-name="${p.name}">
           ${p.name}
         </td>
 
         <td class="right">${fmt(p.point)}</td>
 
+        <!-- 店舗名（従来通り店舗名単独コピー） -->
         <td class="left clickable"
-            data-fullname="${fullShop.replace(/"/g, "&quot;")}"
-            onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
+            data-type="shop"
+            data-name="${p.name}"
+            data-fullname="${fullShop.replace(/"/g, "&quot;")}">
           <div class="store-name">${shortShop}</div>
         </td>
 
@@ -638,7 +597,7 @@ function renderDetailRows(list, isRubyBand) {
   tbody.innerHTML = rows;
 
   /* ---------------------------------------------------------
-     ★ 追加：5分刻みマッチング可能性 → 行を淡いピンクに
+     ★ 5分刻みマッチング可能性 → 行を淡いピンクに
   --------------------------------------------------------- */
   const now = new Date();
 
@@ -656,13 +615,12 @@ function renderDetailRows(list, isRubyBand) {
 }
 
 /* ---------------------------------------------------------
-   クリックコピー
+   クリックコピー（共通）
 --------------------------------------------------------- */
 function copyToClipboard(text) {
   navigator.clipboard.writeText(text);
   log(`コピー：${text}`);
 }
-
 /* ---------------------------------------------------------
    CSV 出力（サマリ）
 --------------------------------------------------------- */
@@ -711,19 +669,17 @@ async function checkUpdate() {
     const raw = json.lastUpdated ?? json.generatedAt ?? "";
     if (!raw) return;
 
-    // 初回は保存だけ
     if (!State.latestUpdateAt) {
       State.latestUpdateAt = raw;
       return;
     }
 
-    // 更新検知
     if (raw !== State.latestUpdateAt) {
       State.latestUpdateAt = raw;
 
       const btn = document.getElementById("reloadBtn");
       if (btn) {
-        btn.classList.add("update-alert"); // オレンジ化
+        btn.classList.add("update-alert");
       }
 
       logWarn("データ更新を検知しました（latest_update.json）");
@@ -755,24 +711,55 @@ async function init() {
 
   log("Viewer 初期化完了");
 
-  /* ★ 監視開始（監視ログは出さない） */
   setInterval(checkUpdate, 60000);
-  checkUpdate(); // 即時1回
+  checkUpdate();
 }
+
+/* ---------------------------------------------------------
+   ★ クリックコピー（★・PRIDE・名前・店舗名）
+--------------------------------------------------------- */
+document.getElementById("detailArea").addEventListener("click", e => {
+  const cell = e.target.closest(".clickable");
+  if (!cell) return;
+
+  const type = cell.dataset.type;
+  const name = cell.dataset.name;
+
+  if (type === "star") {
+    const star = cell.dataset.star;
+    copyToClipboard(`★${star}\t${name}`);
+    return;
+  }
+
+  if (type === "pride") {
+    const pride = cell.dataset.pride;
+    copyToClipboard(`PRIDE${pride}\t${name}`);
+    return;
+  }
+
+  if (type === "name") {
+    copyToClipboard(name);
+    return;
+  }
+
+  if (type === "shop") {
+    const shop = cell.dataset.fullname;
+    copyToClipboard(shop);
+    return;
+  }
+});
 
 /* ---------------------------------------------------------
    DOMContentLoaded
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
 
-  /* ★ reloadBtn の初期色を標準グレーに戻す */
   const reloadBtn = document.getElementById("reloadBtn");
   if (reloadBtn) {
     reloadBtn.classList.remove("update-alert");
     reloadBtn.style.cssText = "";
   }
 
-  /* ★ 最新データ取得（init は再実行しない） */
   document.getElementById("reloadBtn").onclick = async () => {
     startProgress();
     await loadRoundData();
