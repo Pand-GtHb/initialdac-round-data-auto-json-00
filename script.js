@@ -87,7 +87,7 @@ const State = {
   detailOriginal: [],
   generatedAt: "",
   latestRound: null,
-  latestUpdateAt: "",   // ★ 追加：latest_update.json の更新時刻
+  latestUpdateAt: "",   // ★ 追加
   searchText: "",
   currentView: "summary",
   currentIsRubyBand: true
@@ -132,140 +132,6 @@ function appendLog(msg, type = "info") {
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
-
-/* ---------------------------------------------------------
-   進行中アニメーション
---------------------------------------------------------- */
-let progressTimer = null;
-let progressPos = 0;
-let progressLine = null;
-
-function startProgress() {
-  const box = document.getElementById("logBox");
-
-  if (progressLine) progressLine.remove();
-
-  progressPos = 0;
-  progressLine = document.createElement("div");
-  progressLine.style.color = "#ffeb3b";
-
-  box.prepend(progressLine);
-
-  updateProgressBar();
-
-  progressTimer = setInterval(() => {
-    progressPos = (progressPos + 1) % 20;
-    updateProgressBar();
-  }, 120);
-}
-
-function updateProgressBar() {
-  const total = 20;
-  const filled = "■".repeat(progressPos);
-  const empty = "□".repeat(total - progressPos);
-  progressLine.textContent = `進行中：${filled}${empty}`;
-}
-
-function stopProgress() {
-  if (progressTimer) clearInterval(progressTimer);
-  progressTimer = null;
-
-  if (progressLine) {
-    progressLine.remove();
-    progressLine = null;
-  }
-
-  log("Viewer フィルタ完了");
-}
-
-/* ---------------------------------------------------------
-   ユーティリティ
---------------------------------------------------------- */
-const fmt = n => Number(n).toLocaleString();
-const parseDateJST = str => new Date(str.replace(/-/g, "/"));
-
-/* ★★★ formatYMDHM（復活版） */
-function formatYMDHM(date) {
-  const y = date.getFullYear();
-  const m = ("0" + (date.getMonth() + 1)).slice(-2);
-  const d = ("0" + date.getDate()).slice(-2);
-  const hh = ("0" + date.getHours()).slice(-2);
-  const mm = ("0" + date.getMinutes()).slice(-2);
-  return `${y}/${m}/${d} ${hh}:${mm}`;
-}
-
-/* ---------------------------------------------------------
-   normalize
---------------------------------------------------------- */
-function normalize(s) {
-  if (!s) return "";
-
-  s = s.replace(/\u3000/g, " ");
-  s = s.replace(/[A-Za-z0-9]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
-  );
-  s = s.toLowerCase();
-  s = s.replace(/[\u3041-\u3096]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) + 0x60)
-  );
-  s = s.replace(/ /g, "");
-
-  return s;
-}
-
-/* ---------------------------------------------------------
-   店舗名省略
---------------------------------------------------------- */
-function getZenkakuLength(str) {
-  if (!str) return 0;
-  const len = str.replace(/[^\x00-\x7F]/g, "xx").length;
-  return len / 2;
-}
-
-function isMostlyAscii(str) {
-  if (!str) return true;
-  const asciiCount = (str.match(/[\x00-\x7F]/g) || []).length;
-  return asciiCount / str.length >= 0.7;
-}
-
-function getTextWidth(text, font) {
-  const canvas = getTextWidth.canvas || (getTextWidth.canvas = document.createElement("canvas"));
-  const ctx = canvas.getContext("2d");
-  ctx.font = font;
-  return ctx.measureText(text).width;
-}
-
-function shortenStoreName(full) {
-  if (!full) return "";
-
-  if (!isMostlyAscii(full)) {
-    const zLen = getZenkakuLength(full);
-    if (zLen <= 18) return full;
-
-    const head = 6;
-    const tail = 6;
-    if (full.length <= head + tail) return full;
-    return full.slice(0, head) + "…" + full.slice(-tail);
-  }
-
-  const font = "14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-  const maxWidth = 220;
-
-  if (getTextWidth(full, font) <= maxWidth) return full;
-
-  let head = 10;
-  let tail = 10;
-
-  while (head + tail > 2) {
-    const candidate = full.slice(0, head) + "…" + full.slice(-tail);
-    if (getTextWidth(candidate, font) <= maxWidth) return candidate;
-
-    if (head >= tail) head--;
-    else tail--;
-  }
-
-  return full.slice(0, 1) + "…" + full.slice(-1);
-}
 /* ---------------------------------------------------------
    共通 fetch
 --------------------------------------------------------- */
@@ -350,8 +216,7 @@ async function loadRoundData() {
     --------------------------------------------------------- */
     const btn = document.getElementById("reloadBtn");
     if (btn) {
-      btn.style.backgroundColor = "";
-      btn.style.color = "";
+      btn.classList.remove("update-alert");   // ← 修正ポイント
     }
 
   } catch (e) {
@@ -715,8 +580,7 @@ async function checkUpdate() {
 
       const btn = document.getElementById("reloadBtn");
       if (btn) {
-        btn.style.backgroundColor = "#ff8800"; // ★ オレンジ
-        btn.style.color = "#fff";
+        btn.classList.add("update-alert");   // ← ★ 修正ポイント
       }
 
       logWarn("データ更新を検知しました（latest_update.json）");
