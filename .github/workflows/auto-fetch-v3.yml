@@ -1,4 +1,4 @@
-name: Auto Integrate InitialDAC JSON (reduce + parallel fetch)
+name: Auto Integrate InitialDAC JSON (reduce + parallel fetch + update timestamp)
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
           echo "Latest round = $ROUND"
           echo "round=$ROUND" >> $GITHUB_OUTPUT
 
-      # ▼ ③ 全エリア JSON を 20 並列で取得（失敗時は {} を書き込む）
+      # ▼ ③ 全エリア JSON を 20 並列で取得（失敗時は {}）
       - name: Fetch JSON (parallel 20)
         run: |
           mkdir -p tmp
@@ -45,8 +45,6 @@ jobs:
 
             echo "Fetching $URL"
 
-            # 成功 → そのまま保存
-            # 失敗 → 空 JSON {} を保存（reduce が壊れない）
             if curl -f -s "$URL" -o "$OUT"; then
               echo "OK: area $AREA"
             else
@@ -55,11 +53,10 @@ jobs:
             fi
           '
 
-      # ▼ ④ jq reduce（area を fetch 時に埋め込んでいるので filename 解析不要）
+      # ▼ ④ jq reduce（area を filename から抽出）
       - name: Merge JSON (reduce optimized)
         run: |
           jq -n '
-            # tmp/*.json を読み込み、ファイル名から area を抽出して埋め込む
             [inputs as $data |
               {
                 area: (input_filename | capture("area-(?<n>[0-9]+)\\.json").n | tonumber),
@@ -67,7 +64,6 @@ jobs:
               }
             ] as $files
             |
-            # calcDate の最大値を generatedAt にする
             ($files | map(.data.calcDate // empty) | sort | last) as $max
             |
             {
@@ -92,21 +88,27 @@ jobs:
             }
           ' tmp/*.json > integrated_data.json
 
-      # ▼ ⑤ minify（差分最小化）
+      # ▼ ⑤ minify
       - name: Minify JSON
         run: |
           jq -c '.' integrated_data.json > integrated_data.min.json
           mv integrated_data.min.json integrated_data.json
 
-      # ▼ ⑥ GitHub へコミット（integrated_data.json）
-      - name: Commit integrated_data.json
+      # ▼ ⑥ latest_update.json を生成（JST）
+      - name: Generate latest_update.json
+        run: |
+          NOW_JST=$(TZ=Asia/Tokyo date +"%Y-%m-%d %H:%M:%S")
+          echo "{\"lastUpdated\":\"${NOW_JST}\"}" > latest_update.json
+
+      # ▼ ⑦ integrated_data.json + latest_update.json をコミット
+      - name: Commit JSON files
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add integrated_data.json
+          git add integrated_data.json latest_update.json
 
           git diff --cached --quiet && echo "No changes" && exit 0
 
-          git commit -m "Auto update integrated_data.json (round ${{ steps.round.outputs.round }})"
+          git commit -m "Auto update integrated_data.json & latest_update.json (round ${{ steps.round.outputs.round }})"
           git push
