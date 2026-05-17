@@ -87,7 +87,7 @@ const State = {
   detailOriginal: [],
   generatedAt: "",
   latestRound: null,
-  latestUpdateAt: "",   // ★ 追加：latest_update.json の更新時刻
+  latestUpdateAt: "",   // ★ 更新監視用
   searchText: "",
   currentView: "summary",
   currentIsRubyBand: true
@@ -184,7 +184,6 @@ function stopProgress() {
 const fmt = n => Number(n).toLocaleString();
 const parseDateJST = str => new Date(str.replace(/-/g, "/"));
 
-/* ★★★ formatYMDHM（復活版） */
 function formatYMDHM(date) {
   const y = date.getFullYear();
   const m = ("0" + (date.getMonth() + 1)).slice(-2);
@@ -192,79 +191,6 @@ function formatYMDHM(date) {
   const hh = ("0" + date.getHours()).slice(-2);
   const mm = ("0" + date.getMinutes()).slice(-2);
   return `${y}/${m}/${d} ${hh}:${mm}`;
-}
-
-/* ---------------------------------------------------------
-   normalize
---------------------------------------------------------- */
-function normalize(s) {
-  if (!s) return "";
-
-  s = s.replace(/\u3000/g, " ");
-  s = s.replace(/[A-Za-z0-9]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
-  );
-  s = s.toLowerCase();
-  s = s.replace(/[\u3041-\u3096]/g, ch =>
-    String.fromCharCode(ch.charCodeAt(0) + 0x60)
-  );
-  s = s.replace(/ /g, "");
-
-  return s;
-}
-
-/* ---------------------------------------------------------
-   店舗名省略
---------------------------------------------------------- */
-function getZenkakuLength(str) {
-  if (!str) return 0;
-  const len = str.replace(/[^\x00-\x7F]/g, "xx").length;
-  return len / 2;
-}
-
-function isMostlyAscii(str) {
-  if (!str) return true;
-  const asciiCount = (str.match(/[\x00-\x7F]/g) || []).length;
-  return asciiCount / str.length >= 0.7;
-}
-
-function getTextWidth(text, font) {
-  const canvas = getTextWidth.canvas || (getTextWidth.canvas = document.createElement("canvas"));
-  const ctx = canvas.getContext("2d");
-  ctx.font = font;
-  return ctx.measureText(text).width;
-}
-
-function shortenStoreName(full) {
-  if (!full) return "";
-
-  if (!isMostlyAscii(full)) {
-    const zLen = getZenkakuLength(full);
-    if (zLen <= 18) return full;
-
-    const head = 6;
-    const tail = 6;
-    if (full.length <= head + tail) return full;
-    return full.slice(0, head) + "…" + full.slice(-tail);
-  }
-
-  const font = "14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-  const maxWidth = 220;
-
-  if (getTextWidth(full, font) <= maxWidth) return full;
-
-  let head = 10;
-  let tail = 10;
-
-  while (head + tail > 2) {
-    const candidate = full.slice(0, head) + "…" + full.slice(-tail);
-    if (getTextWidth(candidate, font) <= maxWidth) return candidate;
-
-    if (head >= tail) head--;
-    else tail--;
-  }
-
-  return full.slice(0, 1) + "…" + full.slice(-1);
 }
 /* ---------------------------------------------------------
    共通 fetch
@@ -290,7 +216,6 @@ async function loadLatestRound() {
 
     State.latestRound = json.latestRound;
 
-    // HTML に表示
     const el = document.getElementById("latestRound");
     if (el) el.textContent = State.latestRound;
 
@@ -325,7 +250,6 @@ async function loadRoundData() {
   try {
     const json = await fetchJSON("integrated_data.json");
 
-    // JSON の generatedAt をそのまま使用
     State.generatedAt = json.generatedAt ?? "";
 
     if (State.generatedAt) {
@@ -335,7 +259,6 @@ async function loadRoundData() {
 
     const records = json.records || [];
 
-    // ★ normalizedName を付与
     State.all = records.map(p => ({
       ...p,
       normalizedName: normalize(p.name)
@@ -346,13 +269,10 @@ async function loadRoundData() {
     log(`integrated_data.json 読み込み完了 (${State.all.length}件)`);
 
     /* ---------------------------------------------------------
-       ★ 再取得したので Reload ボタン色を元に戻す
+       ★ 最新データ取得後はオレンジ解除（通常色へ）
     --------------------------------------------------------- */
     const btn = document.getElementById("reloadBtn");
-    if (btn) {
-      btn.style.backgroundColor = "";
-      btn.style.color = "";
-    }
+    if (btn) btn.classList.remove("updated");
 
   } catch (e) {
     logError("integrated_data.json の取得に失敗：" + e.message);
@@ -431,7 +351,7 @@ function buildSummary() {
 }
 
 /* ---------------------------------------------------------
-   ★★★ サマリ検索フィルタ（検索後人数が正しく反映）
+   ★★★ サマリ検索フィルタ
 --------------------------------------------------------- */
 function filterSummaryBySearch() {
   const norm = normalize(State.searchText);
@@ -539,7 +459,6 @@ function showDetail(key) {
     return;
   }
 
-  // ★ updateDate の降順でソート（基準）
   State.detailOriginal = row.list.slice().sort((a, b) => {
     return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
@@ -554,7 +473,7 @@ function showDetail(key) {
 }
 
 /* ---------------------------------------------------------
-   詳細テーブル（人数表示は applyPlayerFilter で更新）
+   詳細テーブル
 --------------------------------------------------------- */
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   const area = document.getElementById("detailArea");
@@ -586,18 +505,16 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
 }
 
 /* ---------------------------------------------------------
-   ★★★ プレイヤー名フィルタ（人数表示修正＋名前順ソート削除）
+   プレイヤー名フィルタ
 --------------------------------------------------------- */
 function applyPlayerFilter(keyword, isRubyBand) {
   const base = State.detailOriginal || [];
   const normKey = normalize(keyword);
 
-  // ★ フィルタのみ。ソートは絶対にしない。
   const list = normKey
     ? base.filter(p => (p.normalizedName || "").includes(normKey))
     : base;
 
-  // ★ 検索後の人数を正しく表示
   const countEl = document.getElementById("detailCount");
   if (countEl) countEl.textContent = fmt(list.length);
 
@@ -698,26 +615,23 @@ function exportAllCSV() {
    ★ latest_update.json の更新監視
 --------------------------------------------------------- */
 async function checkUpdate() {
+  log("更新監視中…");
+
   try {
     const json = await fetchJSON("latest_update.json");
     const newAt = json.generatedAt ?? "";
     if (!newAt) return;
 
-    // 初回は保存だけ
     if (!State.latestUpdateAt) {
       State.latestUpdateAt = newAt;
       return;
     }
 
-    // 更新検知
     if (newAt !== State.latestUpdateAt) {
       State.latestUpdateAt = newAt;
 
       const btn = document.getElementById("reloadBtn");
-      if (btn) {
-        btn.style.backgroundColor = "#ff8800"; // ★ オレンジ
-        btn.style.color = "#fff";
-      }
+      if (btn) btn.classList.add("updated");
 
       logWarn("データ更新を検知しました（latest_update.json）");
     }
@@ -727,7 +641,7 @@ async function checkUpdate() {
 }
 
 /* ---------------------------------------------------------
-   初期化（★ latest_round.json → integrated_data.json の順）
+   初期化（★ init は1回のみ実行）
 --------------------------------------------------------- */
 async function init() {
   log("Viewer 初期化中");
@@ -736,8 +650,8 @@ async function init() {
 
   buildRubyFilters();
 
-  await loadLatestRound();   // 最新ラウンド番号
-  await loadRoundData();     // データ本体
+  await loadLatestRound();
+  await loadRoundData();
 
   applyFilters();
   buildSummary();
@@ -746,18 +660,21 @@ async function init() {
   stopProgress();
 
   log("Viewer 初期化完了");
-
-  // ★ 2分ごとに更新チェック
-  setInterval(checkUpdate, 120000);
 }
 
 /* ---------------------------------------------------------
    DOMContentLoaded
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("reloadBtn").onclick = () => {
+
+  /* ★ 最新データ取得（init は再実行しない） */
+  document.getElementById("reloadBtn").onclick = async () => {
     startProgress();
-    init().then(stopProgress);
+    await loadRoundData();
+    applyFilters();
+    buildSummary();
+    renderSummary();
+    stopProgress();
   };
 
   document.getElementById("filterBtn").onclick = () => {
@@ -788,6 +705,10 @@ document.addEventListener("DOMContentLoaded", () => {
     searchInput.value = "";
     renderSummary();
   };
+
+  /* ★ 更新監視はここで1回だけ開始 */
+  log("更新監視を開始しました（2分ごとにチェック）");
+  setInterval(checkUpdate, 120000);
 
   init();
 });
