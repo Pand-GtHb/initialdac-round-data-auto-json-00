@@ -110,7 +110,7 @@ td.center { text-align:center; }
 }
 
 /* ---------------------------------------------------------
-   ★ 表示開始／JSON更新（periodBox）
+   ★ 表示開始／JSON更新（periodBox）※今は未使用でも残しておく
 --------------------------------------------------------- */
 #periodBox {
     display: grid;
@@ -215,6 +215,15 @@ td.center { text-align:center; }
     margin-top: 6px;
 }
 
+/* 「RUBY：」「PRIDE：」のラベル（script.js が生成） */
+.filter-label {
+    width: 5em;
+    text-align: right;
+    padding-right: 6px;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
 /* チェックボックスの左右位置を揃える */
 .filter-items label {
     display: inline-flex;
@@ -223,6 +232,30 @@ td.center { text-align:center; }
     margin-right: 6px;
 }
 
+/* ---------------------------------------------------------
+   ★ 3列レイアウト（表示開始／JSON更新／RUBY／PRIDE 共通）
+--------------------------------------------------------- */
+.row3 {
+    display: grid;
+    grid-template-columns: 6em 1em auto;
+    align-items: center;
+    margin-top: 6px;
+}
+
+.row3 .label {
+    text-align: right;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.row3 .colon {
+    text-align: center;
+    font-weight: bold;
+}
+
+.row3 .value {
+    text-align: left;
+}
 </style>
 </head>
 
@@ -244,19 +277,34 @@ td.center { text-align:center; }
       <option value="120">2時間</option>
       <option value="180">3時間</option>
   </select>
+</div>
 
-  <div id="periodBox">
-      <div class="label">表示開始：</div>
-      <div class="value"><span id="filterStartTime">-</span></div>
+<!-- ★ 表示開始 -->
+<div class="row3">
+  <div class="label">表示開始</div>
+  <div class="colon">：</div>
+  <div class="value"><span id="filterStartTime">-</span></div>
+</div>
 
-      <div class="label">JSON更新：</div>  <!-- ← ★ 正しい文字列に修正済み -->
-      <div class="value"><span id="jsonUpdateTime">-</span></div>
-  </div>
+<!-- ★ JSON更新 -->
+<div class="row3">
+  <div class="label">JSON更新</div>
+  <div class="colon">：</div>
+  <div class="value"><span id="jsonUpdateTime">-</span></div>
 </div>
 
 <!-- ★★★ Ruby / PRIDE フィルタ（script.js が生成） ★★★ -->
-<div id="rubyFilters" class="mt10"></div>
-<div id="prideFilters" class="mt10"></div>
+<div class="row3 mt10">
+  <div class="label">RUBY</div>
+  <div class="colon">：</div>
+  <div class="value"><div id="rubyFilters"></div></div>
+</div>
+
+<div class="row3">
+  <div class="label">PRIDE</div>
+  <div class="colon">：</div>
+  <div class="value"><div id="prideFilters"></div></div>
+</div>
 
 <div class="mt10">
   <button id="reloadBtn">最新データ取得</button>
