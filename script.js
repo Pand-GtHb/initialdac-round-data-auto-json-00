@@ -5,7 +5,7 @@
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
 
 /* ---------------------------------------------------------
-   Ruby帯・PRIDE帯 定義
+   RUBY帯・PRIDE帯 定義
 --------------------------------------------------------- */
 
 const RUBY_ID =
@@ -22,7 +22,7 @@ const PRIDE_LEVELS = [
 ];
 
 /* ---------------------------------------------------------
-   ★ RANKS（Ruby☆1〜8 + PRIDE A〜G）
+   ★ RANKS（RUBY☆1〜8 + PRIDE A〜G）
 --------------------------------------------------------- */
 const RANKS = [
   ...Array.from({ length: 8 }, (_, i) => ({
@@ -182,7 +182,7 @@ const parseDateJST = str => new Date(str.replace(/-/g, "/"));
 function formatYMDHM(date) {
   const y = date.getFullYear();
   const m = ("0" + (date.getMonth() + 1)).slice(-2);
-  const d = ("0" + date.getDate()).slice(-2);   // ← 修正済み
+  const d = ("0" + date.getDate()).slice(-2);
   const hh = ("0" + date.getHours()).slice(-2);
   const mm = ("0" + date.getMinutes()).slice(-2);
   return `${y}/${m}/${d} ${hh}:${mm}`;
@@ -262,7 +262,7 @@ function shortenStoreName(full) {
 }
 
 /* ---------------------------------------------------------
-   ★ Ruby星 → ★★★★★ 表示変換（4文字×2行）
+   ★ RUBY星 → ★★★★★ 表示変換（4文字×2行）
 --------------------------------------------------------- */
 function renderStars(starCount) {
   if (!starCount || starCount < 1) return "";
@@ -273,7 +273,6 @@ function renderStars(starCount) {
     ? stars.slice(0, 4) + "<br>" + stars.slice(4)
     : stars;
 }
-
 /* ---------------------------------------------------------
    共通 fetch
 --------------------------------------------------------- */
@@ -311,6 +310,7 @@ function getPlayerRankKey(player) {
   const pride = PRIDE_LEVELS.find(p => pt >= p.min && pt <= p.max);
   return pride ? pride.key : null;
 }
+
 /* ---------------------------------------------------------
    latest_round.json 読み込み（ラウンド番号表示用）
 --------------------------------------------------------- */
@@ -334,16 +334,35 @@ async function loadLatestRound() {
 }
 
 /* ---------------------------------------------------------
-   Ruby星数フィルタ生成
+   RUBYフィルタ生成（★1〜★8）
 --------------------------------------------------------- */
 function buildRubyFilters() {
   const area = document.getElementById("rubyFilters");
+  if (!area) return;
+
   area.innerHTML = Array.from({ length: 8 }, (_, i) => {
     const star = i + 1;
     return `
       <label style="margin-right:10px;">
         <input type="checkbox" class="ruby-filter" value="${star}" checked>
-        ☆${star}
+        RUBY☆${star}
+      </label>
+    `;
+  }).join("");
+}
+
+/* ---------------------------------------------------------
+   PRIDEフィルタ生成（A〜G）
+--------------------------------------------------------- */
+function buildPrideFilters() {
+  const area = document.getElementById("prideFilters");
+  if (!area) return;
+
+  area.innerHTML = PRIDE_LEVELS.map(p => {
+    return `
+      <label style="margin-right:10px;">
+        <input type="checkbox" class="pride-filter" value="${p.key}" checked>
+        PRIDE ${p.key.replace("P_", "")}
       </label>
     `;
   }).join("");
@@ -431,7 +450,7 @@ function calcStats(list, total) {
 }
 
 /* ---------------------------------------------------------
-   サマリ生成
+   サマリ生成（RUBY＋PRIDE フィルタ対応版）
 --------------------------------------------------------- */
 function buildSummary() {
   State.summary = [];
@@ -439,10 +458,17 @@ function buildSummary() {
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
+  const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
+    .map(x => x.value);
+
   const base = State.filtered.length ? State.filtered : State.all;
 
   State.summary = RANKS
-    .filter(rank => rank.type === "pride" || selectedStars.includes(rank.star))
+    .filter(rank => {
+      if (rank.type === "ruby") return selectedStars.includes(rank.star);
+      if (rank.type === "pride") return selectedPrides.includes(rank.key);
+      return false;
+    })
     .map(rank => {
       const list = base.filter(p => {
         if (rank.type === "ruby") {
@@ -502,7 +528,7 @@ function renderSummary() {
   area.innerHTML = `
     <h3>
       合計 ${fmt(total)}人：
-      ランク帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋
+      RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋
       PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
     </h3>
 
@@ -557,7 +583,6 @@ function renderSummary() {
   const mv = document.getElementById("matchingView");
   if (mv) mv.style.display = "none";
 }
-
 /* ---------------------------------------------------------
    詳細表示（前後ランク移動＋検索再実行対応）
 --------------------------------------------------------- */
@@ -601,6 +626,7 @@ function showDetail(key) {
   const mv = document.getElementById("matchingView");
   if (mv) mv.style.display = "none";
 }
+
 /* ---------------------------------------------------------
    詳細テーブル描画
 --------------------------------------------------------- */
@@ -789,29 +815,33 @@ function downloadCSV(filename, header, body) {
 }
 
 /* ---------------------------------------------------------
-   ★ マッチング候補一覧生成（Ruby☆フィルタ適用版）
+   ★ マッチング候補一覧生成（RUBY＋PRIDE フィルタ対応版）
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
-  const base = (State.filtered.length ? State.filtered : State.all).filter(p => {
-    if (p.onlineBattleRankId === RUBY_ID) {
-      return selectedStars.includes(p.starCnt);
-    }
-    return true;
-  });
+  const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
+    .map(x => x.value);
+
+  const base = (State.filtered.length ? State.filtered : State.all);
 
   const list = [];
 
   base.forEach(p => {
     if (!p.updateDate) return;
-
     if (!isMatchingCandidateByUpdateDate(p.updateDate)) return;
 
     const rankKey = getPlayerRankKey(p);
     if (!rankKey) return;
+
+    // ★ RUBY / PRIDE フィルタ適用
+    if (rankKey.startsWith("R")) {
+      if (!selectedStars.includes(p.starCnt)) return;
+    } else {
+      if (!selectedPrides.includes(rankKey)) return;
+    }
 
     list.push({
       ...p,
@@ -834,7 +864,6 @@ function buildMatchingCandidates() {
 
   State.matchingList = list;
 }
-
 /* ---------------------------------------------------------
    ★ マッチング候補ヘッダ表示
 --------------------------------------------------------- */
@@ -962,6 +991,7 @@ function renderMatchingRows(list) {
     }
   });
 }
+
 /* ---------------------------------------------------------
    ★ マッチング候補検索フィルタ
 --------------------------------------------------------- */
@@ -1042,7 +1072,9 @@ async function init() {
 
   startProgress();
 
+  // ★ RUBY / PRIDE フィルタ自動生成
   buildRubyFilters();
+  buildPrideFilters();
 
   await loadLatestRound();
   await loadRoundData();
