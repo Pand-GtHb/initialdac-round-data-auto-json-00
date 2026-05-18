@@ -51,6 +51,7 @@ td.center { text-align:center; }
 .clickable { cursor: pointer; color: #0078d4; font-weight: bold; }
 #summaryView, #detailView { margin-top: 20px; }
 #detailView { display: none; }
+#matchingView { margin-top: 20px; display: none; }
 
 .bar-wrap {
     width: 100%;
@@ -157,7 +158,6 @@ td.center { text-align:center; }
 
 /* ---------------------------------------------------------
    ★ 新規追加：Ruby星・PRIDE 共通の列幅固定
-      全角4文字 × 2行に収めるための幅指定
 --------------------------------------------------------- */
 .star-pride-col {
     width: 4em;
@@ -165,6 +165,19 @@ td.center { text-align:center; }
     text-align: center;
     white-space: normal;
     line-height: 1.2em;
+}
+
+/* ---------------------------------------------------------
+   ★ 新規追加：サマリ行の左側にボタンを置く枠
+--------------------------------------------------------- */
+#summaryHeader {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+#summaryHeaderText {
+    font-weight: bold;
 }
 </style>
 </head>
@@ -211,7 +224,7 @@ td.center { text-align:center; }
 
 <div id="logBox"></div>
 
-<!-- ★★★ 検索窓（サマリ・詳細共通） ★★★ -->
+<!-- ★★★ 検索窓（サマリ・詳細・候補共通） ★★★ -->
 <div id="searchArea" class="mt10">
   <input
     id="searchInput"
@@ -227,12 +240,19 @@ td.center { text-align:center; }
   />
 </div>
 
-<!-- サマリ画面 -->
+<!-- ★★★ サマリ画面 ★★★ -->
 <div id="summaryView">
+
+  <!-- 新規追加：サマリ行の左側にボタンを置く枠 -->
+  <div id="summaryHeader">
+      <button id="matchingBtn">マッチング候補</button>
+      <span id="summaryHeaderText"></span>
+  </div>
+
   <div id="summaryArea"></div>
 </div>
 
-<!-- 詳細画面 -->
+<!-- ★★★ 詳細画面 ★★★ -->
 <div id="detailView">
   <button id="backBtn">← サマリに戻る</button>
 
@@ -242,6 +262,17 @@ td.center { text-align:center; }
   </div>
 
   <div id="detailArea" class="mt10"></div>
+</div>
+
+<!-- ★★★ 新規追加：マッチング候補画面 ★★★ -->
+<div id="matchingView">
+  <button id="matchingBackBtn">← サマリに戻る</button>
+
+  <!-- 上部の「☆1：2人」「PRIDE A=〜99：3人」など -->
+  <div id="matchingHeader" class="mt10"></div>
+
+  <!-- 詳細画面と同じ構成のテーブルをここに描画 -->
+  <div id="matchingArea" class="mt10"></div>
 </div>
 
 <!-- ★ script.js のキャッシュバスターを cb=4 に更新 -->
