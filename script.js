@@ -318,7 +318,7 @@ function isMatchingCandidateByPhase(updateDateStr) {
   const d = Math.min(r, 5 - r); // 境目からの距離
 
   // ★ 許容幅 w（±0.5分＝30秒）
-  const w = 0.5;
+  const w = 0;
 
   return d <= w;
 }
