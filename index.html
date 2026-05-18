@@ -110,7 +110,7 @@ td.center { text-align:center; }
 }
 
 /* ---------------------------------------------------------
-   ★ 表示開始／JSON更新（periodBox）※今は未使用でも残しておく
+   ★ periodBox（旧構造）※互換のため残すが使用しない
 --------------------------------------------------------- */
 #periodBox {
     display: grid;
@@ -120,7 +120,6 @@ td.center { text-align:center; }
     margin-top: 5px;
 }
 
-/* ★★★ periodBox と filter-label を完全統一 ★★★ */
 #periodBox .label,
 .filter-label {
     width: 5em;
@@ -128,7 +127,7 @@ td.center { text-align:center; }
     padding-right: 6px;
     font-weight: bold;
     font-family: inherit;
-    white-space: nowrap;   /* ← 折り返し禁止（重要） */
+    white-space: nowrap;
 }
 
 #periodBox .value {
@@ -156,7 +155,7 @@ td.center { text-align:center; }
 }
 
 /* ---------------------------------------------------------
-   ★ Reload ボタンの色制御（更新検知時のみオレンジ）
+   ★ Reload ボタンの色制御
 --------------------------------------------------------- */
 .update-alert {
     background-color: #ff8800 !important;
@@ -164,7 +163,7 @@ td.center { text-align:center; }
 }
 
 /* ---------------------------------------------------------
-   ★ 5分刻みマッチング可能性フラグ（淡いピンク）
+   ★ マッチング可能性フラグ
 --------------------------------------------------------- */
 .match-row-pink {
     background-color: #FFE4EC !important;
@@ -184,7 +183,7 @@ td.center { text-align:center; }
 }
 
 /* ---------------------------------------------------------
-   ★ マッチング候補 + 検索窓（横並び）
+   ★ マッチング候補 + 検索窓
 --------------------------------------------------------- */
 #searchRow {
     display: flex;
@@ -205,17 +204,14 @@ td.center { text-align:center; }
 }
 
 /* ---------------------------------------------------------
-   ★★★ RUBY/PRIDE レイアウト揃え（script.js の構造に対応）★★★
+   ★ script.js が生成する RUBY/PRIDE の行
 --------------------------------------------------------- */
-
-/* フィルタ行の2列レイアウト */
 .filter-row {
     display: flex;
     align-items: center;
     margin-top: 6px;
 }
 
-/* 「RUBY：」「PRIDE：」のラベル（script.js が生成） */
 .filter-label {
     width: 5em;
     text-align: right;
@@ -224,7 +220,6 @@ td.center { text-align:center; }
     white-space: nowrap;
 }
 
-/* チェックボックスの左右位置を揃える */
 .filter-items label {
     display: inline-flex;
     align-items: center;
@@ -233,7 +228,7 @@ td.center { text-align:center; }
 }
 
 /* ---------------------------------------------------------
-   ★ 3列レイアウト（表示開始／JSON更新／RUBY／PRIDE 共通）
+   ★ 3列レイアウト（今回の主役）
 --------------------------------------------------------- */
 .row3 {
     display: grid;
@@ -293,15 +288,16 @@ td.center { text-align:center; }
   <div class="value"><span id="jsonUpdateTime">-</span></div>
 </div>
 
-<!-- ★★★ Ruby / PRIDE フィルタ（script.js が生成） ★★★ -->
+<!-- ★ RUBY（script.js がタイトル生成するので label は空） -->
 <div class="row3 mt10">
-  <div class="label">RUBY</div>
+  <div class="label"></div>
   <div class="colon">：</div>
   <div class="value"><div id="rubyFilters"></div></div>
 </div>
 
+<!-- ★ PRIDE（同じく label は空） -->
 <div class="row3">
-  <div class="label">PRIDE</div>
+  <div class="label"></div>
   <div class="colon">：</div>
   <div class="value"><div id="prideFilters"></div></div>
 </div>
