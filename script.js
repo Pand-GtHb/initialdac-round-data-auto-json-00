@@ -184,7 +184,7 @@ const parseDateJST = str => new Date(str.replace(/-/g, "/"));
 function formatYMDHM(date) {
   const y = date.getFullYear();
   const m = ("0" + (date.getMonth() + 1)).slice(-2);
-  const d = ("0" + date.getDate()).slice(-2);
+  const d = ("0" + date.getgetDate()).slice(-2);
   const hh = ("0" + date.getHours()).slice(-2);
   const mm = ("0" + date.getMinutes()).slice(-2);
   return `${y}/${m}/${d} ${hh}:${mm}`;
@@ -559,7 +559,7 @@ function renderSummary() {
   document.getElementById("summaryView").style.display = "block";
   document.getElementById("detailView").style.display = "none";
 
-  /* ★ 新規追加：matchingView を必ず非表示にする */
+  /* ★ matchingView を必ず非表示にする */
   const mv = document.getElementById("matchingView");
   if (mv) mv.style.display = "none";
 }
@@ -609,18 +609,30 @@ function showDetail(key) {
   const mv = document.getElementById("matchingView");
   if (mv) mv.style.display = "none";
 }
-
 /* ---------------------------------------------------------
-   ★ 新規追加：マッチング候補一覧生成
+   ★ 新規追加：マッチング候補一覧生成（Ruby☆フィルタ適用版）
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
-  const base = State.filtered.length ? State.filtered : State.all;
+
+  /* ★ Ruby星フィルタを matching候補にも適用 */
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+
+  const base = (State.filtered.length ? State.filtered : State.all).filter(p => {
+    // Ruby帯 → 選択された星のみ対象
+    if (p.onlineBattleRankId === RUBY_ID) {
+      return selectedStars.includes(p.starCnt);
+    }
+    // PRIDE帯は全て対象
+    return true;
+  });
 
   const list = [];
 
   base.forEach(p => {
     if (!p.updateDate) return;
 
+    // ★ 5n±1分ロジック
     if (!isMatchingCandidateByUpdateDate(p.updateDate)) return;
 
     const rankKey = getPlayerRankKey(p);
@@ -647,206 +659,6 @@ function buildMatchingCandidates() {
   });
 
   State.matchingList = list;
-}
-/* ---------------------------------------------------------
-   詳細テーブル
---------------------------------------------------------- */
-function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
-  const area = document.getElementById("detailArea");
-
-  area.innerHTML = `
-    <h3 id="detailCountHeader">
-      <img src="${bandIcon}" width="32" style="vertical-align:middle;">
-      ${bandLabel}：<span id="detailCount"></span>人
-    </h3>
-
-    <div style="overflow-x:auto;">
-      <table>
-        <thead>
-          <tr>
-            <th>☆・PRIDE</th>
-            <th>プレイヤー名</th>
-            <th>RP</th>
-            <th>店舗名</th>
-            <th>称号</th>
-            <th>Last Update</th>
-          </tr>
-        </thead>
-        <tbody id="detailTableBody"></tbody>
-      </table>
-    </div>
-  `;
-
-  applyPlayerFilter(State.searchText, isRubyBand);
-}
-
-/* ---------------------------------------------------------
-   プレイヤー名フィルタ
---------------------------------------------------------- */
-function applyPlayerFilter(keyword, isRubyBand) {
-  const base = State.detailOriginal || [];
-  const normKey = normalize(keyword);
-
-  const list = normKey
-    ? base.filter(p => (p.normalizedName || "").includes(normKey))
-    : base;
-
-  const countEl = document.getElementById("detailCount");
-  if (countEl) countEl.textContent = fmt(list.length);
-
-  renderDetailRows(list, isRubyBand);
-}
-
-/* ---------------------------------------------------------
-   詳細行描画（★クリックコピー改善の唯一の変更箇所）
---------------------------------------------------------- */
-function renderDetailRows(list, isRubyBand) {
-  const tbody = document.getElementById("detailTableBody");
-  if (!tbody) return;
-
-  const rows = list.map(p => {
-    const titleUrl = p.mytitleId
-      ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
-      : "";
-
-    /* ★ 星 or PRIDE 表示（前回の修正済み） */
-    const starOrLevel = isRubyBand
-      ? (p.onlineBattleRankId === RUBY_ID && p.starCnt ? renderStars(p.starCnt) : "")
-      : p.pridePoint;
-
-    const fullShop = p.shopname ?? "";
-    const shortShop = shortenStoreName(fullShop);
-
-    /* ★ ここが今回のクリックコピー改善の変更点 */
-    const copyValue = isRubyBand
-      ? `★${"★".repeat(p.starCnt - 1)}\t${p.name}`
-      : `${p.pridePoint}\t${p.name}`;
-
-    return `
-      <tr data-updated="${p.updateDate}">
-
-        <!-- ★/PRIDE セル：クリックで「★×n + タブ + 名前」 or 「PRIDE + タブ + 名前」 -->
-        <td class="center clickable"
-            onclick="copyToClipboard('${copyValue}')">
-          ${starOrLevel}
-        </td>
-
-        <!-- 名前セル：名前単独コピー（現状維持） -->
-        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
-          ${p.name}
-        </td>
-
-        <td class="right">${fmt(p.point)}</td>
-
-        <td class="left clickable"
-            data-fullname="${fullShop.replace(/"/g, "&quot;")}"
-            onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
-          <div class="store-name">${shortShop}</div>
-        </td>
-
-        <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
-        <td class="left">${p.updateDate}</td>
-      </tr>
-    `;
-  }).join("");
-
-  tbody.innerHTML = rows;
-
-  /* ---------------------------------------------------------
-     ★ 5分刻みマッチング可能性 → 行を淡いピンクに（5n±1分ロジックに変更）
-  --------------------------------------------------------- */
-  const now = new Date();
-
-  tbody.querySelectorAll("tr").forEach(tr => {
-    const updated = tr.dataset.updated;
-    if (!updated) return;
-
-    const last = new Date(updated.replace(/-/g, "/"));
-    const diffMin = Math.abs(Math.floor((now - last) / 60000));
-
-    /* ★ 5n±1分ロジック（最適な±1分判定） */
-    const nearest = Math.round(diffMin / 5) * 5;
-    if (Math.abs(diffMin - nearest) <= 1) {
-      tr.classList.add("match-row-pink");
-    }
-  });
-}
-
-/* ---------------------------------------------------------
-   クリックコピー
---------------------------------------------------------- */
-function copyToClipboard(text) {
-  navigator.clipboard.writeText(text);
-  log(`コピー：${text}`);
-}
-
-/* ---------------------------------------------------------
-   CSV 出力（サマリ）
---------------------------------------------------------- */
-function exportSummaryCSV() {
-  const header = "帯,人数,%,平均RP,最小RP,最大RP";
-
-  const total = State.summary.reduce((sum, r) => sum + r.list.length, 0);
-
-  const body = State.summary.map(r => {
-    const { cnt, percent, avg, min, max } = calcStats(r.list, total);
-    return `${r.label},${cnt},${percent},${avg},${min},${max}`;
-  }).join("\n");
-
-  downloadCSV("summary.csv", header, body);
-}
-
-/* ---------------------------------------------------------
-   CSV 出力（全データ）
---------------------------------------------------------- */
-function exportAllCSV() {
-  const columns = [
-    "rank","name","shopname","updateDate","point",
-    "mytitleId","prideId","pridePoint","onlineBattleRankId","starCnt"
-  ];
-
-  const header = columns.join(",");
-
-  const body = State.all
-    .map(p =>
-      columns
-        .map(col => `"${String(p[col] ?? "").replace(/"/g, '""')}"`)
-        .join(",")
-    )
-    .join("\n");
-
-  downloadCSV("all_records.csv", header, body);
-}
-
-/* ---------------------------------------------------------
-   ★ latest_update.json の更新監視（監視ログなし）
---------------------------------------------------------- */
-async function checkUpdate() {
-  try {
-    const json = await fetchJSON("latest_update.json");
-
-    const raw = json.lastUpdated ?? json.generatedAt ?? "";
-    if (!raw) return;
-
-    if (!State.latestUpdateAt) {
-      State.latestUpdateAt = raw;
-      return;
-    }
-
-    if (raw !== State.latestUpdateAt) {
-      State.latestUpdateAt = raw;
-
-      const btn = document.getElementById("reloadBtn");
-      if (btn) {
-        btn.classList.add("update-alert");
-      }
-
-      logWarn("データ更新を検知しました（latest_update.json）");
-    }
-
-  } catch (e) {
-    logError("latest_update.json の監視に失敗：" + e.message);
-  }
 }
 
 /* ---------------------------------------------------------
@@ -977,46 +789,6 @@ function renderMatchingRows(list) {
     }
   });
 }
-
-/* ---------------------------------------------------------
-   ★ 新規追加：マッチング候補画面表示
---------------------------------------------------------- */
-function showMatchingCandidates() {
-  buildMatchingCandidates();
-
-  if (!State.matchingList.length) {
-    logWarn("マッチング候補となるプレイヤーがいません（5n±1分条件）");
-  }
-
-  renderMatchingHeader();
-  renderMatchingTable();
-
-  const summaryView = document.getElementById("summaryView");
-  const detailView  = document.getElementById("detailView");
-  const matchingView = document.getElementById("matchingView");
-
-  if (summaryView) summaryView.style.display = "none";
-  if (detailView)  detailView.style.display  = "none";
-  if (matchingView) matchingView.style.display = "block";
-
-  State.currentView = "matching";
-}
-
-/* ---------------------------------------------------------
-   ★ 新規追加：マッチング候補 → サマリに戻る
---------------------------------------------------------- */
-function backToSummaryFromMatching() {
-  const matchingView = document.getElementById("matchingView");
-  const summaryView  = document.getElementById("summaryView");
-  const detailView   = document.getElementById("detailView");
-
-  if (matchingView) matchingView.style.display = "none";
-  if (detailView)   detailView.style.display  = "none";
-  if (summaryView)  summaryView.style.display = "block";
-
-  State.currentView = "summary";
-}
-
 /* ---------------------------------------------------------
    ★ 新規追加：マッチング候補検索フィルタ
 --------------------------------------------------------- */
