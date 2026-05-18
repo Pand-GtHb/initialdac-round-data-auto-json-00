@@ -1094,7 +1094,7 @@ async function checkUpdate() {
     if (!res.ok) throw new Error("HTTP " + res.status);
 
     const json = await res.json();
-    const latest = json.latestUpdateAt || "";
+    const latest = json.lastUpdated || "";
 
     if (!latest) return;
 
