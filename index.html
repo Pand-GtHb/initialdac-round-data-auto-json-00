@@ -176,20 +176,47 @@ td.center { text-align:center; }
     display: flex;
     align-items: center;
     gap: 10px;
-    width: 95%;   /* ← ログウィンドウと右端を揃える */
+    width: 95%;
     margin-top: 10px;
 }
 
-/* 検索窓の右端をログウィンドウと揃える（95%幅） */
 #searchInput {
     flex: 1;
     padding: 6px 8px;
     font-size: 14px;
     border: 1px solid #ccc;
     border-radius: 4px;
-    width: 95%;      /* ← 右端を完全一致させる */
+    width: 95%;
     max-width: 95%;
 }
+
+/* ---------------------------------------------------------
+   ★★★ ここから追加（RUBY/PRIDE レイアウト揃え）★★★
+--------------------------------------------------------- */
+
+/* フィルタ行の2列レイアウト */
+.filter-row {
+    display: flex;
+    align-items: center;
+    margin-top: 6px;
+}
+
+/* 「：」を縦一列に揃える */
+.filter-label {
+    width: 5em;
+    text-align: right;
+    padding-right: 6px;
+    font-weight: bold;
+}
+
+/* チェックボックスの左右位置を揃える */
+.filter-items label {
+    display: inline-flex;
+    align-items: center;
+    min-width: 3.5em;
+    margin-right: 6px;
+}
+
 </style>
 </head>
 
@@ -234,28 +261,18 @@ td.center { text-align:center; }
 
 <div id="logBox"></div>
 
-<!-- ★★★ マッチング候補 + 検索窓（横並び） ★★★ -->
 <div id="searchRow">
     <button id="matchingBtn">マッチング候補</button>
-
-    <input
-      id="searchInput"
-      type="text"
-      placeholder="プレイヤー名で絞り込み（ランク横断）"
-    />
+    <input id="searchInput" type="text" placeholder="プレイヤー名で絞り込み（ランク横断）" />
 </div>
 
-<!-- ★★★ サマリ画面 ★★★ -->
 <div id="summaryView">
-
   <div id="summaryHeader">
       <span id="summaryHeaderText"></span>
   </div>
-
   <div id="summaryArea"></div>
 </div>
 
-<!-- ★★★ 詳細画面 ★★★ -->
 <div id="detailView">
   <button id="backBtn">← サマリに戻る</button>
 
@@ -267,10 +284,8 @@ td.center { text-align:center; }
   <div id="detailArea" class="mt10"></div>
 </div>
 
-<!-- ★★★ マッチング候補画面 ★★★ -->
 <div id="matchingView">
   <button id="matchingBackBtn">← サマリに戻る</button>
-
   <div id="matchingHeader" class="mt10"></div>
   <div id="matchingArea" class="mt10"></div>
 </div>
