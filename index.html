@@ -157,17 +157,6 @@ td.center { text-align:center; }
 }
 
 /* ---------------------------------------------------------
-   ★ 新規追加：Ruby星・PRIDE 共通の列幅固定
---------------------------------------------------------- */
-.star-pride-col {
-    width: 4em;
-    max-width: 4em;
-    text-align: center;
-    white-space: normal;
-    line-height: 1.2em;
-}
-
-/* ---------------------------------------------------------
    ★ 新規追加：サマリ行の左側にボタンを置く枠
 --------------------------------------------------------- */
 #summaryHeader {
@@ -178,22 +167,6 @@ td.center { text-align:center; }
 }
 #summaryHeaderText {
     font-weight: bold;
-}
-
-/* ---------------------------------------------------------
-   ★ Rubyフィルタ & PRIDEフィルタ（左右位置を完全一致）
---------------------------------------------------------- */
-.filter-grid {
-    display: grid;
-    grid-template-columns: 120px repeat(8, 1fr); /* 左ラベル + 8列 */
-    gap: 4px 8px;
-    align-items: center;
-    margin-top: 8px;
-}
-.filter-label {
-    font-weight: bold;
-    text-align: right;
-    padding-right: 6px;
 }
 </style>
 </head>
@@ -226,36 +199,9 @@ td.center { text-align:center; }
   </div>
 </div>
 
-<!-- ★★★ Rubyフィルタ + PRIDEフィルタ（2行グリッド） ★★★ -->
-<div class="mt10">
-
-  <!-- 1行目：Rubyフィルタ -->
-  <div class="filter-grid">
-    <div class="filter-label">Rubyフィルタ：</div>
-    <label><input type="checkbox" class="ruby-filter" value="1" checked> ★1</label>
-    <label><input type="checkbox" class="ruby-filter" value="2" checked> ★2</label>
-    <label><input type="checkbox" class="ruby-filter" value="3" checked> ★3</label>
-    <label><input type="checkbox" class="ruby-filter" value="4" checked> ★4</label>
-    <label><input type="checkbox" class="ruby-filter" value="5" checked> ★5</label>
-    <label><input type="checkbox" class="ruby-filter" value="6" checked> ★6</label>
-    <label><input type="checkbox" class="ruby-filter" value="7" checked> ★7</label>
-    <label><input type="checkbox" class="ruby-filter" value="8" checked> ★8</label>
-  </div>
-
-  <!-- 2行目：PRIDEフィルタ -->
-  <div class="filter-grid">
-    <div class="filter-label">PRIDEフィルタ：</div>
-    <label><input type="checkbox" class="pride-filter" value="A" checked> A</label>
-    <label><input type="checkbox" class="pride-filter" value="B" checked> B</label>
-    <label><input type="checkbox" class="pride-filter" value="C" checked> C</label>
-    <label><input type="checkbox" class="pride-filter" value="D" checked> D</label>
-    <label><input type="checkbox" class="pride-filter" value="E" checked> E</label>
-    <label><input type="checkbox" class="pride-filter" value="F" checked> F</label>
-    <label><input type="checkbox" class="pride-filter" value="G" checked> G</label>
-    <div></div> <!-- 8列目が無いので空白で揃える -->
-  </div>
-
-</div>
+<!-- ★★★ Ruby / PRIDE フィルタ（script.js が生成） ★★★ -->
+<div id="rubyFilterArea" class="mt10"></div>
+<div id="prideFilterArea" class="mt10"></div>
 
 <div class="mt10">
   <button id="reloadBtn">最新データ取得</button>
@@ -285,7 +231,6 @@ td.center { text-align:center; }
 <!-- ★★★ サマリ画面 ★★★ -->
 <div id="summaryView">
 
-  <!-- 新規追加：サマリ行の左側にボタンを置く枠 -->
   <div id="summaryHeader">
       <button id="matchingBtn">マッチング候補</button>
       <span id="summaryHeaderText"></span>
@@ -306,18 +251,14 @@ td.center { text-align:center; }
   <div id="detailArea" class="mt10"></div>
 </div>
 
-<!-- ★★★ 新規追加：マッチング候補画面 ★★★ -->
+<!-- ★★★ マッチング候補画面 ★★★ -->
 <div id="matchingView">
   <button id="matchingBackBtn">← サマリに戻る</button>
 
-  <!-- 上部の「☆1：2人」「PRIDE A=〜99：3人」など -->
   <div id="matchingHeader" class="mt10"></div>
-
-  <!-- 詳細画面と同じ構成のテーブルをここに描画 -->
   <div id="matchingArea" class="mt10"></div>
 </div>
 
-<!-- ★ script.js のキャッシュバスターを cb=4 に更新 -->
 <script src="script.js?cb=4"></script>
 
 </body>
