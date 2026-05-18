@@ -179,6 +179,22 @@ td.center { text-align:center; }
 #summaryHeaderText {
     font-weight: bold;
 }
+
+/* ---------------------------------------------------------
+   ★ Rubyフィルタ & PRIDEフィルタ（左右位置を完全一致）
+--------------------------------------------------------- */
+.filter-grid {
+    display: grid;
+    grid-template-columns: 120px repeat(8, 1fr); /* 左ラベル + 8列 */
+    gap: 4px 8px;
+    align-items: center;
+    margin-top: 8px;
+}
+.filter-label {
+    font-weight: bold;
+    text-align: right;
+    padding-right: 6px;
+}
 </style>
 </head>
 
@@ -210,9 +226,35 @@ td.center { text-align:center; }
   </div>
 </div>
 
+<!-- ★★★ Rubyフィルタ + PRIDEフィルタ（2行グリッド） ★★★ -->
 <div class="mt10">
-  <b>Ruby星数フィルタ：</b><br>
-  <span id="rubyFilters"></span>
+
+  <!-- 1行目：Rubyフィルタ -->
+  <div class="filter-grid">
+    <div class="filter-label">Rubyフィルタ：</div>
+    <label><input type="checkbox" class="ruby-filter" value="1" checked> ★1</label>
+    <label><input type="checkbox" class="ruby-filter" value="2" checked> ★2</label>
+    <label><input type="checkbox" class="ruby-filter" value="3" checked> ★3</label>
+    <label><input type="checkbox" class="ruby-filter" value="4" checked> ★4</label>
+    <label><input type="checkbox" class="ruby-filter" value="5" checked> ★5</label>
+    <label><input type="checkbox" class="ruby-filter" value="6" checked> ★6</label>
+    <label><input type="checkbox" class="ruby-filter" value="7" checked> ★7</label>
+    <label><input type="checkbox" class="ruby-filter" value="8" checked> ★8</label>
+  </div>
+
+  <!-- 2行目：PRIDEフィルタ -->
+  <div class="filter-grid">
+    <div class="filter-label">PRIDEフィルタ：</div>
+    <label><input type="checkbox" class="pride-filter" value="A" checked> A</label>
+    <label><input type="checkbox" class="pride-filter" value="B" checked> B</label>
+    <label><input type="checkbox" class="pride-filter" value="C" checked> C</label>
+    <label><input type="checkbox" class="pride-filter" value="D" checked> D</label>
+    <label><input type="checkbox" class="pride-filter" value="E" checked> E</label>
+    <label><input type="checkbox" class="pride-filter" value="F" checked> F</label>
+    <label><input type="checkbox" class="pride-filter" value="G" checked> G</label>
+    <div></div> <!-- 8列目が無いので空白で揃える -->
+  </div>
+
 </div>
 
 <div class="mt10">
