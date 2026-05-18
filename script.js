@@ -16,7 +16,7 @@ const PRIDE_LEVELS = [
   { key: "P_B", level: "B=100～",   min: 100,   max: 499,   icon: "3c8cc917bb7a97d46ba35c93d898491c" },
   { key: "P_C", level: "C=500～",   min: 500,   max: 999,   icon: "ec8f805c9de95c65c858d2e1341f76ab" },
   { key: "P_D", level: "D=1000～",  min: 1000,  max: 4999,  icon: "58446a29e6c496139963728eea887349" },
-  { key: "P_E", level: "E=5000～",  min: 5000,  max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
+  { key: "P_E", level: "E=5000～",  min: 5000, max: 9999,  icon: "5f88cb6a33355e7bc890d92576e36c94" },
   { key: "P_F", level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
   { key: "P_G", level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
 ];
@@ -285,7 +285,8 @@ async function fetchJSON(path) {
   return res.json();
 }
 /* ---------------------------------------------------------
-   ★ 5n±1分ロジック（マッチング候補判定）
+   ★ 5n±1分ロジック（旧：マッチング候補判定）
+   ※ 旧仕様は残す（重要ポイント1：元機能の欠落禁止）
 --------------------------------------------------------- */
 function isMatchingCandidateByUpdateDate(updateDateStr) {
   if (!updateDateStr) return false;
@@ -296,6 +297,30 @@ function isMatchingCandidateByUpdateDate(updateDateStr) {
 
   const nearest = Math.round(diffMin / 5) * 5;
   return Math.abs(diffMin - nearest) <= 1;
+}
+
+/* ---------------------------------------------------------
+   ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）
+   （5分周期の境目 ±w 分にいるプレイヤーを候補とする）
+--------------------------------------------------------- */
+function isMatchingCandidateByPhase(updateDateStr) {
+  if (!updateDateStr) return false;
+
+  const now = new Date();
+  const last = new Date(updateDateStr.replace(/-/g, "/"));
+  const diffMin = (now - last) / 60000;
+
+  // ★ 試合終了 → ロビー復帰までのラグを考慮し、5分未満は除外
+  if (diffMin < 5) return false;
+
+  // ★ 5分周期の位相（フェーズ）
+  const r = diffMin % 5;
+  const d = Math.min(r, 5 - r); // 境目からの距離
+
+  // ★ 許容幅 w（±0.5分＝30秒）
+  const w = 0.5;
+
+  return d <= w;
 }
 
 /* ---------------------------------------------------------
@@ -335,7 +360,6 @@ async function loadLatestRound() {
 
 /* ---------------------------------------------------------
    ★ RUBYフィルタ生成（ラベル列＋内容列の2列レイアウト）
-   ※ タイトルは index.html が持つため、script.js 側は空にする
 --------------------------------------------------------- */
 function buildRubyFilters() {
   const area = document.getElementById("rubyFilters");
@@ -363,7 +387,6 @@ function buildRubyFilters() {
 
 /* ---------------------------------------------------------
    ★ PRIDEフィルタ生成（ラベル列＋内容列の2列レイアウト）
-   ※ タイトルは index.html が持つため、script.js 側は空にする
 --------------------------------------------------------- */
 function buildPrideFilters() {
   const area = document.getElementById("prideFilters");
@@ -738,10 +761,11 @@ function renderDetailRows(list, isRubyBand) {
 
   tbody.innerHTML = rows;
 
+  // ★ A案：新ロジック（フェーズモデル）でハイライト
   tbody.querySelectorAll("tr").forEach(tr => {
     const updated = tr.dataset.updated;
     if (!updated) return;
-    if (isMatchingCandidateByUpdateDate(updated)) {
+    if (isMatchingCandidateByPhase(updated)) {
       tr.classList.add("match-row-pink");
     }
   });
@@ -853,7 +877,9 @@ function buildMatchingCandidates() {
 
   base.forEach(p => {
     if (!p.updateDate) return;
-    if (!isMatchingCandidateByUpdateDate(p.updateDate)) return;
+
+    // ★ A案：新ロジック（フェーズモデル）に差し替え
+    if (!isMatchingCandidateByPhase(p.updateDate)) return;
 
     const rankKey = getPlayerRankKey(p);
     if (!rankKey) return;
@@ -886,7 +912,6 @@ function buildMatchingCandidates() {
 
   State.matchingList = list;
 }
-
 /* ---------------------------------------------------------
    ★ マッチング候補ヘッダ表示
 --------------------------------------------------------- */
@@ -1006,10 +1031,11 @@ function renderMatchingRows(list) {
 
   tbody.innerHTML = rows;
 
+  // ★ A案：新ロジック（フェーズモデル）でハイライト
   tbody.querySelectorAll("tr").forEach(tr => {
     const updated = tr.dataset.updated;
     if (!updated) return;
-    if (isMatchingCandidateByUpdateDate(updated)) {
+    if (isMatchingCandidateByPhase(updated)) {
       tr.classList.add("match-row-pink");
     }
   });
