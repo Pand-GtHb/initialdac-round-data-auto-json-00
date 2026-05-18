@@ -886,6 +886,40 @@ function buildMatchingCandidates() {
 
   State.matchingList = list;
 }
+
+/* ---------------------------------------------------------
+   ★ マッチング候補ヘッダ表示
+--------------------------------------------------------- */
+function renderMatchingHeader() {
+  const headerEl = document.getElementById("matchingHeader");
+  if (!headerEl) return;
+
+  if (!State.matchingList.length) {
+    headerEl.innerHTML = "<span>マッチング候補は現在 0人です。</span>";
+    return;
+  }
+
+  const counts = {};
+  State.matchingList.forEach(p => {
+    const key = p.__rankKey;
+    counts[key] = (counts[key] || 0) + 1;
+  });
+
+  const parts = RANKS
+    .filter(r => counts[r.key])
+    .map(r => {
+      const cnt = counts[r.key];
+      return `
+        <span style="margin-right:12px; white-space:nowrap;">
+          <img src="${r.icon}" width="24" style="vertical-align:middle; margin-right:4px;">
+          ${r.label}：${fmt(cnt)}人
+        </span>
+      `;
+    });
+
+  headerEl.innerHTML = parts.join("");
+}
+
 /* ---------------------------------------------------------
    ★ マッチング候補テーブル
 --------------------------------------------------------- */
