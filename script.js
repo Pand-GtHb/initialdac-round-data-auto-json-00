@@ -457,7 +457,7 @@ function filterSummaryBySearch() {
 }
 
 /* ---------------------------------------------------------
-   サマリ表示
+   サマリ表示（★割合追加済み）
 --------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
@@ -470,8 +470,16 @@ function renderSummary() {
     .reduce((s, r) => s + r.list.length, 0);
   const prideTotal = total - rubyTotal;
 
+  /* ★ 追加：割合計算 */
+  const rankPercent = total ? Math.round((rubyTotal / total) * 100) : 0;
+  const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;
+
   area.innerHTML = `
-    <h3>合計 ${fmt(total)}人：ランク帯 ${fmt(rubyTotal)}人 ＋ PRIDE帯 ${fmt(prideTotal)}人</h3>
+    <h3>
+      合計 ${fmt(total)}人：
+      ランク帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋
+      PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
+    </h3>
 
     <div style="overflow-x:auto;">
       <table>
