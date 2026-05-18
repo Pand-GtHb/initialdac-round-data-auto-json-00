@@ -334,15 +334,16 @@ async function loadLatestRound() {
 }
 
 /* ---------------------------------------------------------
-   ★ RUBYフィルタ生成（gridレイアウト対応）
+   ★ RUBYフィルタ生成（ラベル列＋内容列の2列レイアウト）
 --------------------------------------------------------- */
 function buildRubyFilters() {
   const area = document.getElementById("rubyFilters");
   if (!area) return;
 
   let html = `
-    <div class="filter-grid">
+    <div class="filter-row">
       <div class="filter-label">RUBY：</div>
+      <div class="filter-items">
   `;
 
   for (let i = 1; i <= 8; i++) {
@@ -351,20 +352,25 @@ function buildRubyFilters() {
     `;
   }
 
-  html += `</div>`;
+  html += `
+      </div>
+    </div>
+  `;
+
   area.innerHTML = html;
 }
 
 /* ---------------------------------------------------------
-   ★ PRIDEフィルタ生成（gridレイアウト対応）
+   ★ PRIDEフィルタ生成（ラベル列＋内容列の2列レイアウト）
 --------------------------------------------------------- */
 function buildPrideFilters() {
   const area = document.getElementById("prideFilters");
   if (!area) return;
 
   let html = `
-    <div class="filter-grid">
+    <div class="filter-row">
       <div class="filter-label">PRIDE：</div>
+      <div class="filter-items">
   `;
 
   PRIDE_LEVELS.forEach(p => {
@@ -374,10 +380,11 @@ function buildPrideFilters() {
     `;
   });
 
-  // PRIDE は 7 個 → 8 列に揃えるため空白セルを追加
-  html += `<div></div>`;
+  html += `
+      </div>
+    </div>
+  `;
 
-  html += `</div>`;
   area.innerHTML = html;
 }
 
@@ -1068,7 +1075,7 @@ async function checkUpdate() {
         btn.classList.add("update-alert");
         btn.style.cssText = "background:#ff4081;color:#fff;font-weight:bold;";
       }
-      logWarn("新しいデータが公開されています。[最新データ更新] ボタンで再取得してください。");
+      logWarn("新しいデータが公開されています。[最新データ取得] ボタンで再取得してください。");
     }
 
     State.latestUpdateAt = latest;
@@ -1085,7 +1092,7 @@ async function init() {
 
   startProgress();
 
-  // ★ RUBY / PRIDE フィルタ自動生成（gridレイアウト対応）
+  // ★ RUBY / PRIDE フィルタ自動生成（2列レイアウト）
   buildRubyFilters();
   buildPrideFilters();
 
@@ -1108,6 +1115,19 @@ async function init() {
    DOMContentLoaded
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
+
+  // ★ ボタン群を1行に揃えて生成
+  const btnArea = document.getElementById("buttonArea");
+  if (btnArea) {
+    btnArea.innerHTML = `
+      <div class="button-row">
+        <button id="reloadBtn">最新データ取得</button>
+        <button id="filterBtn">フィルタ適用</button>
+        <button id="summaryCsvBtn">サマリCSV出力</button>
+        <button id="allCsvBtn">全データCSV出力</button>
+      </div>
+    `;
+  }
 
   const reloadBtn = document.getElementById("reloadBtn");
   if (reloadBtn) {
