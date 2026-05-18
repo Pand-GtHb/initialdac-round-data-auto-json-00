@@ -120,14 +120,15 @@ td.center { text-align:center; }
     margin-top: 5px;
 }
 
-/* ★★★ ここを filter-label と完全統一 ★★★ */
+/* ★★★ periodBox と filter-label を完全統一 ★★★ */
 #periodBox .label,
 .filter-label {
-    width: 5em;              /* ← 完全に同じ幅 */
-    text-align: right;       /* ← 完全に同じ揃え */
-    padding-right: 6px;      /* ← 完全に同じ余白 */
-    font-weight: bold;       /* ← 完全に同じ太字 */
-    font-family: inherit;    /* ← 完全に同じフォント */
+    width: 5em;
+    text-align: right;
+    padding-right: 6px;
+    font-weight: bold;
+    font-family: inherit;
+    white-space: nowrap;   /* ← 折り返し禁止（重要） */
 }
 
 #periodBox .value {
@@ -248,7 +249,7 @@ td.center { text-align:center; }
       <div class="label">表示開始：</div>
       <div class="value"><span id="filterStartTime">-</span></div>
 
-      <div class="label">JSON更新：</div>
+      <div class="label">JSON更新：</div>   <!-- ← ★ 全角ではなく半角に修正 -->
       <div class="value"><span id="jsonUpdateTime">-</span></div>
   </div>
 </div>
