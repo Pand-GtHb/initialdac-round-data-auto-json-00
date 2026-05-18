@@ -90,7 +90,10 @@ const State = {
 
   searchText: "",
   currentView: "summary",
-  currentIsRubyBand: true
+  currentIsRubyBand: true,
+
+  // ★ 新規追加：マッチング候補一覧
+  matchingList: []
 };
 
 /* ---------------------------------------------------------
@@ -272,6 +275,7 @@ function renderStars(starCount) {
     ? stars.slice(0, 4) + "<br>" + stars.slice(4)
     : stars;
 }
+
 /* ---------------------------------------------------------
    共通 fetch
 --------------------------------------------------------- */
@@ -283,6 +287,32 @@ async function fetchJSON(path) {
   return res.json();
 }
 
+/* ---------------------------------------------------------
+   ★ 新規追加：5n±1分ロジック（マッチング候補判定）
+--------------------------------------------------------- */
+function isMatchingCandidateByUpdateDate(updateDateStr) {
+  if (!updateDateStr) return false;
+
+  const now = new Date();
+  const last = new Date(updateDateStr.replace(/-/g, "/"));
+  const diffMin = Math.abs(Math.floor((now - last) / 60000));
+
+  const nearest = Math.round(diffMin / 5) * 5;
+  return Math.abs(diffMin - nearest) <= 1;
+}
+
+/* ---------------------------------------------------------
+   ★ 新規追加：プレイヤーのランクキー取得（R1〜R8 / P_A〜P_G）
+--------------------------------------------------------- */
+function getPlayerRankKey(player) {
+  if (player.onlineBattleRankId === RUBY_ID && player.starCnt >= 1 && player.starCnt <= 8) {
+    return `R${player.starCnt}`;
+  }
+
+  const pt = Number(player.pridePoint ?? 0);
+  const pride = PRIDE_LEVELS.find(p => pt >= p.min && pt <= p.max);
+  return pride ? pride.key : null;
+}
 /* ---------------------------------------------------------
    latest_round.json 読み込み（ラウンド番号表示用）
 --------------------------------------------------------- */
@@ -528,7 +558,12 @@ function renderSummary() {
 
   document.getElementById("summaryView").style.display = "block";
   document.getElementById("detailView").style.display = "none";
+
+  /* ★ 新規追加：matchingView を必ず非表示にする */
+  const mv = document.getElementById("matchingView");
+  if (mv) mv.style.display = "none";
 }
+
 /* ---------------------------------------------------------
    詳細表示（前後ランク移動＋検索再実行対応）
 --------------------------------------------------------- */
@@ -550,6 +585,11 @@ function showDetail(key) {
     renderDetailTable(isRubyBand, bandLabel, bandIcon);
     document.getElementById("summaryView").style.display = "none";
     document.getElementById("detailView").style.display = "block";
+
+    /* ★ matchingView を非表示 */
+    const mv = document.getElementById("matchingView");
+    if (mv) mv.style.display = "none";
+
     return;
   }
 
@@ -564,8 +604,50 @@ function showDetail(key) {
 
   document.getElementById("summaryView").style.display = "none";
   document.getElementById("detailView").style.display = "block";
+
+  /* ★ matchingView を非表示 */
+  const mv = document.getElementById("matchingView");
+  if (mv) mv.style.display = "none";
 }
 
+/* ---------------------------------------------------------
+   ★ 新規追加：マッチング候補一覧生成
+--------------------------------------------------------- */
+function buildMatchingCandidates() {
+  const base = State.filtered.length ? State.filtered : State.all;
+
+  const list = [];
+
+  base.forEach(p => {
+    if (!p.updateDate) return;
+
+    if (!isMatchingCandidateByUpdateDate(p.updateDate)) return;
+
+    const rankKey = getPlayerRankKey(p);
+    if (!rankKey) return;
+
+    list.push({
+      ...p,
+      __rankKey: rankKey
+    });
+  });
+
+  /* ランク順 → 更新日時降順 */
+  list.sort((a, b) => {
+    const ra = getRankInfo(a.__rankKey);
+    const rb = getRankInfo(b.__rankKey);
+    const oa = ra ? ra.order : 999;
+    const ob = rb ? rb.order : 999;
+
+    if (oa !== ob) return oa - ob;
+
+    const da = parseDateJST(a.updateDate);
+    const db = parseDateJST(b.updateDate);
+    return db - da;
+  });
+
+  State.matchingList = list;
+}
 /* ---------------------------------------------------------
    詳細テーブル
 --------------------------------------------------------- */
@@ -768,6 +850,191 @@ async function checkUpdate() {
 }
 
 /* ---------------------------------------------------------
+   ★ 新規追加：マッチング候補ヘッダ表示
+--------------------------------------------------------- */
+function renderMatchingHeader() {
+  const headerEl = document.getElementById("matchingHeader");
+  if (!headerEl) return;
+
+  if (!State.matchingList.length) {
+    headerEl.innerHTML = "<span>マッチング候補は現在 0人です。</span>";
+    return;
+  }
+
+  const counts = {};
+  State.matchingList.forEach(p => {
+    const key = p.__rankKey;
+    counts[key] = (counts[key] || 0) + 1;
+  });
+
+  const parts = RANKS
+    .filter(r => counts[r.key])
+    .map(r => {
+      const cnt = counts[r.key];
+      return `
+        <span style="margin-right:12px; white-space:nowrap;">
+          <img src="${r.icon}" width="24" style="vertical-align:middle; margin-right:4px;">
+          ${r.label}：${fmt(cnt)}人
+        </span>
+      `;
+    });
+
+  headerEl.innerHTML = parts.join("");
+}
+
+/* ---------------------------------------------------------
+   ★ 新規追加：マッチング候補テーブル
+--------------------------------------------------------- */
+function renderMatchingTable() {
+  const area = document.getElementById("matchingArea");
+  if (!area) return;
+
+  const total = State.matchingList.length;
+
+  area.innerHTML = `
+    <h3>
+      マッチング候補：<span id="matchingCount">${fmt(total)}</span>人
+    </h3>
+
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>☆・PRIDE</th>
+            <th>プレイヤー名</th>
+            <th>RP</th>
+            <th>店舗名</th>
+            <th>称号</th>
+            <th>Last Update</th>
+          </tr>
+        </thead>
+        <tbody id="matchingTableBody"></tbody>
+      </table>
+    </div>
+  `;
+
+  renderMatchingRows(State.matchingList);
+}
+
+/* ---------------------------------------------------------
+   ★ 新規追加：マッチング候補行描画
+--------------------------------------------------------- */
+function renderMatchingRows(list) {
+  const tbody = document.getElementById("matchingTableBody");
+  if (!tbody) return;
+
+  const rows = list.map(p => {
+    const titleUrl = p.mytitleId
+      ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
+      : "";
+
+    const isRuby = p.onlineBattleRankId === RUBY_ID && p.starCnt;
+
+    const starOrLevel = isRuby
+      ? renderStars(p.starCnt)
+      : p.pridePoint;
+
+    const fullShop = p.shopname ?? "";
+    const shortShop = shortenStoreName(fullShop);
+
+    const copyValue = isRuby
+      ? `★${"★".repeat(p.starCnt - 1)}\t${p.name}`
+      : `${p.pridePoint}\t${p.name}`;
+
+    return `
+      <tr data-updated="${p.updateDate}">
+        <td class="center clickable"
+            onclick="copyToClipboard('${copyValue}')">
+          ${starOrLevel}
+        </td>
+
+        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
+          ${p.name}
+        </td>
+
+        <td class="right">${fmt(p.point)}</td>
+
+        <td class="left clickable"
+            data-fullname="${fullShop.replace(/"/g, "&quot;")}"
+            onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
+          <div class="store-name">${shortShop}</div>
+        </td>
+
+        <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
+        <td class="left">${p.updateDate}</td>
+      </tr>
+    `;
+  }).join("");
+
+  tbody.innerHTML = rows;
+
+  /* ★ ピンク色付け（5n±1分ロジック） */
+  tbody.querySelectorAll("tr").forEach(tr => {
+    const updated = tr.dataset.updated;
+    if (!updated) return;
+    if (isMatchingCandidateByUpdateDate(updated)) {
+      tr.classList.add("match-row-pink");
+    }
+  });
+}
+
+/* ---------------------------------------------------------
+   ★ 新規追加：マッチング候補画面表示
+--------------------------------------------------------- */
+function showMatchingCandidates() {
+  buildMatchingCandidates();
+
+  if (!State.matchingList.length) {
+    logWarn("マッチング候補となるプレイヤーがいません（5n±1分条件）");
+  }
+
+  renderMatchingHeader();
+  renderMatchingTable();
+
+  const summaryView = document.getElementById("summaryView");
+  const detailView  = document.getElementById("detailView");
+  const matchingView = document.getElementById("matchingView");
+
+  if (summaryView) summaryView.style.display = "none";
+  if (detailView)  detailView.style.display  = "none";
+  if (matchingView) matchingView.style.display = "block";
+
+  State.currentView = "matching";
+}
+
+/* ---------------------------------------------------------
+   ★ 新規追加：マッチング候補 → サマリに戻る
+--------------------------------------------------------- */
+function backToSummaryFromMatching() {
+  const matchingView = document.getElementById("matchingView");
+  const summaryView  = document.getElementById("summaryView");
+  const detailView   = document.getElementById("detailView");
+
+  if (matchingView) matchingView.style.display = "none";
+  if (detailView)   detailView.style.display  = "none";
+  if (summaryView)  summaryView.style.display = "block";
+
+  State.currentView = "summary";
+}
+
+/* ---------------------------------------------------------
+   ★ 新規追加：マッチング候補検索フィルタ
+--------------------------------------------------------- */
+function applyMatchingFilter(keyword) {
+  const base = State.matchingList || [];
+  const normKey = normalize(keyword);
+
+  const list = normKey
+    ? base.filter(p => (p.normalizedName || "").includes(normKey))
+    : base;
+
+  const countEl = document.getElementById("matchingCount");
+  if (countEl) countEl.textContent = fmt(list.length);
+
+  renderMatchingRows(list);
+}
+
+/* ---------------------------------------------------------
    初期化（★ init は1回のみ実行）
 --------------------------------------------------------- */
 async function init() {
@@ -830,8 +1097,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (State.currentView === "summary") {
       renderSummary();
-    } else {
+    } else if (State.currentView === "detail") {
       applyPlayerFilter(State.searchText, State.currentIsRubyBand);
+    } else if (State.currentView === "matching") {
+      applyMatchingFilter(State.searchText);
     }
   });
 
@@ -840,6 +1109,26 @@ document.addEventListener("DOMContentLoaded", () => {
     searchInput.value = "";
     renderSummary();
   };
+
+  /* ★ 新規追加：マッチング候補ボタン */
+  const matchingBtn = document.getElementById("matchingBtn");
+  if (matchingBtn) {
+    matchingBtn.onclick = () => {
+      State.searchText = "";
+      searchInput.value = "";
+      showMatchingCandidates();
+    };
+  }
+
+  /* ★ 新規追加：マッチング候補 → サマリ戻る */
+  const matchingBackBtn = document.getElementById("matchingBackBtn");
+  if (matchingBackBtn) {
+    matchingBackBtn.onclick = () => {
+      State.searchText = "";
+      searchInput.value = "";
+      backToSummaryFromMatching();
+    };
+  }
 
   init();
 });
