@@ -273,6 +273,7 @@ function renderStars(starCount) {
     ? stars.slice(0, 4) + "<br>" + stars.slice(4)
     : stars;
 }
+
 /* ---------------------------------------------------------
    共通 fetch
 --------------------------------------------------------- */
@@ -283,7 +284,6 @@ async function fetchJSON(path) {
   if (!res.ok) throw new Error("HTTP " + res.status);
   return res.json();
 }
-
 /* ---------------------------------------------------------
    ★ 5n±1分ロジック（マッチング候補判定）
 --------------------------------------------------------- */
@@ -335,6 +335,7 @@ async function loadLatestRound() {
 
 /* ---------------------------------------------------------
    ★ RUBYフィルタ生成（ラベル列＋内容列の2列レイアウト）
+   ※ タイトルは index.html が持つため、script.js 側は空にする
 --------------------------------------------------------- */
 function buildRubyFilters() {
   const area = document.getElementById("rubyFilters");
@@ -342,7 +343,7 @@ function buildRubyFilters() {
 
   let html = `
     <div class="filter-row">
-      <div class="filter-label">RUBY：</div>
+      <div class="filter-label"></div>
       <div class="filter-items">
   `;
 
@@ -362,6 +363,7 @@ function buildRubyFilters() {
 
 /* ---------------------------------------------------------
    ★ PRIDEフィルタ生成（ラベル列＋内容列の2列レイアウト）
+   ※ タイトルは index.html が持つため、script.js 側は空にする
 --------------------------------------------------------- */
 function buildPrideFilters() {
   const area = document.getElementById("prideFilters");
@@ -369,7 +371,7 @@ function buildPrideFilters() {
 
   let html = `
     <div class="filter-row">
-      <div class="filter-label">PRIDE：</div>
+      <div class="filter-label"></div>
       <div class="filter-items">
   `;
 
@@ -885,39 +887,6 @@ function buildMatchingCandidates() {
   State.matchingList = list;
 }
 /* ---------------------------------------------------------
-   ★ マッチング候補ヘッダ表示
---------------------------------------------------------- */
-function renderMatchingHeader() {
-  const headerEl = document.getElementById("matchingHeader");
-  if (!headerEl) return;
-
-  if (!State.matchingList.length) {
-    headerEl.innerHTML = "<span>マッチング候補は現在 0人です。</span>";
-    return;
-  }
-
-  const counts = {};
-  State.matchingList.forEach(p => {
-    const key = p.__rankKey;
-    counts[key] = (counts[key] || 0) + 1;
-  });
-
-  const parts = RANKS
-    .filter(r => counts[r.key])
-    .map(r => {
-      const cnt = counts[r.key];
-      return `
-        <span style="margin-right:12px; white-space:nowrap;">
-          <img src="${r.icon}" width="24" style="vertical-align:middle; margin-right:4px;">
-          ${r.label}：${fmt(cnt)}人
-        </span>
-      `;
-    });
-
-  headerEl.innerHTML = parts.join("");
-}
-
-/* ---------------------------------------------------------
    ★ マッチング候補テーブル
 --------------------------------------------------------- */
 function renderMatchingTable() {
@@ -1092,7 +1061,7 @@ async function init() {
 
   startProgress();
 
-  // ★ RUBY / PRIDE フィルタ自動生成（2列レイアウト）
+  // ★ RUBY / PRIDE フィルタ自動生成（タイトルは index.html 側）
   buildRubyFilters();
   buildPrideFilters();
 
