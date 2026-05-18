@@ -131,6 +131,12 @@ td.center { text-align:center; }
     white-space: nowrap;
 }
 
+/* ★ ここを上書きして空白を消す */
+.filter-label {
+    width: 0 !important;
+    padding-right: 0 !important;
+}
+
 #periodBox .value {
     text-align: left;
 }
@@ -213,14 +219,6 @@ td.center { text-align:center; }
     margin-top: 6px;
 }
 
-.filter-label {
-    width: 5em;
-    text-align: right;
-    padding-right: 6px;
-    font-weight: bold;
-    white-space: nowrap;
-}
-
 .filter-items label {
     display: inline-flex;
     align-items: center;
@@ -289,7 +287,7 @@ td.center { text-align:center; }
   <div class="value"><span id="jsonUpdateTime">-</span></div>
 </div>
 
-<!-- ★ RUBY（script.js がボタンだけ入れる） -->
+<!-- ★ RUBY -->
 <div class="row3 mt10">
   <div class="label">RUBY</div>
   <div class="colon">：</div>
