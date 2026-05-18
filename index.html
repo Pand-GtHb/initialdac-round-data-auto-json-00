@@ -168,6 +168,26 @@ td.center { text-align:center; }
 #summaryHeaderText {
     font-weight: bold;
 }
+
+/* ---------------------------------------------------------
+   ★ マッチング候補 + 検索窓（横並び）
+--------------------------------------------------------- */
+#searchRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+/* 検索窓の右端をログウィンドウと揃える（95%幅） */
+#searchInput {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    max-width: 95%;
+}
 </style>
 </head>
 
@@ -212,27 +232,21 @@ td.center { text-align:center; }
 
 <div id="logBox"></div>
 
-<!-- ★★★ 検索窓（サマリ・詳細・候補共通） ★★★ -->
-<div id="searchArea" class="mt10">
-  <input
-    id="searchInput"
-    type="text"
-    placeholder="プレイヤー名で絞り込み（ランク横断）"
-    style="
-      width: 95%;
-      padding: 6px 8px;
-      font-size: 14px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-    "
-  />
+<!-- ★★★ マッチング候補 + 検索窓（横並び） ★★★ -->
+<div id="searchRow">
+    <button id="matchingBtn">マッチング候補</button>
+
+    <input
+      id="searchInput"
+      type="text"
+      placeholder="プレイヤー名で絞り込み（ランク横断）"
+    />
 </div>
 
 <!-- ★★★ サマリ画面 ★★★ -->
 <div id="summaryView">
 
   <div id="summaryHeader">
-      <button id="matchingBtn">マッチング候補</button>
       <span id="summaryHeaderText"></span>
   </div>
 
