@@ -285,29 +285,21 @@ async function fetchJSON(path) {
   return res.json();
 }
 /* ---------------------------------------------------------
-   ★ 5n±1分ロジック（旧：マッチング候補判定）
-   ※ 旧仕様は残す（重要ポイント1：元機能の欠落禁止）
---------------------------------------------------------- */
-function isMatchingCandidateByUpdateDate(updateDateStr) {
-  if (!updateDateStr) return false;
-
-  const now = new Date();
-  const last = new Date(updateDateStr.replace(/-/g, "/"));
-  const diffMin = Math.abs(Math.floor((now - last) / 60000));
-
-  const nearest = Math.round(diffMin / 5) * 5;
-  return Math.abs(diffMin - nearest) <= 1;
-}
-
-/* ---------------------------------------------------------
    ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）
    （5分周期の境目 ±w 分にいるプレイヤーを候補とする）
+   ※ 旧ロジックは今回のみ削除許可（Pさん指示）
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(updateDateStr) {
   if (!updateDateStr) return false;
 
   const now = new Date();
   const last = new Date(updateDateStr.replace(/-/g, "/"));
+
+  // ★ 追加：秒を30秒単位に丸める（自然な丸め）
+  const sec = last.getSeconds();
+  const rounded = sec < 30 ? 0 : 30;
+  last.setSeconds(rounded, 0);
+
   const diffMin = (now - last) / 60000;
 
   // ★ 試合終了 → ロビー復帰までのラグを考慮し、5分未満は除外
@@ -317,7 +309,7 @@ function isMatchingCandidateByPhase(updateDateStr) {
   const r = diffMin % 5;
   const d = Math.min(r, 5 - r); // 境目からの距離
 
-  // ★ 許容幅 w（±0.5分＝30秒）
+  // ★ 許容幅 w（±0.25分＝15秒）
   const w = 0.25;
 
   return d <= w;
