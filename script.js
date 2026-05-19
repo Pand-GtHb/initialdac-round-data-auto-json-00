@@ -394,7 +394,10 @@ function buildRubyFilters() {
 
   for (let i = 1; i <= 8; i++) {
     html += `
-      <label><input type="checkbox" class="ruby-filter" value="${i}" checked> ★${i}</label>
+      <label class="ruby-btn">
+        <input type="checkbox" class="ruby-filter" value="${i}" checked>
+        ★${i}
+      </label>
     `;
   }
 
@@ -405,6 +408,7 @@ function buildRubyFilters() {
 
   area.innerHTML = html;
 }
+
 
 /* ---------------------------------------------------------
    ★ PRIDEフィルタ生成（ラベル列＋内容列の2列レイアウト）
@@ -422,7 +426,10 @@ function buildPrideFilters() {
   PRIDE_LEVELS.forEach(p => {
     const label = p.key.replace("P_", "");
     html += `
-      <label><input type="checkbox" class="pride-filter" value="${p.key}" checked> ${label}</label>
+      <label class="pride-btn">
+        <input type="checkbox" class="pride-filter" value="${p.key}" checked>
+        ${label}
+      </label>
     `;
   });
 
