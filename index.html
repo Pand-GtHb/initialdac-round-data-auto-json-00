@@ -223,7 +223,7 @@ td.center { text-align:center; }
     display: inline-flex;
     align-items: center;
     min-width: 3.5em;
-    margin-right: 6px;
+    margin-right: 2px;   /* ★ 修正：間隔だけ狭くした */
 }
 
 /* ---------------------------------------------------------
@@ -249,25 +249,6 @@ td.center { text-align:center; }
 
 .row3 .value {
     text-align: left;
-}
-
-/* ---------------------------------------------------------
-   ★ 追加：RUBY/PRIDE ボタンだけをスマホ時に詰める（副作用ゼロ）
---------------------------------------------------------- */
-@media (max-width: 480px) {
-    .ruby-btn,
-    .pride-btn {
-        margin-right: 2px !important;   /* ★ 追加 */
-        padding: 0 1px !important;      /* ★ 追加 */
-        font-size: 13px !important;     /* ★ 追加 */
-        min-width: auto !important;     /* ★ 追加 */
-    }
-
-    .ruby-btn input,
-    .pride-btn input {
-        transform: scale(0.9);          /* ★ 追加 */
-        margin-right: 1px;              /* ★ 追加 */
-    }
 }
 </style>
 </head>
