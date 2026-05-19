@@ -822,21 +822,46 @@ function exportSummaryCSV() {
   downloadCSV("summary.csv", header, body);
 }
 
+
 /* ---------------------------------------------------------
-   CSV 出力（全データ）
+   CSV 出力（全データ）★ area列追加＋roundPoint対応
 --------------------------------------------------------- */
 function exportAllCSV() {
-  const columns = [
-    "rank","name","shopname","updateDate","point",
-    "mytitleId","prideId","pridePoint","onlineBattleRankId","starCnt"
-  ];
+  // 表示上のヘッダ（列名）
+  const header = [
+    "area",
+    "rank",
+    "name",
+    "shopname",
+    "updateDate",
+    "roundPoint",
+    "mytitleId",
+    "prideId",
+    "pridePoint",
+    "onlineBattleRankId",
+    "starCnt"
+  ].join(",");
 
-  const header = columns.join(",");
+  // 実データ側で参照するフィールド名
+  // roundPoint 列は point フィールドを出力する
+  const fields = [
+    "area",
+    "rank",
+    "name",
+    "shopname",
+    "updateDate",
+    "point",
+    "mytitleId",
+    "prideId",
+    "pridePoint",
+    "onlineBattleRankId",
+    "starCnt"
+  ];
 
   const body = State.all
     .map(p =>
-      columns
-        .map(col => `"${String(p[col] ?? "").replace(/"/g, '""')}"`)
+      fields
+        .map(key => `"${String(p[key] ?? "").replace(/"/g, '""')}"`)
         .join(",")
     )
     .join("\n");
