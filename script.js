@@ -315,7 +315,7 @@ async function fetchJSON(path) {
 
 /* ---------------------------------------------------------
    ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）
-   （5分周期の境目 ±w 分にいるプレイヤーを候補とする）
+   （4分20秒周期の境目 ±w 分にいるプレイヤーを候補とする）
    ※ 旧ロジックは今回のみ削除許可（Pさん指示）
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(updateDateStr) {
@@ -324,19 +324,20 @@ function isMatchingCandidateByPhase(updateDateStr) {
   const now = new Date();
   const last = new Date(updateDateStr.replace(/-/g, "/"));
 
-  // ★ 追加：秒を30秒単位に丸める（自然な丸め）
+  // ★ 秒を30秒単位に丸める（自然な丸め）
   const sec = last.getSeconds();
   const rounded = sec < 30 ? 0 : 30;
   last.setSeconds(rounded, 0);
 
   const diffMin = (now - last) / 60000;
 
-  // ★ 試合終了 → ロビー復帰までのラグを考慮し、5分未満は除外
-  if (diffMin < 5) return false;
+  // ★ 4分20秒（4.3333333分）未満は除外
+  const cycle = 4.3333333; // 4分20秒
+  if (diffMin < cycle) return false;
 
-  // ★ 5分周期の位相（フェーズ）
-  const r = diffMin % 5;
-  const d = Math.min(r, 5 - r); // 境目からの距離
+  // ★ 4分20秒周期の位相（フェーズ）
+  const r = diffMin % cycle;
+  const d = Math.min(r, cycle - r); // 境目からの距離
 
   // ★ 許容幅 w（±0.25分＝15秒）
   const w = 0.25;
