@@ -5,6 +5,35 @@
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
 
 /* ---------------------------------------------------------
+   ★ areaList.json 読み込み（辞書化）
+--------------------------------------------------------- */
+let AreaList = {};
+
+async function loadAreaList() {
+  try {
+    const res = await fetch(`${BASE_URL}/areaList.json?t=${Date.now()}`, {
+      cache: "no-store"
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+
+    const json = await res.json();
+
+    // ★ 配列 → 辞書化
+    AreaList = {};
+    if (json.areas && Array.isArray(json.areas)) {
+      json.areas.forEach(a => {
+        AreaList[String(a.area)] = a.areaName;
+      });
+    }
+
+    log("areaList.json 読み込み完了");
+  } catch (e) {
+    logError("areaList.json の取得に失敗：" + e.message);
+    AreaList = {};
+  }
+}
+
+/* ---------------------------------------------------------
    RUBY帯・PRIDE帯 定義
 --------------------------------------------------------- */
 
@@ -273,7 +302,6 @@ function renderStars(starCount) {
     ? stars.slice(0, 4) + "<br>" + stars.slice(4)
     : stars;
 }
-
 /* ---------------------------------------------------------
    共通 fetch
 --------------------------------------------------------- */
@@ -284,6 +312,7 @@ async function fetchJSON(path) {
   if (!res.ok) throw new Error("HTTP " + res.status);
   return res.json();
 }
+
 /* ---------------------------------------------------------
    ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）
    （5分周期の境目 ±w 分にいるプレイヤーを候補とする）
@@ -423,9 +452,11 @@ async function loadRoundData() {
 
     const records = json.records || [];
 
+    // ★ 修正：areaName を付与
     State.all = records.map(p => ({
       ...p,
-      normalizedName: normalize(p.name)
+      normalizedName: normalize(p.name),
+      areaName: AreaList[String(p.area)] || ""
     }));
 
     State.filtered = [...State.all];
@@ -814,14 +845,14 @@ function exportSummaryCSV() {
   downloadCSV("summary.csv", header, body);
 }
 
-
 /* ---------------------------------------------------------
-   CSV 出力（全データ）★ area列追加＋roundPoint対応
+   CSV 出力（全データ）★ areaName 列追加済み
 --------------------------------------------------------- */
 function exportAllCSV() {
   // 表示上のヘッダ（列名）
   const header = [
     "area",
+    "areaName",
     "rank",
     "name",
     "shopname",
@@ -835,9 +866,9 @@ function exportAllCSV() {
   ].join(",");
 
   // 実データ側で参照するフィールド名
-  // roundPoint 列は point フィールドを出力する
   const fields = [
     "area",
+    "areaName",
     "rank",
     "name",
     "shopname",
@@ -878,7 +909,6 @@ function downloadCSV(filename, header, body) {
 
   URL.revokeObjectURL(url);
 }
-
 /* ---------------------------------------------------------
    ★ マッチング候補一覧生成（RUBY＋PRIDE フィルタ対応）
 --------------------------------------------------------- */
@@ -931,6 +961,7 @@ function buildMatchingCandidates() {
 
   State.matchingList = list;
 }
+
 /* ---------------------------------------------------------
    ★ マッチング候補ヘッダ表示
 --------------------------------------------------------- */
@@ -1133,16 +1164,19 @@ async function checkUpdate() {
 }
 
 /* ---------------------------------------------------------
-   初期化
+   初期化（★ loadAreaList を追加済み）
 --------------------------------------------------------- */
 async function init() {
   log("Viewer 初期化中");
 
   startProgress();
 
-  // ★ RUBY / PRIDE フィルタ自動生成（タイトルは index.html 側）
+  // ★ RUBY / PRIDE フィルタ自動生成
   buildRubyFilters();
   buildPrideFilters();
+
+  // ★ 追加：areaList.json を読み込む
+  await loadAreaList();
 
   await loadLatestRound();
   await loadRoundData();
