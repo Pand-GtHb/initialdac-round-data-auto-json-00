@@ -801,21 +801,32 @@ function renderDetailRows(list, isRubyBand) {
     }
   });
 }
-
 /* ---------------------------------------------------------
-   クリップボードコピー
+   クリップボードコピー（★ログ復活版）
 --------------------------------------------------------- */
 function copyToClipboard(text) {
   if (!navigator.clipboard) {
+    // 古いブラウザ用（同期コピー）
     const ta = document.createElement("textarea");
     ta.value = text;
     document.body.appendChild(ta);
     ta.select();
     document.execCommand("copy");
     document.body.removeChild(ta);
+
+    log(`コピー：${text}`);  // ★ 追加（同期コピー時）
+
     return;
   }
-  navigator.clipboard.writeText(text).catch(() => {});
+
+  // 新しいブラウザ用（非同期コピー）
+  navigator.clipboard.writeText(text)
+    .then(() => {
+      log(`コピー：${text}`);  // ★ 追加（成功時）
+    })
+    .catch(() => {
+      logError("コピーに失敗しました");  // ★ 失敗時
+    });
 }
 
 /* ---------------------------------------------------------
