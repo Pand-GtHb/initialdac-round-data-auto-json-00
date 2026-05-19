@@ -250,6 +250,29 @@ td.center { text-align:center; }
 .row3 .value {
     text-align: left;
 }
+
+/* ---------------------------------------------------------
+   ★ 追加CSS：RUBY/PRIDE ボタン間隔の最適化
+--------------------------------------------------------- */
+.ruby-btn,
+.pride-btn {
+    margin-right: 8px;
+}
+
+@media (max-width: 480px) {
+    .ruby-btn,
+    .pride-btn {
+        margin-right: 3px;
+        padding: 0 2px;
+        font-size: 13px;
+    }
+
+    .ruby-btn input,
+    .pride-btn input {
+        transform: scale(0.9);
+        margin-right: 1px;
+    }
+}
 </style>
 </head>
 
