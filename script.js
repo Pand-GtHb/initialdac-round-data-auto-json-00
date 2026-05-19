@@ -848,8 +848,10 @@ function exportAllCSV() {
    CSV ダウンロード共通関数
 --------------------------------------------------------- */
 function downloadCSV(filename, header, body) {
-  const csv = header + "\n" + body;
-  const blob = new Blob([csv], { type: "text/csv" });
+  const bom = "\uFEFF"; // UTF-8 BOM
+  const csv = bom + header + "\n" + body;
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
 
   const a = document.createElement("a");
