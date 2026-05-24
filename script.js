@@ -315,7 +315,7 @@ async function fetchJSON(path) {
 
 /* ---------------------------------------------------------
    ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）
-   （4分20秒周期の境目 ±w 分にいるプレイヤーを候補とする）
+   （指定周期の境目 ±w 分にいるプレイヤーを候補とする）
    ※ 旧ロジックは今回のみ削除許可（Pさん指示）
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(updateDateStr) {
@@ -331,11 +331,11 @@ function isMatchingCandidateByPhase(updateDateStr) {
 
   const diffMin = (now - last) / 60000;
 
-  // ★ 4分20秒（4.3333333分）未満は除外
-  const cycle = 4.3333333; // 4分20秒
+  // ★ 3分54秒未満は除外
+  const cycle = 3.9; // 4分20秒
   if (diffMin < cycle) return false;
 
-  // ★ 4分20秒周期の位相（フェーズ）
+  // 周期の位相（フェーズ）
   const r = diffMin % cycle;
   const d = Math.min(r, cycle - r); // 境目からの距離
 
