@@ -332,7 +332,7 @@ function isMatchingCandidateByPhase(updateDateStr) {
   const diffMin = (now - last) / 60000;
 
   // サイクル設定
-  const cycle = 3.8; // 3分48秒
+  const cycle = 4; // 4分00秒
   if (diffMin < cycle) return false;
 
   // 周期の位相（フェーズ）
