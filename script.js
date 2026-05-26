@@ -121,6 +121,10 @@ const State = {
   currentIsRubyBand: true,
 
   matchingList: []
+
+  seasonModel: null,
+  myStar: 6
+
 };
 
 /* ---------------------------------------------------------
@@ -346,6 +350,71 @@ function isMatchingCandidateByPhase(updateDateStr) {
 }
 
 /* ---------------------------------------------------------
+   ★ 予測スコア（Season学習 + Phase + Recency + Activity）
+--------------------------------------------------------- */
+const MATCHING_SCORE_CONFIG = {
+  cycle: 4,
+  phaseWindow: 0.25,
+  recencyTau: 12,
+  weight: {
+    strength: 0.30,
+    phase: 0.35,
+    recency: 0.25,
+    activity: 0.10
+  },
+  threshold: 0.42,
+  // 0人回避のため、最低表示人数（参考表示用）
+  minCandidates: 10
+};
+
+function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cycle) {
+  if (!updateDateStr) return { diffMin: Infinity, d: Infinity };
+  const now = new Date();
+  const last = new Date(updateDateStr.replace(/-/g, "/"));
+  const sec = last.getSeconds();
+  const rounded = sec < 30 ? 0 : 30;
+  last.setSeconds(rounded, 0);
+  const diffMin = (now - last) / 60000;
+  if (!isFinite(diffMin) || diffMin < 0) return { diffMin: Infinity, d: Infinity };
+  if (diffMin < cycleMin) return { diffMin, d: Infinity };
+  const r = diffMin % cycleMin;
+  const d = Math.min(r, cycleMin - r);
+  return { diffMin, d };
+}
+
+function calcMatchingScore(player) {
+  if (!player || !player.updateDate) return 0;
+
+  // ★ 学習（相手ランク分布）
+  const strengthScore = getSeason6StrengthScore(player);
+
+  // ★ Phase / Recency
+  const { diffMin, d } = getPhaseDistanceMin(player.updateDate);
+  if (!isFinite(diffMin) || diffMin === Infinity) return 0;
+
+  const phaseScore = (isFinite(d) && d !== Infinity)
+    ? Math.max(0, 1 - (d / MATCHING_SCORE_CONFIG.phaseWindow))
+    : 0;
+
+  const recencyScore = Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);
+
+  // ★ Activity（Viewer上の指標：starCnt / pridePoint）
+  const star = Number(player.starCnt ?? 0);
+  const pride = Number(player.pridePoint ?? 0);
+  const activityScore = star > 0 ? Math.min(1, star / 8) : (pride > 0 ? 0.70 : 0);
+
+  const w = MATCHING_SCORE_CONFIG.weight;
+  const score =
+    strengthScore * w.strength +
+    phaseScore    * w.phase +
+    recencyScore  * w.recency +
+    activityScore * w.activity;
+
+  return Math.max(0, Math.min(1, score));
+}
+
+
+/* ---------------------------------------------------------
    ★ 追加：マッチング候補スコアリング（Phase + Recency + Activity）
    - 既存UI/機能は維持し、候補の選出ロジックのみ高精度化
 --------------------------------------------------------- */
@@ -446,6 +515,22 @@ async function loadLatestRound() {
     log("latest_round.json 読み込み完了");
   } catch (e) {
     logError("latest_round.json の取得に失敗：" + e.message);
+  }
+}
+
+/* ---------------------------------------------------------
+   ★ シーズン 学習モデル（season_model.json）読み込み
+--------------------------------------------------------- */
+async function loadSeasonModel() {
+  log("season_model.json 取得準備中");
+  try {
+    const json = await fetchJSON("season_model.json");
+    State.seasonModel = json;
+    log("season_model.json 読み込み完了");
+  } catch (e) {
+    // 学習モデルがなくてもViewerが落ちないようにする
+    State.seasonModel = null;
+    logWarn("season_model.json 未取得：学習無しモードで動作します（" + e.message + "）");
   }
 }
 
@@ -997,6 +1082,7 @@ function downloadCSV(filename, header, body) {
 
   URL.revokeObjectURL(url);
 }
+
 /* ---------------------------------------------------------
    ★ マッチング候補一覧生成（アルゴリズム適用）
 --------------------------------------------------------- */
@@ -1006,37 +1092,53 @@ function buildMatchingCandidates() {
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
 
-  const base = (State.filtered.length ? State.filtered : State.all);
-  const list = [];
+  // filtered が極端に少ないと不安定になるので、必要なら all に退避
+  const base = (State.filtered.length >= 30 ? State.filtered : State.all);
 
-  base.forEach(p => {
-    if (!p || !p.updateDate) return;
-
-    // ★ 新：スコアリングで候補判定（旧：isMatchingCandidateByPhase）
-    const score = calcMatchingScore(p);
-    if (score < MATCHING_SCORE_CONFIG.threshold) return;
-
+  // まず全員スコア化（学習＋時刻）
+  const scoredAll = base.map(p => {
     const rankKey = getPlayerRankKey(p);
-    if (!rankKey) return;
-
-    // ★ RUBY / PRIDE フィルタ適用（既存仕様は維持）
-    if (rankKey.startsWith("R")) {
-      if (!selectedStars.includes(p.starCnt)) return;
-    } else {
-      if (!selectedPrides.includes(rankKey)) return;
-    }
-
-    list.push({
-      ...p,
-      __rankKey: rankKey,
-      __score: score
-    });
+    const score = calcMatchingScore(p);
+    return { ...p, __rankKey: rankKey, __score: score };
   });
 
-  // ★ ソート：
-  // 1) スコア降順（最優先）
-  // 2) ランク帯（order）昇順（既存の見やすさ維持）
-  // 3) updateDate 新しい順
+  // フィルタ（RUBY/PRIDE）
+  const filteredByRank = scoredAll.filter(p => {
+    if (!p.updateDate) return false;
+    if (!p.__rankKey) return false;
+
+    if (p.__rankKey.startsWith("R")) {
+      return selectedStars.includes(p.starCnt);
+    } else {
+      return selectedPrides.includes(p.__rankKey);
+    }
+  });
+
+  // Step1: 通常閾値
+  let list = filteredByRank.filter(p => p.__score >= MATCHING_SCORE_CONFIG.threshold);
+
+  // Step2: 0人なら閾値緩和
+  if (list.length === 0) {
+    const relaxed = Math.max(0.25, MATCHING_SCORE_CONFIG.threshold - 0.10);
+    list = filteredByRank.filter(p => p.__score >= relaxed);
+    if (list.length > 0) {
+      logWarn(`候補0人のため閾値を緩和：${MATCHING_SCORE_CONFIG.threshold} → ${relaxed}`);
+    }
+  }
+
+  // Step3: それでも0人なら「参考表示（上位N）」
+  if (list.length === 0) {
+    list = filteredByRank
+      .slice()
+      .sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0))
+      .slice(0, MATCHING_SCORE_CONFIG.minCandidates);
+
+    if (list.length > 0) {
+      logWarn(`候補0人のため、スコア上位${MATCHING_SCORE_CONFIG.minCandidates}人を参考表示します`);
+    }
+  }
+
+  // ソート（スコア降順 → rank order → updateDate新しい順）
   list.sort((a, b) => {
     const sa = (a.__score ?? 0);
     const sb = (b.__score ?? 0);
@@ -1048,12 +1150,38 @@ function buildMatchingCandidates() {
     const ob = rb ? rb.order : 999;
     if (oa !== ob) return oa - ob;
 
-    const da = parseDateJST(a.updateDate);
-    const db = parseDateJST(b.updateDate);
-    return db - da;
+    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
 
   State.matchingList = list;
+
+  // デバッグログ（上位5）
+  if (State.matchingList.length) {
+    log(`候補TOP: ${State.matchingList.slice(0,5).map(p => `${p.name}(${(p.__score??0).toFixed(2)})`).join(" / ")}`);
+  }
+}
+
+
+
+
+/* ---------------------------------------------------------
+   ★ シーズン学習：相手ランク分布から strengthScore を返す
+   - 学習モデルがない場合は中立(0.5)
+   - 0確率を避けるため最低値を付与（スムージング）
+--------------------------------------------------------- */
+function getSeasonStrengthScore(player) {
+  const model = State.seasonModel;
+  if (!model || !model.strength) return 0.5;
+
+  const rankKey = getPlayerRankKey(player);
+  if (!rankKey) return 0.0;
+
+  const myKey = (State.myStar === 7) ? "myStar7" : "myStar6";
+  const dist = model.strength[myKey] || {};
+  const p = Number(dist[rankKey] ?? 0);
+
+  // スムージング：完全0を避ける（同格以外も候補に残す）
+  return Math.max(0.002, Math.min(1, p));
 }
 
 /* ---------------------------------------------------------
@@ -1273,6 +1401,7 @@ async function init() {
   await loadAreaList();
 
   await loadLatestRound();
+  await loadSeasonModel();
   await loadRoundData();
 
   applyFilters();
