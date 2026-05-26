@@ -346,6 +346,75 @@ function isMatchingCandidateByPhase(updateDateStr) {
 }
 
 /* ---------------------------------------------------------
+   ★ 追加：マッチング候補スコアリング（Phase + Recency + Activity）
+   - 既存UI/機能は維持し、候補の選出ロジックのみ高精度化
+--------------------------------------------------------- */
+const MATCHING_SCORE_CONFIG = {
+  cycle: 4,            // 分（既存isMatchingCandidateByPhaseと合わせる）
+  phaseWindow: 0.25,   // 分（±15秒）
+  recencyTau: 10,      // 分（更新の新しさの減衰）
+  weight: {
+    phase: 0.50,
+    recency: 0.30,
+    activity: 0.20
+  },
+  // 候補として採用する下限（0〜1）
+  threshold: 0.40
+};
+
+function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cycle) {
+  if (!updateDateStr) return { diffMin: Infinity, d: Infinity };
+
+  const now = new Date();
+  const last = new Date(updateDateStr.replace(/-/g, "/"));
+
+  // 秒を30秒単位に丸める（既存と同じ丸め）
+  const sec = last.getSeconds();
+  const rounded = sec < 30 ? 0 : 30;
+  last.setSeconds(rounded, 0);
+
+  const diffMin = (now - last) / 60000;
+  if (!isFinite(diffMin) || diffMin < 0) return { diffMin: Infinity, d: Infinity };
+  if (diffMin < cycleMin) return { diffMin, d: Infinity };
+
+  const r = diffMin % cycleMin;
+  const d = Math.min(r, cycleMin - r); // 境目からの距離
+  return { diffMin, d };
+}
+
+function calcMatchingScore(player) {
+  if (!player || !player.updateDate) return 0;
+
+  const { diffMin, d } = getPhaseDistanceMin(player.updateDate);
+  if (!isFinite(diffMin) || diffMin === Infinity) return 0;
+  if (diffMin < MATCHING_SCORE_CONFIG.cycle) return 0;
+
+  // ① Phase（一致ほど1）
+  const phaseScore = (isFinite(d) && d !== Infinity)
+    ? Math.max(0, 1 - (d / MATCHING_SCORE_CONFIG.phaseWindow))
+    : 0;
+
+  // ② Recency（新しいほど1、古いほど0）
+  const recencyScore = Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);
+
+  // ③ Activity
+  // ルビー帯はstarCnt、PRIDE帯はstarCntが0なのでpridePointがあればベース加点
+  const star = Number(player.starCnt ?? 0);
+  const pride = Number(player.pridePoint ?? 0);
+  const activityScore = star > 0 ? Math.min(1, star / 8) : (pride > 0 ? 0.70 : 0);
+
+  const w = MATCHING_SCORE_CONFIG.weight;
+  const score =
+    phaseScore * w.phase +
+    recencyScore * w.recency +
+    activityScore * w.activity;
+
+  // 0-1にクランプ
+  return Math.max(0, Math.min(1, score));
+}
+
+
+/* ---------------------------------------------------------
    ★ プレイヤーのランクキー取得（R1〜R8 / P_A〜P_G）
 --------------------------------------------------------- */
 function getPlayerRankKey(player) {
@@ -929,30 +998,28 @@ function downloadCSV(filename, header, body) {
   URL.revokeObjectURL(url);
 }
 /* ---------------------------------------------------------
-   ★ マッチング候補一覧生成（RUBY＋PRIDE フィルタ対応）
+   ★ マッチング候補一覧生成（アルゴリズム適用）
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
-
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
-
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
 
   const base = (State.filtered.length ? State.filtered : State.all);
-
   const list = [];
 
   base.forEach(p => {
-    if (!p.updateDate) return;
+    if (!p || !p.updateDate) return;
 
-    // ★ A案：新ロジック（フェーズモデル）に差し替え
-    if (!isMatchingCandidateByPhase(p.updateDate)) return;
+    // ★ 新：スコアリングで候補判定（旧：isMatchingCandidateByPhase）
+    const score = calcMatchingScore(p);
+    if (score < MATCHING_SCORE_CONFIG.threshold) return;
 
     const rankKey = getPlayerRankKey(p);
     if (!rankKey) return;
 
-    // ★ RUBY / PRIDE フィルタ適用
+    // ★ RUBY / PRIDE フィルタ適用（既存仕様は維持）
     if (rankKey.startsWith("R")) {
       if (!selectedStars.includes(p.starCnt)) return;
     } else {
@@ -961,16 +1028,24 @@ function buildMatchingCandidates() {
 
     list.push({
       ...p,
-      __rankKey: rankKey
+      __rankKey: rankKey,
+      __score: score
     });
   });
 
+  // ★ ソート：
+  // 1) スコア降順（最優先）
+  // 2) ランク帯（order）昇順（既存の見やすさ維持）
+  // 3) updateDate 新しい順
   list.sort((a, b) => {
+    const sa = (a.__score ?? 0);
+    const sb = (b.__score ?? 0);
+    if (sb !== sa) return sb - sa;
+
     const ra = getRankInfo(a.__rankKey);
     const rb = getRankInfo(b.__rankKey);
     const oa = ra ? ra.order : 999;
     const ob = rb ? rb.order : 999;
-
     if (oa !== ob) return oa - ob;
 
     const da = parseDateJST(a.updateDate);
