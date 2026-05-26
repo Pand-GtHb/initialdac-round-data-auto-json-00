@@ -120,7 +120,7 @@ const State = {
   currentView: "summary",
   currentIsRubyBand: true,
 
-  matchingList: []
+  matchingList: [],
 
   seasonModel: null,
   myStar: 6
@@ -411,44 +411,6 @@ function calcMatchingScore(player) {
     activityScore * w.activity;
 
   return Math.max(0, Math.min(1, score));
-}
-
-
-/* ---------------------------------------------------------
-   ★ 追加：マッチング候補スコアリング（Phase + Recency + Activity）
-   - 既存UI/機能は維持し、候補の選出ロジックのみ高精度化
---------------------------------------------------------- */
-const MATCHING_SCORE_CONFIG = {
-  cycle: 4,            // 分（既存isMatchingCandidateByPhaseと合わせる）
-  phaseWindow: 0.25,   // 分（±15秒）
-  recencyTau: 10,      // 分（更新の新しさの減衰）
-  weight: {
-    phase: 0.50,
-    recency: 0.30,
-    activity: 0.20
-  },
-  // 候補として採用する下限（0〜1）
-  threshold: 0.40
-};
-
-function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cycle) {
-  if (!updateDateStr) return { diffMin: Infinity, d: Infinity };
-
-  const now = new Date();
-  const last = new Date(updateDateStr.replace(/-/g, "/"));
-
-  // 秒を30秒単位に丸める（既存と同じ丸め）
-  const sec = last.getSeconds();
-  const rounded = sec < 30 ? 0 : 30;
-  last.setSeconds(rounded, 0);
-
-  const diffMin = (now - last) / 60000;
-  if (!isFinite(diffMin) || diffMin < 0) return { diffMin: Infinity, d: Infinity };
-  if (diffMin < cycleMin) return { diffMin, d: Infinity };
-
-  const r = diffMin % cycleMin;
-  const d = Math.min(r, cycleMin - r); // 境目からの距離
-  return { diffMin, d };
 }
 
 /* ---------------------------------------------------------
