@@ -354,16 +354,25 @@ function isMatchingCandidateByPhase(updateDateStr) {
 --------------------------------------------------------- */
 const MATCHING_SCORE_CONFIG = {
   cycle: 4,
-  phaseWindow: 0.25,
+
+  // ★ 15秒は厳しすぎて0人になりやすい → 36秒へ
+  phaseWindow: 0.60,
+
+  // 新しさは少し長めに（極端に落ちすぎない）
   recencyTau: 12,
+
   weight: {
-    strength: 0.30,
-    phase: 0.35,
-    recency: 0.25,
+    // ★ 学習（strength）を少し強めると「当たりやすい帯」が上がる
+    strength: 0.40,
+    phase:    0.25,
+    recency:  0.25,
     activity: 0.10
   },
-  threshold: 0.42,
-  // 0人回避のため、最低表示人数（参考表示用）
+
+  // ★ 目標10人前提：閾値を下げる
+  threshold: 0.30,
+
+  // ★ 0人対策：最低でも上位10人は必ず表示
   minCandidates: 10
 };
 
@@ -1083,6 +1092,24 @@ function buildMatchingCandidates() {
     return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
 
+// ★ 最終ガード：候補が10人未満なら、スコア上位で埋める（必ず10人出す）
+if (list.length < MATCHING_SCORE_CONFIG.minCandidates) {
+  const need = MATCHING_SCORE_CONFIG.minCandidates - list.length;
+
+  const existingNames = new Set(list.map(p => p.name));
+  const fillers = filteredByRank
+    .filter(p => !existingNames.has(p.name))
+    .slice()
+    .sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0))
+    .slice(0, need);
+
+  list = list.concat(fillers);
+
+  if (fillers.length > 0) {
+    logWarn(`候補が${MATCHING_SCORE_CONFIG.minCandidates}人未満のため、上位スコアで補完しました（+${fillers.length}）`);
+  }
+}
+
   State.matchingList = list;
 
   // デバッグログ（上位5）
@@ -1090,9 +1117,6 @@ function buildMatchingCandidates() {
     log(`候補TOP: ${State.matchingList.slice(0,5).map(p => `${p.name}(${(p.__score??0).toFixed(2)})`).join(" / ")}`);
   }
 }
-
-
-
 
 /* ---------------------------------------------------------
    ★ シーズン学習：相手ランク分布から strengthScore を返す
@@ -1108,10 +1132,14 @@ function getSeasonStrengthScore(player) {
 
   const myKey = (State.myStar === 7) ? "myStar7" : "myStar6";
   const dist = model.strength[myKey] || {};
+
   const p = Number(dist[rankKey] ?? 0);
 
-  // スムージング：完全0を避ける（同格以外も候補に残す）
-  return Math.max(0.002, Math.min(1, p));
+  // ★ 最低値でゼロ回避（学習分布にない帯も候補に残す）
+  const base = Math.max(0.01, Math.min(1, p));
+
+  // ★ 強調：ピークを持ち上げる（0.65くらいが扱いやすい）
+  return Math.pow(base, 0.65);
 }
 
 /* ---------------------------------------------------------
