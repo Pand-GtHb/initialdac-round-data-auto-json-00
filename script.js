@@ -386,7 +386,7 @@ function calcMatchingScore(player) {
   if (!player || !player.updateDate) return 0;
 
   // ★ 学習（相手ランク分布）
-  const strengthScore = getSeason6StrengthScore(player);
+  const strengthScore = getSeasonStrengthScore(player);
 
   // ★ Phase / Recency
   const { diffMin, d } = getPhaseDistanceMin(player.updateDate);
