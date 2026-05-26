@@ -451,38 +451,6 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
   return { diffMin, d };
 }
 
-function calcMatchingScore(player) {
-  if (!player || !player.updateDate) return 0;
-
-  const { diffMin, d } = getPhaseDistanceMin(player.updateDate);
-  if (!isFinite(diffMin) || diffMin === Infinity) return 0;
-  if (diffMin < MATCHING_SCORE_CONFIG.cycle) return 0;
-
-  // ① Phase（一致ほど1）
-  const phaseScore = (isFinite(d) && d !== Infinity)
-    ? Math.max(0, 1 - (d / MATCHING_SCORE_CONFIG.phaseWindow))
-    : 0;
-
-  // ② Recency（新しいほど1、古いほど0）
-  const recencyScore = Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);
-
-  // ③ Activity
-  // ルビー帯はstarCnt、PRIDE帯はstarCntが0なのでpridePointがあればベース加点
-  const star = Number(player.starCnt ?? 0);
-  const pride = Number(player.pridePoint ?? 0);
-  const activityScore = star > 0 ? Math.min(1, star / 8) : (pride > 0 ? 0.70 : 0);
-
-  const w = MATCHING_SCORE_CONFIG.weight;
-  const score =
-    phaseScore * w.phase +
-    recencyScore * w.recency +
-    activityScore * w.activity;
-
-  // 0-1にクランプ
-  return Math.max(0, Math.min(1, score));
-}
-
-
 /* ---------------------------------------------------------
    ★ プレイヤーのランクキー取得（R1〜R8 / P_A〜P_G）
 --------------------------------------------------------- */
