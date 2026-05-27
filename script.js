@@ -123,8 +123,11 @@ const State = {
   matchingList: [],
 
   seasonModel: null,
-  myStar: 6
-
+  myStar: 6,
+   
+  selectedMyRank: "R6",   // ★ UI選択（デフォルトR6）
+  recentClicks: [],       // ★ クリック履歴（リアルタイムBoost）
+  areaModel: {}           // ★ フィルタ後母集団のエリア分布
 };
 
 /* ---------------------------------------------------------
@@ -219,6 +222,55 @@ function formatYMDHM(date) {
   const hh = ("0" + date.getHours()).slice(-2);
   const mm = ("0" + date.getMinutes()).slice(-2);
   return `${y}/${m}/${d} ${hh}:${mm}`;
+}
+
+/* ---------------------------------------------------------
+   クリックコピーを「擬似マッチログ」としてBoostに使う
+--------------------------------------------------------- */
+function recordClickFromCopiedText(text) {
+  if (!text) return;
+
+  // 形式例： "★★...\tNAME" や "123\tNAME" を想定
+  let name = text;
+  if (String(text).includes("\t")) {
+    const parts = String(text).split("\t");
+    name = parts[parts.length - 1];
+  }
+
+  const player = State.all.find(p => p.name === name);
+  if (!player) return;
+
+  State.recentClicks.unshift({
+    name: player.name,
+    area: player.area,
+    shopname: player.shopname,
+    time: Date.now()
+  });
+
+  // 最大20件
+  State.recentClicks = State.recentClicks.slice(0, 20);
+}
+
+/* ---------------------------------------------------------
+    Boost関数（追加）
+--------------------------------------------------------- */
+function getRealtimeBoost(player) {
+  if (!State.recentClicks.length) return 1;
+
+  let areaScore = 0;
+  let shopScore = 0;
+
+  for (const r of State.recentClicks) {
+    const dtMin = (Date.now() - r.time) / 60000;
+    const decay = Math.exp(-dtMin / 10); // 10分で減衰
+
+    if (player.area === r.area) areaScore += decay;
+    if ((player.shopname || "") === (r.shopname || "")) shopScore += decay;
+  }
+
+  const areaBoost = 1 + Math.min(0.5, areaScore * 0.2);
+  const shopBoost = 1 + Math.min(0.8, shopScore * 0.3);
+  return areaBoost * shopBoost;
 }
 
 /* ---------------------------------------------------------
@@ -413,13 +465,18 @@ function calcMatchingScore(player) {
   const activityScore = star > 0 ? Math.min(1, star / 8) : (pride > 0 ? 0.70 : 0);
 
   const w = MATCHING_SCORE_CONFIG.weight;
-  const score =
-    strengthScore * w.strength +
-    phaseScore    * w.phase +
-    recencyScore  * w.recency +
-    activityScore * w.activity;
-
-  return Math.max(0, Math.min(1, score));
+   const baseScore =
+      strengthScore * w.strength +
+      phaseScore    * w.phase +
+      recencyScore  * w.recency +
+      activityScore * w.activity;
+   
+   const areaScore = getAreaScore(player);
+   const realtimeBoost = getRealtimeBoost(player);
+   // ★ エリアは「候補母集団」反映、クリック履歴は「当日稼働」反映
+   const score = baseScore * (0.8 + areaScore * 0.4) * realtimeBoost;
+   
+   return Math.max(0, Math.min(1, score));
 }
 
 /* ---------------------------------------------------------
@@ -601,7 +658,32 @@ function applyFilters() {
     if (!p.updateDate) return false;
     return parseDateJST(p.updateDate).getTime() >= filterStartMs;
   });
+   State.areaModel = buildAreaDistribution(State.filtered);
 }
+
+
+/* ---------------------------------------------------------
+   「フィルタ後母集団のエリア分布」を自動計算して使う 分布計算関数
+--------------------------------------------------------- */
+function buildAreaDistribution(list) {
+  const counts = {};
+  for (const p of (list || [])) {
+    const k = String(p.area ?? "");
+    if (!k) continue;
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
+  const dist = {};
+  for (const k in counts) dist[k] = counts[k] / total;
+  return dist;
+}
+
+function getAreaScore(player) {
+  const k = String(player.area ?? "");
+  const p = State.areaModel[k] ?? 0.01;
+  return Math.pow(p, 0.7);
+}
+
 
 /* ---------------------------------------------------------
    サマリ統計計算
@@ -908,7 +990,7 @@ function copyToClipboard(text) {
     document.body.removeChild(ta);
 
     log(`コピー：${text}`);  // ★ 追加（同期コピー時）
-
+    recordClickFromCopiedText(text);
     return;
   }
 
@@ -916,6 +998,7 @@ function copyToClipboard(text) {
   navigator.clipboard.writeText(text)
     .then(() => {
       log(`コピー：${text}`);  // ★ 追加（成功時）
+       recordClickFromCopiedText(text);
     })
     .catch(() => {
       logError("コピーに失敗しました");  // ★ 失敗時
@@ -1109,7 +1192,8 @@ if (list.length < MATCHING_SCORE_CONFIG.minCandidates) {
     logWarn(`候補が${MATCHING_SCORE_CONFIG.minCandidates}人未満のため、上位スコアで補完しました（+${fillers.length}）`);
   }
 }
-
+// ★ 最終確定：候補は必ず上位N人に固定
+list = list.slice(0, MATCHING_SCORE_CONFIG.minCandidates);
   State.matchingList = list;
 
   // デバッグログ（上位5）
@@ -1456,6 +1540,19 @@ document.addEventListener("DOMContentLoaded", () => {
       backToSummaryFromMatching();
     };
   }
+  const myRankSelect = document.getElementById("myRankSelect");
+  if (myRankSelect) {
+    State.selectedMyRank = myRankSelect.value || "R6";
+    // 互換：myStarも同期（R7以上なら7、その他は6）
+    State.myStar = (String(State.selectedMyRank).startsWith("R") && Number(String(State.selectedMyRank).slice(1)) >= 7) ? 7 : 6;
 
-  init();
+    myRankSelect.addEventListener("change", (e) => {
+    State.selectedMyRank = e.target.value;
+    State.myStar = (String(State.selectedMyRank).startsWith("R") && Number(String(State.selectedMyRank).slice(1)) >= 7) ? 7 : 6;
+    log(`自分ランク変更：${State.selectedMyRank}`); // ログに出す
+  });
+}
+
+   init();
+
 });
