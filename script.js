@@ -1555,6 +1555,9 @@ async function init() {
    DOMContentLoaded
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
+  // ✅ 最優先で履歴を仕込む（初回戻るで閉じる対策）
+  history.replaceState({ page: STATE.SUMMARY }, '', '');
+  history.pushState({ page: STATE.SUMMARY }, '', '');
 
   // ★ ボタン群を1行に揃えて生成
   const btnArea = document.getElementById("buttonArea");
@@ -1569,55 +1572,72 @@ document.addEventListener("DOMContentLoaded", () => {
     `;
   }
 
+  // ✅ 安全に要素取得（null防止）
   const reloadBtn = document.getElementById("reloadBtn");
+  const filterBtn = document.getElementById("filterBtn");
+  const summaryCsvBtn = document.getElementById("summaryCsvBtn");
+  const allCsvBtn = document.getElementById("allCsvBtn");
+  const backBtn = document.getElementById("backBtn");
+  const matchingBtn = document.getElementById("matchingBtn");
+  const matchingBackBtn = document.getElementById("matchingBackBtn");
+  const searchInput = document.getElementById("searchInput");
+
+  // ✅ reload
   if (reloadBtn) {
     reloadBtn.classList.remove("update-alert");
     reloadBtn.style.cssText = "";
+    reloadBtn.onclick = async () => {
+      startProgress();
+      await loadRoundData();
+      applyFilters();
+      buildSummary();
+      renderSummary();
+      stopProgress();
+    };
   }
 
-  document.getElementById("reloadBtn").onclick = async () => {
-    startProgress();
-    await loadRoundData();
-    applyFilters();
-    buildSummary();
-    renderSummary();
-    stopProgress();
-  };
-
-  document.getElementById("filterBtn").onclick = () => {
-    startProgress();
-    applyFilters();
-    buildSummary();
-    renderSummary();
-    stopProgress();
-  };
-
-  document.getElementById("summaryCsvBtn").onclick = exportSummaryCSV;
-  document.getElementById("allCsvBtn").onclick = exportAllCSV;
-
-  const searchInput = document.getElementById("searchInput");
-
-  searchInput.addEventListener("input", e => {
-    State.searchText = e.target.value;
-
-    if (State.currentView === "summary") {
+  // ✅ filter
+  if (filterBtn) {
+    filterBtn.onclick = () => {
+      startProgress();
+      applyFilters();
+      buildSummary();
       renderSummary();
-    } else if (State.currentView === "detail") {
-      applyPlayerFilter(State.searchText, State.currentIsRubyBand);
-      renderDetailTable(State.currentIsRubyBand, "", "");
-    } else if (State.currentView === "matching") {
-      applyMatchingFilter(State.searchText);
-    }
-  });
+      stopProgress();
+    };
+  }
 
-  document.getElementById("backBtn").onclick = () => {
-    State.searchText = "";
-    searchInput.value = "";
-    renderSummary();
-  };
+  // ✅ CSV
+  if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;
+  if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;
 
-  const matchingBtn = document.getElementById("matchingBtn");
-  if (matchingBtn) {
+  // ✅ 検索
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => {
+      State.searchText = e.target.value;
+
+      if (State.currentView === "summary") {
+        renderSummary();
+      } else if (State.currentView === "detail") {
+        applyPlayerFilter(State.searchText, State.currentIsRubyBand);
+        renderDetailTable(State.currentIsRubyBand, "", "");
+      } else if (State.currentView === "matching") {
+        applyMatchingFilter(State.searchText);
+      }
+    });
+  }
+
+  // ✅ サマリ戻る（UIボタン）
+  if (backBtn && searchInput) {
+    backBtn.onclick = () => {
+      State.searchText = "";
+      searchInput.value = "";
+      renderSummary();
+    };
+  }
+
+  // ✅ matching表示
+  if (matchingBtn && searchInput) {
     matchingBtn.onclick = () => {
       State.searchText = "";
       searchInput.value = "";
@@ -1625,8 +1645,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  const matchingBackBtn = document.getElementById("matchingBackBtn");
-  if (matchingBackBtn) {
+  if (matchingBackBtn && searchInput) {
     matchingBackBtn.onclick = () => {
       State.searchText = "";
       searchInput.value = "";
@@ -1634,10 +1653,11 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-const myRankSelect = document.getElementById("myRankSelect");
+  // ✅ ランク選択
+  const myRankSelect = document.getElementById("myRankSelect");
   if (myRankSelect) {
     State.selectedMyRank = myRankSelect.value || "R6";
-    // 互換：myStarも同期（R7以上なら7、その他は6）
+
     State.myStar =
       (String(State.selectedMyRank).startsWith("R") &&
         Number(String(State.selectedMyRank).slice(1)) >= 7)
@@ -1645,53 +1665,20 @@ const myRankSelect = document.getElementById("myRankSelect");
 
     myRankSelect.addEventListener("change", (e) => {
       State.selectedMyRank = e.target.value;
+
       State.myStar =
         (String(State.selectedMyRank).startsWith("R") &&
           Number(String(State.selectedMyRank).slice(1)) >= 7)
           ? 7 : 6;
 
-      log(`自分ランク変更：${State.selectedMyRank}`); // ログに出す
+      log(`自分ランク変更：${State.selectedMyRank}`);
     });
-  } // ✅ if(myRankSelect) を閉じる（←これが不足していた）
+  }
 
-  // ✅ DOMが揃ってから初期化を実行（logBox null を防ぐ）
-init().then(() => {
-  // ✅ ダミー2枚入れる（安定化）
-  history.replaceState({ page: STATE.SUMMARY }, '', '');
-  history.pushState({ page: STATE.SUMMARY }, '', '');
-  history.pushState({ page: STATE.SUMMARY }, '', '');
+  // ✅ 初期化（DOM後）
+  init();
 });
-
-}); // ✅ DOMContentLoaded を閉じる
-
-/* ---------------------------------------------------------
-   戻るボタン処理
---------------------------------------------------------- */
-window.addEventListener('popstate', (e) => {
-  const state = e.state;
-
-  console.log("popstate fired:", state, "history.length=", history.length);
-
-  // ✅ もう戻れない or stateが無い → 戻るキャンセル
-  if (!state || history.length <= 2) {
-    history.pushState({ page: STATE.SUMMARY }, '', '');
-    return;
-  }
-
-  // ✅ 詳細 / matching → サマリ
-  if (State.currentView === "detail" || State.currentView === "matching") {
-    showSummaryUI(false);
-    history.pushState({ page: STATE.SUMMARY }, '', '');
-    return;
-  }
-
-  // ✅ サマリで戻る → 検索クリア
-  if (state.page === STATE.SUMMARY) {
-    clearSearch();
-    showSummaryUI(false);
-    history.pushState({ page: STATE.SUMMARY }, '', '');
-  }
-});
+``
 
 /* ---------------------------------------------------------
    検索クリア関数
