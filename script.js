@@ -97,18 +97,22 @@ function getRankInfo(key) {
 function showSummaryUI(push = false) {
   renderSummary();
 
-  // 画面切替（必要なら）
   State.currentView = "summary";
+
   document.getElementById("summaryView").style.display = "block";
   document.getElementById("detailView").style.display = "none";
   const mv = document.getElementById("matchingView");
   if (mv) mv.style.display = "none";
 
-  // “遷移したときだけ” pushする
   if (push) {
     history.pushState({ page: STATE.SUMMARY }, '', '');
   }
+
+  if (!push) {
+    history.replaceState({ page: STATE.SUMMARY }, '', '');
+  }
 }
+
 
 /* ---------------------------------------------------------
    ★ 前後ランク移動ボタン制御
@@ -1690,7 +1694,6 @@ window.addEventListener('popstate', (e) => {
   if (State.currentView === "summary") {
   clearSearch();
   renderSummary();
-  history.pushState({ page: STATE.SUMMARY }, '', '');
   return;
   }
 
