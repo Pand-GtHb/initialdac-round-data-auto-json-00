@@ -1555,6 +1555,9 @@ async function init() {
    DOMContentLoaded
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
+  // ✅ 最優先で履歴を仕込む（初回戻るで閉じる対策）
+  history.replaceState({ page: STATE.SUMMARY }, '', '');
+  history.pushState({ page: STATE.SUMMARY }, '', '');
 
   // ★ ボタン群を1行に揃えて生成
   const btnArea = document.getElementById("buttonArea");
@@ -1680,28 +1683,29 @@ document.addEventListener("DOMContentLoaded", () => {
    戻るボタン処理
 --------------------------------------------------------- */
 window.addEventListener('popstate', (e) => {
-  console.log("popstate:", State.currentView);
+  const state = e.state;
 
-  // ✅ ① 詳細 → サマリ
-  if (State.currentView === "detail") {
-    showSummaryUI(false);
+  console.log("popstate fired:", state, "history.length=", history.length);
+
+  // ✅ もう戻れない or stateが無い → 戻るキャンセル
+  if (!state || history.length <= 2) {
+    history.pushState({ page: STATE.SUMMARY }, '', '');
     return;
   }
 
-  // ✅ ② マッチング → サマリ
-  if (State.currentView === "matching") {
+  // ✅ 詳細 / matching → サマリ
+  if (State.currentView === "detail" || State.currentView === "matching") {
     showSummaryUI(false);
+    history.pushState({ page: STATE.SUMMARY }, '', '');
     return;
   }
 
-  // ✅ ③ サマリ → 検索クリアのみ
-  if (State.currentView === "summary") {
+  // ✅ サマリで戻る → 検索クリア
+  if (state.page === STATE.SUMMARY) {
     clearSearch();
-    renderSummary();
-    return;
+    showSummaryUI(false);
+    history.pushState({ page: STATE.SUMMARY }, '', '');
   }
-
-  // ✅ ④ その他は何もしない（初回はブラウザ任せ）
 });
 
 
