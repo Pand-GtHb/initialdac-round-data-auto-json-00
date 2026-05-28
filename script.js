@@ -1678,7 +1678,36 @@ document.addEventListener("DOMContentLoaded", () => {
   // ✅ 初期化（DOM後）
   init();
 });
-``
+
+/* ---------------------------------------------------------
+   戻るボタン処理
+--------------------------------------------------------- */
+window.addEventListener('popstate', (e) => {
+  const state = e.state;
+
+  console.log("popstate fired:", state, "history.length=", history.length);
+
+  // ✅ もう戻れない or stateが無い → 戻るキャンセル
+  if (!state || history.length <= 2) {
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+    return;
+  }
+
+  // ✅ 詳細 / matching → サマリ
+  if (State.currentView === "detail" || State.currentView === "matching") {
+    showSummaryUI(false);
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+    return;
+  }
+
+  // ✅ サマリで戻る → 検索クリア
+  if (state.page === STATE.SUMMARY) {
+    clearSearch();
+    showSummaryUI(false);
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+  }
+});
+
 
 /* ---------------------------------------------------------
    検索クリア関数
