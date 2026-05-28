@@ -1559,6 +1559,9 @@ document.addEventListener("DOMContentLoaded", () => {
   history.replaceState({ page: STATE.SUMMARY }, '', '');
   history.pushState({ page: STATE.SUMMARY }, '', '');
 
+  // ✅ 初回戻る検知用（フォールバック）
+  let initialPopBlocked = false;
+
   // ★ ボタン群を1行に揃えて生成
   const btnArea = document.getElementById("buttonArea");
   if (btnArea) {
@@ -1685,26 +1688,24 @@ document.addEventListener("DOMContentLoaded", () => {
 window.addEventListener('popstate', (e) => {
   const state = e.state;
 
-  console.log("popstate fired:", state, "history.length=", history.length);
+  console.log("popstate fired:", state);
 
-  // ✅ もう戻れない or stateが無い → 戻るキャンセル
-  if (!state || history.length <= 2) {
+  // ✅ ここ追加（超重要）
+  if (!initialPopBlocked) {
+    initialPopBlocked = true;
     history.pushState({ page: STATE.SUMMARY }, '', '');
     return;
   }
 
-  // ✅ 詳細 / matching → サマリ
+  // ✅ 通常処理
   if (State.currentView === "detail" || State.currentView === "matching") {
     showSummaryUI(false);
-    history.pushState({ page: STATE.SUMMARY }, '', '');
     return;
   }
 
-  // ✅ サマリで戻る → 検索クリア
-  if (state.page === STATE.SUMMARY) {
+  if (state && state.page === STATE.SUMMARY) {
     clearSearch();
     showSummaryUI(false);
-    history.pushState({ page: STATE.SUMMARY }, '', '');
   }
 });
 
