@@ -94,7 +94,7 @@ function getRankInfo(key) {
 /* ---------------------------------------------------------
    ★ showSummaryUI
 --------------------------------------------------------- */
-function showSummaryUI(push = true) {
+function showSummaryUI(push = false) {
   renderSummary();
 
   // 画面切替（必要なら）
@@ -1683,31 +1683,30 @@ document.addEventListener("DOMContentLoaded", () => {
    戻るボタン処理
 --------------------------------------------------------- */
 window.addEventListener('popstate', (e) => {
-  const state = e.state;
+  console.log("popstate fired:", State.currentView);
 
-  console.log("popstate fired:", state, "history.length=", history.length);
-
-  // ✅ もう戻れない or stateが無い → 戻るキャンセル
-  if (!state || history.length <= 2) {
-    history.pushState({ page: STATE.SUMMARY }, '', '');
-    return;
-  }
-
-  // ✅ 詳細 / matching → サマリ
-  if (State.currentView === "detail" || State.currentView === "matching") {
+  // ✅ ① 詳細 → サマリ
+  if (State.currentView === "detail") {
     showSummaryUI(false);
-    history.pushState({ page: STATE.SUMMARY }, '', '');
     return;
   }
 
-  // ✅ サマリで戻る → 検索クリア
-  if (state.page === STATE.SUMMARY) {
+  // ✅ ② マッチング → サマリ
+  if (State.currentView === "matching") {
+    showSummaryUI(false);
+    return;
+  }
+
+  // ✅ ③ サマリ → 検索クリア
+  if (State.currentView === "summary") {
     clearSearch();
-    showSummaryUI(false);
-    history.pushState({ page: STATE.SUMMARY }, '', '');
+    renderSummary();
+    return;
   }
-});
 
+  // ✅ ④ その他（初回戻るなど）は何もしない
+});
+``
 
 /* ---------------------------------------------------------
    検索クリア関数
