@@ -1480,7 +1480,7 @@ async function checkUpdate() {
         btn.classList.add("update-alert");
         btn.style.cssText = "background:#ff4081;color:#fff;font-weight:bold;";
       }
-      logWarn("新しいデータが公開されています。[最新データ取得] ボタンで再取得してください。");
+      logWarn("新しいデータが公開されています。");
     }
 
     State.latestUpdateAt = latest;
@@ -1516,7 +1516,7 @@ async function init() {
 
   log("Viewer 初期化完了");
 
-  setInterval(checkUpdate, 60000);
+  setInterval(checkUpdate, 30000);
   checkUpdate();
 }
 
