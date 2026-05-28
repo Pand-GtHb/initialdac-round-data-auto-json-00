@@ -104,15 +104,12 @@ function showSummaryUI(push = false) {
   const mv = document.getElementById("matchingView");
   if (mv) mv.style.display = "none";
 
-  if (push) {
-    history.pushState({ page: STATE.SUMMARY }, '', '');
-  }
-
+  // ✅ 遷移で来た場合だけ履歴を整える
   if (!push) {
     history.replaceState({ page: STATE.SUMMARY }, '', '');
+    history.pushState({ page: STATE.SUMMARY }, '', '');
   }
 }
-
 
 /* ---------------------------------------------------------
    ★ 前後ランク移動ボタン制御
