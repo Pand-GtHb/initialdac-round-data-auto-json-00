@@ -504,6 +504,16 @@ let score =
   * areaMultiplier
   * adjustedRealtimeBoost;
 
+   // 重み可視化
+   console.log(
+  player.name,
+  "area=", player.area,
+  "areaScore=", areaScore.toFixed(2),
+  "areaMult=", areaMultiplier.toFixed(2),
+  "rtRaw=", realtimeBoost.toFixed(2),
+  "rtAdj=", adjustedRealtimeBoost.toFixed(2),
+  "score=", score.toFixed(3)
+);
 
 // ===============================
 // 上限＆下限
