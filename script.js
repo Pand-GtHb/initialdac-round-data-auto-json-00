@@ -33,6 +33,12 @@ async function loadAreaList() {
   }
 }
 
+
+const STATE = {
+  SUMMARY: 'summary',
+  DETAIL: 'detail'
+};
+
 /* ---------------------------------------------------------
    RUBY帯・PRIDE帯 定義
 --------------------------------------------------------- */
@@ -82,6 +88,26 @@ function getRankIndex(key) {
 
 function getRankInfo(key) {
   return RANKS.find(r => r.key === key) || null;
+}
+
+
+/* ---------------------------------------------------------
+   ★ showSummaryUI
+--------------------------------------------------------- */
+function showSummaryUI(push = true) {
+  renderSummary();
+
+  // 画面切替（必要なら）
+  State.currentView = "summary";
+  document.getElementById("summaryView").style.display = "block";
+  document.getElementById("detailView").style.display = "none";
+  const mv = document.getElementById("matchingView");
+  if (mv) mv.style.display = "none";
+
+  // “遷移したときだけ” pushする
+  if (push) {
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+  }
 }
 
 /* ---------------------------------------------------------
@@ -895,7 +921,9 @@ function renderSummary() {
 
   const mv = document.getElementById("matchingView");
   if (mv) mv.style.display = "none";
+
 }
+
 /* ---------------------------------------------------------
    詳細表示（前後ランク移動＋検索再実行対応）
 --------------------------------------------------------- */
@@ -913,6 +941,8 @@ function showDetail(key) {
     State.detailOriginal = [];
     State.currentView = "detail";
     State.currentIsRubyBand = isRubyBand;
+    history.pushState({ page: STATE.DETAIL }, '', '');
+
 
     renderDetailTable(isRubyBand, bandLabel, bandIcon);
     document.getElementById("summaryView").style.display = "none";
@@ -930,6 +960,7 @@ function showDetail(key) {
 
   State.currentView = "detail";
   State.currentIsRubyBand = isRubyBand;
+  history.pushState({ page: STATE.DETAIL }, '', '');
 
   renderDetailTable(isRubyBand, bandLabel, bandIcon);
 
@@ -1602,19 +1633,62 @@ document.addEventListener("DOMContentLoaded", () => {
       backToSummaryFromMatching();
     };
   }
-  const myRankSelect = document.getElementById("myRankSelect");
+
+const myRankSelect = document.getElementById("myRankSelect");
   if (myRankSelect) {
     State.selectedMyRank = myRankSelect.value || "R6";
     // 互換：myStarも同期（R7以上なら7、その他は6）
-    State.myStar = (String(State.selectedMyRank).startsWith("R") && Number(String(State.selectedMyRank).slice(1)) >= 7) ? 7 : 6;
+    State.myStar =
+      (String(State.selectedMyRank).startsWith("R") &&
+        Number(String(State.selectedMyRank).slice(1)) >= 7)
+        ? 7 : 6;
 
     myRankSelect.addEventListener("change", (e) => {
-    State.selectedMyRank = e.target.value;
-    State.myStar = (String(State.selectedMyRank).startsWith("R") && Number(String(State.selectedMyRank).slice(1)) >= 7) ? 7 : 6;
-    log(`自分ランク変更：${State.selectedMyRank}`); // ログに出す
+      State.selectedMyRank = e.target.value;
+      State.myStar =
+        (String(State.selectedMyRank).startsWith("R") &&
+          Number(String(State.selectedMyRank).slice(1)) >= 7)
+          ? 7 : 6;
+
+      log(`自分ランク変更：${State.selectedMyRank}`); // ログに出す
+    });
+  } // ✅ if(myRankSelect) を閉じる（←これが不足していた）
+
+  // ✅ DOMが揃ってから初期化を実行（logBox null を防ぐ）
+  init().then(() => {
+    history.replaceState({ page: STATE.SUMMARY }, '', '');
+    history.pushState({ page: STATE.SUMMARY }, '', '');
   });
-}
 
-   init();
+}); // ✅ DOMContentLoaded を閉じる
 
+/* ---------------------------------------------------------
+   戻るボタン処理
+--------------------------------------------------------- */
+window.addEventListener('popstate', (e) => {
+  const state = e.state;
+  if (!state) return;
+
+  // ✅ いま詳細/候補から戻ったのなら → サマリへ（検索は消さない）
+  if (State.currentView === "detail" || State.currentView === "matching") {
+    showSummaryUI(false);
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+    return;
+  }
+
+  // ✅ サマリで戻る → 検索クリア
+  if (state.page === STATE.SUMMARY) {
+    clearSearch();
+    showSummaryUI(false);
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+  }
 });
+
+/* ---------------------------------------------------------
+   検索クリア関数
+--------------------------------------------------------- */
+function clearSearch() {
+  const input = document.getElementById('searchInput');
+  if (input) input.value = '';
+  State.searchText = '';
+}
