@@ -94,19 +94,18 @@ function getRankInfo(key) {
 /* ---------------------------------------------------------
    ★ showSummaryUI
 --------------------------------------------------------- */
-function showSummaryUI(push = false) {
+function showSummaryUI(push = true) {
   renderSummary();
 
+  // 画面切替（必要なら）
   State.currentView = "summary";
-
   document.getElementById("summaryView").style.display = "block";
   document.getElementById("detailView").style.display = "none";
   const mv = document.getElementById("matchingView");
   if (mv) mv.style.display = "none";
 
-  // ✅ 遷移で来た場合だけ履歴を整える
-  if (!push) {
-    history.replaceState({ page: STATE.SUMMARY }, '', '');
+  // “遷移したときだけ” pushする
+  if (push) {
     history.pushState({ page: STATE.SUMMARY }, '', '');
   }
 }
@@ -1478,21 +1477,17 @@ function showMatchingCandidates() {
 
   document.getElementById("summaryView").style.display = "none";
   document.getElementById("detailView").style.display = "none";
+
   const mv = document.getElementById("matchingView");
   if (mv) mv.style.display = "block";
-
-  // ✅ これを追加（重要）
-  history.pushState({ page: "matching" }, '', '');
 }
+
 /* ---------------------------------------------------------
    ★ マッチング候補 → サマリに戻る
 --------------------------------------------------------- */
 function backToSummaryFromMatching() {
   State.currentView = "summary";
   renderSummary();
-
-  // ✅ 追加：matching→summaryの遷移も履歴に反映
-  history.pushState({ page: STATE.SUMMARY }, '', '');
 }
 
 /* ---------------------------------------------------------
@@ -1690,23 +1685,29 @@ document.addEventListener("DOMContentLoaded", () => {
 window.addEventListener('popstate', (e) => {
   const state = e.state;
 
-  console.log("popstate:", State.currentView);
+  console.log("popstate fired:", state, "history.length=", history.length);
 
-  // ✅ 詳細 / matching → サマリへ
+  // ✅ もう戻れない or stateが無い → 戻るキャンセル
+  if (!state || history.length <= 2) {
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+    return;
+  }
+
+  // ✅ 詳細 / matching → サマリ
   if (State.currentView === "detail" || State.currentView === "matching") {
     showSummaryUI(false);
+    history.pushState({ page: STATE.SUMMARY }, '', '');
     return;
   }
 
-  // ✅ サマリ → 検索クリア
-  if (State.currentView === "summary") {
+  // ✅ サマリで戻る → 検索クリア
+  if (state.page === STATE.SUMMARY) {
     clearSearch();
-    renderSummary();
-    return;
+    showSummaryUI(false);
+    history.pushState({ page: STATE.SUMMARY }, '', '');
   }
-
-  // ✅ その他は何もしない（初回など）
 });
+
 
 /* ---------------------------------------------------------
    検索クリア関数
