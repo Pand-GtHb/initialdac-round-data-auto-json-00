@@ -1477,11 +1477,12 @@ function showMatchingCandidates() {
 
   document.getElementById("summaryView").style.display = "none";
   document.getElementById("detailView").style.display = "none";
-
   const mv = document.getElementById("matchingView");
   if (mv) mv.style.display = "block";
-}
 
+  // ✅ これを追加（重要）
+  history.pushState({ page: "matching" }, '', '');
+}
 /* ---------------------------------------------------------
    ★ マッチング候補 → サマリに戻る
 --------------------------------------------------------- */
