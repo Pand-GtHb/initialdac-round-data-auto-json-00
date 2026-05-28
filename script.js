@@ -490,7 +490,7 @@ realtimeBoost = Math.min(realtimeBoost, 2.0);
 // ★相乗暴発抑制
 // ===============================
 const areaInfluence = Math.min(areaScore, 2.5);
-const damping = 1 / Math.pow(areaInfluence, 0.5);
+const damping = 1 / Math.pow(areaInfluence, 0.6);
 
 const adjustedRealtimeBoost =
   1 + (realtimeBoost - 1) * damping;
