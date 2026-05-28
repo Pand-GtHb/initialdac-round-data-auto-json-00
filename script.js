@@ -471,12 +471,45 @@ function calcMatchingScore(player) {
       recencyScore  * w.recency +
       activityScore * w.activity;
    
-   const areaScore = getAreaScore(player);
-   const realtimeBoost = getRealtimeBoost(player);
-   // ★ エリアは「候補母集団」反映、クリック履歴は「当日稼働」反映
-   const score = baseScore * (0.8 + areaScore * 0.4) * realtimeBoost;
-   
-   return Math.max(0, Math.min(1, score));
+const areaScore = getAreaScore(player);
+
+// ===============================
+// area補正（分布差ベース）
+// ===============================
+const areaMultiplier = (0.9 + 0.3 * areaScore);
+
+
+// ===============================
+// realtimeBoost（元ロジック流用）
+// ===============================
+let realtimeBoost = getRealtimeBoost(player);
+realtimeBoost = Math.min(realtimeBoost, 2.0);
+
+
+// ===============================
+// ★相乗暴発抑制
+// ===============================
+const areaInfluence = Math.min(areaScore, 2.5);
+const damping = 1 / Math.pow(areaInfluence, 0.5);
+
+const adjustedRealtimeBoost =
+  1 + (realtimeBoost - 1) * damping;
+
+
+// ===============================
+// 最終スコア
+// ===============================
+let score =
+  baseScore
+  * areaMultiplier
+  * adjustedRealtimeBoost;
+
+
+// ===============================
+// 上限＆下限
+// ===============================
+score = Math.min(score, baseScore * 3.0);  // 暴発防止（任意）
+return Math.max(0, Math.min(1, score));
 }
 
 /* ---------------------------------------------------------
@@ -687,8 +720,21 @@ function buildAreaDistribution(list) {
 function getAreaScore(player) {
   const k = String(player.area ?? "");
   const p = State.areaModel[k] ?? 0.01;
-  return Math.pow(p, 0.7);
+
+  const areaCount = Object.keys(State.areaModel).length || 1;
+
+  // 平均分布
+  const avgP = 1 / areaCount;
+
+  // 正規化
+  const normalized = p / avgP;
+
+  // 強調
+  const areaScore = Math.pow(normalized, 0.7);
+
+  return areaScore;
 }
+
 
 
 /* ---------------------------------------------------------
