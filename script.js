@@ -659,6 +659,12 @@ function applyFilters() {
     return parseDateJST(p.updateDate).getTime() >= filterStartMs;
   });
    State.areaModel = buildAreaDistribution(State.filtered);
+
+   // ★ 「エリア重みが効いているか」確認用ログ
+   log("areaModel top5=" + JSON.stringify(
+  Object.entries(State.areaModel).sort((a,b)=>b[1]-a[1]).slice(0,5)
+));
+   
 }
 
 
