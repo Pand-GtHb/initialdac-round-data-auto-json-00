@@ -1655,10 +1655,12 @@ const myRankSelect = document.getElementById("myRankSelect");
   } // ✅ if(myRankSelect) を閉じる（←これが不足していた）
 
   // ✅ DOMが揃ってから初期化を実行（logBox null を防ぐ）
-  init().then(() => {
-    history.replaceState({ page: STATE.SUMMARY }, '', '');
-    history.pushState({ page: STATE.SUMMARY }, '', '');
-  });
+init().then(() => {
+  // ✅ ダミー2枚入れる（安定化）
+  history.replaceState({ page: STATE.SUMMARY }, '', '');
+  history.pushState({ page: STATE.SUMMARY }, '', '');
+  history.pushState({ page: STATE.SUMMARY }, '', '');
+});
 
 }); // ✅ DOMContentLoaded を閉じる
 
@@ -1667,9 +1669,16 @@ const myRankSelect = document.getElementById("myRankSelect");
 --------------------------------------------------------- */
 window.addEventListener('popstate', (e) => {
   const state = e.state;
-  if (!state) return;
 
-  // ✅ いま詳細/候補から戻ったのなら → サマリへ（検索は消さない）
+  console.log("popstate fired:", state, "history.length=", history.length);
+
+  // ✅ もう戻れない or stateが無い → 戻るキャンセル
+  if (!state || history.length <= 2) {
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+    return;
+  }
+
+  // ✅ 詳細 / matching → サマリ
   if (State.currentView === "detail" || State.currentView === "matching") {
     showSummaryUI(false);
     history.pushState({ page: STATE.SUMMARY }, '', '');
