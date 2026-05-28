@@ -1493,6 +1493,9 @@ function showMatchingCandidates() {
 function backToSummaryFromMatching() {
   State.currentView = "summary";
   renderSummary();
+
+  // ✅ 追加：matching→summaryの遷移も履歴に反映
+  history.pushState({ page: STATE.SUMMARY }, '', '');
 }
 
 /* ---------------------------------------------------------
@@ -1688,31 +1691,25 @@ document.addEventListener("DOMContentLoaded", () => {
    戻るボタン処理
 --------------------------------------------------------- */
 window.addEventListener('popstate', (e) => {
-  console.log("popstate fired:", State.currentView);
+  const state = e.state;
 
-  // ✅ ① 詳細 → サマリ
-  if (State.currentView === "summary") {
-  clearSearch();
-  renderSummary();
-  return;
-  }
+  console.log("popstate:", State.currentView);
 
-  // ✅ ② マッチング → サマリ
-  if (State.currentView === "matching") {
+  // ✅ 詳細 / matching → サマリへ
+  if (State.currentView === "detail" || State.currentView === "matching") {
     showSummaryUI(false);
     return;
   }
 
-  // ✅ ③ サマリ → 検索クリア
+  // ✅ サマリ → 検索クリア
   if (State.currentView === "summary") {
     clearSearch();
     renderSummary();
     return;
   }
 
-  // ✅ ④ その他（初回戻るなど）は何もしない
+  // ✅ その他は何もしない（初回など）
 });
-``
 
 /* ---------------------------------------------------------
    検索クリア関数
