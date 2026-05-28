@@ -1687,9 +1687,11 @@ window.addEventListener('popstate', (e) => {
   console.log("popstate fired:", State.currentView);
 
   // ✅ ① 詳細 → サマリ
-  if (State.currentView === "detail") {
-    showSummaryUI(false);
-    return;
+  if (State.currentView === "summary") {
+  clearSearch();
+  renderSummary();
+  history.pushState({ page: STATE.SUMMARY }, '', '');
+  return;
   }
 
   // ✅ ② マッチング → サマリ
