@@ -472,7 +472,7 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
 function calcMatchingScore(player) {
   if (!player || !player.updateDate) return 0;
 
-  // ★ 学習（相手ランク分布）
+  // ★ Season（ランク分布）
   const strengthScore = getSeasonStrengthScore(player);
 
   // ★ Phase / Recency
@@ -485,67 +485,57 @@ function calcMatchingScore(player) {
 
   const recencyScore = Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);
 
-  // ★ Activity（Viewer上の指標：starCnt / pridePoint）
+  // ★ Activity
   const star = Number(player.starCnt ?? 0);
   const pride = Number(player.pridePoint ?? 0);
-  const activityScore = star > 0 ? Math.min(1, star / 8) : (pride > 0 ? 0.70 : 0);
+  const activityScore =
+    star > 0 ? Math.min(1, star / 8)
+             : (pride > 0 ? 0.70 : 0);
 
   const w = MATCHING_SCORE_CONFIG.weight;
-   const baseScore =
-      strengthScore * w.strength +
+
+  // ✅ Seasonを除いた基本スコア
+  const rawScore =
       phaseScore    * w.phase +
       recencyScore  * w.recency +
       activityScore * w.activity;
-   
-const areaScore = getAreaScore(player);
 
-// ===============================
-// area補正（分布差ベース）
-// ===============================
-const areaMultiplier = (0.9 + 0.3 * areaScore);
+  // ✅ ★最重要：Seasonを掛け算
+  let baseScore = rawScore * strengthScore;
 
+  // ===============================
+  // area補正
+  // ===============================
+  const areaScore = getAreaScore(player);
+  const areaMultiplier = (0.9 + 0.3 * areaScore);
 
-// ===============================
-// realtimeBoost（元ロジック流用）
-// ===============================
-let realtimeBoost = getRealtimeBoost(player);
-realtimeBoost = Math.min(realtimeBoost, 2.0);
+  // ===============================
+  // realtimeBoost
+  // ===============================
+  let realtimeBoost = getRealtimeBoost(player);
+  realtimeBoost = Math.min(realtimeBoost, 2.0);
 
+  // ===============================
+  // ★相乗暴発抑制
 
-// ===============================
-// ★相乗暴発抑制
-// ===============================
-const areaInfluence = Math.min(areaScore, 2.5);
-const damping = 1 / Math.pow(areaInfluence, 0.6);
+  const areaInfluence = Math.min(areaScore, 2.5);
+  const damping = 1 / Math.pow(areaInfluence, 0.6);
 
-const adjustedRealtimeBoost =
-  1 + (realtimeBoost - 1) * damping;
+  const adjustedRealtimeBoost =
+    1 + (realtimeBoost - 1) * damping;
 
+  // ===============================
+  // 最終スコア
+  // ===============================
+  let score =
+    baseScore *
+    areaMultiplier *
+    adjustedRealtimeBoost;
 
-// ===============================
-// 最終スコア
-// ===============================
-let score =
-  baseScore
-  * areaMultiplier
-  * adjustedRealtimeBoost;
+  // 上限＆下限
+  score = Math.min(score, baseScore * 3.0);
 
-   // 重み可視化
-   console.log(
-  player.name,
-  "area=", player.area,
-  "areaScore=", areaScore.toFixed(2),
-  "areaMult=", areaMultiplier.toFixed(2),
-  "rtRaw=", realtimeBoost.toFixed(2),
-  "rtAdj=", adjustedRealtimeBoost.toFixed(2),
-  "score=", score.toFixed(3)
-);
-
-// ===============================
-// 上限＆下限
-// ===============================
-score = Math.min(score, baseScore * 3.0);  // 暴発防止（任意）
-return Math.max(0, Math.min(1, score));
+  return Math.max(0, Math.min(1, score));
 }
 
 /* ---------------------------------------------------------
