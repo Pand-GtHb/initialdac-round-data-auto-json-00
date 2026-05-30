@@ -707,7 +707,7 @@ function applyFilters() {
     return;
   }
 
-  const baseMs = parseDateJST(State.generatedAt).getTime();
+  const baseMs = Date.now();
   const filterStartMs = baseMs - minutes * 60 * 1000;
 
   document.getElementById("filterStartTime").textContent =
