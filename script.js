@@ -440,10 +440,12 @@ const MATCHING_SCORE_CONFIG = {
     phase:    0.25,
     recency:  0.25,
     activity: 0.10
-  }
+  },
 
   // ★ 目標10人前提：閾値を下げる
-  threshold: 0.18
+  threshold: 0.18,
+
+  relaxedThreshold: 0.12,
 
   // ★ 0人対策：最低でも上位10人は必ず表示
   minCandidates: 10
@@ -1189,6 +1191,7 @@ function buildMatchingCandidates() {
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
 
+  const relaxed = MATCHING_SCORE_CONFIG.relaxedThreshold;
   const base = State.filtered;
 
   // まず全員スコア化（学習＋時刻）
