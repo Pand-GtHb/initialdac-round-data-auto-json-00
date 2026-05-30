@@ -1326,6 +1326,9 @@ function downloadCSV(filename, header, body) {
 /* ---------------------------------------------------------
    ●●●Part 6 / 6（更新監視・初期化・DOMContentLoaded・popstate・clearSearch）
 --------------------------------------------------------- */
+/* ---------------------------------------------------------
+   latest_update.json 監視（更新検知）
+--------------------------------------------------------- */
 async function checkUpdate() {
   try {
     const res = await fetch(`${BASE_URL}/latest_update.json?t=${Date.now()}`, {
@@ -1346,52 +1349,55 @@ async function checkUpdate() {
     }
 
     State.latestUpdateAt = latest;
+
   } catch (e) {
     logError("latest_update.json の取得に失敗：" + e.message);
   }
 }
 
 /* ---------------------------------------------------------
-   初期化（★ loadAreaList を追加済み）
+   初期化
 --------------------------------------------------------- */
 async function init() {
   log("Viewer 初期化中");
   startProgress();
-  // ★ RUBY / PRIDE フィルタ自動生成
+
   buildRubyFilters();
   buildPrideFilters();
-  // ★ 追加：areaList.json を読み込む
+
   await loadAreaList();
   await loadLatestRound();
   await loadSeasonModel();
   await loadRoundData();
+
   applyFilters();
   buildSummary();
   renderSummary();
+
   stopProgress();
   log("Viewer 初期化完了");
+
   setInterval(checkUpdate, 30000);
   checkUpdate();
 }
 
 /* ---------------------------------------------------------
-   検索クリア関数
+   検索クリア
 --------------------------------------------------------- */
 function clearSearch() {
-  const input = document.getElementById('searchInput');
-  if (input) input.value = '';
-  State.searchText = '';
+  const input = document.getElementById("searchInput");
+  if (input) input.value = "";
+  State.searchText = "";
 }
 
 /* ---------------------------------------------------------
    DOMContentLoaded
 --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
-  // ✅ 最優先で履歴を仕込む（初回戻るで閉じる対策）
+
   history.replaceState({ page: STATE.SUMMARY }, '', '');
   history.pushState({ page: STATE.SUMMARY }, '', '');
 
-  // ★ ボタン群を1行に揃えて生成
   const btnArea = document.getElementById("buttonArea");
   if (btnArea) {
     btnArea.innerHTML = `
@@ -1404,7 +1410,6 @@ document.addEventListener("DOMContentLoaded", () => {
     `;
   }
 
-  // ✅ 安全に要素取得（null防止）
   const reloadBtn = document.getElementById("reloadBtn");
   const filterBtn = document.getElementById("filterBtn");
   const summaryCsvBtn = document.getElementById("summaryCsvBtn");
@@ -1414,7 +1419,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const matchingBackBtn = document.getElementById("matchingBackBtn");
   const searchInput = document.getElementById("searchInput");
 
-  // ✅ reload
   if (reloadBtn) {
     reloadBtn.classList.remove("update-alert");
     reloadBtn.style.cssText = "";
@@ -1428,7 +1432,6 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  // ✅ filter
   if (filterBtn) {
     filterBtn.onclick = () => {
       startProgress();
@@ -1439,11 +1442,9 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  // ✅ CSV
   if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;
   if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;
 
-  // ✅ 検索
   if (searchInput) {
     searchInput.addEventListener("input", (e) => {
       State.searchText = e.target.value;
@@ -1458,7 +1459,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // ✅ サマリ戻る（UIボタン）
   if (backBtn && searchInput) {
     backBtn.onclick = () => {
       State.searchText = "";
@@ -1467,7 +1467,6 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  // ✅ matching表示
   if (matchingBtn && searchInput) {
     matchingBtn.onclick = () => {
       State.searchText = "";
@@ -1484,7 +1483,6 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  // ✅ ランク選択
   const myRankSelect = document.getElementById("myRankSelect");
   if (myRankSelect) {
     State.selectedMyRank = myRankSelect.value || "R6";
@@ -1492,17 +1490,18 @@ document.addEventListener("DOMContentLoaded", () => {
       (String(State.selectedMyRank).startsWith("R") &&
         Number(String(State.selectedMyRank).slice(1)) >= 7)
         ? 7 : 6;
+
     myRankSelect.addEventListener("change", (e) => {
       State.selectedMyRank = e.target.value;
       State.myStar =
         (String(State.selectedMyRank).startsWith("R") &&
           Number(String(State.selectedMyRank).slice(1)) >= 7)
           ? 7 : 6;
+
       log(`自分ランク変更：${State.selectedMyRank}`);
     });
   }
 
-  // ✅ 初期化（DOM後）
   init();
 });
 
@@ -1512,23 +1511,21 @@ document.addEventListener("DOMContentLoaded", () => {
 window.addEventListener('popstate', (e) => {
   const state = e.state;
   console.log("popstate fired:", state, "history.length=", history.length);
-  // ✅ もう戻れない or stateが無い → 戻るキャンセル
+
   if (!state || history.length <= 2) {
     history.pushState({ page: STATE.SUMMARY }, '', '');
     return;
   }
-  // ✅ 詳細 / matching → サマリ
+
   if (State.currentView === "detail" || State.currentView === "matching") {
     showSummaryUI(false);
     history.pushState({ page: STATE.SUMMARY }, '', '');
     return;
   }
-  // ✅ サマリで戻る → 検索クリア
+
   if (state.page === STATE.SUMMARY) {
     clearSearch();
     showSummaryUI(false);
     history.pushState({ page: STATE.SUMMARY }, '', '');
   }
 });
-   latest_update.json 監視（更新検知）
---------------------------------------------------------- */
