@@ -398,6 +398,7 @@ async function fetchJSON(path) {
 /* ---------------------------------------------------------
    ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）
    （指定周期の境目 ±w 分にいるプレイヤーを候補とする）
+   ※ 旧ロジックは今回のみ削除許可（Pさん指示）
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(updateDateStr) {
   if (!updateDateStr) return false;
@@ -413,14 +414,16 @@ function isMatchingCandidateByPhase(updateDateStr) {
   const diffMin = (now - last) / 60000;
 
   // サイクル設定
-  const cycle = MATCHING_SCORE_CONFIG.cycle;
+  const cycle = 4; // 4分00秒
+  if (diffMin < cycle) return false;
 
   // 周期の位相（フェーズ）
   const r = diffMin % cycle;
   const d = Math.min(r, cycle - r); // 境目からの距離
 
-  // ★ 許容幅 w isMatchingCandidateByPhase() でも同じ設定を使うよう揃える
-  const w = MATCHING_SCORE_CONFIG.phaseWindow;
+  // ★ 許容幅 w（±0.25分＝15秒）
+  const w = 0.25;
+
   return d <= w;
 }
 
@@ -437,15 +440,15 @@ const MATCHING_SCORE_CONFIG = {
   recencyTau: 12,
 
   weight: {
+    // ★ 学習（strength）を少し強めると「当たりやすい帯」が上がる
+    strength: 0.40,
     phase:    0.25,
     recency:  0.25,
     activity: 0.10
   },
 
   // ★ 目標10人前提：閾値を下げる
-  threshold: 0.18,
-
-  relaxedThreshold: 0.12,
+  threshold: 0.30,
 
   // ★ 0人対策：最低でも上位10人は必ず表示
   minCandidates: 10
@@ -465,13 +468,11 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
   const d = Math.min(r, cycleMin - r);
   return { diffMin, d };
 }
-/* ---------------------------------------------------------
-   ★ 予測スコア計算
---------------------------------------------------------- */
+
 function calcMatchingScore(player) {
   if (!player || !player.updateDate) return 0;
 
-  // ★ Season（ランク分布）
+  // ★ 学習（相手ランク分布）
   const strengthScore = getSeasonStrengthScore(player);
 
   // ★ Phase / Recency
@@ -484,54 +485,67 @@ function calcMatchingScore(player) {
 
   const recencyScore = Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);
 
-  // ★ Activity
+  // ★ Activity（Viewer上の指標：starCnt / pridePoint）
   const star = Number(player.starCnt ?? 0);
   const pride = Number(player.pridePoint ?? 0);
-  const activityScore =
-    star > 0 ? Math.min(1, star / 8)
-             : (pride > 0 ? 0.70 : 0);
+  const activityScore = star > 0 ? Math.min(1, star / 8) : (pride > 0 ? 0.70 : 0);
 
   const w = MATCHING_SCORE_CONFIG.weight;
-
-  // ✅ Seasonを除いた基本スコア
-  const rawScore =
+   const baseScore =
+      strengthScore * w.strength +
       phaseScore    * w.phase +
       recencyScore  * w.recency +
       activityScore * w.activity;
+   
+const areaScore = getAreaScore(player);
 
-  // ✅ ★最重要：Seasonを掛け算
-  let baseScore = rawScore * strengthScore;
+// ===============================
+// area補正（分布差ベース）
+// ===============================
+const areaMultiplier = (0.9 + 0.3 * areaScore);
 
-  // ===============================
-  // area補正
-  // ===============================
-  const areaScore = getAreaScore(player);
-  const areaMultiplier = (0.9 + 0.3 * areaScore);
 
-  // ===============================
-  // realtimeBoost
-  // ===============================
-  let realtimeBoost = getRealtimeBoost(player);
-  realtimeBoost = Math.min(realtimeBoost, 2.0);
+// ===============================
+// realtimeBoost（元ロジック流用）
+// ===============================
+let realtimeBoost = getRealtimeBoost(player);
+realtimeBoost = Math.min(realtimeBoost, 2.0);
 
-  // ===============================
-  // ★相乗暴発抑制
-  const areaInfluence = Math.min(areaScore, 2.5);
-  const damping = 1 / Math.pow(areaInfluence, 0.6);
-  const adjustedRealtimeBoost = 1 + (realtimeBoost - 1) * damping;
 
-  // ===============================
-  // 最終スコア
-  // ===============================
-  let score =
-    baseScore *
-    areaMultiplier *
-    adjustedRealtimeBoost;
+// ===============================
+// ★相乗暴発抑制
+// ===============================
+const areaInfluence = Math.min(areaScore, 2.5);
+const damping = 1 / Math.pow(areaInfluence, 0.6);
 
-  // 上限＆下限
-  score = Math.min(score, baseScore * 3.0);
+const adjustedRealtimeBoost =
+  1 + (realtimeBoost - 1) * damping;
 
-  return Math.max(0, Math.min(1, score));
+
+// ===============================
+// 最終スコア
+// ===============================
+let score =
+  baseScore
+  * areaMultiplier
+  * adjustedRealtimeBoost;
+
+   // 重み可視化
+   console.log(
+  player.name,
+  "area=", player.area,
+  "areaScore=", areaScore.toFixed(2),
+  "areaMult=", areaMultiplier.toFixed(2),
+  "rtRaw=", realtimeBoost.toFixed(2),
+  "rtAdj=", adjustedRealtimeBoost.toFixed(2),
+  "score=", score.toFixed(3)
+);
+
+// ===============================
+// 上限＆下限
+// ===============================
+score = Math.min(score, baseScore * 3.0);  // 暴発防止（任意）
+return Math.max(0, Math.min(1, score));
 }
 
 /* ---------------------------------------------------------
@@ -703,7 +717,7 @@ function applyFilters() {
     return;
   }
 
-  const baseMs = Date.now();
+  const baseMs = parseDateJST(State.generatedAt).getTime();
   const filterStartMs = baseMs - minutes * 60 * 1000;
 
   document.getElementById("filterStartTime").textContent =
@@ -756,6 +770,8 @@ function getAreaScore(player) {
 
   return areaScore;
 }
+
+
 
 /* ---------------------------------------------------------
    サマリ統計計算
@@ -1191,8 +1207,8 @@ function buildMatchingCandidates() {
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
 
-  const relaxed = MATCHING_SCORE_CONFIG.relaxedThreshold;
-  const base = State.filtered;
+  // filtered が極端に少ないと不安定になるので、必要なら all に退避
+  const base = (State.filtered.length >= 30 ? State.filtered : State.all);
 
   // まず全員スコア化（学習＋時刻）
   const scoredAll = base.map(p => {
@@ -1213,17 +1229,13 @@ function buildMatchingCandidates() {
     }
   });
 
-  log(`matching base件数=${base.length}`);
-  log(`matching rank通過件数=${filteredByRank.length}`);
-
   // Step1: 通常閾値
   let list = filteredByRank.filter(p => p.__score >= MATCHING_SCORE_CONFIG.threshold);
 
   // Step2: 0人なら閾値緩和
   if (list.length === 0) {
-    const relaxed = MATCHING_SCORE_CONFIG.relaxedThreshold;
+    const relaxed = Math.max(0.25, MATCHING_SCORE_CONFIG.threshold - 0.10);
     list = filteredByRank.filter(p => p.__score >= relaxed);
-
     if (list.length > 0) {
       logWarn(`候補0人のため閾値を緩和：${MATCHING_SCORE_CONFIG.threshold} → ${relaxed}`);
     }
@@ -1256,48 +1268,30 @@ function buildMatchingCandidates() {
     return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
 
+// ★ 最終ガード：候補が10人未満なら、スコア上位で埋める（必ず10人出す）
+if (list.length < MATCHING_SCORE_CONFIG.minCandidates) {
+  const need = MATCHING_SCORE_CONFIG.minCandidates - list.length;
 
-  // ★ 補完元は「同じ時間フィルタ内・同じランク条件内」の未採用候補全体
-  if (list.length < MATCHING_SCORE_CONFIG.minCandidates) {
-    const need = MATCHING_SCORE_CONFIG.minCandidates - list.length;
-    const existingNames = new Set(list.map(p => p.name));
+  const existingNames = new Set(list.map(p => p.name));
+  const fillers = filteredByRank
+    .filter(p => !existingNames.has(p.name))
+    .slice()
+    .sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0))
+    .slice(0, need);
 
-    const fillers = filteredByRank
-      .filter(p => !existingNames.has(p.name))
-      .slice()
-      .sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0))
-      .slice(0, need);
+  list = list.concat(fillers);
 
-    list = list.concat(fillers);
-
-    if (fillers.length > 0) {
-      logWarn(
-        `候補が${MATCHING_SCORE_CONFIG.minCandidates}人未満のため、上位スコアで補完しました（+${fillers.length}）`
-      );
-    }
+  if (fillers.length > 0) {
+    logWarn(`候補が${MATCHING_SCORE_CONFIG.minCandidates}人未満のため、上位スコアで補完しました（+${fillers.length}）`);
   }
-
-  // 最終確定
-  list = list.slice(0, MATCHING_SCORE_CONFIG.minCandidates);
+}
+// ★ 最終確定：候補は必ず上位N人に固定
+list = list.slice(0, MATCHING_SCORE_CONFIG.minCandidates);
   State.matchingList = list;
 
-  if (filteredByRank.length > 0) {
-    const scorePreview = filteredByRank
-      .slice()
-      .sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0))
-      .slice(0, 10)
-      .map(p => `${p.name}(${(p.__score ?? 0).toFixed(3)})`)
-      .join(" / ");
-    log(`scoreTop10: ${scorePreview}`);
-  }
-
+  // デバッグログ（上位5）
   if (State.matchingList.length) {
-    log(
-      `候補TOP: ${State.matchingList
-        .slice(0, 5)
-        .map(p => `${p.name}(${(p.__score ?? 0).toFixed(2)})`)
-        .join(" / ")}`
-    );
+    log(`候補TOP: ${State.matchingList.slice(0,5).map(p => `${p.name}(${(p.__score??0).toFixed(2)})`).join(" / ")}`);
   }
 }
 
