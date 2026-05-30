@@ -1326,7 +1326,7 @@ function downloadCSV(filename, header, body) {
 /* ---------------------------------------------------------
    ●●●Part 6 / 6（更新監視・初期化・DOMContentLoaded・popstate・clearSearch）
 --------------------------------------------------------- */
-/* ---------------------------------------------------------/* ------------------------------------------------ {
+async function checkUpdate() {
   try {
     const res = await fetch(`${BASE_URL}/latest_update.json?t=${Date.now()}`, {
       cache: "no-store"
@@ -1335,6 +1335,7 @@ function downloadCSV(filename, header, body) {
     const json = await res.json();
     const latest = json.lastUpdated || "";
     if (!latest) return;
+
     if (State.latestUpdateAt && State.latestUpdateAt !== latest) {
       const btn = document.getElementById("reloadBtn");
       if (btn) {
@@ -1343,6 +1344,7 @@ function downloadCSV(filename, header, body) {
       }
       logWarn("新しいデータが公開されています。");
     }
+
     State.latestUpdateAt = latest;
   } catch (e) {
     logError("latest_update.json の取得に失敗：" + e.message);
