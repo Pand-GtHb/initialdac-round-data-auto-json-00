@@ -5,9 +5,6 @@
 /* ---------------------------------------------------------
    ●●●Part 1 / 6（ヘッダ・定数・状態・ログ・進行表示）
 --------------------------------------------------------- */
-/* ---------------------------------------------------------
-   Initial DAC Round Data Viewer（integrated_data.json + latest_round.json 対応）
---------------------------------------------------------- */
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
 
 /* ---------------------------------------------------------
@@ -57,9 +54,11 @@ const RANKS = [
     order: 8 + idx
   }))
 ];
+
 function getRankIndex(key) {
   return RANKS.findIndex(r => r.key === key);
 }
+
 function getRankInfo(key) {
   return RANKS.find(r => r.key === key) || null;
 }
@@ -107,16 +106,18 @@ const State = {
   currentIsRubyBand: true,
   matchingList: [],
   seasonModel: null,
-  myStar: 6,     
+  myStar: 6,
   selectedMyRank: "R6",   // ★ UI選択（デフォルトR6）
   recentClicks: [],       // ★ クリック履歴（リアルタイムBoost）
-  areaModel: {}           // ★ フィルタ後母集団のエリア分布
+  areaModel: {},          // ★ フィルタ後母集団のエリア分布
+  filtersApplied: false   // ★ フィルタ実行済みフラグ（障害回避用）
 };
 
 /* ---------------------------------------------------------
    ログ
 --------------------------------------------------------- */
 const MAX_LOG_LINES = 200;
+
 function appendLog(msg, type = "info") {
   const box = document.getElementById("logBox");
   const now = new Date();
@@ -136,6 +137,7 @@ function appendLog(msg, type = "info") {
     box.removeChild(box.lastChild);
   }
 }
+
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
@@ -146,6 +148,7 @@ const logError = msg => appendLog(msg, "error");
 let progressTimer = null;
 let progressPos = 0;
 let progressLine = null;
+
 function startProgress() {
   const box = document.getElementById("logBox");
   if (progressLine) progressLine.remove();
@@ -159,12 +162,14 @@ function startProgress() {
     updateProgressBar();
   }, 120);
 }
+
 function updateProgressBar() {
   const total = 20;
   const filled = "■".repeat(progressPos);
   const empty = "□".repeat(total - progressPos);
   progressLine.textContent = `進行中：${filled}${empty}`;
 }
+
 function stopProgress() {
   if (progressTimer) clearInterval(progressTimer);
   progressTimer = null;
@@ -176,13 +181,13 @@ function stopProgress() {
 }
 
 /* ---------------------------------------------------------
-   ●●●Part 2 / 6（ユーティリティ・取得系）
+   ●●●PartPart 2 / 6（ユーティリティ・取得系）
 --------------------------------------------------------- */
-/* ---------------------------------------------------------
-   ユーティリティ
+/* ---------------------------------------------------------/*   ユーティリティ
 --------------------------------------------------------- */
 const fmt = n => Number(n).toLocaleString();
 const parseDateJST = str => new Date(str.replace(/-/g, "/"));
+
 function formatYMDHM(date) {
   const y = date.getFullYear();
   const m = ("0" + (date.getMonth() + 1)).slice(-2);
@@ -217,17 +222,20 @@ function getZenkakuLength(str) {
   const len = str.replace(/[^\x00-\x7F]/g, "xx").length;
   return len / 2;
 }
+
 function isMostlyAscii(str) {
   if (!str) return true;
   const asciiCount = (str.match(/[\x00-\x7F]/g) || []).length;
   return asciiCount / str.length >= 0.7;
 }
+
 function getTextWidth(text, font) {
   const canvas = getTextWidth.canvas || (getTextWidth.canvas = document.createElement("canvas"));
   const ctx = canvas.getContext("2d");
   ctx.font = font;
   return ctx.measureText(text).width;
 }
+
 function shortenStoreName(full) {
   if (!full) return "";
   if (!isMostlyAscii(full)) {
@@ -350,7 +358,12 @@ async function loadRoundData() {
       normalizedName: normalize(p.name),
       areaName: AreaList[String(p.area)] || ""
     }));
+
+    // ★ 未フィルタ状態を明示
     State.filtered = [...State.all];
+    State.filtersApplied = false;
+    State.areaModel = {};
+
     const genTime = State.generatedAt
       ? formatYMDHM(parseDateJST(State.generatedAt))
       : "-";
@@ -372,25 +385,49 @@ async function loadRoundData() {
    フィルタ（時間フィルタ）
 --------------------------------------------------------- */
 function applyFilters() {
-  const minutes = Number(document.getElementById("rangeSelect").value);
+  // ★ データ未ロード防御
+  if (!State.all || State.all.length === 0) {
+    logWarn("applyFilters をスキップ：State.all が未ロードです");
+    return;
+  }
+
+  const rangeEl = document.getElementById("rangeSelect");
+  const rawMinutes = rangeEl ? Number(rangeEl.value) : NaN;
+
+  // ★ 不正値防御（初期値未設定・DOM未準備対策）
+  const minutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : 60;
+  if (!Number.isFinite(rawMinutes) || rawMinutes <= 0) {
+    logWarn(`rangeSelect の値が不正のため、${minutes}分でフィルタします`);
+  }
+
   if (!State.generatedAt) {
     logError("generatedAt が未取得のため、時間フィルタをスキップしました");
     State.filtered = [...State.all];
+    State.areaModel = buildAreaDistribution(State.filtered);
+    State.filtersApplied = true;
     return;
   }
+
   const baseMs = parseDateJST(State.generatedAt).getTime();
   const filterStartMs = baseMs - minutes * 60 * 1000;
-  document.getElementById("filterStartTime").textContent =
-    formatYMDHM(new Date(filterStartMs));
+
+  const filterStartTimeEl = document.getElementById("filterStartTime");
+  if (filterStartTimeEl) {
+    filterStartTimeEl.textContent = formatYMDHM(new Date(filterStartMs));
+  }
+
   State.filtered = State.all.filter(p => {
     if (!p.updateDate) return false;
-    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
+    const ts = parseDateJST(p.updateDate).getTime();
+    return Number.isFinite(ts) && ts >= filterStartMs;
   });
-   State.areaModel = buildAreaDistribution(State.filtered);
-   // ★ 「エリア重みが効いているか」確認用ログ
-   log("areaModel top5=" + JSON.stringify(
-  Object.entries(State.areaModel).sort((a,b)=>b[1]-a[1]).slice(0,5)
-));     
+
+  State.areaModel = buildAreaDistribution(State.filtered);
+  State.filtersApplied = true;
+
+  log("areaModel top5=" + JSON.stringify(
+    Object.entries(State.areaModel).sort((a, b) => b[1] - a[1]).slice(0, 5)
+  ));
 }
 
 /* ---------------------------------------------------------
@@ -408,6 +445,7 @@ function buildAreaDistribution(list) {
   for (const k in counts) dist[k] = counts[k] / total;
   return dist;
 }
+
 function getAreaScore(player) {
   const k = String(player.area ?? "");
   const p = State.areaModel[k] ?? 0.01;
@@ -496,7 +534,10 @@ function buildSummary() {
     .map(x => Number(x.value));
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
-  const base = State.filtered.length ? State.filtered : State.all;
+
+  // ★ 完成形：フィルタ実行済みなら 0件でも filtered を使う
+  const base = State.filtersApplied ? State.filtered : State.all;
+
   State.summary = RANKS
     .filter(rank => {
       if (rank.type === "ruby") return selectedStars.includes(rank.star);
@@ -778,7 +819,7 @@ function copyToClipboard(text) {
   navigator.clipboard.writeText(text)
     .then(() => {
       log(`コピー：${text}`);  // ★ 追加（成功時）
-       recordClickFromCopiedText(text);
+      recordClickFromCopiedText(text);
     })
     .catch(() => {
       logError("コピーに失敗しました");  // ★ 失敗時
@@ -842,11 +883,10 @@ function getRealtimeBoost(player) {
 }
 
 /* ---------------------------------------------------------
-   ●●●PartPart 5 / 6（マッチング・CSV）
+   ●●●Part 5 / 6（マッチング・CSV）
 --------------------------------------------------------- */
 /* ---------------------------------------------------------
-   ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）
-   （指定周期の境目 ±w 分にいるプレイヤーを候補とする）
+   ★ 新ロジック：現在 分にいるプレイヤーを候補とする）   ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）
    ※ 旧ロジックは今回のみ削除許可（Pさん指示）
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(updateDateStr) {
@@ -868,6 +908,7 @@ function isMatchingCandidateByPhase(updateDateStr) {
   const w = 0.25;
   return d <= w;
 }
+
 function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cycle) {
   if (!updateDateStr) return { diffMin: Infinity, d: Infinity };
   const now = new Date();
@@ -933,50 +974,53 @@ function calcMatchingScore(player) {
   const pride = Number(player.pridePoint ?? 0);
   const activityScore = star > 0 ? Math.min(1, star / 8) : (pride > 0 ? 0.70 : 0);
   const w = MATCHING_SCORE_CONFIG.weight;
-   const baseScore =
+  const baseScore =
       strengthScore * w.strength +
       phaseScore    * w.phase +
       recencyScore  * w.recency +
-      activityScore * w.activity;     
-const areaScore = getAreaScore(player);
-// ===============================
-// area補正（分布差ベース）
-// ===============================
-const areaMultiplier = (0.9 + 0.3 * areaScore);
-// ===============================
-// realtimeBoost（元ロジック流用）
-// ===============================
-let realtimeBoost = getRealtimeBoost(player);
-realtimeBoost = Math.min(realtimeBoost, 2.0);
-// ===============================
-// ★相乗暴発抑制
-// ===============================
-const areaInfluence = Math.min(areaScore, 2.5);
-const damping = 1 / Math.pow(areaInfluence, 0.6);
-const adjustedRealtimeBoost =
-  1 + (realtimeBoost - 1) * damping;
-// ===============================
-// 最終スコア
-// ===============================
-let score =
-  baseScore
-  * areaMultiplier
-  * adjustedRealtimeBoost;
-   // 重み可視化
-   console.log(
-  player.name,
-  "area=", player.area,
-  "areaScore=", areaScore.toFixed(2),
-  "areaMult=", areaMultiplier.toFixed(2),
-  "rtRaw=", realtimeBoost.toFixed(2),
-  "rtAdj=", adjustedRealtimeBoost.toFixed(2),
-  "score=", score.toFixed(3)
-);
-// ===============================
-// 上限＆下限
-// ===============================
-score = Math.min(score, baseScore * 3.0);  // 暴発防止（任意）
-return Math.max(0, Math.min(1, score));
+      activityScore * w.activity;
+
+  const areaScore = getAreaScore(player);
+  // ===============================
+  // area補正（分布差ベース）
+  // ===============================
+  const areaMultiplier = (0.9 + 0.3 * areaScore);
+  // ===============================
+  // realtimeBoost（元ロジック流用）
+  // ===============================
+  let realtimeBoost = getRealtimeBoost(player);
+  realtimeBoost = Math.min(realtimeBoost, 2.0);
+  // ===============================
+  // ★相乗暴発抑制
+  // ===============================
+  const areaInfluence = Math.min(areaScore, 2.5);
+  const damping = 1 / Math.pow(areaInfluence, 0.6);
+  const adjustedRealtimeBoost =
+    1 + (realtimeBoost - 1) * damping;
+  // ===============================
+  // 最終スコア
+  // ===============================
+  let score =
+    baseScore
+    * areaMultiplier
+    * adjustedRealtimeBoost;
+
+  // 重み可視化
+  console.log(
+    player.name,
+    "area=", player.area,
+    "areaScore=", areaScore.toFixed(2),
+    "areaMult=", areaMultiplier.toFixed(2),
+    "rtRaw=", realtimeBoost.toFixed(2),
+    "rtAdj=", adjustedRealtimeBoost.toFixed(2),
+    "score=", score.toFixed(3)
+  );
+
+  // ===============================
+  // 上限＆下限
+  // ===============================
+  score = Math.min(score, baseScore * 3.0);  // 暴発防止（任意）
+  return Math.max(0, Math.min(1, score));
 }
 
 /* ---------------------------------------------------------
@@ -1037,22 +1081,24 @@ function buildMatchingCandidates() {
     if (oa !== ob) return oa - ob;
     return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
   });
-// ★ 最終ガード：候補が10人未満なら、スコア上位で埋める（必ず10人出す）
-if (list.length < MATCHING_SCORE_CONFIG.minCandidates) {
-  const need = MATCHING_SCORE_CONFIG.minCandidates - list.length;
-  const existingNames = new Set(list.map(p => p.name));
-  const fillers = filteredByRank
-    .filter(p => !existingNames.has(p.name))
-    .slice()
-    .sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0))
-    .slice(0, need);
-  list = list.concat(fillers);
-  if (fillers.length > 0) {
-    logWarn(`候補が${MATCHING_SCORE_CONFIG.minCandidates}人未満のため、上位スコアで補完しました（+${fillers.length}）`);
+
+  // ★ 最終ガード：候補が10人未満なら、スコア上位で埋める（必ず10人出す）
+  if (list.length < MATCHING_SCORE_CONFIG.minCandidates) {
+    const need = MATCHING_SCORE_CONFIG.minCandidates - list.length;
+    const existingNames = new Set(list.map(p => p.name));
+    const fillers = filteredByRank
+      .filter(p => !existingNames.has(p.name))
+      .slice()
+      .sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0))
+      .slice(0, need);
+    list = list.concat(fillers);
+    if (fillers.length > 0) {
+      logWarn(`候補が${MATCHING_SCORE_CONFIG.minCandidates}人未満のため、上位スコアで補完しました（+${fillers.length}）`);
+    }
   }
-}
-// ★ 最終確定：候補は必ず上位N人に固定
-list = list.slice(0, MATCHING_SCORE_CONFIG.minCandidates);
+
+  // ★ 最終確定：候補は必ず上位N人に固定
+  list = list.slice(0, MATCHING_SCORE_CONFIG.minCandidates);
   State.matchingList = list;
   // デバッグログ（上位5）
   if (State.matchingList.length) {
@@ -1280,10 +1326,7 @@ function downloadCSV(filename, header, body) {
 /* ---------------------------------------------------------
    ●●●Part 6 / 6（更新監視・初期化・DOMContentLoaded・popstate・clearSearch）
 --------------------------------------------------------- */
-/* ---------------------------------------------------------
-   latest_update.json 監視（更新検知）
---------------------------------------------------------- */
-async function checkUpdate() {
+/* ---------------------------------------------------------/* ------------------------------------------------ {
   try {
     const res = await fetch(`${BASE_URL}/latest_update.json?t=${Date.now()}`, {
       cache: "no-store"
@@ -1345,6 +1388,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // ✅ 最優先で履歴を仕込む（初回戻るで閉じる対策）
   history.replaceState({ page: STATE.SUMMARY }, '', '');
   history.pushState({ page: STATE.SUMMARY }, '', '');
+
   // ★ ボタン群を1行に揃えて生成
   const btnArea = document.getElementById("buttonArea");
   if (btnArea) {
@@ -1357,6 +1401,7 @@ document.addEventListener("DOMContentLoaded", () => {
       </div>
     `;
   }
+
   // ✅ 安全に要素取得（null防止）
   const reloadBtn = document.getElementById("reloadBtn");
   const filterBtn = document.getElementById("filterBtn");
@@ -1366,6 +1411,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const matchingBtn = document.getElementById("matchingBtn");
   const matchingBackBtn = document.getElementById("matchingBackBtn");
   const searchInput = document.getElementById("searchInput");
+
   // ✅ reload
   if (reloadBtn) {
     reloadBtn.classList.remove("update-alert");
@@ -1379,6 +1425,7 @@ document.addEventListener("DOMContentLoaded", () => {
       stopProgress();
     };
   }
+
   // ✅ filter
   if (filterBtn) {
     filterBtn.onclick = () => {
@@ -1389,9 +1436,11 @@ document.addEventListener("DOMContentLoaded", () => {
       stopProgress();
     };
   }
+
   // ✅ CSV
   if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;
   if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;
+
   // ✅ 検索
   if (searchInput) {
     searchInput.addEventListener("input", (e) => {
@@ -1406,6 +1455,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+
   // ✅ サマリ戻る（UIボタン）
   if (backBtn && searchInput) {
     backBtn.onclick = () => {
@@ -1414,6 +1464,7 @@ document.addEventListener("DOMContentLoaded", () => {
       renderSummary();
     };
   }
+
   // ✅ matching表示
   if (matchingBtn && searchInput) {
     matchingBtn.onclick = () => {
@@ -1422,6 +1473,7 @@ document.addEventListener("DOMContentLoaded", () => {
       showMatchingCandidates();
     };
   }
+
   if (matchingBackBtn && searchInput) {
     matchingBackBtn.onclick = () => {
       State.searchText = "";
@@ -1429,6 +1481,7 @@ document.addEventListener("DOMContentLoaded", () => {
       backToSummaryFromMatching();
     };
   }
+
   // ✅ ランク選択
   const myRankSelect = document.getElementById("myRankSelect");
   if (myRankSelect) {
@@ -1446,6 +1499,7 @@ document.addEventListener("DOMContentLoaded", () => {
       log(`自分ランク変更：${State.selectedMyRank}`);
     });
   }
+
   // ✅ 初期化（DOM後）
   init();
 });
@@ -1474,3 +1528,5 @@ window.addEventListener('popstate', (e) => {
     history.pushState({ page: STATE.SUMMARY }, '', '');
   }
 });
+   latest_update.json 監視（更新検知）
+--------------------------------------------------------- */
