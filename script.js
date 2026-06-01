@@ -1,16 +1,22 @@
 /* ---------------------------------------------------------
    Initial DAC Round Data Viewer（integrated_data.json + latest_round.json 対応）    
 --------------------------------------------------------- */    
+/* ========================================================= 
+ [01] Initial DAC Round Data Viewer（BASE_URL）
+========================================================= */
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";    
 
 
 /* ---------------------------------------------------------    
-   状態管理    
+   [02] STATE（画面状態 enum）
 --------------------------------------------------------- */    
 const STATE = {    
   SUMMARY: 'summary',    
   DETAIL: 'detail'    
 };    
+/* ---------------------------------------------------------    
+   [03] State（アプリ全体状態）
+--------------------------------------------------------- */    
 const State = {    
   all: [],    
   filtered: [],    
@@ -30,7 +36,7 @@ const State = {
   areaModel: {}           // ★ フィルタ後母集団のエリア分布    
 };    
 /* ---------------------------------------------------------    
-   RUBY帯・PRIDE帯 定義    
+  [04] RUBY帯・PRIDE帯 定義
 --------------------------------------------------------- */    
 const RUBY_ID =    
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";    
@@ -44,7 +50,7 @@ const PRIDE_LEVELS = [
   { key: "P_G", level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }    
 ];    
 /* ---------------------------------------------------------    
-   ★ RANKS（RUBY☆1〜8 + PRIDE A〜G）    
+   [05] RANKS（全ランク定義）★ RANKS（RUBY☆1〜8 + PRIDE A〜G）
 --------------------------------------------------------- */    
 const RANKS = [    
   ...Array.from({ length: 8 }, (_, i) => ({    
@@ -67,14 +73,21 @@ const RANKS = [
     order: 8 + idx    
   }))    
 ];    
+/* ---------------------------------------------------------
+   [06] getRankIndex
+--------------------------------------------------------- */
 function getRankIndex(key) {    
   return RANKS.findIndex(r => r.key === key);    
 }    
+
+/* ---------------------------------------------------------
+   [07] getRankInfo
+--------------------------------------------------------- */
 function getRankInfo(key) {    
   return RANKS.find(r => r.key === key) || null;    
 }    
 /* ---------------------------------------------------------    
-   ログ    
+   [08] ログ（appendLog / log / logWarn / logError）
 --------------------------------------------------------- */    
 const MAX_LOG_LINES = 200;    
 function appendLog(msg, type = "info") {    
@@ -100,7 +113,7 @@ const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");    
 const logError = msg => appendLog(msg, "error");    
 /* ---------------------------------------------------------    
-   進行中アニメーション    
+   [09] 進行中アニメーション
 --------------------------------------------------------- */    
 let progressTimer = null;    
 let progressPos = 0;    
@@ -134,7 +147,7 @@ function stopProgress() {
   log("Viewer フィルタ完了");    
 }    
 /* ---------------------------------------------------------    
-   ユーティリティ    
+   [10] 日付・数値ユーティリティ（fmt / parseDateJST / formatYMDHM）
 --------------------------------------------------------- */    
 const fmt = n => Number(n).toLocaleString();    
 const parseDateJST = str => new Date(str.replace(/-/g, "/"));    
@@ -147,7 +160,7 @@ function formatYMDHM(date) {
   return `${y}/${m}/${d} ${hh}:${mm}`;    
 }    
 /* ---------------------------------------------------------    
-   normalize    
+   [11] normalize（文字正規化）
 --------------------------------------------------------- */    
 function normalize(s) {    
   if (!s) return "";    
@@ -163,7 +176,7 @@ function normalize(s) {
   return s;    
 }    
 /* ---------------------------------------------------------    
-   店舗名省略    
+   [12] 店舗名省略（幅・文字種判定）
 --------------------------------------------------------- */    
 function getZenkakuLength(str) {    
   if (!str) return 0;    
@@ -205,7 +218,7 @@ function shortenStoreName(full) {
   return full.slice(0, 1) + "…" + full.slice(-1);    
 }    
 /* ---------------------------------------------------------    
-   ★ RUBY星 → ★★★★★ 表示変換（4文字×2行）    
+      [13] renderStars（星表示）★ RUBY星 → ★★★★★ 表示変換（4文字×2行）
 --------------------------------------------------------- */    
 function renderStars(starCount) {    
   if (!starCount || starCount < 1) return "";    
@@ -215,7 +228,7 @@ function renderStars(starCount) {
     : stars;    
 }    
 /* ---------------------------------------------------------    
-   共通 fetch    
+   [14] fetchJSON（共通取得）
 --------------------------------------------------------- */    
 async function fetchJSON(path) {    
   const res = await fetch(`${BASE_URL}/${path}?t=${Date.now()}`, {    
@@ -225,7 +238,7 @@ async function fetchJSON(path) {
   return res.json();    
 }    
 /* ---------------------------------------------------------    
-   ★ areaList.json 読み込み（辞書化）    
+   [15] loadAreaList★ areaList.json 読み込み（辞書化）    
 --------------------------------------------------------- */    
 let AreaList = {};    
 async function loadAreaList() {    
@@ -249,7 +262,7 @@ async function loadAreaList() {
   }    
 }    
 /* ---------------------------------------------------------    
-   latest_round.json 読み込み（ラウンド番号表示用）    
+    [16] loadLatestRound  latest_round.json 読み込み（ラウンド番号表示用）
 --------------------------------------------------------- */    
 async function loadLatestRound() {    
   log("latest_round.json 取得準備中");    
@@ -265,7 +278,7 @@ async function loadLatestRound() {
   }    
 }    
 /* ---------------------------------------------------------    
-   ★ シーズン 学習モデル（season_model.json）読み込み    
+   [17] loadSeasonModel★ シーズン 学習モデル（season_model.json）読み込み    
 --------------------------------------------------------- */    
 async function loadSeasonModel() {    
   log("season_model.json 取得準備中");    
@@ -280,7 +293,7 @@ async function loadSeasonModel() {
   }    
 }    
 /* ---------------------------------------------------------    
-   integrated_data.json 読み込み    
+   [18] loadRoundData integrated_data.json 読み込み    
 --------------------------------------------------------- */    
 async function loadRoundData() {    
   log("integrated_data.json 取得準備中");    
@@ -313,7 +326,7 @@ async function loadRoundData() {
   }    
 }    
 /* ---------------------------------------------------------    
-   latest_update.json 監視（更新検知）    
+   [19] checkUpdate（更新監視） latest_update.json 監視（更新検知）    
 --------------------------------------------------------- */    
 async function checkUpdate() {    
   try {    
@@ -338,7 +351,7 @@ async function checkUpdate() {
   }    
 }    
 /* ---------------------------------------------------------    
-   「フィルタ後母集団のエリア分布」を自動計算して使う 分布計算関数    
+   [20] buildAreaDistribution（分布計算）「フィルタ後母集団のエリア分布」を自動計算して使う 分布計算関数
 --------------------------------------------------------- */    
 function buildAreaDistribution(list) {    
   const counts = {};    
@@ -352,6 +365,9 @@ function buildAreaDistribution(list) {
   for (const k in counts) dist[k] = counts[k] / total;    
   return dist;    
 }    
+/* ---------------------------------------------------------    
+   [21] getAreaScore    
+--------------------------------------------------------- */    
 function getAreaScore(player) {    
   const k = String(player.area ?? "");    
   const p = State.areaModel[k] ?? 0.01;    
@@ -365,7 +381,7 @@ function getAreaScore(player) {
   return areaScore;    
 }    
 /* ---------------------------------------------------------    
-   クリックコピーを「擬似マッチログ」としてBoostに使う    
+   [22] recordClickFromCopiedText クリックコピーを「擬似マッチログ」としてBoostに使う    
 --------------------------------------------------------- */    
 function recordClickFromCopiedText(text) {    
   if (!text) return;    
@@ -387,7 +403,7 @@ function recordClickFromCopiedText(text) {
   State.recentClicks = State.recentClicks.slice(0, 20);    
 }    
 /* ---------------------------------------------------------    
-    Boost関数（追加）    
+   [23] getRealtimeBoost　Boost関数
 --------------------------------------------------------- */    
 function getRealtimeBoost(player) {    
   if (!State.recentClicks.length) return 1;    
@@ -404,7 +420,8 @@ function getRealtimeBoost(player) {
   return areaBoost * shopBoost;    
 }    
 /* ---------------------------------------------------------    
-   ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）    
+    [24] isMatchingCandidateByPhase
+ 　 ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）    
    （指定周期の境目 ±w 分にいるプレイヤーを候補とする）    
 --------------------------------------------------------- */    
 function isMatchingCandidateByPhase(updateDateStr) {    
@@ -427,6 +444,7 @@ function isMatchingCandidateByPhase(updateDateStr) {
   return d <= w;    
 }    
 /* ---------------------------------------------------------    
+   [25] getSeasonStrengthScore
    ★ シーズン学習：相手ランク分布から strengthScore を返す    
    - 学習モデルがない場合は中立(0.5)    
    - 0確率を避けるため最低値を付与（スムージング）    
@@ -445,7 +463,7 @@ function getSeasonStrengthScore(player) {
   return Math.pow(base, 0.65);    
 }    
 /* ---------------------------------------------------------    
-   ★ プレイヤーのランクキー取得（R1〜R8 / P_A〜P_G）    
+   [26] getPlayerRankKey   ★ プレイヤーのランクキー取得（R1〜R8 / P_A〜P_G）    
 --------------------------------------------------------- */    
 function getPlayerRankKey(player) {    
   if (player.onlineBattleRankId === RUBY_ID && player.starCnt >= 1 && player.starCnt <= 8) {    
@@ -456,7 +474,7 @@ function getPlayerRankKey(player) {
   return pride ? pride.key : null;    
 }    
 /* ---------------------------------------------------------    
-   ★ 予測スコア（Season学習 + Phase + Recency + Activity）    
+   [27] MATCHING_SCORE_CONFIG　★ 予測スコア（Season学習 + Phase + Recency + Activity）    
 --------------------------------------------------------- */    
 const MATCHING_SCORE_CONFIG = {    
   cycle: 4,    
@@ -476,6 +494,9 @@ const MATCHING_SCORE_CONFIG = {
   // ★ 0人対策：最低でも上位10人は必ず表示    
   minCandidates: 10    
 };    
+/* ---------------------------------------------------------
+   [28] getPhaseDistanceMin
+--------------------------------------------------------- */
 function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cycle) {    
   if (!updateDateStr) return { diffMin: Infinity, d: Infinity };    
   const now = new Date();    
@@ -490,6 +511,9 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
   const d = Math.min(r, cycleMin - r);    
   return { diffMin, d };    
 }    
+/* ---------------------------------------------------------
+  [29] calcMatchingScore
+--------------------------------------------------------- */
 function calcMatchingScore(player) {    
   if (!player || !player.updateDate) return 0;    
   // ★ 学習（相手ランク分布）    
@@ -522,14 +546,14 @@ const areaMultiplier = (0.9 + 0.3 * areaScore);
 let realtimeBoost = getRealtimeBoost(player);    
 realtimeBoost = Math.min(realtimeBoost, 2.0);    
 // ===============================    
-// ★相乗暴発抑制    
+//    [28] getPhaseDistanceMin★相乗暴発抑制    
 // ===============================    
 const areaInfluence = Math.min(areaScore, 2.5);    
 const damping = 1 / Math.pow(areaInfluence, 0.6);    
 const adjustedRealtimeBoost =    
   1 + (realtimeBoost - 1) * damping;    
 // ===============================    
-// 最終スコア    
+//    [29] calcMatchingScore（最重要コア）最終スコア    
 // ===============================    
 let score =    
   baseScore    
@@ -552,7 +576,7 @@ score = Math.min(score, baseScore * 3.0);  // 暴発防止（任意）
 return Math.max(0, Math.min(1, score));    
 }    
 /* ---------------------------------------------------------
-   フィルタ（時間フィルタ）    
+   [30] applyFilters　フィルタ（時間フィルタ）
 --------------------------------------------------------- */    
 function applyFilters() {    
   const minutes = Number(document.getElementById("rangeSelect").value);    
@@ -576,7 +600,7 @@ function applyFilters() {
 ));       
 }    
 /* ---------------------------------------------------------    
-   サマリ統計計算    
+   [31] calcStats
 --------------------------------------------------------- */    
 function calcStats(list, total) {    
   const cnt = list.length;    
@@ -588,6 +612,7 @@ function calcStats(list, total) {
   return { cnt, percent, avg, min, max };    
 }    
 /* ---------------------------------------------------------    
+   [32] buildRubyFilters
    ★ RUBYフィルタ生成（ラベル列＋内容列の2列レイアウト）    
 --------------------------------------------------------- */    
 function buildRubyFilters() {    
@@ -613,6 +638,7 @@ function buildRubyFilters() {
   area.innerHTML = html;    
 }    
 /* ---------------------------------------------------------    
+   [33] buildPrideFilters
    ★ PRIDEフィルタ生成（ラベル列＋内容列の2列レイアウト）    
 --------------------------------------------------------- */    
 function buildPrideFilters() {    
@@ -639,7 +665,8 @@ function buildPrideFilters() {
   area.innerHTML = html;    
 }    
 /* ---------------------------------------------------------    
-   ★ サマリ生成（RUBY＋PRIDE フィルタ対応）    
+   [34] buildSummary　サマリ統計計算
+　★ サマリ生成（RUBY＋PRIDE フィルタ対応）    
 --------------------------------------------------------- */    
 function buildSummary() {    
   State.summary = [];    
@@ -672,7 +699,7 @@ function buildSummary() {
     });    
 }    
 /* ---------------------------------------------------------    
-   サマリ検索フィルタ    
+   [35] filterSummaryBySearch   サマリ検索フィルタ    
 --------------------------------------------------------- */    
 function filterSummaryBySearch() {    
   const norm = normalize(State.searchText);    
@@ -688,7 +715,7 @@ function filterSummaryBySearch() {
   return filtered;    
 }    
 /* ---------------------------------------------------------    
-   サマリ表示    
+    [36] renderSummary  サマリ表示    
 --------------------------------------------------------- */    
 function renderSummary() {    
   const area = document.getElementById("summaryArea");    
@@ -754,7 +781,7 @@ function renderSummary() {
   if (mv) mv.style.display = "none";    
 }    
 /* ---------------------------------------------------------    
-   ★ showSummaryUI    
+   [37] showSummaryUI   ★ showSummaryUI    
 --------------------------------------------------------- */    
 function showSummaryUI(push = true) {    
   renderSummary();    
@@ -770,7 +797,7 @@ function showSummaryUI(push = true) {
   }    
 }    
 /* ---------------------------------------------------------    
-   ★ 前後ランク移動ボタン制御    
+   [38] setupRankNavigation   ★ 前後ランク移動ボタン制御    
 --------------------------------------------------------- */    
 function setupRankNavigation(currentKey) {    
   const idx = getRankIndex(currentKey);    
@@ -784,7 +811,7 @@ function setupRankNavigation(currentKey) {
   nextBtn.onclick = () => next && showDetail(next);    
 }    
 /* ---------------------------------------------------------    
-   詳細表示（前後ランク移動＋検索再実行対応）    
+   [39] showDetail   詳細表示（前後ランク移動＋検索再実行対応）    
 --------------------------------------------------------- */    
 function showDetail(key) {    
   const row = State.summary.find(r => r.key === key) || null;    
@@ -818,7 +845,7 @@ function showDetail(key) {
   if (mv) mv.style.display = "none";    
 }    
 /* ---------------------------------------------------------    
-   詳細テーブル描画    
+   [40] renderDetailTable   詳細テーブル描画    
 --------------------------------------------------------- */    
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {    
   const area = document.getElementById("detailArea");    
@@ -850,7 +877,7 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   renderDetailRows(list, isRubyBand);    
 }    
 /* ---------------------------------------------------------    
-   詳細行描画    
+   [41] renderDetailRows   詳細行描画    
 --------------------------------------------------------- */    
 function renderDetailRows(list, isRubyBand) {    
   const tbody = document.getElementById("detailTableBody");    
@@ -899,7 +926,7 @@ function renderDetailRows(list, isRubyBand) {
   });    
 }    
 /* ---------------------------------------------------------    
-   プレイヤー名フィルタ（サマリ横断）    
+   [42] applyPlayerFilter   プレイヤー名フィルタ（サマリ横断）    
 --------------------------------------------------------- */    
 function applyPlayerFilter(keyword, isRubyBand, keepOriginalOrder = false) {    
   const normKey = normalize(keyword);    
@@ -913,7 +940,7 @@ function applyPlayerFilter(keyword, isRubyBand, keepOriginalOrder = false) {
   return base.filter(p => (p.normalizedName || "").includes(normKey));    
 }    
 /* ---------------------------------------------------------    
-   CSV ダウンロード共通関数    
+   [43] downloadCSV   CSV ダウンロード共通関数    
 --------------------------------------------------------- */    
 function downloadCSV(filename, header, body) {    
   const bom = "\uFEFF"; // UTF-8 BOM    
@@ -927,7 +954,7 @@ function downloadCSV(filename, header, body) {
   URL.revokeObjectURL(url);    
 }    
 /* ---------------------------------------------------------    
-   CSV 出力（サマリ）    
+   [44] exportSummaryCSV   CSV 出力（サマリ）    
 --------------------------------------------------------- */    
 function exportSummaryCSV() {    
   const header = "帯,人数,%,平均RP,最小RP,最大RP";    
@@ -939,7 +966,7 @@ function exportSummaryCSV() {
   downloadCSV("summary.csv", header, body);    
 }    
 /* ---------------------------------------------------------    
-   CSV 出力（全データ）★ areaName 列追加済み    
+   [45] exportAllCSV   CSV 出力（全データ）★ areaName 列追加済み    
 --------------------------------------------------------- */    
 function exportAllCSV() {    
   // 表示上のヘッダ（列名）    
@@ -982,7 +1009,7 @@ function exportAllCSV() {
   downloadCSV("all_records.csv", header, body);    
 }    
 /* ---------------------------------------------------------    
-   クリップボードコピー（★ログ復活版）    
+   [46] copyToClipboard   クリップボードコピー（★ログ復活版）    
 --------------------------------------------------------- */    
 function copyToClipboard(text) {    
   if (!navigator.clipboard) {    
@@ -1008,7 +1035,7 @@ function copyToClipboard(text) {
     });    
 }    
 /* ---------------------------------------------------------
-   ★ マッチング候補一覧生成（アルゴリズム適用）    
+   [47] buildMatchingCandidates   ★ マッチング候補一覧生成（アルゴリズム適用）    
 --------------------------------------------------------- */    
 function buildMatchingCandidates() {    
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]    
@@ -1088,7 +1115,7 @@ list = list.slice(0, MATCHING_SCORE_CONFIG.minCandidates);
   }    
 }    
 /* ---------------------------------------------------------    
-   ★ マッチング候補ヘッダ表示    
+   [48] renderMatchingHeader   ★ マッチング候補ヘッダ表示    
 --------------------------------------------------------- */    
 function renderMatchingHeader() {    
   const headerEl = document.getElementById("matchingHeader");    
@@ -1116,7 +1143,7 @@ function renderMatchingHeader() {
   headerEl.innerHTML = parts.join("");    
 }    
 /* ---------------------------------------------------------    
-   ★ マッチング候補テーブル    
+   [49] renderMatchingTable   ★ マッチング候補テーブル    
 --------------------------------------------------------- */    
 function renderMatchingTable() {    
   const area = document.getElementById("matchingArea");    
@@ -1145,7 +1172,7 @@ function renderMatchingTable() {
   renderMatchingRows(State.matchingList);    
 }    
 /* ---------------------------------------------------------    
-   ★ マッチング候補行描画    
+   [50] renderMatchingRows   ★ マッチング候補行描画    
 --------------------------------------------------------- */    
 function renderMatchingRows(list) {    
   const tbody = document.getElementById("matchingTableBody");    
@@ -1194,7 +1221,7 @@ function renderMatchingRows(list) {
   });    
 }    
 /* ---------------------------------------------------------    
-   ★ マッチング候補検索フィルタ    
+   [51] applyMatchingFilter   ★ マッチング候補検索フィルタ    
 --------------------------------------------------------- */    
 function applyMatchingFilter(keyword) {    
   const base = State.matchingList || [];    
@@ -1207,7 +1234,7 @@ function applyMatchingFilter(keyword) {
   renderMatchingRows(list);    
 }    
 /* ---------------------------------------------------------    
-   ★ マッチング候補画面表示    
+   [52] showMatchingCandidates   ★ マッチング候補画面表示    
 --------------------------------------------------------- */    
 function showMatchingCandidates() {    
   buildMatchingCandidates();    
@@ -1220,14 +1247,14 @@ function showMatchingCandidates() {
   if (mv) mv.style.display = "block";    
 }    
 /* ---------------------------------------------------------    
-   ★ マッチング候補 → サマリに戻る    
+   [53] backToSummaryFromMatching   ★ マッチング候補 → サマリに戻る    
 --------------------------------------------------------- */    
 function backToSummaryFromMatching() {    
   State.currentView = "summary";    
   renderSummary();    
 }    
 /* ---------------------------------------------------------    
-   検索クリア関数    
+   [54] clearSearch   検索クリア関数    
 --------------------------------------------------------- */    
 function clearSearch() {    
   const input = document.getElementById('searchInput');    
@@ -1235,7 +1262,7 @@ function clearSearch() {
   State.searchText = '';    
 }    
 /* ---------------------------------------------------------    
-   初期化（★ loadAreaList を追加済み）    
+   [55] init   初期化（★ loadAreaList を追加済み）    
 --------------------------------------------------------- */    
 async function init() {    
   log("Viewer 初期化中");    
@@ -1257,7 +1284,7 @@ async function init() {
   checkUpdate();    
 }    
 /* ---------------------------------------------------------    
-   DOMContentLoaded    
+   [56] DOMContentLoaded   DOMContentLoaded    
 --------------------------------------------------------- */    
 document.addEventListener("DOMContentLoaded", () => {    
   // ✅ 最優先で履歴を仕込む（初回戻るで閉じる対策）    
@@ -1368,7 +1395,7 @@ document.addEventListener("DOMContentLoaded", () => {
   init();    
 });    
 /* ---------------------------------------------------------    
-   戻るボタン処理    
+   [57] popstate（戻る制御   戻るボタン処理    
 --------------------------------------------------------- */    
 window.addEventListener('popstate', (e) => {    
   const state = e.state;    
@@ -1391,4 +1418,3 @@ window.addEventListener('popstate', (e) => {
     history.pushState({ page: STATE.SUMMARY }, '', '');    
   }    
 });  
-
