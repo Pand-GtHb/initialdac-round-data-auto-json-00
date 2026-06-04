@@ -876,55 +876,93 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
   `;    
   renderDetailRows(list, isRubyBand);    
 }    
-/* ---------------------------------------------------------    
-   [41] renderDetailRows   詳細行描画    
---------------------------------------------------------- */    
-function renderDetailRows(list, isRubyBand) {    
-  const tbody = document.getElementById("detailTableBody");    
-  if (!tbody) return;    
-  const rows = list.map(p => {    
-    const titleUrl = p.mytitleId    
-      ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`    
-      : "";    
-    const isRuby = p.onlineBattleRankId === RUBY_ID && p.starCnt;    
-    const starOrLevel = isRuby    
-      ? renderStars(p.starCnt)    
-      : p.pridePoint;    
-    const fullShop = p.shopname ?? "";    
-    const shortShop = shortenStoreName(fullShop);    
-    const copyValue = isRuby    
-      ? `★${"★".repeat(p.starCnt - 1)}\t${p.name}`    
-      : `${p.pridePoint}\t${p.name}`;    
-    return `    
-      <tr data-updated="${p.updateDate}">    
-        <td class="center clickable"    
-            onclick="copyToClipboard('${copyValue}')">    
-          ${starOrLevel}    
-        </td>    
-        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">    
-          ${p.name}    
-        </td>    
-        <td class="right">${fmt(p.point)}</td>    
-        <td class="left clickable"    
-            data-fullname="${fullShop.replace(/"/g, "&quot;")}"    
-            onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">    
-          <div class="store-name">${shortShop}</div>    
-        </td>    
-        <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>    
-        <td class="left">${p.updateDate}</td>    
-      </tr>    
-    `;    
-  }).join("");    
-  tbody.innerHTML = rows;    
-  // ★ A案：新ロジック（フェーズモデル）でハイライト    
-  tbody.querySelectorAll("tr").forEach(tr => {    
-    const updated = tr.dataset.updated;    
-    if (!updated) return;    
-    if (isMatchingCandidateByPhase(updated)) {    
-      tr.classList.add("match-row-pink");    
-    }    
-  });    
-}    
+
+/* ---------------------------------------------------------
+   [41-A] buildPlayerRowHTML
+   ★ 詳細/マッチング共通：1行分HTML生成
+--------------------------------------------------------- */
+function buildPlayerRowHTML(p) {
+  const titleUrl = p.mytitleId
+    ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
+    : "";
+
+  const isRuby = p.onlineBattleRankId === RUBY_ID && p.starCnt;
+
+  const starOrLevel = isRuby
+    ? renderStars(p.starCnt)
+    : p.pridePoint;
+
+  const fullShop = p.shopname ?? "";
+  const shortShop = shortenStoreName(fullShop);
+
+  const copyValue = isRuby
+    ? `★${"★".repeat(p.starCnt - 1)}\t${p.name}`
+    : `${p.pridePoint}\t${p.name}`;
+
+  return `
+    <tr data-updated="${p.updateDate}">
+      <td class="center clickable"
+          onclick="copyToClipboard('${copyValue}')">
+        ${starOrLevel}
+      </td>
+      <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
+        ${p.name}
+      </td>
+      <td class="right">${fmt(p.point)}</td>
+      <td class="left clickable"
+          data-fullname="${fullShop.replace(/"/g, "&quot;")}"
+          onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
+        <div class="store-name">${shortShop}</div>
+      </td>
+      <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
+      <td class="left">${p.updateDate}</td>
+    </tr>
+  `;
+}
+
+/* ---------------------------------------------------------
+   [41-B] highlightMatchingRows
+   ★ 共通：フェーズハイライト
+--------------------------------------------------------- */
+function highlightMatchingRows(tbody) {
+  tbody.querySelectorAll("tr").forEach(tr => {
+    const updated = tr.dataset.updated;
+    if (!updated) return;
+    if (isMatchingCandidateByPhase(updated)) {
+      tr.classList.add("match-row-pink");
+    }
+  });
+}
+
+/* ---------------------------------------------------------
+   [41-C] renderPlayerRowsToBody
+   ★ 共通：tbody描画
+--------------------------------------------------------- */
+function renderPlayerRowsToBody(tbodyId, list) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+
+  const rows = list.map(p => buildPlayerRowHTML(p)).join("");
+  tbody.innerHTML = rows;
+
+  // ★ ハイライト処理
+  highlightMatchingRows(tbody);
+}
+
+/* ---------------------------------------------------------
+   [41] renderDetailRows   詳細行描画（軽量ラッパー化）
+--------------------------------------------------------- */
+function renderDetailRows(list, isRubyBand) {
+  renderPlayerRowsToBody("detailTableBody", list);
+}
+
+/* ---------------------------------------------------------
+   [50] renderMatchingRows   ★ マッチング候補行描画（軽量ラッパー化）
+--------------------------------------------------------- */
+function renderMatchingRows(list) {
+  renderPlayerRowsToBody("matchingTableBody", list);
+}
+
 /* ---------------------------------------------------------    
    [42] applyPlayerFilter   プレイヤー名フィルタ（サマリ横断）    
 --------------------------------------------------------- */    
@@ -1171,55 +1209,8 @@ function renderMatchingTable() {
   `;    
   renderMatchingRows(State.matchingList);    
 }    
-/* ---------------------------------------------------------    
-   [50] renderMatchingRows   ★ マッチング候補行描画    
---------------------------------------------------------- */    
-function renderMatchingRows(list) {    
-  const tbody = document.getElementById("matchingTableBody");    
-  if (!tbody) return;    
-  const rows = list.map(p => {    
-    const titleUrl = p.mytitleId    
-      ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`    
-      : "";    
-    const isRuby = p.onlineBattleRankId === RUBY_ID && p.starCnt;    
-    const starOrLevel = isRuby    
-      ? renderStars(p.starCnt)    
-      : p.pridePoint;    
-    const fullShop = p.shopname ?? "";    
-    const shortShop = shortenStoreName(fullShop);    
-    const copyValue = isRuby    
-      ? `★${"★".repeat(p.starCnt - 1)}\t${p.name}`    
-      : `${p.pridePoint}\t${p.name}`;    
-    return `    
-      <tr data-updated="${p.updateDate}">    
-        <td class="center clickable"    
-            onclick="copyToClipboard('${copyValue}')">    
-          ${starOrLevel}    
-        </td>    
-        <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">    
-          ${p.name}    
-        </td>    
-        <td class="right">${fmt(p.point)}</td>    
-        <td class="left clickable"    
-            data-fullname="${fullShop.replace(/"/g, "&quot;")}"    
-            onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">    
-          <div class="store-name">${shortShop}</div>    
-        </td>    
-        <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>    
-        <td class="left">${p.updateDate}</td>    
-      </tr>    
-    `;    
-  }).join("");    
-  tbody.innerHTML = rows;    
-  // ★ A案：新ロジック（フェーズモデル）でハイライト    
-  tbody.querySelectorAll("tr").forEach(tr => {    
-    const updated = tr.dataset.updated;    
-    if (!updated) return;    
-    if (isMatchingCandidateByPhase(updated)) {    
-      tr.classList.add("match-row-pink");    
-    }    
-  });    
-}    
+
+
 /* ---------------------------------------------------------    
    [51] applyMatchingFilter   ★ マッチング候補検索フィルタ    
 --------------------------------------------------------- */    
