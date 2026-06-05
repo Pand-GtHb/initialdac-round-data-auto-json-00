@@ -15,7 +15,6 @@ const STATE = {
   DETAIL: 'detail',
   MATCHING: 'matching'
 };
-
 /* ---------------------------------------------------------
    [03] State（アプリ全体状態）
 --------------------------------------------------------- */
@@ -36,11 +35,9 @@ const State = {
   matchingList: [],
   seasonModel: null,
   myStar: 6,
-  selectedMyRank: "R6",
   recentClicks: [],
   areaModel: {}
 };
-
 /* ---------------------------------------------------------    
   [04] RUBY帯・PRIDE帯 定義
 --------------------------------------------------------- */    
@@ -531,7 +528,20 @@ function getPlayerRankKey(player) {
   const pt = Number(player.pridePoint ?? 0);    
   const pride = PRIDE_LEVELS.find(p => pt >= p.min && pt <= p.max);    
   return pride ? pride.key : null;    
-}    
+}
+/* ---------------------------------------------------------
+   [26-B] syncMyRankSelection
+   ★ selectedMyRank の利用範囲を局所化しつつ myStar 同期を維持
+--------------------------------------------------------- */
+function syncMyRankSelection(rankValue) {
+  const selectedMyRank = rankValue || "R6";
+  State.myStar =
+    (String(selectedMyRank).startsWith("R") &&
+      Number(String(selectedMyRank).slice(1)) >= 7)
+      ? 7
+      : 6;
+  return selectedMyRank;
+}
 /* ---------------------------------------------------------    
    [27] MATCHING_SCORE_CONFIG　★ 予測スコア（Season学習 + Phase + Recency + Activity）    
 --------------------------------------------------------- */    
@@ -1490,24 +1500,16 @@ if (matchingBackBtn && searchInput) {
     backToSummaryFromMatching(true);
   };
 } 
-  // ✅ ランク選択    
-  const myRankSelect = document.getElementById("myRankSelect");    
-  if (myRankSelect) {    
-    State.selectedMyRank = myRankSelect.value || "R6";    
-    State.myStar =    
-      (String(State.selectedMyRank).startsWith("R") &&    
-        Number(String(State.selectedMyRank).slice(1)) >= 7)    
-        ? 7 : 6;    
-    myRankSelect.addEventListener("change", (e) => {    
-      State.selectedMyRank = e.target.value;    
-      State.myStar =    
-        (String(State.selectedMyRank).startsWith("R") &&    
-          Number(String(State.selectedMyRank).slice(1)) >= 7)    
-          ? 7 : 6;    
-      log(`自分ランク変更：${State.selectedMyRank}`);    
-    });    
-  }    
-  // ✅ 初期化（DOM後）    
+// ✅ ランク選択
+const myRankSelect = document.getElementById("myRankSelect");
+if (myRankSelect) {
+  syncMyRankSelection(myRankSelect.value);
+  myRankSelect.addEventListener("change", (e) => {
+    const selectedMyRank = syncMyRankSelection(e.target.value);
+    log(`自分ランク変更：${selectedMyRank}`);
+  });
+} 
+// ✅ 初期化（DOM後）
   init();    
   });    
 /* ---------------------------------------------------------
