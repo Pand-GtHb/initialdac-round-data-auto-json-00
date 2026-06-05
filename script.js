@@ -30,6 +30,9 @@ const State = {
   searchText: "",
   currentView: STATE.SUMMARY,   // ★修正：enum化
   currentIsRubyBand: true,
+  currentDetailKey: "",
+  currentDetailLabel: "",
+  currentDetailIcon: "",
   matchingList: [],
   seasonModel: null,
   myStar: 6,
@@ -752,76 +755,87 @@ function filterSummaryBySearch() {
     [36] renderSummary  サマリ表示    
 --------------------------------------------------------- */    
 function renderSummary() {
-  const area = document.getElementById("summaryArea");
+  const area = document.getElementById("summaryArea");  
 
-  const filteredSummary = filterSummaryBySearch();
-  const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
+  const filteredSummary = filterSummaryBySearch();  
 
-  const rubyTotal = filteredSummary
-    .filter(r => r.key.startsWith("R"))
-    .reduce((s, r) => s + r.list.length, 0);
+  const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);  
 
-  const prideTotal = total - rubyTotal;
+  const rubyTotal = filteredSummary  
+    .filter(r => r.key.startsWith("R"))  
+    .reduce((s, r) => s + r.list.length, 0);  
 
-  const rankPercent = total ? Math.round((rubyTotal / total) * 100) : 0;
-  const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;
+  const prideTotal = total - rubyTotal;  
 
-  area.innerHTML = `
-    <h3>
-      合計 ${fmt(total)}人：
-      RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋
-      PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
-    </h3>
-    <div style="overflow-x:auto;">
-      <table>
-        <tr>
-          <th>ランク</th>
-          <th>☆・Lv</th>
-          <th>人数</th>
-          <th>%</th>
-          <th>Bar</th>
-          <th>RP:Avg</th>
-          <th>RP:Min</th>
-          <th>RP:Max</th>
-        </tr>
-        ${filteredSummary.map(r => {
-          const { cnt, percent, avg, min, max } = calcStats(r.list, total);
-          return `
-            <tr class="clickable" data-key="${r.key}">
-              <td class="center"><img src="${r.icon}" width="32"></td>
-              <td class="left">${r.label}</td>
-              <td class="right">${fmt(cnt)}</td>
-              <td class="right">${percent}%</td>
-              <td class="center">
-                <div class="bar-wrap">
-                  <div class="bar" style="width:${percent}%;"></div>
-                </div>
-              </td>
-              <td class="right">${fmt(avg)}</td>
-              <td class="right">${fmt(min)}</td>
-              <td class="right">${fmt(max)}</td>
-            </tr>
-          `;
-        }).join("")}
-      </table>
-    </div>
-  `;
+  const rankPercent = total ? Math.round((rubyTotal / total) * 100) : 0;  
+  const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;  
 
-  document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
-    tr.addEventListener("click", () => {
-      const key = tr.dataset.key;
-      State.currentIsRubyBand = key.startsWith("R");
-      showDetail(key);
-    });
-  });
+  area.innerHTML = `  
+    <h3>  
+      合計 ${fmt(total)}人：  
+      RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋  
+      PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%  
+    </h3>  
 
-  // ★修正
-  setCurrentView(STATE.SUMMARY);
+    <div style="overflow-x:auto;">  
+      <table>  
+        <tr>  
+          <th>ランク</th>  
+          <th>☆・Lv</th>  
+          <th>人数</th>  
+          <th>%</th>  
+          <th>Bar</th>  
+          <th>RP:Avg</th>  
+          <th>RP:Min</th>  
+          <th>RP:Max</th>  
+        </tr>  
 
-  document.getElementById("summaryView").style.display = "block";
-  document.getElementById("detailView").style.display = "none";
-  const mv = document.getElementById("matchingView");
-  if (mv) mv.style.display = "none";
+        ${filteredSummary.map(r => {  
+          const { cnt, percent, avg, min, max } = calcStats(r.list, total);  
+
+          return `  
+            <tr class="clickable" data-key="${r.key}">  
+              <td class="center"><img src="${r.icon}" width="32"></td>  
+              <td class="left">${r.label}</td>  
+              <td class="right">${fmt(cnt)}</td>  
+              <td class="right">${percent}%</td>  
+              <td class="center">  
+                <div class="bar-wrap">  
+                  <div class="bar" style="width:${percent}%;"></div>  
+                </div>  
+              </td>  
+              <td class="right">${fmt(avg)}</td>  
+              <td class="right">${fmt(min)}</td>  
+              <td class="right">${fmt(max)}</td>  
+            </tr>  
+          `;  
+        }).join("")}  
+
+      </table>  
+    </div>  
+  `;  
+
+  document.querySelectorAll("#summaryArea .clickable").forEach(tr => {  
+    tr.addEventListener("click", () => {  
+      const key = tr.dataset.key;  
+      State.currentIsRubyBand = key.startsWith("R");  
+      showDetail(key);  
+    });  
+  });  
+
+  // ★追加（状態クリア）
+  State.currentDetailKey = "";
+  State.currentDetailLabel = "";
+  State.currentDetailIcon = "";
+
+  // ★修正  
+  setCurrentView(STATE.SUMMARY);  
+
+  document.getElementById("summaryView").style.display = "block";  
+  document.getElementById("detailView").style.display = "none";  
+
+  const mv = document.getElementById("matchingView");  
+  if (mv) mv.style.display = "none";  
 }
 /* ---------------------------------------------------------    
    [37] showSummaryUI   ★ showSummaryUI    
@@ -858,38 +872,53 @@ function setupRankNavigation(currentKey) {
 /* ---------------------------------------------------------    
    [39] showDetail   詳細表示（前後ランク移動＋検索再実行対応）    
 --------------------------------------------------------- */    
-function showDetail(key) {    
-  const row = State.summary.find(r => r.key === key) || null;    
-  const rankInfo = getRankInfo(key);    
-  const isRubyBand = rankInfo ? rankInfo.type === "ruby" : key.startsWith("R");    
-  const bandLabel = rankInfo ? rankInfo.label : (row ? row.label : key);    
-  const bandIcon = rankInfo ? rankInfo.icon : "";    
-  setupRankNavigation(key);    
-  if (!row) {    
-    State.detailOriginal = [];    
-    setCurrentView(STATE.DETAIL);  
-    State.currentIsRubyBand = isRubyBand;    
-    history.pushState({ page: STATE.DETAIL }, '', '');    
-    renderDetailTable(isRubyBand, bandLabel, bandIcon);    
-    document.getElementById("summaryView").style.display = "none";    
-    document.getElementById("detailView").style.display = "block";    
-    const mv = document.getElementById("matchingView");    
-    if (mv) mv.style.display = "none";    
-    return;    
-  }    
-  State.detailOriginal = row.list.slice().sort((a, b) => {    
-    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);    
-  });    
-  State.currentView = "detail";    
-  State.currentIsRubyBand = isRubyBand;    
-  history.pushState({ page: STATE.DETAIL }, '', '');    
-  renderDetailTable(isRubyBand, bandLabel, bandIcon);    
-  document.getElementById("summaryView").style.display = "none";    
-  document.getElementById("detailView").style.display = "block";    
-  const mv = document.getElementById("matchingView");    
-  if (mv) mv.style.display = "none";    
-}    
-/* ---------------------------------------------------------    
+function showDetail(key) {
+  const row = State.summary.find(r => r.key === key) || null;      
+  const rankInfo = getRankInfo(key);      
+  const isRubyBand = rankInfo ? rankInfo.type === "ruby" : key.startsWith("R");      
+  const bandLabel = rankInfo ? rankInfo.label : (row ? row.label : key);      
+  const bandIcon = rankInfo ? rankInfo.icon : "";      
+  setupRankNavigation(key);      
+
+  if (!row) {      
+    State.detailOriginal = [];      
+    setCurrentView(STATE.DETAIL);    
+    State.currentIsRubyBand = isRubyBand;      
+
+    // ★追加（見出し保持）
+    State.currentDetailKey = key;
+    State.currentDetailLabel = bandLabel;
+    State.currentDetailIcon = bandIcon;
+
+    history.pushState({ page: STATE.DETAIL }, '', '');      
+    renderDetailTable(isRubyBand, bandLabel, bandIcon);      
+    document.getElementById("summaryView").style.display = "none";      
+    document.getElementById("detailView").style.display = "block";      
+    const mv = document.getElementById("matchingView");      
+    if (mv) mv.style.display = "none";      
+    return;      
+  }      
+
+  State.detailOriginal = row.list.slice().sort((a, b) => {      
+    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);      
+  });      
+
+  State.currentView = "detail";      
+  State.currentIsRubyBand = isRubyBand;      
+
+  // ★追加（見出し保持）
+  State.currentDetailKey = key;
+  State.currentDetailLabel = bandLabel;
+  State.currentDetailIcon = bandIcon;
+
+  history.pushState({ page: STATE.DETAIL }, '', '');      
+  renderDetailTable(isRubyBand, bandLabel, bandIcon);      
+
+  document.getElementById("summaryView").style.display = "none";      
+  document.getElementById("detailView").style.display = "block";      
+  const mv = document.getElementById("matchingView");      
+  if (mv) mv.style.display = "none";      
+}/* ---------------------------------------------------------    
    [40] renderDetailTable   詳細テーブル描画    
 --------------------------------------------------------- */    
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {    
@@ -1254,7 +1283,6 @@ function renderMatchingTable() {
   renderMatchingRows(State.matchingList);    
 }    
 
-
 /* ---------------------------------------------------------    
    [51] applyMatchingFilter   ★ マッチング候補検索フィルタ    
 --------------------------------------------------------- */    
@@ -1376,22 +1404,29 @@ document.addEventListener("DOMContentLoaded", () => {
   if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;    
   if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;    
   // ✅ 検索    
-if (searchInput) {
-  searchInput.addEventListener("input", (e) => {
-    State.searchText = e.target.value;
+  if (searchInput) {
+  searchInput.addEventListener("input", (e) => {  
+    State.searchText = e.target.value;  
 
-    if (isCurrentView(STATE.SUMMARY)) {
-      renderSummary();
+    if (isCurrentView(STATE.SUMMARY)) {  
+      renderSummary();  
 
-    } else if (isCurrentView(STATE.DETAIL)) {
-      applyPlayerFilter(State.searchText, State.currentIsRubyBand);
-      renderDetailTable(State.currentIsRubyBand, "", "");
+    } else if (isCurrentView(STATE.DETAIL)) {  
+      applyPlayerFilter(State.searchText, State.currentIsRubyBand);  
 
-    } else if (isCurrentView(STATE.MATCHING)) {
-      applyMatchingFilter(State.searchText);
-    }
-  });
-}  // ✅ サマリ戻る（UIボタン）    
+      // ★修正（見出し保持）
+      renderDetailTable(
+        State.currentIsRubyBand,
+        State.currentDetailLabel || "",
+        State.currentDetailIcon || ""
+      );  
+
+    } else if (isCurrentView(STATE.MATCHING)) {  
+      applyMatchingFilter(State.searchText);  
+    }  
+  });  
+  }
+  // ✅ サマリ戻る（UIボタン）    
   if (backBtn && searchInput) {    
     backBtn.onclick = () => {    
       State.searchText = "";    
@@ -1433,7 +1468,7 @@ if (searchInput) {
   }    
   // ✅ 初期化（DOM後）    
   init();    
-});    
+  });    
 /* ---------------------------------------------------------    
    [57] popstate（戻る制御   戻るボタン処理    
 --------------------------------------------------------- */    
@@ -1447,7 +1482,6 @@ window.addEventListener('popstate', (e) => {
   }
    
   // ✅ 詳細 / matching → サマリ    
-
   if (isCurrentView(STATE.DETAIL) || isCurrentView(STATE.MATCHING)) {
     showSummaryUI(false);
     history.pushState({ page: STATE.SUMMARY }, '', '');
@@ -1455,7 +1489,6 @@ window.addEventListener('popstate', (e) => {
   }
 
   // ✅ サマリで戻る → 検索クリア    
-
   if (state.page === STATE.SUMMARY) {
     clearSearch();
     showSummaryUI(false);
