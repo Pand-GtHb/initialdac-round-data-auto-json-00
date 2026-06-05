@@ -879,56 +879,77 @@ function setupRankNavigation(currentKey) {
   prevBtn.onclick = () => prev && showDetail(prev);    
   nextBtn.onclick = () => next && showDetail(next);    
 }    
-/* ---------------------------------------------------------    
-   [39] showDetail   詳細表示（前後ランク移動＋検索再実行対応）    
---------------------------------------------------------- */    
-function showDetail(key) {
-  const row = State.summary.find(r => r.key === key) || null;      
-  const rankInfo = getRankInfo(key);      
-  const isRubyBand = rankInfo ? rankInfo.type === "ruby" : key.startsWith("R");      
-  const bandLabel = rankInfo ? rankInfo.label : (row ? row.label : key);      
-  const bandIcon = rankInfo ? rankInfo.icon : "";      
-  setupRankNavigation(key);      
+/* ---------------------------------------------------------
+   [39] showDetail   詳細表示（前後ランク移動＋検索再実行対応）
+--------------------------------------------------------- */
+function showDetail(key, push = true) {
 
-  if (!row) {      
-    State.detailOriginal = [];      
-    setCurrentView(STATE.DETAIL);    
-    State.currentIsRubyBand = isRubyBand;      
+  const row = State.summary.find(r => r.key === key) || null;
+  const rankInfo = getRankInfo(key);
 
-    // ★追加（見出し保持）
+  const isRubyBand = rankInfo
+    ? rankInfo.type === "ruby"
+    : key.startsWith("R");
+
+  const bandLabel = rankInfo
+    ? rankInfo.label
+    : (row ? row.label : key);
+
+  const bandIcon = rankInfo ? rankInfo.icon : "";
+
+  setupRankNavigation(key);
+
+  if (!row) {
+
+    State.detailOriginal = [];
+
+    setCurrentView(STATE.DETAIL);
+    State.currentIsRubyBand = isRubyBand;
+
     State.currentDetailKey = key;
     State.currentDetailLabel = bandLabel;
     State.currentDetailIcon = bandIcon;
 
-    history.pushState({ page: STATE.DETAIL }, '', '');      
-    renderDetailTable(isRubyBand, bandLabel, bandIcon);      
-    document.getElementById("summaryView").style.display = "none";      
-    document.getElementById("detailView").style.display = "block";      
-    const mv = document.getElementById("matchingView");      
-    if (mv) mv.style.display = "none";      
-    return;      
-  }      
+    if (push) {
+      history.pushState(
+        { page: STATE.DETAIL, key, label: bandLabel, icon: bandIcon },
+        '',
+        ''
+      );
+    }
 
-  State.detailOriginal = row.list.slice().sort((a, b) => {      
-    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);      
-  });      
+    renderDetailTable(isRubyBand, bandLabel, bandIcon);
 
-  State.currentView = "detail";      
-  State.currentIsRubyBand = isRubyBand;      
+    switchDisplayView(STATE.DETAIL);
+    return;
+  }
 
-  // ★追加（見出し保持）
+  State.detailOriginal = row.list
+    .slice()
+    .sort((a, b) =>
+      parseDateJST(b.updateDate) - parseDateJST(a.updateDate)
+    );
+
+  setCurrentView(STATE.DETAIL);
+  State.currentIsRubyBand = isRubyBand;
+
   State.currentDetailKey = key;
   State.currentDetailLabel = bandLabel;
   State.currentDetailIcon = bandIcon;
 
-  history.pushState({ page: STATE.DETAIL }, '', '');      
-  renderDetailTable(isRubyBand, bandLabel, bandIcon);      
+  if (push) {
+    history.pushState(
+      { page: STATE.DETAIL, key, label: bandLabel, icon: bandIcon },
+      '',
+      ''
+    );
+  }
 
-  document.getElementById("summaryView").style.display = "none";      
-  document.getElementById("detailView").style.display = "block";      
-  const mv = document.getElementById("matchingView");      
-  if (mv) mv.style.display = "none";      
-}/* ---------------------------------------------------------    
+  renderDetailTable(isRubyBand, bandLabel, bandIcon);
+
+  switchDisplayView(STATE.DETAIL);
+}
+/* ---------------------------------------------------------    
    [40] renderDetailTable   詳細テーブル描画    
 --------------------------------------------------------- */    
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {    
@@ -1306,21 +1327,22 @@ function applyMatchingFilter(keyword) {
   if (countEl) countEl.textContent = fmt(list.length);    
   renderMatchingRows(list);    
 }    
-/* ---------------------------------------------------------    
-   [52] showMatchingCandidates   ★ マッチング候補画面表示    
---------------------------------------------------------- */    
-function showMatchingCandidates() {
+/* ---------------------------------------------------------
+   [52] showMatchingCandidates   ★ マッチング候補画面表示
+--------------------------------------------------------- */
+function showMatchingCandidates(push = true) {
+
   buildMatchingCandidates();
   renderMatchingHeader();
   renderMatchingTable();
 
-  // ★修正
   setCurrentView(STATE.MATCHING);
 
-  document.getElementById("summaryView").style.display = "none";
-  document.getElementById("detailView").style.display = "none";
-  const mv = document.getElementById("matchingView");
-  if (mv) mv.style.display = "block";
+  switchDisplayView(STATE.MATCHING);
+
+  if (push) {
+    history.pushState({ page: STATE.MATCHING }, '', '');
+  }
 }
 /* ---------------------------------------------------------    
    [53] backToSummaryFromMatching   ★ マッチング候補 → サマリに戻る    
@@ -1436,29 +1458,38 @@ document.addEventListener("DOMContentLoaded", () => {
     }  
   });  
   }
-  // ✅ サマリ戻る（UIボタン）    
-  if (backBtn && searchInput) {    
-    backBtn.onclick = () => {    
-      State.searchText = "";    
-      searchInput.value = "";    
-      renderSummary();    
-    };    
-  }    
-  // ✅ matching表示    
-  if (matchingBtn && searchInput) {    
-    matchingBtn.onclick = () => {    
-      State.searchText = "";    
-      searchInput.value = "";    
-      showMatchingCandidates();    
-    };    
-  }    
-  if (matchingBackBtn && searchInput) {    
-    matchingBackBtn.onclick = () => {    
-      State.searchText = "";    
-      searchInput.value = "";    
-      backToSummaryFromMatching();    
-    };    
-  }    
+// ✅ サマリ戻る（UIボタン）
+if (backBtn && searchInput) {
+  backBtn.onclick = () => {
+
+    State.searchText = "";
+    searchInput.value = "";
+
+    showSummaryUI(true);
+  };
+}
+
+// ✅ matching表示
+if (matchingBtn && searchInput) {
+  matchingBtn.onclick = () => {
+
+    State.searchText = "";
+    searchInput.value = "";
+
+    showMatchingCandidates(true);
+  };
+}
+
+// ✅ matching戻る
+if (matchingBackBtn && searchInput) {
+  matchingBackBtn.onclick = () => {
+
+    State.searchText = "";
+    searchInput.value = "";
+
+    backToSummaryFromMatching(true);
+  };
+} 
   // ✅ ランク選択    
   const myRankSelect = document.getElementById("myRankSelect");    
   if (myRankSelect) {    
@@ -1479,29 +1510,54 @@ document.addEventListener("DOMContentLoaded", () => {
   // ✅ 初期化（DOM後）    
   init();    
   });    
-/* ---------------------------------------------------------    
-   [57] popstate（戻る制御   戻るボタン処理    
---------------------------------------------------------- */    
-
+/* ---------------------------------------------------------
+   [57] popstate（戻る制御   戻るボタン処理      
+--------------------------------------------------------- */
 window.addEventListener('popstate', (e) => {
-  const state = e.state;
+  const state = e.state || { page: STATE.SUMMARY };
 
-  if (!state || history.length <= 2) {
-    history.pushState({ page: STATE.SUMMARY }, '', '');
+  // ✅ DETAILへ戻る
+  if (state.page === STATE.DETAIL) {
+    const key = state.key || State.currentDetailKey;
+
+    // keyがない場合は安全にサマリ
+    if (!key) {
+      clearSearch();
+      const input = document.getElementById("searchInput");
+      if (input) input.value = "";
+      showSummaryUI(false);
+      return;
+    }
+
+    // 検索クリア（現行仕様維持）
+    if (State.searchText) {
+      clearSearch();
+      const input = document.getElementById("searchInput");
+      if (input) input.value = "";
+    }
+
+    // ★重要：pushしない
+    showDetail(key, false);
     return;
   }
-   
-  // ✅ 詳細 / matching → サマリ    
-  if (isCurrentView(STATE.DETAIL) || isCurrentView(STATE.MATCHING)) {
-    showSummaryUI(false);
-    history.pushState({ page: STATE.SUMMARY }, '', '');
+
+  // ✅ MATCHINGへ戻る
+  if (state.page === STATE.MATCHING) {
+    if (State.searchText) {
+      clearSearch();
+      const input = document.getElementById("searchInput");
+      if (input) input.value = "";
+    }
+
+    // ★重要：pushしない
+    showMatchingCandidates(false);
     return;
   }
 
-  // ✅ サマリで戻る → 検索クリア    
-  if (state.page === STATE.SUMMARY) {
-    clearSearch();
-    showSummaryUI(false);
-    history.pushState({ page: STATE.SUMMARY }, '', '');
-  }
+  // ✅ SUMMARY（デフォルト）
+  clearSearch();
+  const input = document.getElementById("searchInput");
+  if (input) input.value = "";
+
+  showSummaryUI(false);
 });
