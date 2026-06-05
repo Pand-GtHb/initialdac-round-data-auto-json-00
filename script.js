@@ -613,60 +613,75 @@ function calcStats(list, total) {
   const min = cnt ? Math.min(...points) : 0;    
   const max = cnt ? Math.max(...points) : 0;    
   return { cnt, percent, avg, min, max };    
-}    
-/* ---------------------------------------------------------    
+}
+/* ---------------------------------------------------------
+   [31-B] buildFilterGroupHTML
+   ★ buildRubyFilters / buildPrideFilters 共通HTML生成
+   - 機能互換維持：
+     - filter-row / filter-label / filter-items の構造を維持
+     - checked / class / value / 表示順を維持
+--------------------------------------------------------- */
+function buildFilterGroupHTML(items, options) {
+  const {
+    labelClass,
+    inputClass,
+    getValue,
+    getText
+  } = options;
+
+  const itemHtml = items.map(item => `
+      <label class="${labelClass}">
+        <input type="checkbox" class="${inputClass}" value="${getValue(item)}" checked>
+        ${getText(item)}
+      </label>
+    `).join("");
+
+  return `
+    <div class="filter-row">
+      <div class="filter-label"></div>
+      <div class="filter-items">
+        ${itemHtml}
+      </div>
+    </div>
+  `;
+}
+
+/* ---------------------------------------------------------
    [32] buildRubyFilters
-   ★ RUBYフィルタ生成（ラベル列＋内容列の2列レイアウト）    
---------------------------------------------------------- */    
-function buildRubyFilters() {    
-  const area = document.getElementById("rubyFilters");    
-  if (!area) return;    
-  let html = `    
-    <div class="filter-row">    
-      <div class="filter-label"></div>    
-      <div class="filter-items">    
-  `;    
-  for (let i = 1; i <= 8; i++) {    
-    html += `    
-      <label class="ruby-btn">    
-        <input type="checkbox" class="ruby-filter" value="${i}" checked>    
-        ★${i}    
-      </label>    
-    `;    
-  }    
-  html += `    
-      </div>    
-    </div>    
-  `;    
-  area.innerHTML = html;    
-}    
-/* ---------------------------------------------------------    
+   ★ RUBYフィルタ生成（ラベル列＋内容列の2列レイアウト）
+   ★ 共通化対応版（機能完全維持）
+--------------------------------------------------------- */
+function buildRubyFilters() {
+  const area = document.getElementById("rubyFilters");
+  if (!area) return;
+
+  const stars = Array.from({ length: 8 }, (_, i) => i + 1);
+
+  area.innerHTML = buildFilterGroupHTML(stars, {
+    labelClass: "ruby-btn",
+    inputClass: "ruby-filter",
+    getValue: star => star,
+    getText: star => `★${star}`
+  });
+}
+
+/* ---------------------------------------------------------
    [33] buildPrideFilters
-   ★ PRIDEフィルタ生成（ラベル列＋内容列の2列レイアウト）    
---------------------------------------------------------- */    
-function buildPrideFilters() {    
-  const area = document.getElementById("prideFilters");    
-  if (!area) return;    
-  let html = `    
-    <div class="filter-row">    
-      <div class="filter-label"></div>    
-      <div class="filter-items">    
-  `;    
-  PRIDE_LEVELS.forEach(p => {    
-    const label = p.key.replace("P_", "");    
-    html += `    
-      <label class="pride-btn">    
-        <input type="checkbox" class="pride-filter" value="${p.key}" checked>    
-        ${label}    
-      </label>    
-    `;    
-  });    
-  html += `    
-      </div>    
-    </div>    
-  `;    
-  area.innerHTML = html;    
-}    
+   ★ PRIDEフィルタ生成（ラベル列＋内容列の2列レイアウト）
+   ★ 共通化対応版（機能完全維持）
+--------------------------------------------------------- */
+function buildPrideFilters() {
+  const area = document.getElementById("prideFilters");
+  if (!area) return;
+
+  area.innerHTML = buildFilterGroupHTML(PRIDE_LEVELS, {
+    labelClass: "pride-btn",
+    inputClass: "pride-filter",
+    getValue: p => p.key,
+    getText: p => p.key.replace("P_", "")
+  });
+}
+
 /* ---------------------------------------------------------    
    [34] buildSummary　サマリ統計計算
 　★ サマリ生成（RUBY＋PRIDE フィルタ対応）    
