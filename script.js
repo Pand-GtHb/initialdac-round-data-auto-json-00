@@ -227,40 +227,43 @@ function renderStars(starCount) {
     ? stars.slice(0, 4) + "<br>" + stars.slice(4)    
     : stars;    
 }    
-/* ---------------------------------------------------------    
+/* ---------------------------------------------------------
    [14] fetchJSON（共通取得）
---------------------------------------------------------- */    
-async function fetchJSON(path) {    
-  const res = await fetch(`${BASE_URL}/${path}?t=${Date.now()}`, {    
-    cache: "no-store"    
-  });    
-  if (!res.ok) throw new Error("HTTP " + res.status);    
-  return res.json();    
-}    
-/* ---------------------------------------------------------    
-   [15] loadAreaList★ areaList.json 読み込み（辞書化）    
---------------------------------------------------------- */    
-let AreaList = {};    
-async function loadAreaList() {    
-  try {    
-    const res = await fetch(`${BASE_URL}/areaList.json?t=${Date.now()}`, {    
-      cache: "no-store"    
-    });    
-    if (!res.ok) throw new Error("HTTP " + res.status);    
-    const json = await res.json();    
-    // ★ 配列 → 辞書化    
-    AreaList = {};    
-    if (json.areas && Array.isArray(json.areas)) {    
-      json.areas.forEach(a => {    
-        AreaList[String(a.area)] = a.areaName;    
-      });    
-    }    
-    log("areaList.json 読み込み完了");    
-  } catch (e) {    
-    logError("areaList.json の取得に失敗：" + e.message);    
-    AreaList = {};    
-  }    
-}    
+--------------------------------------------------------- */
+async function fetchJSON(path, options = {}) {
+  const { cache = "no-store" } = options;
+
+  const res = await fetch(`${BASE_URL}/${path}?t=${Date.now()}`, {
+    cache
+  });
+
+  if (!res.ok) throw new Error("HTTP " + res.status);
+
+  return res.json();
+}   
+/* ---------------------------------------------------------
+   [15] loadAreaList★ areaList.json 読み込み（辞書化）
+--------------------------------------------------------- */
+let AreaList = {};
+async function loadAreaList() {
+  try {
+    const json = await fetchJSON("areaList.json");
+
+    // ★ 配列 → 辞書化
+    AreaList = {};
+    if (json.areas && Array.isArray(json.areas)) {
+      json.areas.forEach(a => {
+        AreaList[String(a.area)] = a.areaName;
+      });
+    }
+
+    log("areaList.json 読み込み完了");
+
+  } catch (e) {
+    logError("areaList.json の取得に失敗：" + e.message);
+    AreaList = {};
+  }
+} 
 /* ---------------------------------------------------------    
     [16] loadLatestRound  latest_round.json 読み込み（ラウンド番号表示用）
 --------------------------------------------------------- */    
@@ -325,31 +328,31 @@ async function loadRoundData() {
     logError("integrated_data.json の取得に失敗：" + e.message);    
   }    
 }    
-/* ---------------------------------------------------------    
-   [19] checkUpdate（更新監視） latest_update.json 監視（更新検知）    
---------------------------------------------------------- */    
-async function checkUpdate() {    
-  try {    
-    const res = await fetch(`${BASE_URL}/latest_update.json?t=${Date.now()}`, {    
-      cache: "no-store"    
-    });    
-    if (!res.ok) throw new Error("HTTP " + res.status);    
-    const json = await res.json();    
-    const latest = json.lastUpdated || "";    
-    if (!latest) return;    
-    if (State.latestUpdateAt && State.latestUpdateAt !== latest) {    
-      const btn = document.getElementById("reloadBtn");    
-      if (btn) {    
-        btn.classList.add("update-alert");    
-        btn.style.cssText = "background:#ff4081;color:#fff;font-weight:bold;";    
-      }    
-      logWarn("新しいデータが公開されています。");    
-    }    
-    State.latestUpdateAt = latest;    
-  } catch (e) {    
-    logError("latest_update.json の取得に失敗：" + e.message);    
-  }    
-}    
+/* ---------------------------------------------------------
+   [19] checkUpdate（更新監視） latest_update.json 監視（更新検知）
+--------------------------------------------------------- */
+async function checkUpdate() {
+  try {
+    const json = await fetchJSON("latest_update.json");
+
+    const latest = json.lastUpdated || "";
+    if (!latest) return;
+
+    if (State.latestUpdateAt && State.latestUpdateAt !== latest) {
+      const btn = document.getElementById("reloadBtn");
+      if (btn) {
+        btn.classList.add("update-alert");
+        btn.style.cssText = "background:#ff4081;color:#fff;font-weight:bold;";
+      }
+      logWarn("新しいデータが公開されています。");
+    }
+
+    State.latestUpdateAt = latest;
+
+  } catch (e) {
+    logError("latest_update.json の取得に失敗：" + e.message);
+  }
+}   
 /* ---------------------------------------------------------    
    [20] buildAreaDistribution（分布計算）「フィルタ後母集団のエリア分布」を自動計算して使う 分布計算関数
 --------------------------------------------------------- */    
