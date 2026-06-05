@@ -104,7 +104,25 @@ function isCurrentView(view) {
 function setCurrentView(view) {
   State.currentView = view;
 }
+/* ---------------------------------------------------------
+   [07-C] switchDisplayView
+   ★ 表示切替の共通化（機能維持）
+--------------------------------------------------------- */
+function switchDisplayView(view) {
+  const summaryView = document.getElementById("summaryView");
+  const detailView = document.getElementById("detailView");
+  const matchingView = document.getElementById("matchingView");
 
+  if (summaryView) {
+    summaryView.style.display = (view === STATE.SUMMARY) ? "block" : "none";
+  }
+  if (detailView) {
+    detailView.style.display = (view === STATE.DETAIL) ? "block" : "none";
+  }
+  if (matchingView) {
+    matchingView.style.display = (view === STATE.MATCHING) ? "block" : "none";
+  }
+}
 /* ---------------------------------------------------------    
    [08] ログ（appendLog / log / logWarn / logError）
 --------------------------------------------------------- */    
@@ -763,87 +781,72 @@ function filterSummaryBySearch() {
     [36] renderSummary  サマリ表示    
 --------------------------------------------------------- */    
 function renderSummary() {
-  const area = document.getElementById("summaryArea");  
+  const area = document.getElementById("summaryArea");
+  const filteredSummary = filterSummaryBySearch();
+  const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
+  const rubyTotal = filteredSummary
+    .filter(r => r.key.starts => s + r.list.length, 0);    .filter(r => r.key.startsWith("R"))
+  const prideTotal = total - rubyTotal;
+  const rankPercent = total ? Math.round((rubyTotal / total) * 100) : 0;
+  const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;
 
-  const filteredSummary = filterSummaryBySearch();  
+  area.innerHTML = `
+    <h3>
+      合計 ${fmt(total)}人：
+      RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋
+      PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
+    </h3>
+    <div style="overflow-x:auto;">
+      <table>
+        <tr>
+          <th>ランク</th>
+          <th>☆・Lv</th>
+          <th>人数</th>
+          <th>%</th>
+          <th>Bar</th>
+          <th>RP:Avg</th>
+          <th>RP:Min</th>
+          <th>RP:Max</th>
+        </tr>
+        ${filteredSummary.map(r => {
+          const { cnt, percent, avg, min, max } = calcStats(r.list, total);
+          return `
+            <tr class="clickable" data-key="${r.key}">
+              <td class="center"><img src="${r.icon}" width="32"></td>
+              <td class="left">${r.label}</td>
+              <td class="right">${fmt(cnt)}</td>
+              <td class="right">${percent}%</td>
+              <td class="center">
+                <div class="bar-wrap">
+                  <div class="bar" style="width:${percent}%;"></div>
+                </div>
+              </td>
+              <td class="right">${fmt(avg)}</td>
+              <td class="right">${fmt(min)}</td>
+              <td class="right">${fmt(max)}</td>
+            </tr>
+          `;
+        }).join("")}
+      </table>
+    </div>
+  `;
 
-  const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);  
+  document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const key = tr.dataset.key;
+      State.currentIsRubyBand = key.startsWith("R");
+      showDetail(key);
+    });
+  });
 
-  const rubyTotal = filteredSummary  
-    .filter(r => r.key.startsWith("R"))  
-    .reduce((s, r) => s + r.list.length, 0);  
-
-  const prideTotal = total - rubyTotal;  
-
-  const rankPercent = total ? Math.round((rubyTotal / total) * 100) : 0;  
-  const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;  
-
-  area.innerHTML = `  
-    <h3>  
-      合計 ${fmt(total)}人：  
-      RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋  
-      PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%  
-    </h3>  
-
-    <div style="overflow-x:auto;">  
-      <table>  
-        <tr>  
-          <th>ランク</th>  
-          <th>☆・Lv</th>  
-          <th>人数</th>  
-          <th>%</th>  
-          <th>Bar</th>  
-          <th>RP:Avg</th>  
-          <th>RP:Min</th>  
-          <th>RP:Max</th>  
-        </tr>  
-
-        ${filteredSummary.map(r => {  
-          const { cnt, percent, avg, min, max } = calcStats(r.list, total);  
-
-          return `  
-            <tr class="clickable" data-key="${r.key}">  
-              <td class="center"><img src="${r.icon}" width="32"></td>  
-              <td class="left">${r.label}</td>  
-              <td class="right">${fmt(cnt)}</td>  
-              <td class="right">${percent}%</td>  
-              <td class="center">  
-                <div class="bar-wrap">  
-                  <div class="bar" style="width:${percent}%;"></div>  
-                </div>  
-              </td>  
-              <td class="right">${fmt(avg)}</td>  
-              <td class="right">${fmt(min)}</td>  
-              <td class="right">${fmt(max)}</td>  
-            </tr>  
-          `;  
-        }).join("")}  
-
-      </table>  
-    </div>  
-  `;  
-
-  document.querySelectorAll("#summaryArea .clickable").forEach(tr => {  
-    tr.addEventListener("click", () => {  
-      const key = tr.dataset.key;  
-      State.currentIsRubyBand = key.startsWith("R");  
-      showDetail(key);  
-    });  
-  });  
-
-  // ★追加（状態クリア）
+  // ★ 状態クリア（現状維持）
   State.currentDetailKey = "";
   State.currentDetailLabel = "";
   State.currentDetailIcon = "";
 
-  // ★修正  
-  setCurrentView(STATE.SUMMARY);  
-
-  document.getElementById("summaryView").style.display = "block";  
-  document.getElementById("detailView").style.display = "none";  
-
-  const mv = document.getElementById("matchingView");  
-  if (mv) mv.style.display = "none";  
+  // ★ 現在ビュー設定＋表示切替
+  setCurrentView(STATE.SUMMARY);
+  switchDisplayView(STATE.SUMMARY);
 }
 /* ---------------------------------------------------------    
    [37] showSummaryUI   ★ showSummaryUI    
@@ -851,13 +854,9 @@ function renderSummary() {
 function showSummaryUI(push = true) {
   renderSummary();
 
-  // ★修正
+  // renderSummary側でも実施されるが、現行挙動を崩さないため維持
   setCurrentView(STATE.SUMMARY);
-
-  document.getElementById("summaryView").style.display = "block";
-  document.getElementById("detailView").style.display = "none";
-  const mv = document.getElementById("matchingView");
-  if (mv) mv.style.display = "none";
+  switchDisplayView(STATE.SUMMARY);
 
   if (push) {
     history.pushState({ page: STATE.SUMMARY }, '', '');
