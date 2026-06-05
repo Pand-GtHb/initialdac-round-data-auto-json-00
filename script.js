@@ -7,34 +7,37 @@
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";    
 
 
-/* ---------------------------------------------------------    
+/* ---------------------------------------------------------
    [02] STATE（画面状態 enum）
---------------------------------------------------------- */    
-const STATE = {    
-  SUMMARY: 'summary',    
-  DETAIL: 'detail'    
-};    
-/* ---------------------------------------------------------    
+--------------------------------------------------------- */
+const STATE = {
+  SUMMARY: 'summary',
+  DETAIL: 'detail',
+  MATCHING: 'matching'
+};
+
+/* ---------------------------------------------------------
    [03] State（アプリ全体状態）
---------------------------------------------------------- */    
-const State = {    
-  all: [],    
-  filtered: [],    
-  summary: [],    
-  detailOriginal: [],    
-  generatedAt: "",    
-  latestRound: null,    
-  latestUpdateAt: "",    
-  searchText: "",    
-  currentView: "summary",    
-  currentIsRubyBand: true,    
-  matchingList: [],    
-  seasonModel: null,    
-  myStar: 6,       
-  selectedMyRank: "R6",   // ★ UI選択（デフォルトR6）    
-  recentClicks: [],       // ★ クリック履歴（リアルタイムBoost）    
-  areaModel: {}           // ★ フィルタ後母集団のエリア分布    
-};    
+--------------------------------------------------------- */
+const State = {
+  all: [],
+  filtered: [],
+  summary: [],
+  detailOriginal: [],
+  generatedAt: "",
+  latestRound: null,
+  latestUpdateAt: "",
+  searchText: "",
+  currentView: STATE.SUMMARY,   // ★修正：enum化
+  currentIsRubyBand: true,
+  matchingList: [],
+  seasonModel: null,
+  myStar: 6,
+  selectedMyRank: "R6",
+  recentClicks: [],
+  areaModel: {}
+};
+
 /* ---------------------------------------------------------    
   [04] RUBY帯・PRIDE帯 定義
 --------------------------------------------------------- */    
@@ -85,7 +88,20 @@ function getRankIndex(key) {
 --------------------------------------------------------- */
 function getRankInfo(key) {    
   return RANKS.find(r => r.key === key) || null;    
-}    
+}
+
+/* ---------------------------------------------------------
+   [07-B] isCurrentView / setCurrentView
+   ★ STATE と currentView の一元化
+--------------------------------------------------------- */
+function isCurrentView(view) {
+  return State.currentView === view;
+}
+
+function setCurrentView(view) {
+  State.currentView = view;
+}
+
 /* ---------------------------------------------------------    
    [08] ログ（appendLog / log / logWarn / logError）
 --------------------------------------------------------- */    
@@ -735,85 +751,96 @@ function filterSummaryBySearch() {
 /* ---------------------------------------------------------    
     [36] renderSummary  サマリ表示    
 --------------------------------------------------------- */    
-function renderSummary() {    
-  const area = document.getElementById("summaryArea");    
-  const filteredSummary = filterSummaryBySearch();    
-  const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);    
-  const rubyTotal = filteredSummary    
-    .filter(r => r.key.startsWith("R"))    
-    .reduce((s, r) => s + r.list.length, 0);    
-  const prideTotal = total - rubyTotal;    
-  const rankPercent = total ? Math.round((rubyTotal / total) * 100) : 0;    
-  const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;    
-  area.innerHTML = `    
-    <h3>    
-      合計 ${fmt(total)}人：    
-      RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋    
-      PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%    
-    </h3>    
-    <div style="overflow-x:auto;">    
-      <table>    
-        <tr>    
-          <th>ランク</th>    
-          <th>☆・Lv</th>    
-          <th>人数</th>    
-          <th>%</th>    
-          <th>Bar</th>    
-          <th>RP:Avg</th>    
-          <th>RP:Min</th>    
-          <th>RP:Max</th>    
-        </tr>    
-        ${filteredSummary.map(r => {    
-          const { cnt, percent, avg, min, max } = calcStats(r.list, total);    
-          return `    
-            <tr class="clickable" data-key="${r.key}">    
-              <td class="center"><img src="${r.icon}" width="32"></td>    
-              <td class="left">${r.label}</td>    
-              <td class="right">${fmt(cnt)}</td>    
-              <td class="right">${percent}%</td>    
-              <td class="center">    
-                <div class="bar-wrap">    
-                  <div class="bar" style="width:${percent}%;"></div>    
-                </div>    
-              </td>    
-              <td class="right">${fmt(avg)}</td>    
-              <td class="right">${fmt(min)}</td>    
-              <td class="right">${fmt(max)}</td>    
-            </tr>    
-          `;    
-        }).join("")}    
-      </table>    
-    </div>    
-  `;    
-  document.querySelectorAll("#summaryArea .clickable").forEach(tr => {    
-    tr.addEventListener("click", () => {    
-      const key = tr.dataset.key;    
-      State.currentIsRubyBand = key.startsWith("R");    
-      showDetail(key);    
-    });    
-  });    
-  State.currentView = "summary";    
-  document.getElementById("summaryView").style.display = "block";    
-  document.getElementById("detailView").style.display = "none";    
-  const mv = document.getElementById("matchingView");    
-  if (mv) mv.style.display = "none";    
-}    
+function renderSummary() {
+  const area = document.getElementById("summaryArea");
+
+  const filteredSummary = filterSummaryBySearch();
+  const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
+
+  const rubyTotal = filteredSummary
+    .filter(r => r.key.startsWith("R"))
+    .reduce((s, r) => s + r.list.length, 0);
+
+  const prideTotal = total - rubyTotal;
+
+  const rankPercent = total ? Math.round((rubyTotal / total) * 100) : 0;
+  const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;
+
+  area.innerHTML = `
+    <h3>
+      合計 ${fmt(total)}人：
+      RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋
+      PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
+    </h3>
+    <div style="overflow-x:auto;">
+      <table>
+        <tr>
+          <th>ランク</th>
+          <th>☆・Lv</th>
+          <th>人数</th>
+          <th>%</th>
+          <th>Bar</th>
+          <th>RP:Avg</th>
+          <th>RP:Min</th>
+          <th>RP:Max</th>
+        </tr>
+        ${filteredSummary.map(r => {
+          const { cnt, percent, avg, min, max } = calcStats(r.list, total);
+          return `
+            <tr class="clickable" data-key="${r.key}">
+              <td class="center"><img src="${r.icon}" width="32"></td>
+              <td class="left">${r.label}</td>
+              <td class="right">${fmt(cnt)}</td>
+              <td class="right">${percent}%</td>
+              <td class="center">
+                <div class="bar-wrap">
+                  <div class="bar" style="width:${percent}%;"></div>
+                </div>
+              </td>
+              <td class="right">${fmt(avg)}</td>
+              <td class="right">${fmt(min)}</td>
+              <td class="right">${fmt(max)}</td>
+            </tr>
+          `;
+        }).join("")}
+      </table>
+    </div>
+  `;
+
+  document.querySelectorAll("#summaryArea .clickable").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const key = tr.dataset.key;
+      State.currentIsRubyBand = key.startsWith("R");
+      showDetail(key);
+    });
+  });
+
+  // ★修正
+  setCurrentView(STATE.SUMMARY);
+
+  document.getElementById("summaryView").style.display = "block";
+  document.getElementById("detailView").style.display = "none";
+  const mv = document.getElementById("matchingView");
+  if (mv) mv.style.display = "none";
+}
 /* ---------------------------------------------------------    
    [37] showSummaryUI   ★ showSummaryUI    
 --------------------------------------------------------- */    
-function showSummaryUI(push = true) {    
-  renderSummary();    
-  // 画面切替（必要なら）    
-  State.currentView = "summary";    
-  document.getElementById("summaryView").style.display = "block";    
-  document.getElementById("detailView").style.display = "none";    
-  const mv = document.getElementById("matchingView");    
-  if (mv) mv.style.display = "none";    
-  // “遷移したときだけ” pushする    
-  if (push) {    
-    history.pushState({ page: STATE.SUMMARY }, '', '');    
-  }    
-}    
+function showSummaryUI(push = true) {
+  renderSummary();
+
+  // ★修正
+  setCurrentView(STATE.SUMMARY);
+
+  document.getElementById("summaryView").style.display = "block";
+  document.getElementById("detailView").style.display = "none";
+  const mv = document.getElementById("matchingView");
+  if (mv) mv.style.display = "none";
+
+  if (push) {
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+  }
+}
 /* ---------------------------------------------------------    
    [38] setupRankNavigation   ★ 前後ランク移動ボタン制御    
 --------------------------------------------------------- */    
@@ -840,7 +867,7 @@ function showDetail(key) {
   setupRankNavigation(key);    
   if (!row) {    
     State.detailOriginal = [];    
-    State.currentView = "detail";    
+    setCurrentView(STATE.DETAIL);  
     State.currentIsRubyBand = isRubyBand;    
     history.pushState({ page: STATE.DETAIL }, '', '');    
     renderDetailTable(isRubyBand, bandLabel, bandIcon);    
@@ -1244,16 +1271,19 @@ function applyMatchingFilter(keyword) {
 /* ---------------------------------------------------------    
    [52] showMatchingCandidates   ★ マッチング候補画面表示    
 --------------------------------------------------------- */    
-function showMatchingCandidates() {    
-  buildMatchingCandidates();    
-  renderMatchingHeader();    
-  renderMatchingTable();    
-  State.currentView = "matching";    
-  document.getElementById("summaryView").style.display = "none";    
-  document.getElementById("detailView").style.display = "none";    
-  const mv = document.getElementById("matchingView");    
-  if (mv) mv.style.display = "block";    
-}    
+function showMatchingCandidates() {
+  buildMatchingCandidates();
+  renderMatchingHeader();
+  renderMatchingTable();
+
+  // ★修正
+  setCurrentView(STATE.MATCHING);
+
+  document.getElementById("summaryView").style.display = "none";
+  document.getElementById("detailView").style.display = "none";
+  const mv = document.getElementById("matchingView");
+  if (mv) mv.style.display = "block";
+}
 /* ---------------------------------------------------------    
    [53] backToSummaryFromMatching   ★ マッチング候補 → サマリに戻る    
 --------------------------------------------------------- */    
@@ -1346,20 +1376,22 @@ document.addEventListener("DOMContentLoaded", () => {
   if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;    
   if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;    
   // ✅ 検索    
-  if (searchInput) {    
-    searchInput.addEventListener("input", (e) => {    
-      State.searchText = e.target.value;    
-      if (State.currentView === "summary") {    
-        renderSummary();    
-      } else if (State.currentView === "detail") {    
-        applyPlayerFilter(State.searchText, State.currentIsRubyBand);    
-        renderDetailTable(State.currentIsRubyBand, "", "");    
-      } else if (State.currentView === "matching") {    
-        applyMatchingFilter(State.searchText);    
-      }    
-    });    
-  }    
-  // ✅ サマリ戻る（UIボタン）    
+if (searchInput) {
+  searchInput.addEventListener("input", (e) => {
+    State.searchText = e.target.value;
+
+    if (isCurrentView(STATE.SUMMARY)) {
+      renderSummary();
+
+    } else if (isCurrentView(STATE.DETAIL)) {
+      applyPlayerFilter(State.searchText, State.currentIsRubyBand);
+      renderDetailTable(State.currentIsRubyBand, "", "");
+
+    } else if (isCurrentView(STATE.MATCHING)) {
+      applyMatchingFilter(State.searchText);
+    }
+  });
+}  // ✅ サマリ戻る（UIボタン）    
   if (backBtn && searchInput) {    
     backBtn.onclick = () => {    
       State.searchText = "";    
@@ -1405,24 +1437,28 @@ document.addEventListener("DOMContentLoaded", () => {
 /* ---------------------------------------------------------    
    [57] popstate（戻る制御   戻るボタン処理    
 --------------------------------------------------------- */    
-window.addEventListener('popstate', (e) => {    
-  const state = e.state;    
-  console.log("popstate fired:", state, "history.length=", history.length);    
-  // ✅ もう戻れない or stateが無い → 戻るキャンセル    
-  if (!state || history.length <= 2) {    
-    history.pushState({ page: STATE.SUMMARY }, '', '');    
-    return;    
-  }    
+
+window.addEventListener('popstate', (e) => {
+  const state = e.state;
+
+  if (!state || history.length <= 2) {
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+    return;
+  }
+   
   // ✅ 詳細 / matching → サマリ    
-  if (State.currentView === "detail" || State.currentView === "matching") {    
-    showSummaryUI(false);    
-    history.pushState({ page: STATE.SUMMARY }, '', '');    
-    return;    
-  }    
+
+  if (isCurrentView(STATE.DETAIL) || isCurrentView(STATE.MATCHING)) {
+    showSummaryUI(false);
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+    return;
+  }
+
   // ✅ サマリで戻る → 検索クリア    
-  if (state.page === STATE.SUMMARY) {    
-    clearSearch();    
-    showSummaryUI(false);    
-    history.pushState({ page: STATE.SUMMARY }, '', '');    
-  }    
-});  
+
+  if (state.page === STATE.SUMMARY) {
+    clearSearch();
+    showSummaryUI(false);
+    history.pushState({ page: STATE.SUMMARY }, '', '');
+  }
+});
