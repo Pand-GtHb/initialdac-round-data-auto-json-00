@@ -980,21 +980,20 @@ function renderDetailRows(list, isRubyBand) {
 function renderMatchingRows(list) {
   renderPlayerRowsToBody("matchingTableBody", list);
 }
-
-/* ---------------------------------------------------------    
-   [42] applyPlayerFilter   プレイヤー名フィルタ（サマリ横断）    
---------------------------------------------------------- */    
-function applyPlayerFilter(keyword, isRubyBand, keepOriginalOrder = false) {    
-  const normKey = normalize(keyword);    
-  let base = State.detailOriginal.slice();    
-  if (!keepOriginalOrder) {    
-    base = base.sort((a, b) => {    
-      return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);    
-    });    
-  }    
-  if (!normKey) return base;    
-  return base.filter(p => (p.normalizedName || "").includes(normKey));    
-}    
+/* ---------------------------------------------------------
+   [42] applyPlayerFilter   プレイヤー名フィルタ（サマリ横断）
+--------------------------------------------------------- */
+function applyPlayerFilter(keyword, keepOriginalOrder = false) {
+  const normKey = normalize(keyword);
+  let base = State.detailOriginal.slice();
+  if (!keepOriginalOrder) {
+    base = base.sort((a, b) => {
+      return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);
+    });
+  }
+  if (!normKey) return base;
+  return base.filter(p => (p.normalizedName || "").includes(normKey));
+}  
 /* ---------------------------------------------------------    
    [43] downloadCSV   CSV ダウンロード共通関数    
 --------------------------------------------------------- */    
