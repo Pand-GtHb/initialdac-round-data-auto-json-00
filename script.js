@@ -440,30 +440,49 @@ function getRealtimeBoost(player) {
   const areaBoost = 1 + Math.min(0.5, areaScore * 0.2);    
   const shopBoost = 1 + Math.min(0.8, shopScore * 0.3);    
   return areaBoost * shopBoost;    
-}    
-/* ---------------------------------------------------------    
+} 
+/* ---------------------------------------------------------
+   [24-A] getRoundedDiffMinAndPhaseDistance
+   ★ 時刻丸め＋diff/phase距離の共通計算（機能共通化）
+--------------------------------------------------------- */
+function getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin) {
+  if (!updateDateStr) return { diffMin: Infinity, d: Infinity };
+
+  const now = new Date();
+  const last = new Date(updateDateStr.replace(/-/g, "/"));
+
+  // ★ 秒を30秒単位に丸める（元ロジック維持）
+  const sec = last.getSeconds();
+  const rounded = sec < 30 ? 0 : 30;
+  last.setSeconds(rounded, 0);
+
+  const diffMin = (now - last) / 60000;
+
+  if (!isFinite(diffMin) || diffMin < 0) {
+    return { diffMin: Infinity, d: Infinity };
+  }
+
+  if (diffMin < cycleMin) {
+    return { diffMin, d: Infinity };
+  }
+
+  const r = diffMin % cycleMin;
+  const d = Math.min(r, cycleMin - r);
+
+  return { diffMin, d };
+}   
+/* ---------------------------------------------------------
     [24] isMatchingCandidateByPhase
- 　 ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）    
-   （指定周期の境目 ±w 分にいるプレイヤーを候補とする）    
---------------------------------------------------------- */    
-function isMatchingCandidateByPhase(updateDateStr) {    
-  if (!updateDateStr) return false;    
-  const now = new Date();    
-  const last = new Date(updateDateStr.replace(/-/g, "/"));    
-  // ★ 秒を30秒単位に丸める（自然な丸め）    
-  const sec = last.getSeconds();    
-  const rounded = sec < 30 ? 0 : 30;    
-  last.setSeconds(rounded, 0);    
-  const diffMin = (now - last) / 60000;    
-  // サイクル設定    
-  const cycle = 4; // 4分00秒    
-  if (diffMin < cycle) return false;    
-  // 周期の位相（フェーズ）    
-  const r = diffMin % cycle;    
-  const d = Math.min(r, cycle - r); // 境目からの距離    
-  // ★ 許容幅 w（±0.25分＝15秒）    
-  const w = 0.25;    
-  return d <= w;    
+ 　 ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）
+   （指定周期の境目 ±w 分にいるプレイヤーを候補とする）
+--------------------------------------------------------- */
+function isMatchingCandidateByPhase(updateDateStr) {
+  const cycle = 4;   // 4分00秒
+  const w = 0.25;    // ±0.25分＝15秒
+
+  const { d } = getRoundedDiffMinAndPhaseDistance(updateDateStr, cycle);
+
+  return isFinite(d) && d <= w;
 }    
 /* ---------------------------------------------------------    
    [25] getSeasonStrengthScore
@@ -519,20 +538,9 @@ const MATCHING_SCORE_CONFIG = {
 /* ---------------------------------------------------------
    [28] getPhaseDistanceMin
 --------------------------------------------------------- */
-function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cycle) {    
-  if (!updateDateStr) return { diffMin: Infinity, d: Infinity };    
-  const now = new Date();    
-  const last = new Date(updateDateStr.replace(/-/g, "/"));    
-  const sec = last.getSeconds();    
-  const rounded = sec < 30 ? 0 : 30;    
-  last.setSeconds(rounded, 0);    
-  const diffMin = (now - last) / 60000;    
-  if (!isFinite(diffMin) || diffMin < 0) return { diffMin: Infinity, d: Infinity };    
-  if (diffMin < cycleMin) return { diffMin, d: Infinity };    
-  const r = diffMin % cycleMin;    
-  const d = Math.min(r, cycleMin - r);    
-  return { diffMin, d };    
-}    
+function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cycle) {
+  return getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin);
+}  
 /* ---------------------------------------------------------
   [29] calcMatchingScore
 --------------------------------------------------------- */
