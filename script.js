@@ -777,15 +777,18 @@ function filterSummaryBySearch() {
     .filter(r => r.list.length > 0);    
   return filtered;    
 }    
-/* ---------------------------------------------------------    
-    [36] renderSummary  サマリ表示    
---------------------------------------------------------- */    
+/* ---------------------------------------------------------
+    [36] renderSummary  サマリ表示
+--------------------------------------------------------- */
 function renderSummary() {
   const area = document.getElementById("summaryArea");
   const filteredSummary = filterSummaryBySearch();
   const total = filteredSummary.reduce((sum, r) => sum + r.list.length, 0);
+
   const rubyTotal = filteredSummary
-    .filter(r => r.key.starts => s + r.list.length, 0);    .filter(r => r.key.startsWith("R"))
+    .filter(r => r.key.startsWith("R"))
+    .reduce((s, r) => s + r.list.length, 0);
+
   const prideTotal = total - rubyTotal;
   const rankPercent = total ? Math.round((rubyTotal / total) * 100) : 0;
   const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;
