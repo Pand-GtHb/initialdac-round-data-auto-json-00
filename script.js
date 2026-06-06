@@ -634,14 +634,41 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
   return getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin);
 }  
 /* ---------------------------------------------------------
-   [29] calcMatchingScore（★rank_model完全統合版）
+   [29] calcMatchingScore
+   ★ rank主軸モデル（検証用）
+   ・ランク差を最優先
+   ・PRIDEは仕様に基づき制限
+   ・時間・同期・活動を補助要素として適用
+   ・area_modelは未使用（検証フェーズのため）
 --------------------------------------------------------- */
 function calcMatchingScore(player) {
 
+  // -------------------------
+  // 基本チェック
+  // -------------------------
   if (!player || !player.updateDate) return 0;
 
+  // -------------------------
+  // ランク情報取得
+  // -------------------------
+  const myStar = State.myStar;
+  const oppStar = getVirtualStar(player);
+  if (!oppStar) return 0;
+
   const rankWeight = getRankWeight(player);
-  const prideWeight = getPrideWeight(player);
+
+  // -------------------------
+  // PRIDE制御（仕様準拠）
+  // -------------------------
+  if (oppStar === 8) {
+    if (myStar <= 5) return 0;           // ★5はPRIDE完全排除
+    if (myStar === 6) return rankWeight * 0.2; // ★6は大幅抑制
+    // ★7のみ通常通過
+  }
+
+  // -------------------------
+  // 時間関連
+  // -------------------------
   const timeWeight = getTimeWeight(player);
 
   const { diffMin, d } = getPhaseDistanceMin(player.updateDate);
@@ -655,43 +682,42 @@ function calcMatchingScore(player) {
   const recencyScore =
     Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);
 
+  // -------------------------
+  // 活動量
+  // -------------------------
   const star = Number(player.starCnt ?? 0);
   const pride = Number(player.pridePoint ?? 0);
 
   const activityScore =
-    star > 0 ? Math.min(1, star / 7)
-             : (pride > 0 ? 0.7 : 0);
+    star > 0
+      ? Math.min(1, star / 7)
+      : (pride > 0 ? 0.7 : 0);
 
-  const w = MATCHING_SCORE_CONFIG.weight;
+  // -------------------------
+  // rank主軸スコア構造
+  // -------------------------
+  const rankCore = rankWeight * timeWeight;
 
-  /* ★核心：rank×timeモデル */
-  const baseScore =
-        (rankWeight * timeWeight) * w.strength
-      + phaseScore * w.phase
-      + recencyScore * w.recency
-      + activityScore * w.activity;
+  const miscScore =
+      phaseScore   * 0.30
+    + recencyScore * 0.30
+    + activityScore * 0.20;
 
-  const areaScore = getAreaScore(player);
-  const areaMultiplier = (0.9 + 0.3 * areaScore);
+  const baseScore = rankCore * (0.6 + miscScore);
 
+  // -------------------------
+  // リアルタイム補正（既存機能）
+  // -------------------------
   let realtimeBoost = getRealtimeBoost(player);
   realtimeBoost = Math.min(realtimeBoost, 2.0);
 
-  const areaInfluence = Math.min(areaScore, 2.5);
-  const damping = 1 / Math.pow(areaInfluence, 0.6);
+  // -------------------------
+  // 最終スコア
+  // -------------------------
+  const score = baseScore * realtimeBoost;
 
-  const adjustedRealtimeBoost =
-    1 + (realtimeBoost - 1) * damping;
-
-  let score =
-    baseScore
-    * areaMultiplier
-    * adjustedRealtimeBoost
-    * prideWeight;
-
-  score = Math.min(score, baseScore * 3.0);
-
-  return Math.max(0, Math.min(1, score));
+  // ★ clampしない（ランキング差を残す）
+  return Math.max(0, score);
 }
 /* ---------------------------------------------------------
    [30] applyFilters（★現在時刻基準＋完全安全版）
