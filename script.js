@@ -692,8 +692,9 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
   return getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin);
 }  
 /* ---------------------------------------------------------
-   [29] calcMatchingScore
-   ★ rank主軸モデル（PRIDE制御なし＝rank_model完全依存）
+   [29] calcMatchingScore（Area強化版）
+   ・rank分布ベース
+   ・areaで分解能を確保（強化）
 --------------------------------------------------------- */
 function calcMatchingScore(player) {
 
@@ -736,16 +737,30 @@ function calcMatchingScore(player) {
       : (pride > 0 ? 0.7 : 0);
 
   // -------------------------
-  // rank主軸（最重要）
+  // ★ Area（強化）
+  // -------------------------
+  const areaId = player.areaId;
+  const areaWeight =
+    State.areaModel?.[areaId] ?? 0;
+
+  const AREA_BOOST = 10.0; // ★ここが重要
+
+  const areaFactor = 1 + (areaWeight * AREA_BOOST);
+
+  // -------------------------
+  // rank主軸
   // -------------------------
   const rankCore = rankWeight * timeWeight;
 
   const miscScore =
-      phaseScore   * 0.30
+      phaseScore    * 0.30
     + recencyScore * 0.30
     + activityScore * 0.20;
 
-  const baseScore = rankCore * (0.6 + miscScore);
+  const baseScore =
+    rankCore *
+    (0.6 + miscScore) *
+    areaFactor;
 
   // -------------------------
   // realtimeBoost
