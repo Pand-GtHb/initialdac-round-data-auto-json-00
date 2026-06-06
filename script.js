@@ -27,13 +27,13 @@ const State = {
   latestRound: null,
   latestUpdateAt: "",
   searchText: "",
-  currentView: STATE.SUMMARY,   // ★修正：enum化
+  currentView: STATE.SUMMARY,   // ★enum化
   currentIsRubyBand: true,
   currentDetailKey: "",
   currentDetailLabel: "",
   currentDetailIcon: "",
   matchingList: [],
-  seasonModel: null,
+  rankModel: null,     // ★追加（Seasonの代替）
   myStar: 6,
   recentClicks: [],
   areaModel: {}
@@ -180,19 +180,25 @@ function stopProgress() {
   }    
   log("Viewer フィルタ完了");    
 }    
-/* ---------------------------------------------------------    
+/* ---------------------------------------------------------
    [10] 日付・数値ユーティリティ（fmt / parseDateJST / formatYMDHM）
---------------------------------------------------------- */    
-const fmt = n => Number(n).toLocaleString();    
-const parseDateJST = str => new Date(str.replace(/-/g, "/"));    
-function formatYMDHM(date) {    
-  const y = date.getFullYear();    
-  const m = ("0" + (date.getMonth() + 1)).slice(-2);    
-  const d = ("0" + date.getDate()).slice(-2);    
-  const hh = ("0" + date.getHours()).slice(-2);    
-  const mm = ("0" + date.getMinutes()).slice(-2);    
-  return `${y}/${m}/${d} ${hh}:${mm}`;    
-}    
+--------------------------------------------------------- */
+const fmt = n => Number(n).toLocaleString();
+
+/* ★変更：JST強制 */
+const parseDateJST = str => {
+  if (!str) return null;
+  return new Date(str.replace(" ", "T") + "+09:00");
+};
+
+function formatYMDHM(date) {
+  const y = date.getFullYear();
+  const m = ("0" + (date.getMonth() + 1)).slice(-2);
+  const d = ("0" + date.getDate()).slice(-2);
+  const hh = ("0" + date.getHours()).slice(-2);
+  const mm = ("0" + date.getMinutes()).slice(-2);
+  return `${y}/${m}/${d} ${hh}:${mm}`;
+}
 /* ---------------------------------------------------------    
    [11] normalize（文字正規化）
 --------------------------------------------------------- */    
@@ -314,21 +320,20 @@ async function loadLatestRound() {
     logError("latest_round.json の取得に失敗：" + e.message);    
   }    
 }    
-/* ---------------------------------------------------------    
-   [17] loadSeasonModel★ シーズン 学習モデル（season_model.json）読み込み    
---------------------------------------------------------- */    
-async function loadSeasonModel() {    
-  log("season_model.json 取得準備中");    
-  try {    
-    const json = await fetchJSON("season_model.json");    
-    State.seasonModel = json;    
-    log("season_model.json 読み込み完了");    
-  } catch (e) {    
-    // 学習モデルがなくてもViewerが落ちないようにする    
-    State.seasonModel = null;    
-    logWarn("season_model.json 未取得：学習無しモードで動作します（" + e.message + "）");    
-  }    
-}    
+/* ---------------------------------------------------------
+   [17] loadRankModel（SeasonモデルからRankモデルに変更）
+--------------------------------------------------------- */
+async function loadRankModel() {
+  log("rank_model.json 取得準備中");
+  try {
+    const json = await fetchJSON("rank_model.json");
+    State.rankModel = json;
+    log("rank_model.json 読み込み完了");
+  } catch (e) {
+    State.rankModel = null;
+    logWarn("rank_model.json 未取得：" + e.message);
+  }
+}
 /* ---------------------------------------------------------    
    [18] loadRoundData integrated_data.json 読み込み    
 --------------------------------------------------------- */    
@@ -498,26 +503,7 @@ function isMatchingCandidateByPhase(updateDateStr) {
   const { d } = getRoundedDiffMinAndPhaseDistance(updateDateStr, cycle);
 
   return isFinite(d) && d <= w;
-}    
-/* ---------------------------------------------------------    
-   [25] getSeasonStrengthScore
-   ★ シーズン学習：相手ランク分布から strengthScore を返す    
-   - 学習モデルがない場合は中立(0.5)    
-   - 0確率を避けるため最低値を付与（スムージング）    
---------------------------------------------------------- */    
-function getSeasonStrengthScore(player) {    
-  const model = State.seasonModel;    
-  if (!model || !model.strength) return 0.5;    
-  const rankKey = getPlayerRankKey(player);    
-  if (!rankKey) return 0.0;    
-  const myKey = (State.myStar === 7) ? "myStar7" : "myStar6";    
-  const dist = model.strength[myKey] || {};    
-  const p = Number(dist[rankKey] ?? 0);    
-  // ★ 最低値でゼロ回避（学習分布にない帯も候補に残す）    
-  const base = Math.max(0.01, Math.min(1, p));    
-  // ★ 強調：ピークを持ち上げる（0.65くらいが扱いやすい）    
-  return Math.pow(base, 0.65);    
-}    
+}       
 /* ---------------------------------------------------------    
    [26] getPlayerRankKey   ★ プレイヤーのランクキー取得（R1〜R8 / P_A〜P_G）    
 --------------------------------------------------------- */    
@@ -530,7 +516,7 @@ function getPlayerRankKey(player) {
   return pride ? pride.key : null;    
 }
 /* ---------------------------------------------------------
-   [26-B] syncMyRankSelection
+   [26-A] syncMyRankSelection
    ★ selectedMyRank の利用範囲を局所化しつつ myStar 同期を維持
 --------------------------------------------------------- */
 function syncMyRankSelection(rankValue) {
@@ -542,27 +528,82 @@ function syncMyRankSelection(rankValue) {
       : 6;
   return selectedMyRank;
 }
-/* ---------------------------------------------------------    
-   [27] MATCHING_SCORE_CONFIG　★ 予測スコア（Season学習 + Phase + Recency + Activity）    
---------------------------------------------------------- */    
-const MATCHING_SCORE_CONFIG = {    
-  cycle: 4,    
-  // ★ 15秒は厳しすぎて0人になりやすい → 36秒へ    
-  phaseWindow: 0.60,    
-  // 新しさは少し長めに（極端に落ちすぎない）    
-  recencyTau: 12,    
-  weight: {    
-    // ★ 学習（strength）を少し強めると「当たりやすい帯」が上がる    
-    strength: 0.40,    
-    phase:    0.25,    
-    recency:  0.25,    
-    activity: 0.10    
-  },    
-  // ★ 目標10人前提：閾値を下げる    
-  threshold: 0.30,    
-  // ★ 0人対策：最低でも上位10人は必ず表示    
-  minCandidates: 10    
-};    
+/* ---------------------------------------------------------
+   [26-B] ランク統合（RUBY＋PRIDE）
+--------------------------------------------------------- */
+
+function getVirtualStar(player) {
+  if (player.onlineBattleRankId === RUBY_ID) {
+    return player.starCnt;
+  }
+  if (player.pridePoint > 0) {
+    return State.rankModel?.scale?.pride_virtual_star ?? 8;
+  }
+  return null;
+}
+
+function getRankWeight(player) {
+  const model = State.rankModel;
+  if (!model) return 0.5;
+
+  const myStar = State.myStar;
+  const oppStar = getVirtualStar(player);
+  if (!oppStar) return 0;
+
+  const diff = Math.abs(myStar - oppStar);
+  const table = model.models[String(myStar)]?.weights || {};
+
+  return table[String(diff)] ?? model.fallback.default_diff_weight;
+}
+
+function getPrideWeight(player) {
+  if (!State.rankModel) return 1.0;
+  if (player.pridePoint <= 0) return 1.0;
+
+  const pt = player.pridePoint;
+  const band = PRIDE_LEVELS.find(p => pt >= p.min && pt <= p.max);
+  if (!band) return 1.0;
+
+  const key = band.key.replace("P_", "");
+  return State.rankModel.pride.bands[key]?.weight ?? 1.0;
+}
+/* ---------------------------------------------------------
+   [26-C] getTimeWeight（★現在時刻統一）
+--------------------------------------------------------- */
+function getTimeWeight(player) {
+
+  if (!player.updateDate) return 0;
+
+  const now = Date.now();
+  const last = parseDateJST(player.updateDate)?.getTime();
+  if (!last) return 0;
+
+  const diffMin = (now - last) / 60000;
+  if (diffMin < 0) return 0;
+
+  const maxRange = Number(document.getElementById("rangeSelect").value);
+
+  const normalized = Math.max(0, 1 - diffMin / maxRange);
+
+  return Math.pow(normalized, 0.7);
+}
+/* ---------------------------------------------------------
+   [27] MATCHING_SCORE_CONFIG
+   ★ 予測スコア（Rankモデル + Phase + Recency + Activity）
+--------------------------------------------------------- */
+const MATCHING_SCORE_CONFIG = {
+  cycle: 4,
+  phaseWindow: 0.60,
+  recencyTau: 12,
+  weight: {
+    strength: 0.40,   // ★ rank×timeベース
+    phase:    0.25,
+    recency:  0.25,
+    activity: 0.10
+  },
+  threshold: 0.30,
+  minCandidates: 10
+}; 
 /* ---------------------------------------------------------
    [28] getPhaseDistanceMin
 --------------------------------------------------------- */
@@ -570,93 +611,91 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
   return getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin);
 }  
 /* ---------------------------------------------------------
-  [29] calcMatchingScore
+   [29] calcMatchingScore（★rank_model完全統合版）
 --------------------------------------------------------- */
-function calcMatchingScore(player) {    
-  if (!player || !player.updateDate) return 0;    
-  // ★ 学習（相手ランク分布）    
-  const strengthScore = getSeasonStrengthScore(player);    
-  // ★ Phase / Recency    
-  const { diffMin, d } = getPhaseDistanceMin(player.updateDate);    
-  if (!isFinite(diffMin) || diffMin === Infinity) return 0;    
-  const phaseScore = (isFinite(d) && d !== Infinity)    
-    ? Math.max(0, 1 - (d / MATCHING_SCORE_CONFIG.phaseWindow))    
-    : 0;    
-  const recencyScore = Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);    
-  // ★ Activity（Viewer上の指標：starCnt / pridePoint）    
-  const star = Number(player.starCnt ?? 0);    
-  const pride = Number(player.pridePoint ?? 0);    
-  const activityScore = star > 0 ? Math.min(1, star / 8) : (pride > 0 ? 0.70 : 0);    
-  const w = MATCHING_SCORE_CONFIG.weight;    
-   const baseScore =    
-      strengthScore * w.strength +    
-      phaseScore    * w.phase +    
-      recencyScore  * w.recency +    
-      activityScore * w.activity;       
-const areaScore = getAreaScore(player);    
-// ===============================    
-// area補正（分布差ベース）    
-// ===============================    
-const areaMultiplier = (0.9 + 0.3 * areaScore);    
-// ===============================    
-// realtimeBoost（元ロジック流用）    
-// ===============================    
-let realtimeBoost = getRealtimeBoost(player);    
-realtimeBoost = Math.min(realtimeBoost, 2.0);    
-// ===============================    
-//    [28] getPhaseDistanceMin★相乗暴発抑制    
-// ===============================    
-const areaInfluence = Math.min(areaScore, 2.5);    
-const damping = 1 / Math.pow(areaInfluence, 0.6);    
-const adjustedRealtimeBoost =    
-  1 + (realtimeBoost - 1) * damping;    
-// ===============================    
-//    [29] calcMatchingScore（最重要コア）最終スコア    
-// ===============================    
-let score =    
-  baseScore    
-  * areaMultiplier    
-  * adjustedRealtimeBoost;    
-   // 重み可視化    
-   console.log(    
-  player.name,    
-  "area=", player.area,    
-  "areaScore=", areaScore.toFixed(2),    
-  "areaMult=", areaMultiplier.toFixed(2),    
-  "rtRaw=", realtimeBoost.toFixed(2),    
-  "rtAdj=", adjustedRealtimeBoost.toFixed(2),    
-  "score=", score.toFixed(3)    
-);    
-// ===============================    
-// 上限＆下限    
-// ===============================    
-score = Math.min(score, baseScore * 3.0);  // 暴発防止（任意）    
-return Math.max(0, Math.min(1, score));    
-}    
+function calcMatchingScore(player) {
+
+  if (!player || !player.updateDate) return 0;
+
+  const rankWeight = getRankWeight(player);
+  const prideWeight = getPrideWeight(player);
+  const timeWeight = getTimeWeight(player);
+
+  const { diffMin, d } = getPhaseDistanceMin(player.updateDate);
+  if (!isFinite(diffMin)) return 0;
+
+  const phaseScore =
+    (isFinite(d) && d !== Infinity)
+      ? Math.max(0, 1 - (d / MATCHING_SCORE_CONFIG.phaseWindow))
+      : 0;
+
+  const recencyScore =
+    Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);
+
+  const star = Number(player.starCnt ?? 0);
+  const pride = Number(player.pridePoint ?? 0);
+
+  const activityScore =
+    star > 0 ? Math.min(1, star / 7)
+             : (pride > 0 ? 0.7 : 0);
+
+  const w = MATCHING_SCORE_CONFIG.weight;
+
+  /* ★核心：rank×timeモデル */
+  const baseScore =
+        (rankWeight * timeWeight) * w.strength
+      + phaseScore * w.phase
+      + recencyScore * w.recency
+      + activityScore * w.activity;
+
+  const areaScore = getAreaScore(player);
+  const areaMultiplier = (0.9 + 0.3 * areaScore);
+
+  let realtimeBoost = getRealtimeBoost(player);
+  realtimeBoost = Math.min(realtimeBoost, 2.0);
+
+  const areaInfluence = Math.min(areaScore, 2.5);
+  const damping = 1 / Math.pow(areaInfluence, 0.6);
+
+  const adjustedRealtimeBoost =
+    1 + (realtimeBoost - 1) * damping;
+
+  let score =
+    baseScore
+    * areaMultiplier
+    * adjustedRealtimeBoost
+    * prideWeight;
+
+  score = Math.min(score, baseScore * 3.0);
+
+  return Math.max(0, Math.min(1, score));
+}
 /* ---------------------------------------------------------
-   [30] applyFilters　フィルタ（時間フィルタ）
---------------------------------------------------------- */    
-function applyFilters() {    
-  const minutes = Number(document.getElementById("rangeSelect").value);    
-  if (!State.generatedAt) {    
-    logError("generatedAt が未取得のため、時間フィルタをスキップしました");    
-    State.filtered = [...State.all];    
-    return;    
-  }    
-  const baseMs = parseDateJST(State.generatedAt).getTime();    
-  const filterStartMs = baseMs - minutes * 60 * 1000;    
-  document.getElementById("filterStartTime").textContent =    
-    formatYMDHM(new Date(filterStartMs));    
-  State.filtered = State.all.filter(p => {    
-    if (!p.updateDate) return false;    
-    return parseDateJST(p.updateDate).getTime() >= filterStartMs;    
-  });    
-   State.areaModel = buildAreaDistribution(State.filtered);    
-   // ★ 「エリア重みが効いているか」確認用ログ    
-   log("areaModel top5=" + JSON.stringify(    
-  Object.entries(State.areaModel).sort((a,b)=>b[1]-a[1]).slice(0,5)    
-));       
-}    
+   [30] applyFilters（★現在時刻基準）
+--------------------------------------------------------- */
+function applyFilters() {
+
+  const minutes = Number(document.getElementById("rangeSelect").value);
+
+  /* ★変更：generatedAt → now */
+  const baseMs = Date.now();
+
+  const filterStartMs = baseMs - minutes * 60 * 1000;
+
+  document.getElementById("filterStartTime").textContent =
+    formatYMDHM(new Date(filterStartMs));
+
+  State.filtered = State.all.filter(p => {
+    if (!p.updateDate) return false;
+    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
+  });
+
+  State.areaModel = buildAreaDistribution(State.filtered);
+
+  log("areaModel top5=" + JSON.stringify(
+    Object.entries(State.areaModel).sort((a,b)=>b[1]-a[1]).slice(0,5)
+  ));
+}
 /* ---------------------------------------------------------    
    [31] calcStats
 --------------------------------------------------------- */    
@@ -1194,8 +1233,7 @@ function buildMatchingCandidates() {
     .map(x => Number(x.value));    
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]    
     .map(x => x.value);    
-  // filtered が極端に少ないと不安定になるので、必要なら all に退避    
-  const base = (State.filtered.length >= 30 ? State.filtered : State.all);    
+ const base = State.all;
   // まず全員スコア化（学習＋時刻）    
   const scoredAll = base.map(p => {    
     const rankKey = getPlayerRankKey(p);    
@@ -1369,28 +1407,30 @@ function clearSearch() {
   if (input) input.value = '';    
   State.searchText = '';    
 }    
-/* ---------------------------------------------------------    
-   [55] init   初期化（★ loadAreaList を追加済み）    
---------------------------------------------------------- */    
-async function init() {    
-  log("Viewer 初期化中");    
-  startProgress();    
-  // ★ RUBY / PRIDE フィルタ自動生成    
-  buildRubyFilters();    
-  buildPrideFilters();    
-  // ★ 追加：areaList.json を読み込む    
-  await loadAreaList();    
-  await loadLatestRound();    
-  await loadSeasonModel();    
-  await loadRoundData();    
-  applyFilters();    
-  buildSummary();    
-  renderSummary();    
-  stopProgress();    
-  log("Viewer 初期化完了");    
-  setInterval(checkUpdate, 30000);    
-  checkUpdate();    
-}    
+/* ---------------------------------------------------------
+   [55] init   初期化
+--------------------------------------------------------- */
+async function init() {
+  log("Viewer 初期化中");
+  startProgress();
+
+  buildRubyFilters();
+  buildPrideFilters();
+
+  await loadAreaList();
+  await loadLatestRound();
+
+  await loadRankModel();     // ★ここを追加 ←重要
+
+  await loadRoundData();
+
+  applyFilters();
+  buildSummary();
+  renderSummary();
+
+  stopProgress();
+  log("Viewer 初期化完了");
+}
 /* ---------------------------------------------------------    
    [56] DOMContentLoaded   DOMContentLoaded    
 --------------------------------------------------------- */    
