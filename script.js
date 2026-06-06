@@ -36,7 +36,7 @@ const State = {
   rankModel: null,     // ★追加（Seasonの代替）
   myStar: 6,
   recentClicks: [],
-  areaModel: {}
+  areaModel: {},
   scoringConfig: null
 };
 /* ---------------------------------------------------------    
