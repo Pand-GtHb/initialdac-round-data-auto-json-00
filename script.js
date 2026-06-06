@@ -710,8 +710,12 @@ function calcMatchingScore(player) {
   if (!player || !player.updateDate) return 0;
 
   const cfg = State.scoringConfig;
-  if (!cfg) return 0;
 
+  // 修正
+  if (!cfg) {
+    // fallback（壊れないようにする）
+    return 1;
+  }
   // -------------------------
   // rank
   // -------------------------
@@ -802,25 +806,38 @@ function selectByWeight(players, count) {
   const result = [];
   const pool = [...players];
 
+  // ★ 安全なスコア関数
+  const safeScore = (p) =>
+    Math.max(0.0001, p.score || 0);
+
   while (result.length < count && pool.length > 0) {
 
+    // -------------------------
+    // 合計スコア
+    // -------------------------
     const total =
-      pool.reduce((sum, p) => sum + Math.max(0.0001, p.score || 0), 0);
+      pool.reduce((sum, p) => sum + safeScore(p), 0);
 
     if (total <= 0) break;
 
+    // -------------------------
+    // ルーレット
+    // -------------------------
     let r = Math.random() * total;
 
     let idx = 0;
 
     for (let i = 0; i < pool.length; i++) {
-      r -= Math.max(0.0001, pool[i].score || 0);
+      r -= safeScore(pool[i]);
       if (r <= 0) {
         idx = i;
         break;
       }
     }
 
+    // -------------------------
+    // 抽選確定
+    // -------------------------
     result.push(pool[idx]);
     pool.splice(idx, 1);
   }
@@ -1421,7 +1438,7 @@ function copyToClipboard(text) {
    ★ マッチング候補一覧生成（確率サンプリング版）
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
-
+  console.log("scoringConfig:", State.scoringConfig);
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
