@@ -692,9 +692,9 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
   return getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin);
 }  
 /* ---------------------------------------------------------
-   [29] calcMatchingScore（分解能強化版）
-   ・rankは基準点として使用
-   ・areaとmiscで差を作る
+   [29] calcMatchingScore（順位分離版）
+   ・rankは候補性（弱）
+   ・areaで順位を決定
 --------------------------------------------------------- */
 function calcMatchingScore(player) {
 
@@ -704,10 +704,23 @@ function calcMatchingScore(player) {
   if (!player || !player.updateDate) return 0;
 
   // -------------------------
-  // ランク
+  // ランク（弱い影響にする）
   // -------------------------
   const rankWeight = getRankWeight(player);
   if (rankWeight <= 0) return 0;
+
+  // ★ rankを圧縮（差を弱める）
+  const rankScore = Math.sqrt(rankWeight) * 10;
+
+  // -------------------------
+  // Area（主役）
+  // -------------------------
+  const areaId = player.areaId;
+  const areaWeight =
+    State.areaModel?.[areaId] ?? 0;
+
+  // ★ 強く効かせる
+  const areaScore = areaWeight * 200;
 
   // -------------------------
   // 時間
@@ -737,27 +750,12 @@ function calcMatchingScore(player) {
       : (pride > 0 ? 0.7 : 0);
 
   // -------------------------
-  // Area
-  // -------------------------
-  const areaId = player.areaId;
-  const areaWeight =
-    State.areaModel?.[areaId] ?? 0;
-
-  // -------------------------
-  // rank基準（スケール化）
-  // -------------------------
-  const RANK_SCALE = 100;  // ★重要
-
-  const rankScore = rankWeight * RANK_SCALE * timeWeight;
-
-  // -------------------------
-  // 補助スコア（加算）
+  // misc
   // -------------------------
   const miscScore =
       phaseScore    * 20
     + recencyScore * 20
-    + activityScore * 10
-    + areaWeight    * 50;
+    + activityScore * 10;
 
   // -------------------------
   // realtimeBoost
@@ -766,10 +764,12 @@ function calcMatchingScore(player) {
   realtimeBoost = Math.min(realtimeBoost, 2.0);
 
   // -------------------------
-  // 最終スコア
+  // 最終スコア（加算型）
   // -------------------------
   const score =
-    (rankScore + miscScore) * realtimeBoost;
+    (areaScore + miscScore + rankScore) *
+    timeWeight *
+    realtimeBoost;
 
   return Math.max(0, score);
 }
