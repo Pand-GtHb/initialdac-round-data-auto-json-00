@@ -1443,17 +1443,20 @@ function copyToClipboard(text) {
 }    
 /* ---------------------------------------------------------
    [47] buildMatchingCandidates
-   ★ マッチング候補一覧生成（確率サンプリング版）
+   ★ マッチング候補一覧生成（確率サンプリング版・時間フィルタ反映）
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
+
   console.log("scoringConfig:", State.scoringConfig);
+
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
 
-  const base = State.all;
+  // ★修正：時間フィルタ後データを使用
+  const base = State.filtered;
 
   // -------------------------
   // スコア付与
@@ -1465,7 +1468,7 @@ function buildMatchingCandidates() {
     return {
       ...p,
       __rankKey: getPlayerRankKey(p),
-      __score: Math.max(0.0001, score) // ★0防止（重要）
+      __score: Math.max(0.0001, score) // ★0防止
     };
   });
 
@@ -1511,13 +1514,12 @@ function buildMatchingCandidates() {
   }
 
   // -------------------------
-  // Step3: 確率サンプリング（最重要）
+  // Step3: 確率サンプリング
   // -------------------------
   let selected;
 
   if (list.length > 0) {
 
-    // ★ 通常ケース
     selected = selectByWeight(
       list,
       MATCHING_SCORE_CONFIG.minCandidates
@@ -1525,7 +1527,6 @@ function buildMatchingCandidates() {
 
   } else {
 
-    // ★ フォールバック（全体から抽選）
     selected = selectByWeight(
       filteredByRank,
       MATCHING_SCORE_CONFIG.minCandidates
@@ -1564,7 +1565,7 @@ function buildMatchingCandidates() {
   State.matchingList = selected;
 
   // -------------------------
-  // ログ（上位5だけ表示）
+  // ログ（上位5）
   // -------------------------
   if (selected.length) {
     log(
