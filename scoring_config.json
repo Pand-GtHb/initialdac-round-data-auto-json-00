@@ -4,31 +4,26 @@
     "updatedAt": "2026-06-06T17:45:00+09:00",
     "description": "rank主軸モデル（linear化）・PRIDE出現補正バージョン",
     "notes": [
-      "rankのmodeをsqrtからlinearへ変更",
-      "PRIDEと★7の差をそのまま活かす設計",
-      "scaleは24（上位偏重を抑えつつPRIDEを出すバランス）",
-      "areaは補正として掛け算で使用",
-      "timeは現状維持（乗算）"
+      "rank mode linear",
+      "scale 24",
+      "PRIDE出現補正",
+      "area補正は維持",
+      "time変更なし"
     ]
   },
-
   "rank": {
     "mode": "linear",
     "scale": 24
   },
-
   "area": {
     "scale": 200
   },
-
   "time": {
     "mode": "multiply"
   },
-
   "misc": {
     "phase": 20,
     "recency": 20,
     "activity": 10
   }
 }
-``
