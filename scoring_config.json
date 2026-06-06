@@ -1,14 +1,29 @@
 {
+  "meta": {
+    "version": "scoring_config_v2_rank_tuned",
+    "updatedAt": "2026-06-06T17:15:00+09:00",
+    "description": "rank影響をやや強化したバランス版（PRIDE出現改善）",
+    "notes": [
+      "scale=22→26に調整",
+      "PRIDEが自然に1〜2人出ることを意図",
+      "area主導は維持",
+      "timeは現状仕様維持（乗算）"
+    ]
+  },
+
   "rank": {
     "mode": "sqrt",
-    "scale": 22
+    "scale": 26
   },
+
   "area": {
     "scale": 200
   },
+
   "time": {
     "mode": "multiply"
   },
+
   "misc": {
     "phase": 20,
     "recency": 20,
