@@ -527,71 +527,133 @@ function isMatchingCandidateByPhase(updateDateStr) {
 
   return isFinite(d) && d <= w;
 }       
-/* ---------------------------------------------------------    
-   [26] getPlayerRankKey   ★ プレイヤーのランクキー取得（R1〜R8 / P_A〜P_G）    
---------------------------------------------------------- */    
-function getPlayerRankKey(player) {    
-  if (player.onlineBattleRankId === RUBY_ID && player.starCnt >= 1 && player.starCnt <= 8) {    
-    return `R${player.starCnt}`;    
-  }    
-  const pt = Number(player.pridePoint ?? 0);    
-  const pride = PRIDE_LEVELS.find(p => pt >= p.min && pt <= p.max);    
-  return pride ? pride.key : null;    
+/* ---------------------------------------------------------
+   [26] ランク関連ユーティリティ
+   ・ランクキー取得
+   ・自分ランク同期
+   ・非対称ランクモデル（vs方式）
+   ・PRIDE帯補正（ポイント範囲対応）
+--------------------------------------------------------- */
+/* ---------------------------------------------------------
+   [26-1] getPlayerRankKey
+   ★ プレイヤーのランクキー取得（R1〜R8 / P_A〜P_G）
+--------------------------------------------------------- */
+function getPlayerRankKey(player) {
+
+  // RUBY帯
+  if (
+    player.onlineBattleRankId === RUBY_ID &&
+    Number(player.starCnt) >= 1 &&
+    Number(player.starCnt) <= 8
+  ) {
+    return `R${player.starCnt}`;
+  }
+
+  // PRIDE帯
+  const pt = Number(player.pridePoint ?? 0);
+
+  const pride = PRIDE_LEVELS.find(p =>
+    pt >= p.min && pt <= p.max
+  );
+
+  return pride ? pride.key : null;
 }
 /* ---------------------------------------------------------
-   [26-A] syncMyRankSelection
+   [26-2] syncMyRankSelection
    ★ selectedMyRank の利用範囲を局所化しつつ myStar 同期を維持
 --------------------------------------------------------- */
 function syncMyRankSelection(rankValue) {
+
   const selectedMyRank = rankValue || "R6";
+
   State.myStar =
-    (String(selectedMyRank).startsWith("R") &&
-      Number(String(selectedMyRank).slice(1)) >= 7)
+    (
+      String(selectedMyRank).startsWith("R") &&
+      Number(String(selectedMyRank).slice(1)) >= 7
+    )
       ? 7
       : 6;
+
   return selectedMyRank;
 }
 /* ---------------------------------------------------------
-   [26-B] ランク統合（RUBY＋PRIDE）
+   [26-3] getVirtualStar
+   ・RUBY：そのまま星
+   ・PRIDE：仮想★8に変換
 --------------------------------------------------------- */
-
 function getVirtualStar(player) {
+
+  // RUBY帯
   if (player.onlineBattleRankId === RUBY_ID) {
-    return player.starCnt;
+    return Number(player.starCnt ?? 0);
   }
-  if (player.pridePoint > 0) {
+
+  // PRIDE帯
+  if (Number(player.pridePoint ?? 0) > 0) {
     return State.rankModel?.scale?.pride_virtual_star ?? 8;
   }
+
   return null;
 }
-
+/* ---------------------------------------------------------
+   [26-4] getRankWeight
+   ★ 非対称ランクモデル（vs方式）
+   ・myStar → oppStar の直接マッピング
+--------------------------------------------------------- */
 function getRankWeight(player) {
+
   const model = State.rankModel;
-  if (!model) return 0.5;
+  if (!model) return 0.1;
 
   const myStar = State.myStar;
   const oppStar = getVirtualStar(player);
+
   if (!oppStar) return 0;
 
-  const diff = Math.abs(myStar - oppStar);
-  const table = model.models[String(myStar)]?.weights || {};
+  const table = model.models?.[String(myStar)]?.vs;
 
-  return table[String(diff)] ?? model.fallback.default_diff_weight;
-}
+  if (!table) {
+    return model.fallback?.default_vs_weight ?? 0.05;
+  }
 
-function getPrideWeight(player) {
-  if (!State.rankModel) return 1.0;
-  if (player.pridePoint <= 0) return 1.0;
-
-  const pt = player.pridePoint;
-  const band = PRIDE_LEVELS.find(p => pt >= p.min && pt <= p.max);
-  if (!band) return 1.0;
-
-  const key = band.key.replace("P_", "");
-  return State.rankModel.pride.bands[key]?.weight ?? 1.0;
+  return table[String(oppStar)]
+    ?? model.fallback?.default_vs_weight
+    ?? 0.05;
 }
 /* ---------------------------------------------------------
-   [26-C] getTimeWeight（★現在時刻統一）
+   [26-5] getPrideWeight
+   ★ PRIDE帯補正（ポイント範囲による分類）
+   ・rank_model.json の bands を使用
+--------------------------------------------------------- */
+function getPrideWeight(player) {
+
+  const model = State.rankModel;
+
+  // PRIDEでない場合
+  if (!model || !player.pridePoint) return 1.0;
+
+  const pt = Number(player.pridePoint);
+
+  const bands = model.pride?.bands;
+  if (!bands) return 1.0;
+
+  // ポイント範囲で判定
+  for (const key in bands) {
+
+    const band = bands[key];
+
+    const min = Number(band.min ?? 0);
+    const max = Number(band.max ?? Infinity);
+
+    if (pt >= min && pt <= max) {
+      return Number(band.weight ?? 1.0);
+    }
+  }
+
+  return 1.0;
+}
+/* ---------------------------------------------------------
+   [26-6] getTimeWeight（★現在時刻基準）
 --------------------------------------------------------- */
 function getTimeWeight(player) {
 
@@ -635,11 +697,7 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
 }  
 /* ---------------------------------------------------------
    [29] calcMatchingScore
-   ★ rank主軸モデル（検証用）
-   ・ランク差を最優先
-   ・PRIDEは仕様に基づき制限
-   ・時間・同期・活動を補助要素として適用
-   ・area_modelは未使用（検証フェーズのため）
+   ★ rank主軸モデル（PRIDE制御なし＝rank_model完全依存）
 --------------------------------------------------------- */
 function calcMatchingScore(player) {
 
@@ -649,25 +707,13 @@ function calcMatchingScore(player) {
   if (!player || !player.updateDate) return 0;
 
   // -------------------------
-  // ランク情報取得
+  // ランク
   // -------------------------
-  const myStar = State.myStar;
-  const oppStar = getVirtualStar(player);
-  if (!oppStar) return 0;
-
   const rankWeight = getRankWeight(player);
+  if (rankWeight <= 0) return 0;
 
   // -------------------------
-  // PRIDE制御（仕様準拠）
-  // -------------------------
-  if (oppStar === 8) {
-    if (myStar <= 5) return 0;           // ★5はPRIDE完全排除
-    if (myStar === 6) return rankWeight * 0.2; // ★6は大幅抑制
-    // ★7のみ通常通過
-  }
-
-  // -------------------------
-  // 時間関連
+  // 時間
   // -------------------------
   const timeWeight = getTimeWeight(player);
 
@@ -694,7 +740,7 @@ function calcMatchingScore(player) {
       : (pride > 0 ? 0.7 : 0);
 
   // -------------------------
-  // rank主軸スコア構造
+  // rank主軸（最重要）
   // -------------------------
   const rankCore = rankWeight * timeWeight;
 
@@ -706,7 +752,7 @@ function calcMatchingScore(player) {
   const baseScore = rankCore * (0.6 + miscScore);
 
   // -------------------------
-  // リアルタイム補正（既存機能）
+  // realtimeBoost
   // -------------------------
   let realtimeBoost = getRealtimeBoost(player);
   realtimeBoost = Math.min(realtimeBoost, 2.0);
@@ -716,7 +762,6 @@ function calcMatchingScore(player) {
   // -------------------------
   const score = baseScore * realtimeBoost;
 
-  // ★ clampしない（ランキング差を残す）
   return Math.max(0, score);
 }
 /* ---------------------------------------------------------
