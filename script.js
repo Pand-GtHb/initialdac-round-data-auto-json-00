@@ -703,7 +703,7 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
   return getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin);
 }  
 /* ---------------------------------------------------------
-   [29] calcMatchingScore（外部config対応）
+   [29] calcMatchingScore（rank主軸モデル・config対応）
 --------------------------------------------------------- */
 function calcMatchingScore(player) {
 
@@ -711,13 +711,13 @@ function calcMatchingScore(player) {
 
   const cfg = State.scoringConfig;
 
-  // 修正
+  // フォールバック
   if (!cfg) {
-    // fallback（壊れないようにする）
     return 1;
   }
+
   // -------------------------
-  // rank
+  // rank（主軸）
   // -------------------------
   const rankWeight = getRankWeight(player);
   if (rankWeight <= 0) return 0;
@@ -732,22 +732,24 @@ function calcMatchingScore(player) {
     rankBase = rankWeight;
   }
 
+  // ★ 主軸としてスケーリング
   const rankScore =
     rankBase * cfg.rank.scale;
 
   // -------------------------
-  // area
+  // area（補正）
   // -------------------------
   const areaId = player.areaId;
 
   const areaWeight =
     State.areaModel?.[areaId] ?? 0;
 
-  const areaScore =
-    areaWeight * cfg.area.scale;
+  // ★ 直接加算ではなく「倍率に変換」
+  const areaFactor =
+    1 + (areaWeight * 3.0);  // ← 重要（調整可能）
 
   // -------------------------
-  // time
+  // time（そのまま）
   // -------------------------
   const timeWeight = getTimeWeight(player);
 
@@ -774,12 +776,16 @@ function calcMatchingScore(player) {
       : (pride > 0 ? 0.7 : 0);
 
   // -------------------------
-  // misc
+  // misc（軽め補正）
   // -------------------------
-  const miscScore =
+  const miscRaw =
       phaseScore    * cfg.misc.phase
     + recencyScore * cfg.misc.recency
     + activityScore * cfg.misc.activity;
+
+  // ★ 過剰影響を防ぐため圧縮
+  const miscFactor =
+    1 + (miscRaw / 50);
 
   // -------------------------
   // realtime
@@ -788,14 +794,16 @@ function calcMatchingScore(player) {
   realtimeBoost = Math.min(realtimeBoost, 2.0);
 
   // -------------------------
-  // score
+  // score（rank主軸掛け算モデル）
   // -------------------------
   const score =
-    (areaScore + miscScore + rankScore)
+    rankScore
+    * areaFactor
+    * miscFactor
     * timeWeight
     * realtimeBoost;
 
-  return Math.max(0, score);
+  return Math.max(0.0001, score);
 }
 /* ---------------------------------------------------------
    [29-B] selectByWeight（確率サンプリング）
