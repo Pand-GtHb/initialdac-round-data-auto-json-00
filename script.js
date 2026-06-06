@@ -185,13 +185,36 @@ function stopProgress() {
 --------------------------------------------------------- */
 const fmt = n => Number(n).toLocaleString();
 
-/* ★変更：JST強制 */
+/* ★最終修正版（すべてのフォーマット対応） */
 const parseDateJST = str => {
-  if (!str) return null;
-  return new Date(str.replace(" ", "T") + "+09:00");
+  if (!str || typeof str !== "string") return null;
+
+  let s = str.trim();
+
+  // ★ "/" → "-" 統一
+  s = s.replace(/\//g, "-");
+
+  // ★ " " → "T"
+  if (s.includes(" ")) s = s.replace(" ", "T");
+
+  // ★ 秒が無い場合補完
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) {
+    s += ":00";
+  }
+
+  // ★ JST付与
+  s += "+09:00";
+
+  const d = new Date(s);
+
+  if (isNaN(d.getTime())) return null;
+
+  return d;
 };
 
 function formatYMDHM(date) {
+  if (!date || isNaN(date.getTime())) return "--/-- --:--";
+
   const y = date.getFullYear();
   const m = ("0" + (date.getMonth() + 1)).slice(-2);
   const d = ("0" + date.getDate()).slice(-2);
@@ -671,29 +694,66 @@ function calcMatchingScore(player) {
   return Math.max(0, Math.min(1, score));
 }
 /* ---------------------------------------------------------
-   [30] applyFilters（★現在時刻基準）
+   [30] applyFilters（★現在時刻基準＋完全安全版）
 --------------------------------------------------------- */
 function applyFilters() {
 
   const minutes = Number(document.getElementById("rangeSelect").value);
 
-  /* ★変更：generatedAt → now */
+  // ★ 基準時刻：現在時刻に統一
   const baseMs = Date.now();
-
   const filterStartMs = baseMs - minutes * 60 * 1000;
 
-  document.getElementById("filterStartTime").textContent =
-    formatYMDHM(new Date(filterStartMs));
+  const startDate = new Date(filterStartMs);
+  const startLabel = formatYMDHM(startDate);
+
+  const el = document.getElementById("filterStartTime");
+  if (el) el.textContent = startLabel;
+
+  let validCount = 0;
+  let invalidCount = 0;
 
   State.filtered = State.all.filter(p => {
-    if (!p.updateDate) return false;
-    return parseDateJST(p.updateDate).getTime() >= filterStartMs;
+
+    if (!p.updateDate) {
+      invalidCount++;
+      return false;
+    }
+
+    const date = parseDateJST(p.updateDate);
+
+    // ★ 日付異常ガード（最重要）
+    if (!date || isNaN(date.getTime())) {
+      invalidCount++;
+      return false;
+    }
+
+    validCount++;
+
+    return date.getTime() >= filterStartMs;
   });
 
+  // ★ フィルタ崩壊防止（非常に重要）
+  if (State.filtered.length === 0) {
+    logWarn("時間フィルタ結果が0件 → フォールバック発動");
+
+    // 上位500件だけ使う（負荷防止）
+    State.filtered = State.all
+      .slice()
+      .sort((a, b) => parseDateJST(b.updateDate) - parseDateJST(a.updateDate))
+      .slice(0, 500);
+  }
+
+  // ★ エリアモデル再生成
   State.areaModel = buildAreaDistribution(State.filtered);
 
+  // ★ デバッグログ（原因把握用）
+  log(`フィルタ結果: ${State.filtered.length}件 / 有効:${validCount}件 / 無効:${invalidCount}件`);
+
   log("areaModel top5=" + JSON.stringify(
-    Object.entries(State.areaModel).sort((a,b)=>b[1]-a[1]).slice(0,5)
+    Object.entries(State.areaModel)
+      .sort((a,b)=>b[1]-a[1])
+      .slice(0,5)
   ));
 }
 /* ---------------------------------------------------------    
