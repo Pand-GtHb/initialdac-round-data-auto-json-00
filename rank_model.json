@@ -1,26 +1,20 @@
 {
-  "meta": {
-    "version": "S6_final_full_actual_model",
-    "note": "実測比率＋PRIDE帯＋ランク別PRIDE分布"
-  },
-
-  "scale": {
-    "pride_virtual_star": "PRIDE"
+  " "S6_final_full_actual_model",  "meta": {
+    "note": "実測比率＋PRIDE帯＋ランク別PRIDE分布（構文修正済）"
   },
 
   "models": {
-
     "5": {
       "vs": {
         "1": 0.045,
-        "2": 0.000,
+        "2": 0.0,
         "3": 0.136,
         "4": 0.045,
         "5": 0.136,
         "6": 0.227,
         "7": 0.409,
-        "8": 0.000,
-        "PRIDE": 0.000
+        "8": 0.0,
+        "PRIDE": 0.0
       },
       "pride_distribution": {
         "A": 0.0,
@@ -78,7 +72,6 @@
         "G": 0.00
       }
     }
-
   },
 
   "pride": {
@@ -97,4 +90,3 @@
     "default_vs_weight": 0.0
   }
 }
-``
