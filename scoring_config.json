@@ -1,19 +1,20 @@
 {
   "meta": {
-    "version": "scoring_config_v2_rank_tuned",
-    "updatedAt": "2026-06-06T17:15:00+09:00",
-    "description": "rank影響をやや強化したバランス版（PRIDE出現改善）",
+    "version": "scoring_config_v3_rank_linear",
+    "updatedAt": "2026-06-06T17:45:00+09:00",
+    "description": "rank主軸モデル（linear化）・PRIDE出現補正バージョン",
     "notes": [
-      "scale=22→26に調整",
-      "PRIDEが自然に1〜2人出ることを意図",
-      "area主導は維持",
-      "timeは現状仕様維持（乗算）"
+      "rankのmodeをsqrtからlinearへ変更",
+      "PRIDEと★7の差をそのまま活かす設計",
+      "scaleは24（上位偏重を抑えつつPRIDEを出すバランス）",
+      "areaは補正として掛け算で使用",
+      "timeは現状維持（乗算）"
     ]
   },
 
   "rank": {
-    "mode": "sqrt",
-    "scale": 26
+    "mode": "linear",
+    "scale": 24
   },
 
   "area": {
@@ -30,3 +31,4 @@
     "activity": 10
   }
 }
+``
