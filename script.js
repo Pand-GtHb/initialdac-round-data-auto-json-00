@@ -774,6 +774,40 @@ function calcMatchingScore(player) {
   return Math.max(0, score);
 }
 /* ---------------------------------------------------------
+   [29-B] selectByWeight（確率サンプリング）
+   ・scoreを重みとしてランダム抽出
+--------------------------------------------------------- */
+function selectByWeight(players, count) {
+
+  const result = [];
+  const pool = [...players];
+
+  while (result.length < count && pool.length > 0) {
+
+    const total =
+      pool.reduce((sum, p) => sum + Math.max(0.0001, p.score || 0), 0);
+
+    if (total <= 0) break;
+
+    let r = Math.random() * total;
+
+    let idx = 0;
+
+    for (let i = 0; i < pool.length; i++) {
+      r -= Math.max(0.0001, pool[i].score || 0);
+      if (r <= 0) {
+        idx = i;
+        break;
+      }
+    }
+
+    result.push(pool[idx]);
+    pool.splice(idx, 1);
+  }
+
+  return result;
+}
+/* ---------------------------------------------------------
    [30] applyFilters（★現在時刻基準＋完全安全版）
 --------------------------------------------------------- */
 function applyFilters() {
@@ -1366,84 +1400,138 @@ function copyToClipboard(text) {
     });    
 }    
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates   ★ マッチング候補一覧生成（アルゴリズム適用）    
---------------------------------------------------------- */    
-function buildMatchingCandidates() {    
-  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]    
-    .map(x => Number(x.value));    
-  const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]    
-    .map(x => x.value);    
- const base = State.all;
-  // まず全員スコア化（学習＋時刻）    
-  const scoredAll = base.map(p => {    
-    const rankKey = getPlayerRankKey(p);    
-    const score = calcMatchingScore(p);    
-    return { ...p, __rankKey: rankKey, __score: score };    
-  });    
-  // フィルタ（RUBY/PRIDE）    
-  const filteredByRank = scoredAll.filter(p => {    
-    if (!p.updateDate) return false;    
-    if (!p.__rankKey) return false;    
-    if (p.__rankKey.startsWith("R")) {    
-      return selectedStars.includes(p.starCnt);    
-    } else {    
-      return selectedPrides.includes(p.__rankKey);    
-    }    
-  });    
-  // Step1: 通常閾値    
-  let list = filteredByRank.filter(p => p.__score >= MATCHING_SCORE_CONFIG.threshold);    
-  // Step2: 0人なら閾値緩和    
-  if (list.length === 0) {    
-    const relaxed = Math.max(0.25, MATCHING_SCORE_CONFIG.threshold - 0.10);    
-    list = filteredByRank.filter(p => p.__score >= relaxed);    
-    if (list.length > 0) {    
-      logWarn(`候補0人のため閾値を緩和：${MATCHING_SCORE_CONFIG.threshold} → ${relaxed}`);    
-    }    
-  }    
-  // Step3: それでも0人なら「参考表示（上位N）」    
-  if (list.length === 0) {    
-    list = filteredByRank    
-      .slice()    
-      .sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0))    
-      .slice(0, MATCHING_SCORE_CONFIG.minCandidates);    
-    if (list.length > 0) {    
-      logWarn(`候補0人のため、スコア上位${MATCHING_SCORE_CONFIG.minCandidates}人を参考表示します`);    
-    }    
-  }    
-  // ソート（スコア降順 → rank order → updateDate新しい順）    
-  list.sort((a, b) => {    
-    const sa = (a.__score ?? 0);    
-    const sb = (b.__score ?? 0);    
-    if (sb !== sa) return sb - sa;    
-    const ra = getRankInfo(a.__rankKey);    
-    const rb = getRankInfo(b.__rankKey);    
-    const oa = ra ? ra.order : 999;    
-    const ob = rb ? rb.order : 999;    
-    if (oa !== ob) return oa - ob;    
-    return parseDateJST(b.updateDate) - parseDateJST(a.updateDate);    
-  });    
-// ★ 最終ガード：候補が10人未満なら、スコア上位で埋める（必ず10人出す）    
-if (list.length < MATCHING_SCORE_CONFIG.minCandidates) {    
-  const need = MATCHING_SCORE_CONFIG.minCandidates - list.length;    
-  const existingNames = new Set(list.map(p => p.name));    
-  const fillers = filteredByRank    
-    .filter(p => !existingNames.has(p.name))    
-    .slice()    
-    .sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0))    
-    .slice(0, need);    
-  list = list.concat(fillers);    
-  if (fillers.length > 0) {    
-    logWarn(`候補が${MATCHING_SCORE_CONFIG.minCandidates}人未満のため、上位スコアで補完しました（+${fillers.length}）`);    
-  }    
-}    
-// ★ 最終確定：候補は必ず上位N人に固定    
-list = list.slice(0, MATCHING_SCORE_CONFIG.minCandidates);    
-  State.matchingList = list;    
-  // デバッグログ（上位5）    
-  if (State.matchingList.length) {    
-    log(`候補TOP: ${State.matchingList.slice(0,5).map(p => `${p.name}(${(p.__score??0).toFixed(2)})`).join(" / ")}`);    
-  }    
-}    
+   [47] buildMatchingCandidates
+   ★ マッチング候補一覧生成（確率サンプリング版）
+--------------------------------------------------------- */
+function buildMatchingCandidates() {
+
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+
+  const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
+    .map(x => x.value);
+
+  const base = State.all;
+
+  // -------------------------
+  // スコア付与
+  // -------------------------
+  const scoredAll = base.map(p => {
+
+    const score = calcMatchingScore(p);
+
+    return {
+      ...p,
+      __rankKey: getPlayerRankKey(p),
+      __score: Math.max(0.0001, score) // ★0防止（重要）
+    };
+  });
+
+  // -------------------------
+  // ランクフィルタ
+  // -------------------------
+  const filteredByRank = scoredAll.filter(p => {
+
+    if (!p.updateDate) return false;
+    if (!p.__rankKey) return false;
+
+    if (p.__rankKey.startsWith("R")) {
+      return selectedStars.includes(p.starCnt);
+    } else {
+      return selectedPrides.includes(p.__rankKey);
+    }
+  });
+
+  // -------------------------
+  // Step1: 通常閾値
+  // -------------------------
+  let list = filteredByRank.filter(p =>
+    p.__score >= MATCHING_SCORE_CONFIG.threshold
+  );
+
+  // -------------------------
+  // Step2: 閾値緩和
+  // -------------------------
+  if (list.length === 0) {
+
+    const relaxed = Math.max(
+      0.25,
+      MATCHING_SCORE_CONFIG.threshold - 0.10
+    );
+
+    list = filteredByRank.filter(p =>
+      p.__score >= relaxed
+    );
+
+    if (list.length > 0) {
+      logWarn(`候補0人のため閾値を緩和：${MATCHING_SCORE_CONFIG.threshold} → ${relaxed}`);
+    }
+  }
+
+  // -------------------------
+  // Step3: 確率サンプリング（最重要）
+  // -------------------------
+  let selected;
+
+  if (list.length > 0) {
+
+    // ★ 通常ケース
+    selected = selectByWeight(
+      list,
+      MATCHING_SCORE_CONFIG.minCandidates
+    );
+
+  } else {
+
+    // ★ フォールバック（全体から抽選）
+    selected = selectByWeight(
+      filteredByRank,
+      MATCHING_SCORE_CONFIG.minCandidates
+    );
+
+    if (selected.length > 0) {
+      logWarn(`候補0人のため、確率サンプリングで${MATCHING_SCORE_CONFIG.minCandidates}人抽出`);
+    }
+  }
+
+  // -------------------------
+  // ★補完（足りない場合）
+  // -------------------------
+  if (selected.length < MATCHING_SCORE_CONFIG.minCandidates) {
+
+    const need = MATCHING_SCORE_CONFIG.minCandidates - selected.length;
+
+    const existing = new Set(selected.map(p => p.name));
+
+    const pool = filteredByRank.filter(p =>
+      !existing.has(p.name)
+    );
+
+    const fillers = selectByWeight(pool, need);
+
+    selected = selected.concat(fillers);
+
+    if (fillers.length > 0) {
+      logWarn(`候補不足のため補完（+${fillers.length}）`);
+    }
+  }
+
+  // -------------------------
+  // 完了
+  // -------------------------
+  State.matchingList = selected;
+
+  // -------------------------
+  // ログ（上位5だけ表示）
+  // -------------------------
+  if (selected.length) {
+    log(
+      `候補TOP: ${selected.slice(0,5).map(p =>
+        `${p.name}(${(p.__score ?? 0).toFixed(2)})`
+      ).join(" / ")}`
+    );
+  }
+}
 /* ---------------------------------------------------------    
    [48] renderMatchingHeader   ★ マッチング候補ヘッダ表示    
 --------------------------------------------------------- */    
