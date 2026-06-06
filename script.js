@@ -528,19 +528,18 @@ function isMatchingCandidateByPhase(updateDateStr) {
   return isFinite(d) && d <= w;
 }       
 /* ---------------------------------------------------------
-   [26] ランク関連ユーティリティ
-   ・ランクキー取得
-   ・自分ランク同期
-   ・非対称ランクモデル（vs方式）
-   ・PRIDE帯補正（ポイント範囲対応）
+   [26] ランク関連ユーティリティ（最終版）
+   ・実測分布モデル対応
+   ・PRIDE分離
+   ・PRIDE帯ランク別分布
 --------------------------------------------------------- */
+
+
 /* ---------------------------------------------------------
    [26-1] getPlayerRankKey
-   ★ プレイヤーのランクキー取得（R1〜R8 / P_A〜P_G）
 --------------------------------------------------------- */
 function getPlayerRankKey(player) {
 
-  // RUBY帯
   if (
     player.onlineBattleRankId === RUBY_ID &&
     Number(player.starCnt) >= 1 &&
@@ -549,18 +548,16 @@ function getPlayerRankKey(player) {
     return `R${player.starCnt}`;
   }
 
-  // PRIDE帯
-  const pt = Number(player.pridePoint ?? 0);
+  if (Number(player.pridePoint ?? 0) > 0) {
+    return "PRIDE";
+  }
 
-  const pride = PRIDE_LEVELS.find(p =>
-    pt >= p.min && pt <= p.max
-  );
-
-  return pride ? pride.key : null;
+  return null;
 }
+
+
 /* ---------------------------------------------------------
    [26-2] syncMyRankSelection
-   ★ selectedMyRank の利用範囲を局所化しつつ myStar 同期を維持
 --------------------------------------------------------- */
 function syncMyRankSelection(rankValue) {
 
@@ -576,68 +573,65 @@ function syncMyRankSelection(rankValue) {
 
   return selectedMyRank;
 }
+
+
 /* ---------------------------------------------------------
    [26-3] getVirtualStar
-   ・RUBY：そのまま星
-   ・PRIDE：仮想★8に変換
+   ★ PRIDEは "PRIDE" を返す
 --------------------------------------------------------- */
 function getVirtualStar(player) {
 
-  // RUBY帯
   if (player.onlineBattleRankId === RUBY_ID) {
-    return Number(player.starCnt ?? 0);
+    return String(Number(player.starCnt ?? 0));
   }
 
-  // PRIDE帯
   if (Number(player.pridePoint ?? 0) > 0) {
-    return State.rankModel?.scale?.pride_virtual_star ?? 8;
+    return "PRIDE";
   }
 
   return null;
 }
+
+
 /* ---------------------------------------------------------
    [26-4] getRankWeight
-   ★ 非対称ランクモデル（vs方式）
-   ・myStar → oppStar の直接マッピング
 --------------------------------------------------------- */
 function getRankWeight(player) {
 
   const model = State.rankModel;
-  if (!model) return 0.1;
+  if (!model) return 0;
 
-  const myStar = State.myStar;
-  const oppStar = getVirtualStar(player);
+  const myStar = String(State.myStar);
+  const opp = getVirtualStar(player);
 
-  if (!oppStar) return 0;
+  if (!opp) return 0;
 
-  const table = model.models?.[String(myStar)]?.vs;
+  const table = model.models?.[myStar]?.vs;
+  if (!table) return 0;
 
-  if (!table) {
-    return model.fallback?.default_vs_weight ?? 0.05;
-  }
-
-  return table[String(oppStar)]
-    ?? model.fallback?.default_vs_weight
-    ?? 0.05;
+  return Number(table[opp] ?? 0);
 }
+
+
 /* ---------------------------------------------------------
    [26-5] getPrideWeight
-   ★ PRIDE帯補正（ポイント範囲による分類）
-   ・rank_model.json の bands を使用
+   ★ PRIDE帯をランク別distributionで評価
 --------------------------------------------------------- */
 function getPrideWeight(player) {
 
+  if (!State.rankModel) return 1.0;
+  if (Number(player.pridePoint ?? 0) <= 0) return 1.0;
+
   const model = State.rankModel;
+  const myStar = String(State.myStar);
 
-  // PRIDEでない場合
-  if (!model || !player.pridePoint) return 1.0;
+  const dist = model.models?.[myStar]?.pride_distribution;
+  if (!dist) return 1.0;
 
-  const pt = Number(player.pridePoint);
-
+  const pt = Number(player.pridePoint ?? 0);
   const bands = model.pride?.bands;
   if (!bands) return 1.0;
 
-  // ポイント範囲で判定
   for (const key in bands) {
 
     const band = bands[key];
@@ -646,14 +640,16 @@ function getPrideWeight(player) {
     const max = Number(band.max ?? Infinity);
 
     if (pt >= min && pt <= max) {
-      return Number(band.weight ?? 1.0);
+      return Number(dist[key] ?? 1.0);
     }
   }
 
   return 1.0;
 }
+
+
 /* ---------------------------------------------------------
-   [26-6] getTimeWeight（★現在時刻基準）
+   [26-6] getTimeWeight（★変更なし）
 --------------------------------------------------------- */
 function getTimeWeight(player) {
 
