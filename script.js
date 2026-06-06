@@ -824,7 +824,7 @@ function selectByWeight(players, count) {
     const timeWeight = getTimeWeight(p);
 
     // 補正係数（1.5倍推奨）
-    const timeBoost = 1 + (timeWeight - 1) * 2.7;
+    const timeBoost = 1 + (timeWeight - 1) * 3.0;
 
     return base * timeBoost;
   };
