@@ -808,15 +808,26 @@ function calcMatchingScore(player) {
 /* ---------------------------------------------------------
    [29-B] selectByWeight（確率サンプリング）
    ・scoreを重みとしてランダム抽出
+   ・timeで当選確率補正（追加）
 --------------------------------------------------------- */
 function selectByWeight(players, count) {
 
   const result = [];
   const pool = [...players];
 
-  // ★ 安全なスコア関数
-  const safeScore = (p) =>
-    Math.max(0.0001, p.score || 0);
+  // ★ 安全なスコア関数（time補正込み）
+  const safeScore = (p) => {
+
+    const base = Math.max(0.0001, p.score || 0);
+
+    // ★ time補正（ここが今回の変更の核心）
+    const timeWeight = getTimeWeight(p);
+
+    // 補正係数（1.5倍推奨）
+    const timeBoost = 1 + (timeWeight - 1) * 1.5;
+
+    return base * timeBoost;
+  };
 
   while (result.length < count && pool.length > 0) {
 
