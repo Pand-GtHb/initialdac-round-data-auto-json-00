@@ -37,6 +37,7 @@ const State = {
   myStar: 6,
   recentClicks: [],
   areaModel: {}
+  scoringConfig: null
 };
 /* ---------------------------------------------------------    
   [04] RUBY帯・PRIDE帯 定義
@@ -526,15 +527,25 @@ function isMatchingCandidateByPhase(updateDateStr) {
   const { d } = getRoundedDiffMinAndPhaseDistance(updateDateStr, cycle);
 
   return isFinite(d) && d <= w;
-}       
+}
+/* ---------------------------------------------------------
+   [25] loadScoringConfig
+--------------------------------------------------------- */
+async function loadScoringConfig() {
+  try {
+    const res = await fetch("scoring_config.json");
+    State.scoringConfig = await res.json();
+    log("scoring_config.json 読み込み完了");
+  } catch (e) {
+    logWarn("scoring_config.json 未取得：" + e.message);
+  }
+}
 /* ---------------------------------------------------------
    [26] ランク関連ユーティリティ（最終版）
    ・実測分布モデル対応
    ・PRIDE分離
    ・PRIDE帯ランク別分布
 --------------------------------------------------------- */
-
-
 /* ---------------------------------------------------------
    [26-1] getPlayerRankKey
 --------------------------------------------------------- */
@@ -692,38 +703,47 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
   return getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin);
 }  
 /* ---------------------------------------------------------
-   [29] calcMatchingScore（順位分離版）
-   ・rankは候補性（弱）
-   ・areaで順位を決定
+   [29] calcMatchingScore（外部config対応）
 --------------------------------------------------------- */
 function calcMatchingScore(player) {
 
-  // -------------------------
-  // 基本チェック
-  // -------------------------
   if (!player || !player.updateDate) return 0;
 
+  const cfg = State.scoringConfig;
+  if (!cfg) return 0;
+
   // -------------------------
-  // ランク（弱い影響にする）
+  // rank
   // -------------------------
   const rankWeight = getRankWeight(player);
   if (rankWeight <= 0) return 0;
 
-  // ★ rankを圧縮（差を弱める）
-  const rankScore = Math.sqrt(rankWeight) * 10;
+  let rankBase;
+
+  if (cfg.rank.mode === "sqrt") {
+    rankBase = Math.sqrt(rankWeight);
+  } else if (cfg.rank.mode === "linear") {
+    rankBase = rankWeight;
+  } else {
+    rankBase = rankWeight;
+  }
+
+  const rankScore =
+    rankBase * cfg.rank.scale;
 
   // -------------------------
-  // Area（主役）
+  // area
   // -------------------------
   const areaId = player.areaId;
+
   const areaWeight =
     State.areaModel?.[areaId] ?? 0;
 
-  // ★ 強く効かせる
-  const areaScore = areaWeight * 200;
+  const areaScore =
+    areaWeight * cfg.area.scale;
 
   // -------------------------
-  // 時間
+  // time
   // -------------------------
   const timeWeight = getTimeWeight(player);
 
@@ -739,7 +759,7 @@ function calcMatchingScore(player) {
     Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);
 
   // -------------------------
-  // 活動量
+  // activity
   // -------------------------
   const star = Number(player.starCnt ?? 0);
   const pride = Number(player.pridePoint ?? 0);
@@ -753,23 +773,23 @@ function calcMatchingScore(player) {
   // misc
   // -------------------------
   const miscScore =
-      phaseScore    * 20
-    + recencyScore * 20
-    + activityScore * 10;
+      phaseScore    * cfg.misc.phase
+    + recencyScore * cfg.misc.recency
+    + activityScore * cfg.misc.activity;
 
   // -------------------------
-  // realtimeBoost
+  // realtime
   // -------------------------
   let realtimeBoost = getRealtimeBoost(player);
   realtimeBoost = Math.min(realtimeBoost, 2.0);
 
   // -------------------------
-  // 最終スコア（加算型）
+  // score
   // -------------------------
   const score =
-    (areaScore + miscScore + rankScore) *
-    timeWeight *
-    realtimeBoost;
+    (areaScore + miscScore + rankScore)
+    * timeWeight
+    * realtimeBoost;
 
   return Math.max(0, score);
 }
@@ -913,7 +933,6 @@ function buildFilterGroupHTML(items, options) {
     </div>
   `;
 }
-
 /* ---------------------------------------------------------
    [32] buildRubyFilters
    ★ RUBYフィルタ生成（ラベル列＋内容列の2列レイアウト）
@@ -932,7 +951,6 @@ function buildRubyFilters() {
     getText: star => `★${star}`
   });
 }
-
 /* ---------------------------------------------------------
    [33] buildPrideFilters
    ★ PRIDEフィルタ生成（ラベル列＋内容列の2列レイアウト）
@@ -949,7 +967,6 @@ function buildPrideFilters() {
     getText: p => p.key.replace("P_", "")
   });
 }
-
 /* ---------------------------------------------------------    
    [34] buildSummary　サマリ統計計算
 　★ サマリ生成（RUBY＋PRIDE フィルタ対応）    
@@ -1648,7 +1665,10 @@ async function init() {
   await loadAreaList();
   await loadLatestRound();
 
-  await loadRankModel();     // ★ここを追加 ←重要
+  await loadRankModel();
+
+  // ★ここ追加（これが最重要）
+  await loadScoringConfig();
 
   await loadRoundData();
 
