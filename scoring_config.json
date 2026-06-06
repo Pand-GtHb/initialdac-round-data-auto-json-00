@@ -1,0 +1,17 @@
+{
+  "rank": {
+    "mode": "sqrt",
+    "scale": 22
+  },
+  "area": {
+    "scale": 200
+  },
+  "time": {
+    "mode": "multiply"
+  },
+  "misc": {
+    "phase": 20,
+    "recency": 20,
+    "activity": 10
+  }
+}
