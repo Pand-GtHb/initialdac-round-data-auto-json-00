@@ -487,47 +487,69 @@ function getRealtimeBoost(player) {
   return areaBoost * shopBoost;    
 } 
 /* ---------------------------------------------------------
-   [24-A] getRoundedDiffMinAndPhaseDistance
-   ★ 時刻丸め＋diff/phase距離の共通計算（機能共通化）
+   [24-A] getRoundedDiffMinAndPhaseDistance（修正版）
+   ★ 丸め廃止・秒ベース周期位置を返す
 --------------------------------------------------------- */
 function getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin) {
   if (!updateDateStr) return { diffMin: Infinity, d: Infinity };
 
-  const now = new Date();
-  const last = new Date(updateDateStr.replace(/-/g, "/"));
+  const now = Date.now();
+  const last = parseDateJST(updateDateStr)?.getTime();
 
-  // ★ 秒を30秒単位に丸める（元ロジック維持）
-  const sec = last.getSeconds();
-  const rounded = sec < 30 ? 0 : 30;
-  last.setSeconds(rounded, 0);
-
-  const diffMin = (now - last) / 60000;
-
-  if (!isFinite(diffMin) || diffMin < 0) {
+  if (!last || !isFinite(last)) {
     return { diffMin: Infinity, d: Infinity };
   }
 
-  if (diffMin < cycleMin) {
-    return { diffMin, d: Infinity };
+  // ★ 秒差（丸めなし）
+  const diffSec = (now - last) / 1000;
+
+  if (!isFinite(diffSec) || diffSec < 0) {
+    return { diffMin: Infinity, d: Infinity };
   }
 
-  const r = diffMin % cycleMin;
-  const d = Math.min(r, cycleMin - r);
+  // ★ 分換算（互換維持）
+  const diffMin = diffSec / 60;
 
-  return { diffMin, d };
-}   
+  // ★ 周期秒（4分 → 240秒）
+  const cycleSec = cycleMin * 60;
+
+  // ★ 周期内位置
+  const r = diffSec % cycleSec;
+
+  // ★ 中心（4分）からの距離（秒）
+  const center = cycleSec;
+  const dSec = Math.abs(r - center);
+
+  return {
+    diffMin: diffMin,        // 既存互換
+    d: dSec / 60             // 分に戻す（互換維持）
+  };
+}
 /* ---------------------------------------------------------
-    [24] isMatchingCandidateByPhase
- 　 ★ 新ロジック：現在時刻ベースのフェーズモデル（A案）
-   （指定周期の境目 ±w 分にいるプレイヤーを候補とする）
+   [24-B] isMatchingCandidateByPhase（修正版）
+   ★ 3分30秒〜4分30秒を対象（±30秒）
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(updateDateStr) {
-  const cycle = 4;   // 4分00秒
-  const w = 0.25;    // ±0.25分＝15秒
+  const cycleSec = 240; // 4分
 
-  const { d } = getRoundedDiffMinAndPhaseDistance(updateDateStr, cycle);
+  // ★ 範囲（秒）
+  const minSec = 210; // 3:30
+  const maxSec = 270; // 4:30
 
-  return isFinite(d) && d <= w;
+  if (!updateDateStr) return false;
+
+  const now = Date.now();
+  const last = parseDateJST(updateDateStr)?.getTime();
+
+  if (!last) return false;
+
+  const diffSec = (now - last) / 1000;
+
+  if (!isFinite(diffSec) || diffSec < 0) return false;
+
+  const r = diffSec % cycleSec;
+
+  return r >= minSec && r <= maxSec;
 }
 /* ---------------------------------------------------------
    [25] loadScoringConfig
