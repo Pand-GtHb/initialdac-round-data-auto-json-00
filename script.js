@@ -37,7 +37,8 @@ const State = {
   myStar: 6,
   recentClicks: [],
   areaModel: {},
-  scoringConfig: null
+  scoringConfig: null,
+  updateWatchTimer: null
 };
 /* ---------------------------------------------------------    
   [04] RUBY帯・PRIDE帯 定義
@@ -1705,6 +1706,7 @@ async function init() {
 
   stopProgress();
   log("Viewer 初期化完了");
+  startUpdateWatch();
 }
 /* ---------------------------------------------------------    
    [56] DOMContentLoaded   DOMContentLoaded    
@@ -1878,3 +1880,23 @@ window.addEventListener('popstate', (e) => {
 
   showSummaryUI(false);
 });
+/* ---------------------------------------------------------
+   [58] startUpdateWatch（更新監視開始）
+--------------------------------------------------------- */
+function startUpdateWatch() {
+
+  // ★ 多重防止
+  if (State.updateWatchTimer) {
+    clearInterval(State.updateWatchTimer);
+  }
+
+  // ★ 初回チェック
+  checkUpdate();
+
+  // ★ 定期監視
+  State.updateWatchTimer = setInterval(() => {
+    checkUpdate();
+  }, 30000);
+
+  log("更新監視を開始（30秒間隔）");
+}
