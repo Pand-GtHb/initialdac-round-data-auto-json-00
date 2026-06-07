@@ -916,17 +916,6 @@ function applyFilters() {
     return date.getTime() >= filterStartMs;
   });
 
-  // ★ フィルタ崩壊防止（非常に重要）
-  if (State.filtered.length === 0) {
-    logWarn("時間フィルタ結果が0件 → フォールバック発動");
-
-    // 上位500件だけ使う（負荷防止）
-    State.filtered = State.all
-      .slice()
-      .sort((a, b) => parseDateJST(b.updateDate) - parseDateJST(a.updateDate))
-      .slice(0, 500);
-  }
-
   // ★ エリアモデル再生成
   State.areaModel = buildAreaDistribution(State.filtered);
 
