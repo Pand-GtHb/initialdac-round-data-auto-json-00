@@ -487,42 +487,62 @@ function getRealtimeBoost(player) {
   return areaBoost * shopBoost;    
 } 
 /* ---------------------------------------------------------
-   [24-A] getRoundedDiffMinAndPhaseDistance（修正版）
-   ★ 丸め廃止・秒ベース周期位置を返す
+   [24-A] getRoundedDiffMinAndPhaseDistance
+   ★ 丸め廃止＋現在時刻基準の周期位置計算
+   ★ 3分30秒～4分30秒（210～270秒）判定に必要な情報を返す
 --------------------------------------------------------- */
 function getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin) {
-  if (!updateDateStr) return { diffMin: Infinity, d: Infinity };
+  if (!updateDateStr) {
+    return {
+      diffMin: Infinity,
+      d: Infinity,
+      rSec: Infinity,
+      inPinkWindow: false
+    };
+  }
 
   const now = Date.now();
   const last = parseDateJST(updateDateStr)?.getTime();
 
   if (!last || !isFinite(last)) {
-    return { diffMin: Infinity, d: Infinity };
+    return {
+      diffMin: Infinity,
+      d: Infinity,
+      rSec: Infinity,
+      inPinkWindow: false
+    };
   }
 
-  // ★ 秒差（丸めなし）
+  // ★ 丸めなし
   const diffSec = (now - last) / 1000;
 
   if (!isFinite(diffSec) || diffSec < 0) {
-    return { diffMin: Infinity, d: Infinity };
+    return {
+      diffMin: Infinity,
+      d: Infinity,
+      rSec: Infinity,
+      inPinkWindow: false
+    };
   }
 
-  // ★ 分換算（互換維持）
   const diffMin = diffSec / 60;
-
-  // ★ 周期秒（4分 → 240秒）
   const cycleSec = cycleMin * 60;
+  const rSec = diffSec % cycleSec;
 
-  // ★ 周期内位置
-  const r = diffSec % cycleSec;
+  // ★ ピンク範囲：3分30秒～4分30秒
+  const minPinkSec = 210; // 3:30
+  const maxPinkSec = 270; // 4:30
+  const inPinkWindow = (rSec >= minPinkSec && rSec <= maxPinkSec);
 
-  // ★ 中心（4分）からの距離（秒）
-  const center = cycleSec;
-  const dSec = Math.abs(r - center);
+  // ★ 参考距離（4分=240秒 を中心にした距離）
+  const centerSec = 240;
+  const dSec = Math.abs(rSec - centerSec);
 
   return {
-    diffMin: diffMin,        // 既存互換
-    d: dSec / 60             // 分に戻す（互換維持）
+    diffMin: diffMin,
+    d: dSec / 60,          // 既存互換のため分で返す
+    rSec: rSec,
+    inPinkWindow: inPinkWindow
   };
 }
 /* ---------------------------------------------------------
@@ -704,21 +724,22 @@ function getTimeWeight(player) {
 }
 /* ---------------------------------------------------------
    [27] MATCHING_SCORE_CONFIG
-   ★ 予測スコア（Rankモデル + Phase + Recency + Activity）
+   ★ 予測スコア設定（Phaseはピンクと一致・距離モデル廃止）
+   ★ 確率調整は抽選処理（[29-B]）のみで行う
 --------------------------------------------------------- */
 const MATCHING_SCORE_CONFIG = {
-  cycle: 4,
-  phaseWindow: 0.60,
-  recencyTau: 12,
+  recencyTau: 12,    // ★ 時間減衰（分単位）
+
   weight: {
-    strength: 0.40,   // ★ rank×timeベース
-    phase:    0.25,
+    strength: 0.40,   // ★ rank×timeベースの重み
+    phase:    0.25,   // ★ ピンク一致時の寄与（0 or 1）
     recency:  0.25,
     activity: 0.10
   },
-  threshold: 0.30,
-  minCandidates: 10
-}; 
+
+  threshold: 0.30,   // ★ 候補抽出閾値
+  minCandidates: 10  // ★ 最低候補人数（現仕様維持）
+};
 /* ---------------------------------------------------------
    [28] getPhaseDistanceMin
 --------------------------------------------------------- */
@@ -726,10 +747,11 @@ function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cyc
   return getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin);
 }  
 /* ---------------------------------------------------------
-   [29] calcMatchingScore（rank主軸モデル・config対応）
+   [29] calcMatchingScore（修正版）
+   ★ phaseScore をピンク判定と完全一致
+   ★ スコアに倍率は一切入れない（抽選側でのみ調整）
 --------------------------------------------------------- */
 function calcMatchingScore(player) {
-
   if (!player || !player.updateDate) return 0;
 
   const cfg = State.scoringConfig;
@@ -746,7 +768,6 @@ function calcMatchingScore(player) {
   if (rankWeight <= 0) return 0;
 
   let rankBase;
-
   if (cfg.rank.mode === "sqrt") {
     rankBase = Math.sqrt(rankWeight);
   } else if (cfg.rank.mode === "linear") {
@@ -755,7 +776,6 @@ function calcMatchingScore(player) {
     rankBase = rankWeight;
   }
 
-  // ★ 主軸としてスケーリング
   const rankScore =
     rankBase * cfg.rank.scale;
 
@@ -763,27 +783,35 @@ function calcMatchingScore(player) {
   // area（補正）
   // -------------------------
   const areaId = player.areaId;
-
   const areaWeight =
     State.areaModel?.[areaId] ?? 0;
 
-  // ★ 直接加算ではなく「倍率に変換」
+  // ★ 倍率化（既存維持）
   const areaFactor =
-    1 + (areaWeight * 3.0);  // ← 重要（調整可能）
+    1 + (areaWeight * 3.0);
 
   // -------------------------
-  // time（そのまま）
+  // time（既存維持）
   // -------------------------
   const timeWeight = getTimeWeight(player);
 
-  const { diffMin, d } = getPhaseDistanceMin(player.updateDate);
+  // -------------------------
+  // phase（★今回の修正ポイント）
+  // -------------------------
+  const { diffMin } = getPhaseDistanceMin(player.updateDate);
+
   if (!isFinite(diffMin)) return 0;
 
-  const phaseScore =
-    (isFinite(d) && d !== Infinity)
-      ? Math.max(0, 1 - (d / MATCHING_SCORE_CONFIG.phaseWindow))
-      : 0;
+  // ★ ピンク判定と完全一致
+  const inPinkWindow =
+    isMatchingCandidateByPhase(player.updateDate);
 
+  const phaseScore =
+    inPinkWindow ? 1 : 0;
+
+  // -------------------------
+  // recency
+  // -------------------------
   const recencyScore =
     Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);
 
@@ -794,30 +822,32 @@ function calcMatchingScore(player) {
   const pride = Number(player.pridePoint ?? 0);
 
   const activityScore =
-    star > 0
+    (star > 0)
       ? Math.min(1, star / 7)
       : (pride > 0 ? 0.7 : 0);
 
   // -------------------------
-  // misc（軽め補正）
+  // misc（既存式維持）
   // -------------------------
   const miscRaw =
       phaseScore    * cfg.misc.phase
-    + recencyScore * cfg.misc.recency
+    + recencyScore  * cfg.misc.recency
     + activityScore * cfg.misc.activity;
 
-  // ★ 過剰影響を防ぐため圧縮
   const miscFactor =
     1 + (miscRaw / 50);
 
   // -------------------------
   // realtime
   // -------------------------
-  let realtimeBoost = getRealtimeBoost(player);
-  realtimeBoost = Math.min(realtimeBoost, 2.0);
+  let realtimeBoost =
+    getRealtimeBoost(player);
+
+  realtimeBoost =
+    Math.min(realtimeBoost, 2.0);
 
   // -------------------------
-  // score（rank主軸掛け算モデル）
+  // score（★倍率なし・純粋構造）
   // -------------------------
   const score =
     rankScore
@@ -829,37 +859,63 @@ function calcMatchingScore(player) {
   return Math.max(0.0001, score);
 }
 /* ---------------------------------------------------------
-   [29-B] selectByWeight（確率サンプリング）
-   ・scoreを重みとしてランダム抽出
-   ・timeで当選確率補正（指数型）
+   [29-B] selectByWeight
+   ★ ピンクは一律優遇
+   ★ ただし古いサイクルほど減衰
 --------------------------------------------------------- */
 function selectByWeight(players, count) {
-
   const result = [];
   const pool = [...players];
 
-  // ★ 安全なスコア関数（指数型 time補正）
   const safeScore = (p) => {
-
-    const base = Math.max(0.0001, p.score || 0);
+    const base = Math.max(0.0001, p.__score || 0);
 
     const timeWeight = getTimeWeight(p);
-
-    // ★ 指数型補正（ここが核心）
     const timeBoost = Math.pow(timeWeight, 2.0);
 
-    return base * timeBoost;
+    // -------------------------
+    // ★ ピンク判定
+    // -------------------------
+    const isPink =
+      isMatchingCandidateByPhase(p.updateDate);
+
+    let pinkBoost = 1;
+
+    if (isPink) {
+      const last = parseDateJST(p.updateDate)?.getTime();
+
+      if (last) {
+        const now = Date.now();
+        const diffMin = (now - last) / 60000;
+
+        if (diffMin >= 0 && isFinite(diffMin)) {
+
+          // -------------------------
+          // ★ Recency減衰（ここが核心）
+          // -------------------------
+          const tau = 12;   // 分（サイクル減衰）
+          const decay = Math.exp(-diffMin / tau);
+
+          // -------------------------
+          // ★ ピンク優遇（一定）× 減衰
+          // -------------------------
+          const maxBoost = 1.8;
+
+          pinkBoost = 1 + (maxBoost - 1) * decay;
+        }
+      }
+    }
+
+    return base * timeBoost * pinkBoost;
   };
 
   while (result.length < count && pool.length > 0) {
-
     const total =
       pool.reduce((sum, p) => sum + safeScore(p), 0);
 
     if (total <= 0) break;
 
     let r = Math.random() * total;
-
     let idx = 0;
 
     for (let i = 0; i < pool.length; i++) {
