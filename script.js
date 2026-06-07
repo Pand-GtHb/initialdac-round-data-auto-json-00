@@ -1015,7 +1015,7 @@ function buildSummary() {
     .map(x => Number(x.value));    
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]    
     .map(x => x.value);    
-  const base = State.filtered.length ? State.filtered : State.all;    
+  const base = State.filtered;
   State.summary = RANKS    
     .filter(rank => {    
       if (rank.type === "ruby") return selectedStars.includes(rank.star);    
