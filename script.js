@@ -6,7 +6,6 @@
 ========================================================= */
 const BASE_URL = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";    
 
-
 /* ---------------------------------------------------------
    [02] STATE（画面状態 enum）
 --------------------------------------------------------- */
@@ -1580,10 +1579,10 @@ function copyToClipboard(text) {
 }   
 /* ---------------------------------------------------------
    [47] buildMatchingCandidates
-   ★ マッチング候補一覧生成（確率サンプリング版・時間フィルタ反映）
+   ★ マッチング候補一覧生成
+   ★ 最終表示を「スコア降順」に変更
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
-
   console.log("scoringConfig:", State.scoringConfig);
 
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
@@ -1592,20 +1591,18 @@ function buildMatchingCandidates() {
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
 
-  // ★修正：時間フィルタ後データを使用
+  // ★時間フィルタ後データ
   const base = State.filtered;
 
   // -------------------------
   // スコア付与
   // -------------------------
   const scoredAll = base.map(p => {
-
     const score = calcMatchingScore(p);
-
     return {
       ...p,
       __rankKey: getPlayerRankKey(p),
-      __score: Math.max(0.0001, score) // ★0防止
+      __score: Math.max(0.0001, score)
     };
   });
 
@@ -1613,7 +1610,6 @@ function buildMatchingCandidates() {
   // ランクフィルタ
   // -------------------------
   const filteredByRank = scoredAll.filter(p => {
-
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
 
@@ -1635,7 +1631,6 @@ function buildMatchingCandidates() {
   // Step2: 閾値緩和
   // -------------------------
   if (list.length === 0) {
-
     const relaxed = Math.max(
       0.25,
       MATCHING_SCORE_CONFIG.threshold - 0.10
@@ -1656,14 +1651,11 @@ function buildMatchingCandidates() {
   let selected;
 
   if (list.length > 0) {
-
     selected = selectByWeight(
       list,
       MATCHING_SCORE_CONFIG.minCandidates
     );
-
   } else {
-
     selected = selectByWeight(
       filteredByRank,
       MATCHING_SCORE_CONFIG.minCandidates
@@ -1675,10 +1667,9 @@ function buildMatchingCandidates() {
   }
 
   // -------------------------
-  // ★補完（足りない場合）
+  // ★補完
   // -------------------------
   if (selected.length < MATCHING_SCORE_CONFIG.minCandidates) {
-
     const need = MATCHING_SCORE_CONFIG.minCandidates - selected.length;
 
     const existing = new Set(selected.map(p => p.name));
@@ -1695,6 +1686,12 @@ function buildMatchingCandidates() {
       logWarn(`候補不足のため補完（+${fillers.length}）`);
     }
   }
+
+  // -------------------------
+  // ★ここが今回の追加（最重要）
+  // スコア降順で並び替え
+  // -------------------------
+  selected.sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0));
 
   // -------------------------
   // 完了
