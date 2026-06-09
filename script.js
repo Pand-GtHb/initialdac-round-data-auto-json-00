@@ -674,18 +674,18 @@ function getPlayerRankKey(player) {
 }
 /* ---------------------------------------------------------
    [26-2] syncMyRankSelection
+   ★ 自分ランク選択を R1〜R8 の実値で保持する
 --------------------------------------------------------- */
 function syncMyRankSelection(rankValue) {
-
   const selectedMyRank = rankValue || "R6";
 
-  State.myStar =
-    (
-      String(selectedMyRank).startsWith("R") &&
-      Number(String(selectedMyRank).slice(1)) >= 7
-    )
-      ? 7
-      : 6;
+  const num = Number(String(selectedMyRank).replace("R", ""));
+
+  if (num >= 1 && num <= 8) {
+    State.myStar = num;
+  } else {
+    State.myStar = 6; // fallback
+  }
 
   return selectedMyRank;
 }
@@ -803,8 +803,9 @@ function getPhaseDistanceMin(copiedAtMs, cycleMin = 5) {
 }
 /* ---------------------------------------------------------
    [29] calcMatchingScore
-   ★ phase を copiedAt 基準の新判定へ全面置換
+   ★ phase は copiedAt 基準の新判定
    ★ realtimeBoost は同ランク＋同エリア強化版を使用
+   ★ pride_distribution を score に反映
 --------------------------------------------------------- */
 function calcMatchingScore(player) {
   if (!player || !player.updateDate) return 0;
@@ -832,8 +833,13 @@ function calcMatchingScore(player) {
   const rankScore = rankBase * cfg.rank.scale;
 
   // -------------------------
+  // pride_distribution（PRIDE帯補正）
+  // ★ PRIDE以外は getPrideWeight() が 1.0 を返すため安全
+  // -------------------------
+  const prideWeight = getPrideWeight(player);
+
+  // -------------------------
   // area（補正）
-  // ★ 既存バグ回避：areaId ではなく area を使う
   // -------------------------
   const areaKey = String(player.area ?? "");
   const areaWeight =
@@ -848,7 +854,7 @@ function calcMatchingScore(player) {
   const timeWeight = getTimeWeight(player);
 
   // -------------------------
-  // phase / recency（新基準）
+  // phase / recency（copiedAt基準）
   // -------------------------
   const latestCopied = getLatestCopiedPlayer();
   const phaseInfo = latestCopied
@@ -898,9 +904,11 @@ function calcMatchingScore(player) {
 
   // -------------------------
   // score
+  // ★ prideWeight を最終乗算
   // -------------------------
   const score =
     rankScore
+    * prideWeight
     * areaFactor
     * miscFactor
     * timeWeight
