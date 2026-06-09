@@ -647,6 +647,15 @@ function findPlayerFromCopiedText(text) {
 }
 /* ---------------------------------------------------------
    [23] getRealtimeBoost
+   ★ ブースト内訳取得関数と統一
+--------------------------------------------------------- */
+function getRealtimeBoost(player) {
+  const detail = getRealtimeBoostDetail(player);
+  return detail.total;
+}
+/* ---------------------------------------------------------
+   [23-A] getRealtimeBoostDetail
+   ★ ランク・エリア・店舗のブースト内訳を返す
    ★ コピー相手の属性（ランク＋エリア）への重みを強化
    優先度：
    1) 同ランク＋同エリア
@@ -654,11 +663,15 @@ function findPlayerFromCopiedText(text) {
    3) 同エリアのみ
    4) 同店舗のみ
 --------------------------------------------------------- */
-function getRealtimeBoost(player) {
-  if (!State.recentClicks.length) return 1;
-  if (!player) return 1;
+function getRealtimeBoostDetail(player) {
+  if (!State.recentClicks.length || !player) {
+    return { rank: 0, area: 0, shop: 0, total: 1 };
+  }
 
-  let score = 0;
+  let rankScore = 0;
+  let areaScore = 0;
+  let shopScore = 0;
+
   const playerRankKey = getPlayerRankKey(player);
 
   for (const r of State.recentClicks) {
@@ -682,17 +695,25 @@ function getRealtimeBoost(player) {
       String(player.shopname ?? "") === String(r.shopname ?? "");
 
     if (sameRank && sameArea) {
-      score += decay * 1.20;   // 最強
+      rankScore += decay * 0.8;
+      areaScore += decay * 0.4;
     } else if (sameRank) {
-      score += decay * 0.65;
+      rankScore += decay * 0.6;
     } else if (sameArea) {
-      score += decay * 0.50;
+      areaScore += decay * 0.5;
     } else if (sameShop) {
-      score += decay * 0.30;
+      shopScore += decay * 0.3;
     }
   }
 
-  return 1 + Math.min(1.8, score);
+  const totalBoost = 1 + Math.min(1.8, rankScore + areaScore + shopScore);
+
+  return {
+    rank: rankScore,
+    area: areaScore,
+    shop: shopScore,
+    total: totalBoost
+  };
 }
 /* ---------------------------------------------------------
    [24-A] getRoundedDiffMinAndPhaseDistance
@@ -1697,12 +1718,13 @@ function exportAllCSV() {
 }    
 /* ---------------------------------------------------------
    [46] copyToClipboard
-   ★ コピー内容は変更しない
-   ★ ログだけ「エリア名 / Update時刻」を追加
+   ★ ログに boost情報追加
 --------------------------------------------------------- */
 function copyToClipboard(text) {
+
   const buildCopyLogMessage = (rawText) => {
     const player = findPlayerFromCopiedText(rawText);
+
     if (!player) {
       return `コピー：${rawText}`;
     }
@@ -1712,11 +1734,17 @@ function copyToClipboard(text) {
       ? formatYMDHM(parseDateJST(player.updateDate))
       : "--/-- --:--";
 
-    return `コピー：${rawText} / ${areaName} / Update:${updateLabel}`;
+    // ★ ここ追加
+    const boost = getRealtimeBoostDetail(player);
+
+    return `コピー：${rawText} / ${areaName} / Update:${updateLabel}`
+      + ` / Boost[rank=${boost.rank.toFixed(2)}`
+      + ` area=${boost.area.toFixed(2)}`
+      + ` shop=${boost.shop.toFixed(2)}`
+      + ` total=${boost.total.toFixed(2)}]`;
   };
 
   if (!navigator.clipboard) {
-    // 古いブラウザ用（同期コピー）
     const ta = document.createElement("textarea");
     ta.value = text;
     document.body.appendChild(ta);
@@ -1729,7 +1757,6 @@ function copyToClipboard(text) {
     return;
   }
 
-  // 新しいブラウザ用（非同期コピー）
   navigator.clipboard.writeText(text)
     .then(() => {
       log(buildCopyLogMessage(text));
@@ -1738,7 +1765,7 @@ function copyToClipboard(text) {
     .catch(() => {
       logError("コピーに失敗しました");
     });
-}   
+}  
 /* ---------------------------------------------------------
    [47] buildMatchingCandidates
    ★ マッチング候補一覧生成
