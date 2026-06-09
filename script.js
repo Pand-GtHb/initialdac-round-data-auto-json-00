@@ -447,52 +447,113 @@ function getAreaScore(player) {
   const areaScore = Math.pow(normalized, 0.7);    
   return areaScore;    
 }    
-/* ---------------------------------------------------------    
-   [22] recordClickFromCopiedText クリックコピーを「擬似マッチログ」としてBoostに使う    
---------------------------------------------------------- */    
-function recordClickFromCopiedText(text) {    
-  if (!text) return;    
-  // 形式例： "★★...\tNAME" や "123\tNAME" を想定    
-  let name = text;    
-  if (String(text).includes("\t")) {    
-    const parts = String(text).split("\t");    
-    name = parts[parts.length - 1];    
-  }    
-  const player = State.all.find(p => p.name === name);    
-  if (!player) return;    
-  State.recentClicks.unshift({    
-    name: player.name,    
-    area: player.area,    
-    shopname: player.shopname,    
-    time: Date.now()    
-  });    
-  // 最大20件    
-  State.recentClicks = State.recentClicks.slice(0, 20);    
-}    
-/* ---------------------------------------------------------    
-   [23] getRealtimeBoost　Boost関数
---------------------------------------------------------- */    
-function getRealtimeBoost(player) {    
-  if (!State.recentClicks.length) return 1;    
-  let areaScore = 0;    
-  let shopScore = 0;    
-  for (const r of State.recentClicks) {    
-    const dtMin = (Date.now() - r.time) / 60000;    
-    const decay = Math.exp(-dtMin / 10); // 10分で減衰    
-    if (player.area === r.area) areaScore += decay;    
-    if ((player.shopname || "") === (r.shopname || "")) shopScore += decay;    
-  }    
-  const areaBoost = 1 + Math.min(0.5, areaScore * 0.2);    
-  const shopBoost = 1 + Math.min(0.8, shopScore * 0.3);    
-  return areaBoost * shopBoost;    
-} 
+/* ---------------------------------------------------------
+   [22] recordClickFromCopiedText
+   ★ コピー履歴を「実マッチアンカー」として保存
+   ★ areaName / updateDate / rankKey / copiedAt を追加
+--------------------------------------------------------- */
+function recordClickFromCopiedText(text) {
+  if (!text) return;
+
+  const player = findPlayerFromCopiedText(text);
+  if (!player) return;
+
+  const copiedAt = Date.now();
+  const areaName = AreaList[String(player.area)] || player.areaName || "";
+  const rankKey = getPlayerRankKey(player);
+
+  State.recentClicks.unshift({
+    name: player.name,
+    area: player.area,
+    areaName: areaName,
+    shopname: player.shopname,
+    starCnt: player.starCnt,
+    pridePoint: player.pridePoint,
+    rankKey: rankKey,
+    updateDate: player.updateDate,
+    time: copiedAt,       // 既存互換維持
+    copiedAt: copiedAt    // 新基準
+  });
+
+  // 最大20件（現行維持）
+  State.recentClicks = State.recentClicks.slice(0, 20);
+}
+/* ---------------------------------------------------------
+   [22-A] findPlayerFromCopiedText
+   ★ コピー文字列からプレイヤーを特定する共通関数
+--------------------------------------------------------- */
+function findPlayerFromCopiedText(text) {
+  if (!text) return null;
+
+  let name = String(text);
+  if (name.includes("\t")) {
+    const parts = name.split("\t");
+    name = parts[parts.length - 1];
+  }
+  name = String(name).trim();
+
+  if (!name) return null;
+
+  // 現行仕様に合わせて name 一致で検索
+  return State.all.find(p => String(p.name) === name) || null;
+}
+/* ---------------------------------------------------------
+   [23] getRealtimeBoost
+   ★ コピー相手の属性（ランク＋エリア）への重みを強化
+   優先度：
+   1) 同ランク＋同エリア
+   2) 同ランクのみ
+   3) 同エリアのみ
+   4) 同店舗のみ
+--------------------------------------------------------- */
+function getRealtimeBoost(player) {
+  if (!State.recentClicks.length) return 1;
+  if (!player) return 1;
+
+  let score = 0;
+  const playerRankKey = getPlayerRankKey(player);
+
+  for (const r of State.recentClicks) {
+    const anchorTime = Number(r.copiedAt || r.time || 0);
+    if (!anchorTime) continue;
+
+    const dtMin = (Date.now() - anchorTime) / 60000;
+    if (!isFinite(dtMin) || dtMin < 0) continue;
+
+    const decay = Math.exp(-dtMin / 10);
+
+    const sameRank =
+      !!playerRankKey &&
+      !!r.rankKey &&
+      String(playerRankKey) === String(r.rankKey);
+
+    const sameArea =
+      String(player.area ?? "") === String(r.area ?? "");
+
+    const sameShop =
+      String(player.shopname ?? "") === String(r.shopname ?? "");
+
+    if (sameRank && sameArea) {
+      score += decay * 1.20;   // 最強
+    } else if (sameRank) {
+      score += decay * 0.65;
+    } else if (sameArea) {
+      score += decay * 0.50;
+    } else if (sameShop) {
+      score += decay * 0.30;
+    }
+  }
+
+  return 1 + Math.min(1.8, score);
+}
 /* ---------------------------------------------------------
    [24-A] getRoundedDiffMinAndPhaseDistance
-   ★ 丸め廃止＋現在時刻基準の周期位置計算
-   ★ 3分30秒～4分30秒（210～270秒）判定に必要な情報を返す
+   ★ 旧 3分30秒〜4分30秒 / updateDate 基準を廃止
+   ★ copiedAt 基準の 5分±45秒 サイクル情報を返す
+   ★ 最初の対象窓は 4分15秒〜5分45秒、その後5分周期で繰り返し
 --------------------------------------------------------- */
-function getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin) {
-  if (!updateDateStr) {
+function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
+  if (!copiedAtMs || !isFinite(Number(copiedAtMs))) {
     return {
       diffMin: Infinity,
       d: Infinity,
@@ -502,19 +563,8 @@ function getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin) {
   }
 
   const now = Date.now();
-  const last = parseDateJST(updateDateStr)?.getTime();
-
-  if (!last || !isFinite(last)) {
-    return {
-      diffMin: Infinity,
-      d: Infinity,
-      rSec: Infinity,
-      inPinkWindow: false
-    };
-  }
-
-  // ★ 丸めなし
-  const diffSec = (now - last) / 1000;
+  const anchor = Number(copiedAtMs);
+  const diffSec = (now - anchor) / 1000;
 
   if (!isFinite(diffSec) || diffSec < 0) {
     return {
@@ -525,51 +575,53 @@ function getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin) {
     };
   }
 
-  const diffMin = diffSec / 60;
-  const cycleSec = cycleMin * 60;
+  const cycleSec = cycleMin * 60;   // 300秒
+  const toleranceSec = 45;          // ±45秒
   const rSec = diffSec % cycleSec;
 
-  // ★ ピンク範囲：3分30秒～4分30秒
-  const minPinkSec = 210; // 3:30
-  const maxPinkSec = 270; // 4:30
-  const inPinkWindow = (rSec >= minPinkSec && rSec <= maxPinkSec);
-
-  // ★ 参考距離（4分=240秒 を中心にした距離）
-  const centerSec = 240;
-  const dSec = Math.abs(rSec - centerSec);
+  // 5分±45秒 = 4:15〜5:45
+  // 周期窓として扱うため、最初の窓以前（0〜4:14）は対象外
+  let inPinkWindow = false;
+  if (diffSec >= (cycleSec - toleranceSec)) {
+    const distToNearestCycleBoundary = Math.min(rSec, cycleSec - rSec);
+    inPinkWindow = distToNearestCycleBoundary <= toleranceSec;
+  }
 
   return {
-    diffMin: diffMin,
-    d: dSec / 60,          // 既存互換のため分で返す
+    diffMin: diffSec / 60,
+    d: Math.min(rSec, cycleSec - rSec) / 60,
     rSec: rSec,
     inPinkWindow: inPinkWindow
   };
 }
 /* ---------------------------------------------------------
-   [24-B] isMatchingCandidateByPhase（修正版）
-   ★ 3分30秒〜4分30秒を対象（±30秒）
+   [24-B] isMatchingCandidateByPhase
+   ★ 旧 updateDate 基準を廃止
+   ★ 「最新にコピーしたプレイヤー本人」かつ「copiedAt基準 5分±45秒」
 --------------------------------------------------------- */
-function isMatchingCandidateByPhase(updateDateStr) {
-  const cycleSec = 240; // 4分
+function isMatchingCandidateByPhase(player) {
+  if (!player) return false;
 
-  // ★ 範囲（秒）
-  const minSec = 210; // 3:30
-  const maxSec = 270; // 4:30
+  const anchor = getLatestCopiedPlayer();
+  if (!anchor) return false;
 
-  if (!updateDateStr) return false;
+  const sameName =
+    String(player.name ?? "") === String(anchor.name ?? "");
 
-  const now = Date.now();
-  const last = parseDateJST(updateDateStr)?.getTime();
+  const sameUpdateDate =
+    String(player.updateDate ?? "") === String(anchor.updateDate ?? "");
 
-  if (!last) return false;
+  if (!sameName || !sameUpdateDate) return false;
 
-  const diffSec = (now - last) / 1000;
-
-  if (!isFinite(diffSec) || diffSec < 0) return false;
-
-  const r = diffSec % cycleSec;
-
-  return r >= minSec && r <= maxSec;
+  const phase = getPhaseDistanceMin(anchor.copiedAt || anchor.time, 5);
+  return !!phase.inPinkWindow;
+}
+/* ---------------------------------------------------------
+   [24-C] getLatestCopiedPlayer
+   ★ 最新コピー履歴を返す
+--------------------------------------------------------- */
+function getLatestCopiedPlayer() {
+  return State.recentClicks[0] || null;
 }
 /* ---------------------------------------------------------
    [25] loadScoringConfig
@@ -590,10 +642,21 @@ async function loadScoringConfig() {
    ・PRIDE帯ランク別分布
 --------------------------------------------------------- */
 /* ---------------------------------------------------------
+   [26-1-A] getPrideBandKey
+   ★ pridePoint から P_A〜P_G を返す
+--------------------------------------------------------- */
+function getPrideBandKey(pridePoint) {
+  const pt = Number(pridePoint ?? 0);
+  if (pt <= 0) return null;
+
+  const band = PRIDE_LEVELS.find(p => pt >= p.min && pt <= p.max);
+  return band ? band.key : null;
+}
+/* ---------------------------------------------------------
    [26-1] getPlayerRankKey
+   ★ PRIDE を P_A〜P_G 単位で返す
 --------------------------------------------------------- */
 function getPlayerRankKey(player) {
-
   if (
     player.onlineBattleRankId === RUBY_ID &&
     Number(player.starCnt) >= 1 &&
@@ -602,14 +665,13 @@ function getPlayerRankKey(player) {
     return `R${player.starCnt}`;
   }
 
-  if (Number(player.pridePoint ?? 0) > 0) {
-    return "PRIDE";
+  const prideBandKey = getPrideBandKey(player.pridePoint);
+  if (prideBandKey) {
+    return prideBandKey;
   }
 
   return null;
 }
-
-
 /* ---------------------------------------------------------
    [26-2] syncMyRankSelection
 --------------------------------------------------------- */
@@ -627,8 +689,6 @@ function syncMyRankSelection(rankValue) {
 
   return selectedMyRank;
 }
-
-
 /* ---------------------------------------------------------
    [26-3] getVirtualStar
    ★ PRIDEは "PRIDE" を返す
@@ -645,8 +705,6 @@ function getVirtualStar(player) {
 
   return null;
 }
-
-
 /* ---------------------------------------------------------
    [26-4] getRankWeight
 --------------------------------------------------------- */
@@ -665,8 +723,6 @@ function getRankWeight(player) {
 
   return Number(table[opp] ?? 0);
 }
-
-
 /* ---------------------------------------------------------
    [26-5] getPrideWeight
    ★ PRIDE帯をランク別distributionで評価
@@ -700,8 +756,6 @@ function getPrideWeight(player) {
 
   return 1.0;
 }
-
-
 /* ---------------------------------------------------------
    [26-6] getTimeWeight（★変更なし）
 --------------------------------------------------------- */
@@ -742,21 +796,20 @@ const MATCHING_SCORE_CONFIG = {
 };
 /* ---------------------------------------------------------
    [28] getPhaseDistanceMin
+   ★ copiedAt 基準 phase ラッパー
 --------------------------------------------------------- */
-function getPhaseDistanceMin(updateDateStr, cycleMin = MATCHING_SCORE_CONFIG.cycle) {
-  return getRoundedDiffMinAndPhaseDistance(updateDateStr, cycleMin);
-}  
+function getPhaseDistanceMin(copiedAtMs, cycleMin = 5) {
+  return getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin);
+}
 /* ---------------------------------------------------------
-   [29] calcMatchingScore（修正版）
-   ★ phaseScore をピンク判定と完全一致
-   ★ スコアに倍率は一切入れない（抽選側でのみ調整）
+   [29] calcMatchingScore
+   ★ phase を copiedAt 基準の新判定へ全面置換
+   ★ realtimeBoost は同ランク＋同エリア強化版を使用
 --------------------------------------------------------- */
 function calcMatchingScore(player) {
   if (!player || !player.updateDate) return 0;
 
   const cfg = State.scoringConfig;
-
-  // フォールバック
   if (!cfg) {
     return 1;
   }
@@ -776,17 +829,16 @@ function calcMatchingScore(player) {
     rankBase = rankWeight;
   }
 
-  const rankScore =
-    rankBase * cfg.rank.scale;
+  const rankScore = rankBase * cfg.rank.scale;
 
   // -------------------------
   // area（補正）
+  // ★ 既存バグ回避：areaId ではなく area を使う
   // -------------------------
-  const areaId = player.areaId;
+  const areaKey = String(player.area ?? "");
   const areaWeight =
-    State.areaModel?.[areaId] ?? 0;
+    State.areaModel?.[areaKey] ?? 0;
 
-  // ★ 倍率化（既存維持）
   const areaFactor =
     1 + (areaWeight * 3.0);
 
@@ -796,27 +848,25 @@ function calcMatchingScore(player) {
   const timeWeight = getTimeWeight(player);
 
   // -------------------------
-  // phase（★今回の修正ポイント）
+  // phase / recency（新基準）
   // -------------------------
-  const { diffMin } = getPhaseDistanceMin(player.updateDate);
+  const latestCopied = getLatestCopiedPlayer();
+  const phaseInfo = latestCopied
+    ? getPhaseDistanceMin(latestCopied.copiedAt || latestCopied.time, 5)
+    : { diffMin: Infinity, inPinkWindow: false };
 
-  if (!isFinite(diffMin)) return 0;
-
-  // ★ ピンク判定と完全一致
-  const inPinkWindow =
-    isMatchingCandidateByPhase(player.updateDate);
+  const isPinkTarget = isMatchingCandidateByPhase(player);
 
   const phaseScore =
-    inPinkWindow ? 1 : 0;
+    (isPinkTarget && phaseInfo.inPinkWindow) ? 1 : 0;
 
-  // -------------------------
-  // recency
-  // -------------------------
   const recencyScore =
-    Math.exp(-diffMin / MATCHING_SCORE_CONFIG.recencyTau);
+    (isPinkTarget && isFinite(phaseInfo.diffMin))
+      ? Math.exp(-phaseInfo.diffMin / MATCHING_SCORE_CONFIG.recencyTau)
+      : 0;
 
   // -------------------------
-  // activity
+  // activity（既存維持）
   // -------------------------
   const star = Number(player.starCnt ?? 0);
   const pride = Number(player.pridePoint ?? 0);
@@ -844,10 +894,10 @@ function calcMatchingScore(player) {
     getRealtimeBoost(player);
 
   realtimeBoost =
-    Math.min(realtimeBoost, 2.0);
+    Math.min(realtimeBoost, 2.5);
 
   // -------------------------
-  // score（★倍率なし・純粋構造）
+  // score
   // -------------------------
   const score =
     rankScore
@@ -860,8 +910,7 @@ function calcMatchingScore(player) {
 }
 /* ---------------------------------------------------------
    [29-B] selectByWeight
-   ★ ピンクは一律優遇
-   ★ ただし古いサイクルほど減衰
+   ★ 抽選優遇対象を「コピー本人の新ピンク対象」に変更
 --------------------------------------------------------- */
 function selectByWeight(players, count) {
   const result = [];
@@ -869,38 +918,20 @@ function selectByWeight(players, count) {
 
   const safeScore = (p) => {
     const base = Math.max(0.0001, p.__score || 0);
-
     const timeWeight = getTimeWeight(p);
     const timeBoost = Math.pow(timeWeight, 2.0);
 
-    // -------------------------
-    // ★ ピンク判定
-    // -------------------------
-    const isPink =
-      isMatchingCandidateByPhase(p.updateDate);
+    const isPink = isMatchingCandidateByPhase(p);
 
     let pinkBoost = 1;
-
     if (isPink) {
-      const last = parseDateJST(p.updateDate)?.getTime();
-
-      if (last) {
-        const now = Date.now();
-        const diffMin = (now - last) / 60000;
-
-        if (diffMin >= 0 && isFinite(diffMin)) {
-
-          // -------------------------
-          // ★ Recency減衰（ここが核心）
-          // -------------------------
-          const tau = 12;   // 分（サイクル減衰）
-          const decay = Math.exp(-diffMin / tau);
-
-          // -------------------------
-          // ★ ピンク優遇（一定）× 減衰
-          // -------------------------
+      const anchor = getLatestCopiedPlayer();
+      if (anchor) {
+        const phase = getPhaseDistanceMin(anchor.copiedAt || anchor.time, 5);
+        if (isFinite(phase.diffMin) && phase.diffMin >= 0) {
+          const tau = 12;   // 分
+          const decay = Math.exp(-phase.diffMin / tau);
           const maxBoost = 1.8;
-
           pinkBoost = 1 + (maxBoost - 1) * decay;
         }
       }
@@ -1358,21 +1389,32 @@ function buildPlayerRowHTML(p) {
     </tr>
   `;
 }
-
 /* ---------------------------------------------------------
    [41-B] highlightMatchingRows
-   ★ 共通：フェーズハイライト
+   ★ ピンク着色対象を「コピーしたプレイヤー本人だけ」に変更
+   ★ 判定基準は copiedAt 基準 5分±45秒
 --------------------------------------------------------- */
 function highlightMatchingRows(tbody) {
+  const anchor = getLatestCopiedPlayer();
+  if (!anchor) return;
+
   tbody.querySelectorAll("tr").forEach(tr => {
-    const updated = tr.dataset.updated;
-    if (!updated) return;
-    if (isMatchingCandidateByPhase(updated)) {
+    const updated = tr.dataset.updated || "";
+    const nameCell = tr.querySelector(".player-name");
+    const rowName = nameCell ? String(nameCell.textContent).trim() : "";
+
+    const rowPlayer = {
+      name: rowName,
+      updateDate: updated
+    };
+
+    if (isMatchingCandidateByPhase(rowPlayer)) {
       tr.classList.add("match-row-pink");
+    } else {
+      tr.classList.remove("match-row-pink");
     }
   });
 }
-
 /* ---------------------------------------------------------
    [41-C] renderPlayerRowsToBody
    ★ 共通：tbody描画
@@ -1484,32 +1526,50 @@ function exportAllCSV() {
     .join("\n");    
   downloadCSV("all_records.csv", header, body);    
 }    
-/* ---------------------------------------------------------    
-   [46] copyToClipboard   クリップボードコピー（★ログ復活版）    
---------------------------------------------------------- */    
-function copyToClipboard(text) {    
-  if (!navigator.clipboard) {    
-    // 古いブラウザ用（同期コピー）    
-    const ta = document.createElement("textarea");    
-    ta.value = text;    
-    document.body.appendChild(ta);    
-    ta.select();    
-    document.execCommand("copy");    
-    document.body.removeChild(ta);    
-    log(`コピー：${text}`);  // ★ 追加（同期コピー時）    
-    recordClickFromCopiedText(text);    
-    return;    
-  }    
-  // 新しいブラウザ用（非同期コピー）    
-  navigator.clipboard.writeText(text)    
-    .then(() => {    
-      log(`コピー：${text}`);  // ★ 追加（成功時）    
-       recordClickFromCopiedText(text);    
-    })    
-    .catch(() => {    
-      logError("コピーに失敗しました");  // ★ 失敗時    
-    });    
-}    
+/* ---------------------------------------------------------
+   [46] copyToClipboard
+   ★ コピー内容は変更しない
+   ★ ログだけ「エリア名 / Update時刻」を追加
+--------------------------------------------------------- */
+function copyToClipboard(text) {
+  const buildCopyLogMessage = (rawText) => {
+    const player = findPlayerFromCopiedText(rawText);
+    if (!player) {
+      return `コピー：${rawText}`;
+    }
+
+    const areaName = AreaList[String(player.area)] || player.areaName || "";
+    const updateLabel = player.updateDate
+      ? formatYMDHM(parseDateJST(player.updateDate))
+      : "--/-- --:--";
+
+    return `コピー：${rawText} / ${areaName} / Update:${updateLabel}`;
+  };
+
+  if (!navigator.clipboard) {
+    // 古いブラウザ用（同期コピー）
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+
+    log(buildCopyLogMessage(text));
+    recordClickFromCopiedText(text);
+    return;
+  }
+
+  // 新しいブラウザ用（非同期コピー）
+  navigator.clipboard.writeText(text)
+    .then(() => {
+      log(buildCopyLogMessage(text));
+      recordClickFromCopiedText(text);
+    })
+    .catch(() => {
+      logError("コピーに失敗しました");
+    });
+}   
 /* ---------------------------------------------------------
    [47] buildMatchingCandidates
    ★ マッチング候補一覧生成（確率サンプリング版・時間フィルタ反映）
