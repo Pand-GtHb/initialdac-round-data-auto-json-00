@@ -37,7 +37,12 @@ const State = {
   recentClicks: [],
   areaModel: {},
   scoringConfig: null,
-  updateWatchTimer: null
+  updateWatchTimer: null,
+
+  // ★追加：最新データ先読み用
+  prefetchedRoundData: null,
+  prefetchedForUpdateAt: "",
+  prefetchInFlight: null
 };
 /* ---------------------------------------------------------    
   [04] RUBY帯・PRIDE帯 定義
@@ -327,7 +332,23 @@ async function loadAreaList() {
     logError("areaList.json の取得に失敗：" + e.message);
     AreaList = {};
   }
-} 
+}
+/* ---------------------------------------------------------
+   [15-A] areaList 取得/適用 分離
+--------------------------------------------------------- */
+async function fetchAreaListJson() {
+  return fetchJSON("areaList.json");
+}
+
+function applyAreaListJson(json) {
+  AreaList = {};
+  if (json?.areas && Array.isArray(json.areas)) {
+    json.areas.forEach(a => {
+      AreaList[String(a.area)] = a.areaName;
+    });
+  }
+  log("areaList.json 読み込み完了");
+}
 /* ---------------------------------------------------------    
     [16] loadLatestRound  latest_round.json 読み込み（ラウンド番号表示用）
 --------------------------------------------------------- */    
@@ -343,7 +364,23 @@ async function loadLatestRound() {
   } catch (e) {    
     logError("latest_round.json の取得に失敗：" + e.message);    
   }    
-}    
+}
+/* ---------------------------------------------------------
+   [16-A] latest_round 取得/適用 分離
+--------------------------------------------------------- */
+async function fetchLatestRoundJson() {
+  return fetchJSON("latest_round.json");
+}
+
+function applyLatestRoundJson(json) {
+  if (!json?.latestRound) {
+    throw new Error("latestRound が存在しません");
+  }
+  State.latestRound = json.latestRound;
+  const el = document.getElementById("latestRound");
+  if (el) el.textContent = State.latestRound;
+  log("latest_round.json 読み込み完了");
+}
 /* ---------------------------------------------------------
    [17] loadRankModel（SeasonモデルからRankモデルに変更）
 --------------------------------------------------------- */
@@ -357,6 +394,17 @@ async function loadRankModel() {
     State.rankModel = null;
     logWarn("rank_model.json 未取得：" + e.message);
   }
+}
+/* ---------------------------------------------------------
+   [17-A] rank_model 取得/適用 分離
+--------------------------------------------------------- */
+async function fetchRankModelJson() {
+  return fetchJSON("rank_model.json");
+}
+
+function applyRankModelJson(json) {
+  State.rankModel = json;
+  log("rank_model.json 読み込み完了");
 }
 /* ---------------------------------------------------------    
    [18] loadRoundData integrated_data.json 読み込み    
@@ -390,32 +438,133 @@ async function loadRoundData() {
   } catch (e) {    
     logError("integrated_data.json の取得に失敗：" + e.message);    
   }    
-}    
+}
 /* ---------------------------------------------------------
-   [19] checkUpdate（更新監視） latest_update.json 監視（更新検知）
+   [18-A] integrated_data 取得/適用 分離
+--------------------------------------------------------- */
+async function fetchRoundDataJson() {
+  return fetchJSON("integrated_data.json");
+}
+
+function applyRoundDataJson(json, options = {}) {
+  const { resetReloadButton = true } = options;
+
+  State.generatedAt = json?.generatedAt ?? "";
+
+  const timeEl = document.getElementById("jsonUpdateTime");
+  if (timeEl && State.generatedAt) {
+    timeEl.textContent = formatYMDHM(parseDateJST(State.generatedAt));
+  }
+
+  const records = json?.records || [];
+  State.all = records.map(p => ({
+    ...p,
+    normalizedName: normalize(p.name),
+    areaName: AreaList[String(p.area)] || ""
+  }));
+  State.filtered = [...State.all];
+
+  const genTime = State.generatedAt
+    ? formatYMDHM(parseDateJST(State.generatedAt))
+    : "-";
+
+  log(`integrated_data.json 読み込み完了 (${State.all.length}件：${genTime})`);
+
+  if (resetReloadButton) {
+    const btn = document.getElementById("reloadBtn");
+    if (btn) {
+      btn.classList.remove("update-alert");
+      btn.style.cssText = "";
+    }
+  }
+}
+/* ---------------------------------------------------------
+   [18-B] 先読み済みデータ優先で最新データ適用
+--------------------------------------------------------- */
+async function reloadLatestDataPreferPrefetch() {
+  startProgress();
+
+  try {
+    if (State.prefetchedRoundData) {
+      log("先読み済みデータを適用します");
+      applyRoundDataJson(State.prefetchedRoundData, { resetReloadButton: true });
+
+      // ★ 適用後クリア
+      State.prefetchedRoundData = null;
+      State.prefetchedForUpdateAt = "";
+    } else {
+      log("先読みデータなしのため通常取得します");
+      await loadRoundData();
+    }
+
+    applyFilters();
+    buildSummary();
+    renderSummary();
+  } finally {
+    stopProgress();
+  }
+}
+/* ---------------------------------------------------------
+   [19-A] 最新データ先読み
+--------------------------------------------------------- */
+async function prefetchLatestRoundData(lastUpdatedValue) {
+  if (!lastUpdatedValue) return;
+
+  // ★ 既に対象更新版を先読み済みなら何もしない
+  if (State.prefetchedForUpdateAt === lastUpdatedValue && State.prefetchedRoundData) {
+    return;
+  }
+
+  // ★ 同一更新に対する多重起動防止
+  if (State.prefetchInFlight) {
+    return State.prefetchInFlight;
+  }
+
+  State.prefetchInFlight = (async () => {
+    try {
+      log("新データ先読み開始");
+      const json = await fetchRoundDataJson();
+      State.prefetchedRoundData = json;
+      State.prefetchedForUpdateAt = lastUpdatedValue;
+      log("新データ先読み完了");
+    } catch (e) {
+      logWarn("新データ先読みに失敗：" + e.message);
+    } finally {
+      State.prefetchInFlight = null;
+    }
+  })();
+
+  return State.prefetchInFlight;
+}
+/* ---------------------------------------------------------
+   [19-B] checkUpdate（更新監視） latest_update.json 監視（更新検知＋先読み）
 --------------------------------------------------------- */
 async function checkUpdate() {
   try {
     const json = await fetchJSON("latest_update.json");
-
     const latest = json.lastUpdated || "";
     if (!latest) return;
 
-    if (State.latestUpdateAt && State.latestUpdateAt !== latest) {
+    const changed = State.latestUpdateAt && State.latestUpdateAt !== latest;
+
+    if (changed) {
       const btn = document.getElementById("reloadBtn");
       if (btn) {
         btn.classList.add("update-alert");
         btn.style.cssText = "background:#ff4081;color:#fff;font-weight:bold;";
       }
       logWarn("新しいデータが公開されています。");
+
+      // ★追加：更新版本体を先読み
+      prefetchLatestRoundData(latest);
     }
 
     State.latestUpdateAt = latest;
-
   } catch (e) {
     logError("latest_update.json の取得に失敗：" + e.message);
   }
-}   
+}
+
 /* ---------------------------------------------------------    
    [20] buildAreaDistribution（分布計算）「フィルタ後母集団のエリア分布」を自動計算して使う 分布計算関数
 --------------------------------------------------------- */    
@@ -633,6 +782,19 @@ async function loadScoringConfig() {
   } catch (e) {
     logWarn("scoring_config.json 未取得：" + e.message);
   }
+}
+/* ---------------------------------------------------------
+   [25-A] scoring_config 取得/適用 分離
+--------------------------------------------------------- */
+async function fetchScoringConfigJson() {
+  const res = await fetch("scoring_config.json");
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+function applyScoringConfigJson(json) {
+  State.scoringConfig = json;
+  log("scoring_config.json 読み込み完了");
 }
 /* ---------------------------------------------------------
    [26] ランク関連ユーティリティ（最終版）
@@ -1813,7 +1975,7 @@ function clearSearch() {
   State.searchText = '';    
 }    
 /* ---------------------------------------------------------
-   [55] init   初期化
+   [55] init   初期化（Promise.all化・既存関数温存型）
 --------------------------------------------------------- */
 async function init() {
   log("Viewer 初期化中");
@@ -1822,15 +1984,41 @@ async function init() {
   buildRubyFilters();
   buildPrideFilters();
 
-  await loadAreaList();
-  await loadLatestRound();
+  try {
+    log("初期データ並列取得開始");
 
-  await loadRankModel();
+    const [
+      areaJson,
+      latestRoundJson,
+      rankModelJson,
+      scoringConfigJson,
+      roundDataJson
+    ] = await Promise.all([
+      fetchAreaListJson(),
+      fetchLatestRoundJson(),
+      fetchRankModelJson(),
+      fetchScoringConfigJson(),
+      fetchRoundDataJson()
+    ]);
 
-  // ★ここ追加（これが最重要）
-  await loadScoringConfig();
+    // ★ 適用順序だけ維持
+    applyAreaListJson(areaJson);
+    applyLatestRoundJson(latestRoundJson);
+    applyRankModelJson(rankModelJson);
+    applyScoringConfigJson(scoringConfigJson);
+    applyRoundDataJson(roundDataJson, { resetReloadButton: true });
 
-  await loadRoundData();
+  } catch (e) {
+    logError("初期化並列取得に失敗：" + e.message);
+    logWarn("逐次ロードへフォールバックします");
+
+    // ★ フォールバック：既存逐次処理
+    await loadAreaList();
+    await loadLatestRound();
+    await loadRankModel();
+    await loadScoringConfig();
+    await loadRoundData();
+  }
 
   applyFilters();
   buildSummary();
@@ -1868,19 +2056,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const matchingBtn = document.getElementById("matchingBtn");    
   const matchingBackBtn = document.getElementById("matchingBackBtn");    
   const searchInput = document.getElementById("searchInput");    
-  // ✅ reload    
-  if (reloadBtn) {    
-    reloadBtn.classList.remove("update-alert");    
-    reloadBtn.style.cssText = "";    
-    reloadBtn.onclick = async () => {    
-      startProgress();    
-      await loadRoundData();    
-      applyFilters();    
-      buildSummary();    
-      renderSummary();    
-      stopProgress();    
-    };    
-  }    
+  // ✅ reload
+  if (reloadBtn) {
+    reloadBtn.classList.remove("update-alert");
+    reloadBtn.style.cssText = "";
+    reloadBtn.onclick = async () => {
+      await reloadLatestDataPreferPrefetch();
+    };
+  }
   // ✅ filter    
   if (filterBtn) {    
     filterBtn.onclick = () => {    
