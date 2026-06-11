@@ -243,7 +243,18 @@ function normalize(s) {
   );    
   s = s.replace(/ /g, "");    
   return s;    
-}    
+}
+/* ---------------------------------------------------------
+   [11-A] normalizePlayerName（安全版）
+   ★ 前後空白のみ除去
+   ★ 内部空白は保持
+--------------------------------------------------------- */
+function normalizePlayerName(str) {
+  return String(str ?? "")
+    .replace(/^[\s\u3000]+/, "")   // 先頭の空白除去
+    .replace(/[\s\u3000]+$/, "")   // 末尾の空白除去
+    .normalize("NFKC");            // 表記揺れ統一（任意）
+}
 /* ---------------------------------------------------------    
    [12] 店舗名省略（幅・文字種判定）
 --------------------------------------------------------- */    
@@ -629,21 +640,24 @@ function recordClickFromCopiedText(text) {
 /* ---------------------------------------------------------
    [22-A] findPlayerFromCopiedText
    ★ コピー文字列からプレイヤーを特定する共通関数
+   ★ 名前は normalizePlayerName で比較
 --------------------------------------------------------- */
 function findPlayerFromCopiedText(text) {
   if (!text) return null;
 
   let name = String(text);
+
   if (name.includes("\t")) {
     const parts = name.split("\t");
     name = parts[parts.length - 1];
   }
-  name = String(name).trim();
 
-  if (!name) return null;
+  const targetName = normalizePlayerName(name);
+  if (!targetName) return null;
 
-  // 現行仕様に合わせて name 一致で検索
-  return State.all.find(p => String(p.name) === name) || null;
+  return State.all.find(p =>
+    normalizePlayerName(p.name) === targetName
+  ) || null;
 }
 /* ---------------------------------------------------------
    [23] getRealtimeBoost
@@ -781,6 +795,7 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
    [24-B] isMatchingCandidateByPhase
    ★ 旧 updateDate 基準を廃止
    ★ 「最新にコピーしたプレイヤー本人」かつ「copiedAt基準 5分±45秒」
+   ★ 名前比較は normalizePlayerName を使用
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(player) {
   if (!player) return false;
@@ -789,7 +804,7 @@ function isMatchingCandidateByPhase(player) {
   if (!anchor) return false;
 
   const sameName =
-    String(player.name ?? "") === String(anchor.name ?? "");
+    normalizePlayerName(player.name) === normalizePlayerName(anchor.name);
 
   const sameUpdateDate =
     String(player.updateDate ?? "") === String(anchor.updateDate ?? "");
@@ -1804,6 +1819,7 @@ function copyToClipboard(text) {
 /* ---------------------------------------------------------
    [46-A] findCandidateInfoForLog
    ★ State.matchingList から CandidateRank / Score / rankWeight を取得
+   ★ 名前比較は normalizePlayerName を使用
 --------------------------------------------------------- */
 function findCandidateInfoForLog(player) {
   if (!player) {
@@ -1823,9 +1839,12 @@ function findCandidateInfoForLog(player) {
     };
   }
 
+  const targetName = normalizePlayerName(player.name);
+  const targetUpdateDate = String(player.updateDate ?? "");
+
   const idx = list.findIndex(p =>
-    String(p.name ?? "") === String(player.name ?? "") &&
-    String(p.updateDate ?? "") === String(player.updateDate ?? "")
+    normalizePlayerName(p.name) === targetName &&
+    String(p.updateDate ?? "") === targetUpdateDate
   );
 
   return {
