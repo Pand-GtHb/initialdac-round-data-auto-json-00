@@ -245,15 +245,13 @@ function normalize(s) {
   return s;    
 }
 /* ---------------------------------------------------------
-   [11-A] normalizePlayerName（安全版）
-   ★ 前後空白のみ除去
-   ★ 内部空白は保持
+   [11-A] normalizePlayerName（完全一致版）
+   ★ 空白を一切変更しない
+   ★ 表記揺れ（全角半角）のみ統一（任意）
 --------------------------------------------------------- */
 function normalizePlayerName(str) {
   return String(str ?? "")
-    .replace(/^[\s\u3000]+/, "")   // 先頭の空白除去
-    .replace(/[\s\u3000]+$/, "")   // 末尾の空白除去
-    .normalize("NFKC");            // 表記揺れ統一（任意）
+    .normalize("NFKC"); // ←のみ（空白保持）
 }
 /* ---------------------------------------------------------    
    [12] 店舗名省略（幅・文字種判定）
@@ -639,20 +637,22 @@ function recordClickFromCopiedText(text) {
 }
 /* ---------------------------------------------------------
    [22-A] findPlayerFromCopiedText
-   ★ コピー文字列からプレイヤーを特定する共通関数
-   ★ 名前は normalizePlayerName で比較
+   ★ コピー文字列からプレイヤーを特定
+   ★ 名前は完全一致（空白も含める）
 --------------------------------------------------------- */
 function findPlayerFromCopiedText(text) {
   if (!text) return null;
 
   let name = String(text);
 
+  // タブ区切り（ランク＋名前コピー対応）
   if (name.includes("\t")) {
     const parts = name.split("\t");
     name = parts[parts.length - 1];
   }
 
   const targetName = normalizePlayerName(name);
+
   if (!targetName) return null;
 
   return State.all.find(p =>
@@ -793,9 +793,8 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
 }
 /* ---------------------------------------------------------
    [24-B] isMatchingCandidateByPhase
-   ★ 旧 updateDate 基準を廃止
-   ★ 「最新にコピーしたプレイヤー本人」かつ「copiedAt基準 5分±45秒」
-   ★ 名前比較は normalizePlayerName を使用
+   ★ ピンク判定（本人＋updateDate一致）
+   ★ 名前は完全一致（空白も含める）
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(player) {
   if (!player) return false;
@@ -1818,8 +1817,8 @@ function copyToClipboard(text) {
 }
 /* ---------------------------------------------------------
    [46-A] findCandidateInfoForLog
-   ★ State.matchingList から CandidateRank / Score / rankWeight を取得
-   ★ 名前比較は normalizePlayerName を使用
+   ★ CandidateRank / Score / rankWeight取得
+   ★ 名前完全一致（空白含む）
 --------------------------------------------------------- */
 function findCandidateInfoForLog(player) {
   if (!player) {
@@ -1831,6 +1830,7 @@ function findCandidateInfoForLog(player) {
   }
 
   const list = Array.isArray(State.matchingList) ? State.matchingList : [];
+
   if (!list.length) {
     return {
       candidateRank: null,
@@ -1948,10 +1948,12 @@ function buildMatchingCandidates() {
   if (selected.length < MATCHING_SCORE_CONFIG.minCandidates) {
     const need = MATCHING_SCORE_CONFIG.minCandidates - selected.length;
 
-    const existing = new Set(selected.map(p => p.name));
+    const existing = new Set(
+      selected.map(p => normalizePlayerName(p.name))    
+    );
 
     const pool = filteredByRank.filter(p =>
-      !existing.has(p.name)
+      !existing.has(normalizePlayerName(p.name))
     );
 
     const fillers = selectByWeight(pool, need);
