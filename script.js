@@ -59,14 +59,14 @@ const PRIDE_LEVELS = [
   { key: "P_G", level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }    
 ];    
 /* ---------------------------------------------------------    
-   [05] RANKS（全ランク定義）★ RANKS（RUBY☆1〜8 + PRIDE A〜G）
+   [05] RANKS（全ランク定義）★ RANKS（RUBY★1〜8 + PRIDE A〜G）
 --------------------------------------------------------- */    
 const RANKS = [    
   ...Array.from({ length: 8 }, (_, i) => ({    
     key: `R${i + 1}`,    
     type: "ruby",    
     star: i + 1,    
-    label: `☆${i + 1}`,    
+    label: `★${i + 1}`,    
     badgeId: RUBY_ID,    
     icon: `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,    
     order: i    
@@ -1386,7 +1386,7 @@ function renderSummary() {
       <table>
         <tr>
           <th>ランク</th>
-          <th>☆・Lv</th>
+          <th>★・Lv</th>
           <th>人数</th>
           <th>%</th>
           <th>Bar</th>
@@ -1550,7 +1550,7 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
       <table>    
         <thead>    
           <tr>    
-            <th>☆・PRIDE</th>    
+            <th>★・PRIDE</th>    
             <th>プレイヤー名</th>    
             <th>RP</th>    
             <th>店舗名</th>    
@@ -2030,7 +2030,7 @@ function renderMatchingTable() {
       <table>    
         <thead>    
           <tr>    
-            <th>☆・PRIDE</th>    
+            <th>★・PRIDE</th>    
             <th>プレイヤー名</th>    
             <th>RP</th>    
             <th>店舗名</th>    
