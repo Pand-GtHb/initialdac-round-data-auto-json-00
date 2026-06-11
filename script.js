@@ -720,6 +720,7 @@ function getRealtimeBoostDetail(player) {
    ★ 旧 3分30秒〜4分30秒 / updateDate 基準を廃止
    ★ copiedAt 基準の 5分±45秒 サイクル情報を返す
    ★ 最初の対象窓は 4分15秒〜5分45秒、その後5分周期で繰り返し
+   ★ 5分±45秒 + 初回サイクル除外
 --------------------------------------------------------- */
 function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
   if (!copiedAtMs || !isFinite(Number(copiedAtMs))) {
@@ -745,20 +746,33 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
   }
 
   const cycleSec = cycleMin * 60;   // 300秒
-  const toleranceSec = 45;          // ±45秒
+  const toleranceSec = 45;
+
   const rSec = diffSec % cycleSec;
 
-  // 5分±45秒 = 4:15〜5:45
-  // 周期窓として扱うため、最初の窓以前（0〜4:14）は対象外
+  // ★ここが追加（最重要）
+  // 1周期目を完全除外
+  if (diffSec < cycleSec) {
+    return {
+      diffMin: diffSec / 60,
+      d: Infinity,
+      rSec: rSec,
+      inPinkWindow: false
+    };
+  }
+
+  // ★通常ピンク判定
   let inPinkWindow = false;
-  if (diffSec >= (cycleSec - toleranceSec)) {
-    const distToNearestCycleBoundary = Math.min(rSec, cycleSec - rSec);
-    inPinkWindow = distToNearestCycleBoundary <= toleranceSec;
+
+  const distToNearest = Math.min(rSec, cycleSec - rSec);
+
+  if (distToNearest <= toleranceSec) {
+    inPinkWindow = true;
   }
 
   return {
     diffMin: diffSec / 60,
-    d: Math.min(rSec, cycleSec - rSec) / 60,
+    d: distToNearest / 60,
     rSec: rSec,
     inPinkWindow: inPinkWindow
   };
@@ -1718,7 +1732,8 @@ function exportAllCSV() {
 }    
 /* ---------------------------------------------------------
    [46] copyToClipboard
-   ★ ログに boost情報追加
+   ★ コピー内容は変更しない
+   ★ ログに「エリア名 / Update時刻 / Boost / CandidateRank / Score / rankWeight」を追加
 --------------------------------------------------------- */
 function copyToClipboard(text) {
 
@@ -1734,17 +1749,36 @@ function copyToClipboard(text) {
       ? formatYMDHM(parseDateJST(player.updateDate))
       : "--/-- --:--";
 
-    // ★ ここ追加
     const boost = getRealtimeBoostDetail(player);
+    const candidateInfo = findCandidateInfoForLog(player);
+
+    const rankLabel =
+      candidateInfo.candidateRank != null
+        ? candidateInfo.candidateRank
+        : "-";
+
+    const scoreLabel =
+      candidateInfo.score != null
+        ? candidateInfo.score.toFixed(2)
+        : "-";
+
+    const rankWeightLabel =
+      candidateInfo.rankWeight != null
+        ? Number(candidateInfo.rankWeight).toFixed(3)
+        : "-";
 
     return `コピー：${rawText} / ${areaName} / Update:${updateLabel}`
       + ` / Boost[rank=${boost.rank.toFixed(2)}`
       + ` area=${boost.area.toFixed(2)}`
       + ` shop=${boost.shop.toFixed(2)}`
-      + ` total=${boost.total.toFixed(2)}]`;
+      + ` total=${boost.total.toFixed(2)}]`
+      + ` / CandidateRank:${rankLabel}`
+      + ` / Score:${scoreLabel}`
+      + ` / rankWeight:${rankWeightLabel}`;
   };
 
   if (!navigator.clipboard) {
+    // 古いブラウザ用（同期コピー）
     const ta = document.createElement("textarea");
     ta.value = text;
     document.body.appendChild(ta);
@@ -1757,6 +1791,7 @@ function copyToClipboard(text) {
     return;
   }
 
+  // 新しいブラウザ用（非同期コピー）
   navigator.clipboard.writeText(text)
     .then(() => {
       log(buildCopyLogMessage(text));
@@ -1765,7 +1800,40 @@ function copyToClipboard(text) {
     .catch(() => {
       logError("コピーに失敗しました");
     });
-}  
+}
+/* ---------------------------------------------------------
+   [46-A] findCandidateInfoForLog
+   ★ State.matchingList から CandidateRank / Score / rankWeight を取得
+--------------------------------------------------------- */
+function findCandidateInfoForLog(player) {
+  if (!player) {
+    return {
+      candidateRank: null,
+      score: null,
+      rankWeight: null
+    };
+  }
+
+  const list = Array.isArray(State.matchingList) ? State.matchingList : [];
+  if (!list.length) {
+    return {
+      candidateRank: null,
+      score: null,
+      rankWeight: getRankWeight(player)
+    };
+  }
+
+  const idx = list.findIndex(p =>
+    String(p.name ?? "") === String(player.name ?? "") &&
+    String(p.updateDate ?? "") === String(player.updateDate ?? "")
+  );
+
+  return {
+    candidateRank: idx >= 0 ? (idx + 1) : null,
+    score: idx >= 0 ? Number(list[idx].__score ?? 0) : null,
+    rankWeight: getRankWeight(player)
+  };
+}
 /* ---------------------------------------------------------
    [47] buildMatchingCandidates
    ★ マッチング候補一覧生成
