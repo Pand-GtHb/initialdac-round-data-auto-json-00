@@ -1886,6 +1886,36 @@ function buildMatchingCandidates() {
     + ` / Cluster=${isCluster ? "YES" : "NO"}`
   );
 }
+// -------------------------
+  // ⑧-A 詳細ログ（原因分析用）
+  // -------------------------
+
+  function getOpponentLabel(p) {
+    if (p.onlineBattleRankId === RUBY_ID) {
+      return `R${p.starCnt}`;
+    }
+    if (Number(p.pridePoint ?? 0) > 0) {
+      return `P${p.pridePoint}`;
+    }
+    return "-";
+  }
+
+  const debugTop = rankedAll.slice(0, 3);
+
+  debugTop.forEach((p, idx) => {
+    const d = p.__detail || {};
+
+    log(
+      `[DEBUG] Rank=${idx + 1}`
+      + ` / name=${p.name}`
+      + ` / opp=${getOpponentLabel(p)}`
+      + ` / score=${(p.__score ?? 0).toFixed(3)}`
+      + ` / rankW=${Number(d.rankWeight ?? 0).toFixed(3)}`
+      + ` / timeW=${Number(d.timeWeight ?? 0).toFixed(3)}`
+      + ` / area=${Number(d.areaFactor ?? 1).toFixed(3)}`
+      + ` / boost=${Number(d.realtimeBoost ?? 1).toFixed(3)}`
+    );
+  });
 /* ---------------------------------------------------------    
    [48] renderMatchingHeader   ★ マッチング候補ヘッダ表示    
 --------------------------------------------------------- */    
