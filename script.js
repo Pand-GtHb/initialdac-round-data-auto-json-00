@@ -826,8 +826,7 @@ function getLatestCopiedPlayer() {
 async function loadScoringConfig() {
   try {
     const json = await fetchJSON("scoring_config.json");
-    State.scoringConfig = json;
-    log("scoring_config.json 読み込み完了");
+    applyScoringConfigJson(json);
   } catch (e) {
     logWarn("scoring_config.json 未取得：" + e.message);
   }
@@ -835,6 +834,11 @@ async function loadScoringConfig() {
 
 async function fetchScoringConfigJson() {
   return fetchJSON("scoring_config.json");
+}
+
+function applyScoringConfigJson(json) {
+  State.scoringConfig = json;
+  log("scoring_config.json 読み込み完了");
 }
 /* ---------------------------------------------------------
    [26] ランク関連ユーティリティ（最終版）
