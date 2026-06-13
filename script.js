@@ -1885,7 +1885,6 @@ function buildMatchingCandidates() {
     + ` / Ratio=${(diag?.top1Ratio ?? 0).toFixed(2)}`
     + ` / Cluster=${isCluster ? "YES" : "NO"}`
   );
-}
 // -------------------------
   // ⑧-A 詳細ログ（原因分析用）
   // -------------------------
@@ -1916,6 +1915,7 @@ function buildMatchingCandidates() {
       + ` / boost=${Number(d.realtimeBoost ?? 1).toFixed(3)}`
     );
   });
+}
 /* ---------------------------------------------------------    
    [48] renderMatchingHeader   ★ マッチング候補ヘッダ表示    
 --------------------------------------------------------- */    
