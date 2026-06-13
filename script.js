@@ -154,9 +154,24 @@ function appendLog(msg, type = "info") {
     box.removeChild(box.lastChild);    
   }    
 }    
-const log = msg => appendLog(msg, "info");    
-const logWarn = msg => appendLog(msg, "warn");    
-const logError = msg => appendLog(msg, "error");    
+const log = msg => appendLog(msg, "info");
+const logWarn = msg => appendLog(msg, "warn");  
+const logError = msg => appendLog(msg, "error");
+/* ---------------------------------------------------------
+   [08-A] MATCHINGログ制御設定（追加）
+   ★ 通常ログと詳細ログを分離
+--------------------------------------------------------- */
+const MATCHING_LOG_CONFIG = {
+  verboseTopDetails: false,   // ★ trueでDEBUG詳細ON
+  topListCount: 5             // 表示TOP件数
+};
+
+function formatMatchTopList(list, count = MATCHING_LOG_CONFIG.topListCount) {
+  return (list || [])
+    .slice(0, count)
+    .map(p => `${p.name}(${Number(p.__score ?? 0).toFixed(2)})`)
+    .join(" / ");
+}
 /* ---------------------------------------------------------    
    [09] 進行中アニメーション
 --------------------------------------------------------- */    
@@ -1821,8 +1836,7 @@ function exportAllCSV() {
 }    
 /* ---------------------------------------------------------
    [46] copyToClipboard
-   ★ コピー内容は変更しない
-   ★ ログに「エリア名 / Update時刻 / Boost / CandidateRank / Score / rankWeight」を追加
+   ★ 欠落理由ログ追加版
 --------------------------------------------------------- */
 function copyToClipboard(text) {
 
@@ -1830,10 +1844,11 @@ function copyToClipboard(text) {
     const player = findPlayerFromCopiedText(rawText);
 
     if (!player) {
-      return `コピー：${rawText}`;
+      return `コピー：${rawText} / reason:player_not_found`;
     }
 
     const areaName = AreaList[String(player.area)] || player.areaName || "";
+
     const updateLabel = player.updateDate
       ? formatYMDHM(parseDateJST(player.updateDate))
       : "--/-- --:--";
@@ -1846,9 +1861,14 @@ function copyToClipboard(text) {
         ? candidateInfo.candidateRank
         : "-";
 
+    const displayRankLabel =
+      candidateInfo.displayRank != null
+        ? candidateInfo.displayRank
+        : "-";
+
     const scoreLabel =
       candidateInfo.score != null
-        ? candidateInfo.score.toFixed(2)
+        ? Number(candidateInfo.score).toFixed(2)
         : "-";
 
     const rankWeightLabel =
@@ -1856,31 +1876,34 @@ function copyToClipboard(text) {
         ? Number(candidateInfo.rankWeight).toFixed(3)
         : "-";
 
+    const missLabel = (candidateInfo.missReasons || []).length
+      ? candidateInfo.missReasons.join("|")
+      : "-";
+
     return `コピー：${rawText} / ${areaName} / Update:${updateLabel}`
       + ` / Boost[rank=${boost.rank.toFixed(2)}`
       + ` area=${boost.area.toFixed(2)}`
       + ` shop=${boost.shop.toFixed(2)}`
       + ` total=${boost.total.toFixed(2)}]`
       + ` / CandidateRank:${rankLabel}`
+      + ` / DisplayRank:${displayRankLabel}`
       + ` / Score:${scoreLabel}`
-      + ` / rankWeight:${rankWeightLabel}`;
+      + ` / rankWeight:${rankWeightLabel}`
+      + ` / Miss:${missLabel}`;
   };
 
   if (!navigator.clipboard) {
-    // 古いブラウザ用（同期コピー）
     const ta = document.createElement("textarea");
     ta.value = text;
     document.body.appendChild(ta);
     ta.select();
     document.execCommand("copy");
     document.body.removeChild(ta);
-
     log(buildCopyLogMessage(text));
     recordClickFromCopiedText(text);
     return;
   }
 
-  // 新しいブラウザ用（非同期コピー）
   navigator.clipboard.writeText(text)
     .then(() => {
       log(buildCopyLogMessage(text));
@@ -1891,65 +1914,173 @@ function copyToClipboard(text) {
     });
 }
 /* ---------------------------------------------------------
-   [46-A] findCandidateInfoForLog
-   ★ CandidateRank / Score / rankWeight取得
-   ★ 名前完全一致（空白含む）
+   [46] copyToClipboard
+   ★ 欠落理由ログ追加版
+--------------------------------------------------------- */
+function copyToClipboard(text) {
+
+  const buildCopyLogMessage = (rawText) => {
+    const player = findPlayerFromCopiedText(rawText);
+
+    if (!player) {
+      return `コピー：${rawText} / reason:player_not_found`;
+    }
+
+    const areaName = AreaList[String(player.area)] || player.areaName || "";
+
+    const updateLabel = player.updateDate
+      ? formatYMDHM(parseDateJST(player.updateDate))
+      : "--/-- --:--";
+
+    const boost = getRealtimeBoostDetail(player);
+    const candidateInfo = findCandidateInfoForLog(player);
+
+    const rankLabel =
+      candidateInfo.candidateRank != null
+        ? candidateInfo.candidateRank
+        : "-";
+
+    const displayRankLabel =
+      candidateInfo.displayRank != null
+        ? candidateInfo.displayRank
+        : "-";
+
+    const scoreLabel =
+      candidateInfo.score != null
+        ? Number(candidateInfo.score).toFixed(2)
+        : "-";
+
+    const rankWeightLabel =
+      candidateInfo.rankWeight != null
+        ? Number(candidateInfo.rankWeight).toFixed(3)
+        : "-";
+
+    const missLabel = (candidateInfo.missReasons || []).length
+      ? candidateInfo.missReasons.join("|")
+      : "-";
+
+    return `コピー：${rawText} / ${areaName} / Update:${updateLabel}`
+      + ` / Boost[rank=${boost.rank.toFixed(2)}`
+      + ` area=${boost.area.toFixed(2)}`
+      + ` shop=${boost.shop.toFixed(2)}`
+      + ` total=${boost.total.toFixed(2)}]`
+      + ` / CandidateRank:${rankLabel}`
+      + ` / DisplayRank:${displayRankLabel}`
+      + ` / Score:${scoreLabel}`
+      + ` / rankWeight:${rankWeightLabel}`
+      + ` / Miss:${missLabel}`;
+  };
+
+  if (!navigator.clipboard) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    log(buildCopyLogMessage(text));
+    recordClickFromCopiedText(text);
+    return;
+  }
+
+  navigator.clipboard.writeText(text)
+    .then(() => {
+      log(buildCopyLogMessage(text));
+      recordClickFromCopiedText(text);
+    })
+    .catch(() => {
+      logError("コピーに失敗しました");
+    });
+}
+/* ---------------------------------------------------------
+   [46-A] findCandidateInfoForLog（完全差し替え）
+   ★ 欠落理由解析強化
 --------------------------------------------------------- */
 function findCandidateInfoForLog(player) {
-  if (!player) return {};
 
-  // ★全件順位優先
-  const list = State.matchingRankedAll?.length
-    ? State.matchingRankedAll
-    : State.matchingList;
+  if (!player) return { missReasons: ["player_not_found"] };
 
-  const source = State.matchingRankedAll?.length
-    ? "all"
-    : "display";
+  const allRanked = State.matchingRankedAll || [];
+  const displayList = State.matchingList || [];
+  const scoreDetail = calcMatchingScoreDetail(player);
 
-  if (!list?.length) return {};
+  const missReasons = [];
 
-  const idx = list.findIndex(p =>
+  const inFiltered = (State.filtered || []).some(p =>
     normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
-    String(p.updateDate) === String(player.updateDate)
+    String(p.updateDate ?? "") === String(player.updateDate ?? "")
   );
 
+  const inAllRanked = allRanked.findIndex(p =>
+    normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
+    String(p.updateDate ?? "") === String(player.updateDate ?? "")
+  );
+
+  const inDisplay = displayList.findIndex(p =>
+    normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
+    String(p.updateDate ?? "") === String(player.updateDate ?? "")
+  );
+
+  const rankKey = getPlayerRankKey(player);
+
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+
+  const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
+    .map(x => x.value);
+
+  let inUiPool = false;
+
+  if (rankKey) {
+    if (rankKey.startsWith("R")) {
+      inUiPool = selectedStars.includes(Number(player.starCnt));
+    } else {
+      inUiPool = selectedPrides.includes(rankKey);
+    }
+  }
+
+  // ★ 欠落原因分類
+  if (!player.updateDate) missReasons.push("no_updateDate");
+  else if (!parseDateJST(player.updateDate)) missReasons.push("invalid_updateDate");
+
+  if (!inFiltered) missReasons.push("outside_time_filter");
+  if (!rankKey) missReasons.push("no_rankKey");
+  if (rankKey && !inUiPool) missReasons.push("ui_filtered_out");
+  if (Number(scoreDetail.rankWeight ?? 0) <= 0) missReasons.push("rank_model_zero");
+
+  if (allRanked.length === 0) missReasons.push("candidate_not_built");
+  if (allRanked.length > 0 && inAllRanked < 0) missReasons.push("outside_analysis_pool");
+  if (displayList.length > 0 && inDisplay < 0) missReasons.push("outside_display_top10");
+
   return {
-    candidateRank: idx >= 0 ? idx + 1 : null,
-    score: idx >= 0 ? list[idx].__score : null,
-    rankingSource: source,
+    candidateRank: inAllRanked >= 0 ? inAllRanked + 1 : null,
+    displayRank: inDisplay >= 0 ? inDisplay + 1 : null,
+    score: inAllRanked >= 0 ? allRanked[inAllRanked].__score : null,
+    rankingSource: allRanked.length ? "all" : "display",
     diagnostics: State.matchingDiagnostics,
-    scoreDetail: calcMatchingScoreDetail(player)
+    missReasons,
+    rankWeight: scoreDetail.rankWeight,
+    scoreDetail
   };
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates
-   ★マッチング候補生成の中核ロジック
-
-   【設計思想】
-   - 「1位を当てる」のではなく「有力候補集合を出す」
-   - 母集団は State.filtered + RUBY/PRIDEフィルタ
-   - その中で、抽選対象は rank_model（= 自ランク）に沿って絞る
-   - 混戦時は上位クラスタを固定し、抽選ノイズを抑制する
+   [47] buildMatchingCandidates（完全差し替え）
+   ★ TOP固定削除版（最重要）
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
+
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
 
-  // -------------------------
-  // ① 母集団（時間フィルタ後）
-  // -------------------------
+  // ① 母集団
   const base = State.filtered;
 
-  // -------------------------
-  // ② スコア計算
-  // -------------------------
+  // ② スコア
   const scoredAll = base.map(p => {
     const detail = calcMatchingScoreDetail(p);
-
     return {
       ...p,
       __rankKey: getPlayerRankKey(p),
@@ -1958,9 +2089,7 @@ function buildMatchingCandidates() {
     };
   });
 
-  // -------------------------
-  // ③ UIフィルタ（RUBY/PRIDEチェック）
-  // -------------------------
+  // ③ UIフィルタ
   const filteredByUi = scoredAll.filter(p => {
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
@@ -1972,141 +2101,90 @@ function buildMatchingCandidates() {
     }
   });
 
-  // -------------------------
-  // ④ rank_model適合候補
-  // -------------------------
-  // rankWeight > 0 を「自ランク的に抽選対象」とみなす
+  // ④ rank_model
   const filteredByRankModel = filteredByUi.filter(p =>
     Number(p.__detail?.rankWeight ?? 0) > 0
   );
 
-  // -------------------------
-  // ⑤ 分析用順位（決定論）
-  // -------------------------
-  // 基本は rank_model 適合候補を分析対象にする
-  // ただし 0件なら filteredByUi へ安全フォールバック
+  // ⑤ 分析順位
   const analysisBase = filteredByRankModel.length > 0
     ? filteredByRankModel
     : filteredByUi;
 
-  const rankedAll = [...analysisBase].sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0));
+  const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
 
   State.matchingRankedAll = rankedAll;
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
 
   const diag = State.matchingDiagnostics;
-
-  // -------------------------
-  // ⑥ クラスタ判定
-  // -------------------------
   const isCluster = diag && diag.gap12 < 0.05;
 
-  let fixed = [];
-  let pool = [];
-
-  if (isCluster) {
-    // 混戦 → Top3クラスタ固定
-    fixed = rankedAll.slice(0, 3);
-    pool = rankedAll.slice(3);
-  } else {
-    // 非混戦 → Top1固定
-    fixed = rankedAll.slice(0, 1);
-    pool = rankedAll.slice(1);
-  }
-
-  // -------------------------
-  // ⑦ 残りを抽選
-  // -------------------------
-  const need = Math.max(0, 10 - fixed.length);
-
+  // ★ TOP固定完全撤廃
   let selected = [];
-  if (need > 0 && pool.length > 0) {
-    selected = selectByWeight(pool, need);
+
+  const initialNeed = Math.min(10, rankedAll.length);
+  if (initialNeed > 0) {
+    selected = selectByWeight(rankedAll, initialNeed);
   }
 
-  // rank_model 適合候補が少なくて不足した場合だけ、
-  // UI対象全体から補完する（安全策）
-  if (fixed.length + selected.length < 10) {
+  // 不足補完
+  if (selected.length < 10) {
     const existing = new Set(
-      [...fixed, ...selected].map(p => `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
+      selected.map(p => `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
     );
 
     const fallbackPool = filteredByUi.filter(p =>
       !existing.has(`${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
     );
 
-    const restNeed = 10 - (fixed.length + selected.length);
+    const restNeed = 10 - selected.length;
     if (restNeed > 0 && fallbackPool.length > 0) {
-      const fillers = selectByWeight(fallbackPool, restNeed);
-      selected = [...selected, ...fillers];
+      selected = [...selected, ...selectByWeight(fallbackPool, restNeed)];
     }
   }
 
-  // -------------------------
-  // ⑧ 固定 + 抽選 結合
-  // -------------------------
-  selected = [...fixed, ...selected];
-
-  // 表示順は score 降順
-  selected.sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0));
+  selected.sort((a, b) => b.__score - a.__score);
 
   State.matchingList = selected;
 
-  // -------------------------
-  // ⑨ 詳細ログ（原因分析用）
-  // -------------------------
-  function getOpponentLabel(p) {
-    if (p.onlineBattleRankId === RUBY_ID) {
-      return `R${Number(p.starCnt ?? 0)}`;
-    }
-    if (Number(p.pridePoint ?? 0) > 0) {
-      return `PRIDE:${Number(p.pridePoint ?? 0)}`;
-    }
-    return "-";
-  }
+  // ★ 必要最小ログ
+  const rankKeyMissing = scoredAll.filter(p => !p.__rankKey).length;
+  const rankModelExcluded = filteredByUi.filter(p => Number(p.__detail?.rankWeight ?? 0) <= 0).length;
 
-  const debugTop = rankedAll.slice(0, 3);
-
-  debugTop.forEach((p, idx) => {
-    const d = p.__detail || {};
-
-    log(
-      `[DEBUG] Rank=${idx + 1}`
-      + ` / name=${p.name}`
-      + ` / opp=${getOpponentLabel(p)}`
-      + ` / score=${Number(p.__score ?? 0).toFixed(3)}`
-      + ` / rankWeight=${Number(d.rankWeight ?? 0).toFixed(3)}`
-      + ` / rankScore=${Number(d.rankScore ?? 0).toFixed(3)}`
-      + ` / timeWeight=${Number(d.timeWeight ?? 0).toFixed(3)}`
-      + ` / areaFactor=${Number(d.areaFactor ?? 1).toFixed(3)}`
-      + ` / boost=${Number(d.realtimeBoost ?? 1).toFixed(3)}`
-    );
-  });
-
-  // -------------------------
-  // ⑩ ログ出力
-  // -------------------------
-  log(
-    `分析TOP: ` +
-    rankedAll.slice(0, 5)
-      .map(p => `${p.name}(${Number(p.__score ?? 0).toFixed(2)})`)
-      .join(" / ")
+  log(`候補生成: Base=${base.length}`
+    + ` / UiPool=${filteredByUi.length}`
+    + ` / RankModelPool=${filteredByRankModel.length}`
+    + ` / Selected=${selected.length}`
   );
 
-  log(
-    `表示TOP: ` +
-    selected.slice(0, 5)
-      .map(p => `${p.name}(${Number(p.__score ?? 0).toFixed(2)})`)
-      .join(" / ")
+  log(`候補欠落内訳: noRankKey=${rankKeyMissing}`
+    + ` / rankModelZero=${rankModelExcluded}`
+    + ` / analysisFallback=${filteredByRankModel.length > 0 ? "NO" : "YES"}`
   );
 
-  log(
-    `診断: Gap12=${Number(diag?.gap12 ?? 0).toFixed(2)}`
+  log(`診断: Gap12=${Number(diag?.gap12 ?? 0).toFixed(2)}`
     + ` / Ratio=${Number(diag?.top1Ratio ?? 0).toFixed(2)}`
     + ` / Cluster=${isCluster ? "YES" : "NO"}`
-    + ` / RankModelPool=${filteredByRankModel.length}`
-    + ` / UiPool=${filteredByUi.length}`
   );
+
+  log(`表示TOP: ${formatMatchTopList(selected)}`);
+
+  // 詳細ログ（手動ON）
+  if (MATCHING_LOG_CONFIG.verboseTopDetails) {
+    rankedAll.slice(0, 3).forEach((p, idx) => {
+      const d = p.__detail || {};
+      log(
+        `[DEBUG] Rank=${idx + 1}`
+        + ` / name=${p.name}`
+        + ` / score=${p.__score.toFixed(3)}`
+        + ` / rankWeight=${Number(d.rankWeight ?? 0).toFixed(3)}`
+        + ` / rankScore=${Number(d.rankScore ?? 0).toFixed(3)}`
+        + ` / timeWeight=${Number(d.timeWeight ?? 0).toFixed(3)}`
+        + ` / areaFactor=${Number(d.areaFactor ?? 1).toFixed(3)}`
+        + ` / boost=${Number(d.realtimeBoost ?? 1).toFixed(3)}`
+      );
+    });
+  }
 }
 /* ---------------------------------------------------------    
    [48] renderMatchingHeader   ★ マッチング候補ヘッダ表示    
