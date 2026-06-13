@@ -1029,36 +1029,164 @@ function calcMatchingDiagnostics(list) {
 }
 /* ---------------------------------------------------------
    [28-B] calcMatchingScoreDetail
+   ★ scoreの内訳返却版
+   ★ rankWeight / rankScore を正しく返す
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
-  if (!player || !player.updateDate) return { score:0 };
+  if (!player || !player.updateDate) {
+    return {
+      score: 0,
+      rankWeight: 0,
+      rankScore: 0,
+      prideWeight: 1,
+      areaFactor: 1,
+      timeWeight: 0,
+      phaseScore: 0,
+      recencyScore: 0,
+      activityScore: 0,
+      miscRaw: 0,
+      miscFactor: 1,
+      realtimeBoost: 1
+    };
+  }
 
-  const cfg = State.scoringConfig || {};
+  const cfg = State.scoringConfig;
+  if (!cfg) {
+    return {
+      score: 1,
+      rankWeight: 0,
+      rankScore: 1,
+      prideWeight: 1,
+      areaFactor: 1,
+      timeWeight: 1,
+      phaseScore: 0,
+      recencyScore: 0,
+      activityScore: 0,
+      miscRaw: 0,
+      miscFactor: 1,
+      realtimeBoost: 1
+    };
+  }
 
-  const rankWeight = getRankWeight(player);
-  if (rankWeight <= 0) return { score:0 };
+  // -------------------------
+  // rankWeight（自ランク × 相手帯）
+  // -------------------------
+  const rankWeight = Number(getRankWeight(player) ?? 0);
 
-  const rankScore = rankWeight;
-  const prideWeight = getPrideWeight(player);
-  const areaFactor = getAreaScore(player);
-  const timeWeight = getTimeWeight(player);
+  // rankWeight <= 0 は「rank_model上は非対象」
+  // ただし score は 0 で返して、buildMatchingCandidates側で pool 制御する
+  if (rankWeight <= 0) {
+    return {
+      score: 0,
+      rankWeight: 0,
+      rankScore: 0,
+      prideWeight: 1,
+      areaFactor: getAreaScore(player),
+      timeWeight: getTimeWeight(player),
+      phaseScore: 0,
+      recencyScore: 0,
+      activityScore: 0,
+      miscRaw: 0,
+      miscFactor: 1,
+      realtimeBoost: Math.min(getRealtimeBoost(player), 2.5)
+    };
+  }
 
+  // -------------------------
+  // rankScore（rankWeightの変換後）
+  // -------------------------
+  let rankBase;
+  if (cfg.rank?.mode === "sqrt") {
+    rankBase = Math.sqrt(rankWeight);
+  } else if (cfg.rank?.mode === "linear") {
+    rankBase = rankWeight;
+  } else {
+    rankBase = rankWeight;
+  }
+
+  const rankScale = Number(cfg.rank?.scale ?? 1);
+  const rankScore = rankBase * rankScale;
+
+  // -------------------------
+  // pride / area / time
+  // -------------------------
+  const prideWeight = Number(getPrideWeight(player) ?? 1);
+  const areaFactor = Number(getAreaScore(player) ?? 1);
+  const timeWeight = Number(getTimeWeight(player) ?? 0);
+
+  // -------------------------
+  // phase / recency
+  // -------------------------
+  const latestCopied = getLatestCopiedPlayer();
+  const phaseInfo = latestCopied
+    ? getPhaseDistanceMin(latestCopied.copiedAt || latestCopied.time, 5)
+    : { diffMin: Infinity, inPinkWindow: false };
+
+  const isPinkTarget = isMatchingCandidateByPhase(player);
+  const phaseScore =
+    (isPinkTarget && phaseInfo.inPinkWindow) ? 1 : 0;
+
+  const recencyScore =
+    (isPinkTarget && isFinite(phaseInfo.diffMin))
+      ? Math.exp(-phaseInfo.diffMin / MATCHING_SCORE_CONFIG.recencyTau)
+      : 0;
+
+  // -------------------------
+  // activity
+  // -------------------------
+  const star = Number(player.starCnt ?? 0);
+  const pride = Number(player.pridePoint ?? 0);
+
+  const activityScore =
+    (star > 0)
+      ? Math.min(1, star / 7)
+      : (pride > 0 ? 0.7 : 0);
+
+  // -------------------------
+  // misc
+  // -------------------------
+  const miscPhase = Number(cfg.misc?.phase ?? 0);
+  const miscRecency = Number(cfg.misc?.recency ?? 0);
+  const miscActivity = Number(cfg.misc?.activity ?? 0);
+
+  const miscRaw =
+      phaseScore    * miscPhase
+    + recencyScore  * miscRecency
+    + activityScore * miscActivity;
+
+  const miscFactor = 1 + (miscRaw / 50);
+
+  // -------------------------
+  // realtimeBoost
+  // -------------------------
   let realtimeBoost = getRealtimeBoost(player);
   realtimeBoost = Math.min(realtimeBoost, 2.5);
 
+  // -------------------------
+  // final score
+  // -------------------------
   const score =
-    rankScore *
-    prideWeight *
-    areaFactor *
-    timeWeight *
-    realtimeBoost;
+    rankScore
+    * prideWeight
+    * areaFactor
+    * miscFactor
+    * timeWeight
+    * realtimeBoost;
 
   return {
     score: Math.max(0.0001, score),
+
+    // ★ debug / analysis 用
+    rankWeight,
     rankScore,
     prideWeight,
     areaFactor,
     timeWeight,
+    phaseScore,
+    recencyScore,
+    activityScore,
+    miscRaw,
+    miscFactor,
     realtimeBoost
   };
 }
@@ -1797,29 +1925,71 @@ function findCandidateInfoForLog(player) {
 /* ---------------------------------------------------------
    [47] buildMatchingCandidates
    ★マッチング候補生成の中核ロジック
+
    【設計思想】
    - 「1位を当てる」のではなく「有力候補集合を出す」
-   - score順は参考情報であり、確定順位ではない
-   - 混戦時は“上位クラスタ”を固定し、抽選ノイズを抑制する
+   - 母集団は State.filtered + RUBY/PRIDEフィルタ
+   - その中で、抽選対象は rank_model（= 自ランク）に沿って絞る
+   - 混戦時は上位クラスタを固定し、抽選ノイズを抑制する
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+  const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
+    .map(x => x.value);
+
+  // -------------------------
+  // ① 母集団（時間フィルタ後）
+  // -------------------------
   const base = State.filtered;
 
-  // ★スコア計算
-  const scored = base.map(p=>{
-    const d = calcMatchingScoreDetail(p);
+  // -------------------------
+  // ② スコア計算
+  // -------------------------
+  const scoredAll = base.map(p => {
+    const detail = calcMatchingScoreDetail(p);
+
     return {
       ...p,
-      __score: d.score,
-      __detail: d
+      __rankKey: getPlayerRankKey(p),
+      __score: Number(detail.score ?? 0),
+      __detail: detail
     };
   });
 
   // -------------------------
-  // ★分析用全件順位（決定論）
+  // ③ UIフィルタ（RUBY/PRIDEチェック）
   // -------------------------
-  const rankedAll = [...scored].sort((a,b)=>b.__score-a.__score);
+  const filteredByUi = scoredAll.filter(p => {
+    if (!p.updateDate) return false;
+    if (!p.__rankKey) return false;
+
+    if (p.__rankKey.startsWith("R")) {
+      return selectedStars.includes(Number(p.starCnt));
+    } else {
+      return selectedPrides.includes(p.__rankKey);
+    }
+  });
+
+  // -------------------------
+  // ④ rank_model適合候補
+  // -------------------------
+  // rankWeight > 0 を「自ランク的に抽選対象」とみなす
+  const filteredByRankModel = filteredByUi.filter(p =>
+    Number(p.__detail?.rankWeight ?? 0) > 0
+  );
+
+  // -------------------------
+  // ⑤ 分析用順位（決定論）
+  // -------------------------
+  // 基本は rank_model 適合候補を分析対象にする
+  // ただし 0件なら filteredByUi へ安全フォールバック
+  const analysisBase = filteredByRankModel.length > 0
+    ? filteredByRankModel
+    : filteredByUi;
+
+  const rankedAll = [...analysisBase].sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0));
 
   State.matchingRankedAll = rankedAll;
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
@@ -1827,7 +1997,7 @@ function buildMatchingCandidates() {
   const diag = State.matchingDiagnostics;
 
   // -------------------------
-  // ★クラスタ判定（ここが今回の核心）
+  // ⑥ クラスタ判定
   // -------------------------
   const isCluster = diag && diag.gap12 < 0.05;
 
@@ -1835,66 +2005,62 @@ function buildMatchingCandidates() {
   let pool = [];
 
   if (isCluster) {
-    // ★混戦 → Top3固定
+    // 混戦 → Top3クラスタ固定
     fixed = rankedAll.slice(0, 3);
     pool = rankedAll.slice(3);
-
   } else {
-    // ★非混戦 → Top1固定
+    // 非混戦 → Top1固定
     fixed = rankedAll.slice(0, 1);
     pool = rankedAll.slice(1);
   }
 
   // -------------------------
-  // ★残りを抽選（従来ロジック維持）
+  // ⑦ 残りを抽選
   // -------------------------
-  const need = 10 - fixed.length;
+  const need = Math.max(0, 10 - fixed.length);
 
   let selected = [];
-
   if (need > 0 && pool.length > 0) {
     selected = selectByWeight(pool, need);
   }
 
+  // rank_model 適合候補が少なくて不足した場合だけ、
+  // UI対象全体から補完する（安全策）
+  if (fixed.length + selected.length < 10) {
+    const existing = new Set(
+      [...fixed, ...selected].map(p => `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
+    );
+
+    const fallbackPool = filteredByUi.filter(p =>
+      !existing.has(`${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
+    );
+
+    const restNeed = 10 - (fixed.length + selected.length);
+    if (restNeed > 0 && fallbackPool.length > 0) {
+      const fillers = selectByWeight(fallbackPool, restNeed);
+      selected = [...selected, ...fillers];
+    }
+  }
+
+  // -------------------------
+  // ⑧ 固定 + 抽選 結合
+  // -------------------------
   selected = [...fixed, ...selected];
 
-  // ★ソート（表示用）
-  selected.sort((a,b)=>b.__score-a.__score);
+  // 表示順は score 降順
+  selected.sort((a, b) => (b.__score ?? 0) - (a.__score ?? 0));
 
   State.matchingList = selected;
 
   // -------------------------
-  // ★ログ（強化）
+  // ⑨ 詳細ログ（原因分析用）
   // -------------------------
-  log(
-    `分析TOP: ` +
-    rankedAll.slice(0,5)
-      .map(p=>`${p.name}(${p.__score.toFixed(2)})`)
-      .join(" / ")
-  );
-
-  log(
-    `表示TOP: ` +
-    selected.slice(0,5)
-      .map(p=>`${p.name}(${p.__score.toFixed(2)})`)
-      .join(" / ")
-  );
-
-  log(
-    `診断: Gap12=${(diag?.gap12 ?? 0).toFixed(2)}`
-    + ` / Ratio=${(diag?.top1Ratio ?? 0).toFixed(2)}`
-    + ` / Cluster=${isCluster ? "YES" : "NO"}`
-  );
-// -------------------------
-  // ⑧-A 詳細ログ（原因分析用）
-  // -------------------------
-
   function getOpponentLabel(p) {
     if (p.onlineBattleRankId === RUBY_ID) {
-      return `R${p.starCnt}`;
+      return `R${Number(p.starCnt ?? 0)}`;
     }
     if (Number(p.pridePoint ?? 0) > 0) {
-      return `P${p.pridePoint}`;
+      return `PRIDE:${Number(p.pridePoint ?? 0)}`;
     }
     return "-";
   }
@@ -1908,13 +2074,39 @@ function buildMatchingCandidates() {
       `[DEBUG] Rank=${idx + 1}`
       + ` / name=${p.name}`
       + ` / opp=${getOpponentLabel(p)}`
-      + ` / score=${(p.__score ?? 0).toFixed(3)}`
-      + ` / rankW=${Number(d.rankWeight ?? 0).toFixed(3)}`
-      + ` / timeW=${Number(d.timeWeight ?? 0).toFixed(3)}`
-      + ` / area=${Number(d.areaFactor ?? 1).toFixed(3)}`
+      + ` / score=${Number(p.__score ?? 0).toFixed(3)}`
+      + ` / rankWeight=${Number(d.rankWeight ?? 0).toFixed(3)}`
+      + ` / rankScore=${Number(d.rankScore ?? 0).toFixed(3)}`
+      + ` / timeWeight=${Number(d.timeWeight ?? 0).toFixed(3)}`
+      + ` / areaFactor=${Number(d.areaFactor ?? 1).toFixed(3)}`
       + ` / boost=${Number(d.realtimeBoost ?? 1).toFixed(3)}`
     );
   });
+
+  // -------------------------
+  // ⑩ ログ出力
+  // -------------------------
+  log(
+    `分析TOP: ` +
+    rankedAll.slice(0, 5)
+      .map(p => `${p.name}(${Number(p.__score ?? 0).toFixed(2)})`)
+      .join(" / ")
+  );
+
+  log(
+    `表示TOP: ` +
+    selected.slice(0, 5)
+      .map(p => `${p.name}(${Number(p.__score ?? 0).toFixed(2)})`)
+      .join(" / ")
+  );
+
+  log(
+    `診断: Gap12=${Number(diag?.gap12 ?? 0).toFixed(2)}`
+    + ` / Ratio=${Number(diag?.top1Ratio ?? 0).toFixed(2)}`
+    + ` / Cluster=${isCluster ? "YES" : "NO"}`
+    + ` / RankModelPool=${filteredByRankModel.length}`
+    + ` / UiPool=${filteredByUi.length}`
+  );
 }
 /* ---------------------------------------------------------    
    [48] renderMatchingHeader   ★ マッチング候補ヘッダ表示    
