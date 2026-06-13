@@ -1796,8 +1796,11 @@ function findCandidateInfoForLog(player) {
 }
 /* ---------------------------------------------------------
    [47] buildMatchingCandidates
-   ★ マッチング候補一覧生成
-   ★ 最終表示を「スコア降順」に変更
+   ★マッチング候補生成の中核ロジック
+   【設計思想】
+   - 「1位を当てる」のではなく「有力候補集合を出す」
+   - score順は参考情報であり、確定順位ではない
+   - 混戦時は“上位クラスタ”を固定し、抽選ノイズを抑制する
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
@@ -1813,30 +1816,74 @@ function buildMatchingCandidates() {
     };
   });
 
-  // ★全件順位（決定論）
+  // -------------------------
+  // ★分析用全件順位（決定論）
+  // -------------------------
   const rankedAll = [...scored].sort((a,b)=>b.__score-a.__score);
 
   State.matchingRankedAll = rankedAll;
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
 
-  // ★従来の抽選ロジック維持
-  const selected = selectByWeight(scored, 10);
+  const diag = State.matchingDiagnostics;
 
+  // -------------------------
+  // ★クラスタ判定（ここが今回の核心）
+  // -------------------------
+  const isCluster = diag && diag.gap12 < 0.05;
+
+  let fixed = [];
+  let pool = [];
+
+  if (isCluster) {
+    // ★混戦 → Top3固定
+    fixed = rankedAll.slice(0, 3);
+    pool = rankedAll.slice(3);
+
+  } else {
+    // ★非混戦 → Top1固定
+    fixed = rankedAll.slice(0, 1);
+    pool = rankedAll.slice(1);
+  }
+
+  // -------------------------
+  // ★残りを抽選（従来ロジック維持）
+  // -------------------------
+  const need = 10 - fixed.length;
+
+  let selected = [];
+
+  if (need > 0 && pool.length > 0) {
+    selected = selectByWeight(pool, need);
+  }
+
+  selected = [...fixed, ...selected];
+
+  // ★ソート（表示用）
   selected.sort((a,b)=>b.__score-a.__score);
 
   State.matchingList = selected;
 
-  // ★ログ
-  log("分析TOP: " +
-    rankedAll.slice(0,5).map(p=>`${p.name}(${p.__score.toFixed(2)})`).join(" / ")
+  // -------------------------
+  // ★ログ（強化）
+  // -------------------------
+  log(
+    `分析TOP: ` +
+    rankedAll.slice(0,5)
+      .map(p=>`${p.name}(${p.__score.toFixed(2)})`)
+      .join(" / ")
   );
 
-  log("表示TOP: " +
-    selected.slice(0,5).map(p=>`${p.name}(${p.__score.toFixed(2)})`).join(" / ")
+  log(
+    `表示TOP: ` +
+    selected.slice(0,5)
+      .map(p=>`${p.name}(${p.__score.toFixed(2)})`)
+      .join(" / ")
   );
 
-  log(`診断: Gap12=${State.matchingDiagnostics.gap12.toFixed(2)}`
-    + ` / Ratio=${State.matchingDiagnostics.top1Ratio.toFixed(2)}`
+  log(
+    `診断: Gap12=${(diag?.gap12 ?? 0).toFixed(2)}`
+    + ` / Ratio=${(diag?.top1Ratio ?? 0).toFixed(2)}`
+    + ` / Cluster=${isCluster ? "YES" : "NO"}`
   );
 }
 /* ---------------------------------------------------------    
