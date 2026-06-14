@@ -131,47 +131,169 @@ function switchDisplayView(view) {
     matchingView.style.display = (view === STATE.MATCHING) ? "block" : "none";
   }
 }
-/* ---------------------------------------------------------    
-   [08] ログ（appendLog / log / logWarn / logError）
---------------------------------------------------------- */    
-const MAX_LOG_LINES = 200;    
-function appendLog(msg, type = "info") {    
-  const box = document.getElementById("logBox");    
-  const now = new Date();    
-  const t = now.toLocaleString("ja-JP", {    
-    hour12: false,    
-    year: "numeric", month: "2-digit", day: "2-digit",    
-    hour: "2-digit", minute: "2-digit", second: "2-digit"    
-  });    
-  const line = document.createElement("div");    
-  line.textContent = `[${t}] ${msg}`;    
-  line.dataset.type = type;    
-  if (type === "error") line.style.color = "#ff5555";    
-  else if (type === "warn") line.style.color = "#ffeb3b";    
-  else line.style.color = "#00ff00";    
-  box.prepend(line);    
-  while (box.children.length > MAX_LOG_LINES) {    
-    box.removeChild(box.lastChild);    
-  }    
-}    
-const log = msg => appendLog(msg, "info");
-const logWarn = msg => appendLog(msg, "warn");  
-const logError = msg => appendLog(msg, "error");
 /* ---------------------------------------------------------
-   [08-A] MATCHINGログ制御設定（追加）
-   ★ 通常ログと詳細ログを分離
+   [08] ログ（appendLog / log / logWarn / logError）
+   ★ 画面ログ + localStorage 永続保存
+   ★ 既存UIログ機能は維持
 --------------------------------------------------------- */
-const MATCHING_LOG_CONFIG = {
-  verboseTopDetails: false,   // ★ trueでDEBUG詳細ON
-  topListCount: 5             // 表示TOP件数
+const MAX_LOG_LINES = 200;
+
+/* ★ 永続保存キー */
+const LOG_STORAGE_KEYS = {
+  viewerLogs: "initialdac_viewer_logs",
+  copyEvents: "initialdac_copy_events",
+  matchingSnapshots: "initialdac_matching_snapshots"
 };
 
-function formatMatchTopList(list, count = MATCHING_LOG_CONFIG.topListCount) {
-  return (list || [])
-    .slice(0, count)
-    .map(p => `${p.name}(${Number(p.__score ?? 0).toFixed(2)})`)
-    .join(" / ");
+/* ★ 保存上限 */
+const LOG_STORAGE_LIMITS = {
+  viewerLogs: 500,
+  copyEvents: 200,
+  matchingSnapshots: 100
+};
+
+function getNowLabelJa() {
+  const now = new Date();
+  return now.toLocaleString("ja-JP", {
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
 }
+
+function readStoredArraySafe(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeStoredArraySafe(key, list) {
+  try {
+    localStorage.setItem(key, JSON.stringify(list));
+  } catch (e) {
+    // 容量超過など。失敗しても画面ログは継続
+    console.warn("localStorage write failed:", key, e);
+  }
+}
+
+function pushStoredRecord(key, record, limit = 200) {
+  const arr = readStoredArraySafe(key);
+  arr.unshift(record);
+  const trimmed = arr.slice(0, limit);
+  writeStoredArraySafe(key, trimmed);
+}
+
+function buildMatchingSnapshotForStorage() {
+  const ranked = (State.matchingRankedAll || []).slice(0, 20).map((p, idx) => ({
+    rank: idx + 1,
+    name: p.name,
+    updateDate: p.updateDate || "",
+    area: p.area ?? "",
+    shopname: p.shopname ?? "",
+    rankKey: p.__rankKey ?? getPlayerRankKey(p),
+    score: Number(p.__score ?? 0),
+    rankWeight: Number(p.__detail?.rankWeight ?? 0),
+    realtimeBoost: Number(p.__detail?.realtimeBoost ?? 1),
+    baseScoreBeforeBoost: Number(p.__detail?.baseScoreBeforeBoost ?? 0),
+    scoreAfterBoost: Number(p.__detail?.scoreAfterBoost ?? p.__score ?? 0)
+  }));
+
+  const display = (State.matchingList || []).map((p, idx) => ({
+    rank: idx + 1,
+    name: p.name,
+    updateDate: p.updateDate || "",
+    area: p.area ?? "",
+    shopname: p.shopname ?? "",
+    rankKey: p.__rankKey ?? getPlayerRankKey(p),
+    score: Number(p.__score ?? 0),
+    rankWeight: Number(p.__detail?.rankWeight ?? 0),
+    realtimeBoost: Number(p.__detail?.realtimeBoost ?? 1),
+    baseScoreBeforeBoost: Number(p.__detail?.baseScoreBeforeBoost ?? 0),
+    scoreAfterBoost: Number(p.__detail?.scoreAfterBoost ?? p.__score ?? 0)
+  }));
+
+  return {
+    savedAt: getNowLabelJa(),
+    generatedAt: State.generatedAt || "",
+    latestRound: State.latestRound || "",
+    latestUpdateAt: State.latestUpdateAt || "",
+    diagnostics: State.matchingDiagnostics || null,
+    rankedTop20: ranked,
+    displayTop10: display
+  };
+}
+
+function saveMatchingSnapshotToStorage(reason = "manual") {
+  const snapshot = {
+    reason,
+    ...buildMatchingSnapshotForStorage()
+  };
+  pushStoredRecord(
+    LOG_STORAGE_KEYS.matchingSnapshots,
+    snapshot,
+    LOG_STORAGE_LIMITS.matchingSnapshots
+  );
+}
+
+function saveCopyEventToStorage(payload) {
+  pushStoredRecord(
+    LOG_STORAGE_KEYS.copyEvents,
+    payload,
+    LOG_STORAGE_LIMITS.copyEvents
+  );
+}
+
+function saveViewerLogToStorage(payload) {
+  pushStoredRecord(
+    LOG_STORAGE_KEYS.viewerLogs,
+    payload,
+    LOG_STORAGE_LIMITS.viewerLogs
+  );
+}
+
+function appendLog(msg, type = "info") {
+  const box = document.getElementById("logBox");
+  const t = getNowLabelJa();
+
+  // ★ 画面ログ（既存維持）
+  if (box) {
+    const line = document.createElement("div");
+    line.textContent = `[${t}] ${msg}`;
+    line.dataset.type = type;
+    if (type === "error") line.style.color = "#ff5555";
+    else if (type === "warn") line.style.color = "#ffeb3b";
+    else line.style.color = "#00ff00";
+    box.prepend(line);
+
+    while (box.children.length > MAX_LOG_LINES) {
+      box.removeChild(box.lastChild);
+    }
+  }
+
+  // ★ 永続保存
+  saveViewerLogToStorage({
+    savedAt: t,
+    type,
+    message: String(msg ?? ""),
+    currentView: State.currentView || "",
+    generatedAt: State.generatedAt || "",
+    latestRound: State.latestRound || "",
+    latestUpdateAt: State.latestUpdateAt || ""
+  });
+}
+
+const log = msg => appendLog(msg, "info");
+const logWarn = msg => appendLog(msg, "warn");
+const logError = msg => appendLog(msg, "error");
 /* ---------------------------------------------------------    
    [09] 進行中アニメーション
 --------------------------------------------------------- */    
@@ -746,10 +868,9 @@ function getRealtimeBoostDetail(player) {
 }
 /* ---------------------------------------------------------
    [24-A] getRoundedDiffMinAndPhaseDistance
-   ★ 旧 3分30秒〜4分30秒 / updateDate 基準を廃止
    ★ copiedAt 基準の 5分±45秒 サイクル情報を返す
    ★ 最初の対象窓は 4分15秒〜5分45秒、その後5分周期で繰り返し
-   ★ 5分±45秒 + 初回サイクル除外
+   ★ 5分±45秒 + 初回サイクル除外（5分45秒まで除外）
 --------------------------------------------------------- */
 function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
   if (!copiedAtMs || !isFinite(Number(copiedAtMs))) {
@@ -757,53 +878,52 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
       diffMin: Infinity,
       d: Infinity,
       rSec: Infinity,
-      inPinkWindow: false
+      inPinkWindow: false,
+      isInitialCooldown: false,
+      cooldownRemainingSec: Infinity
     };
   }
-
   const now = Date.now();
   const anchor = Number(copiedAtMs);
   const diffSec = (now - anchor) / 1000;
-
   if (!isFinite(diffSec) || diffSec < 0) {
     return {
       diffMin: Infinity,
       d: Infinity,
       rSec: Infinity,
-      inPinkWindow: false
+      inPinkWindow: false,
+      isInitialCooldown: false,
+      cooldownRemainingSec: Infinity
     };
   }
-
   const cycleSec = cycleMin * 60;   // 300秒
   const toleranceSec = 45;
-
+  const initialCooldownSec = cycleSec + toleranceSec; // 345秒
   const rSec = diffSec % cycleSec;
-
-  // ★ここが追加（最重要）
-  // 1周期目を完全除外
-  if (diffSec < cycleSec) {
+  // ★初回除外（5分45秒まで）
+  if (diffSec < initialCooldownSec) {
     return {
       diffMin: diffSec / 60,
       d: Infinity,
       rSec: rSec,
-      inPinkWindow: false
+      inPinkWindow: false,
+      isInitialCooldown: true,
+      cooldownRemainingSec: initialCooldownSec - diffSec
     };
   }
-
   // ★通常ピンク判定
   let inPinkWindow = false;
-
   const distToNearest = Math.min(rSec, cycleSec - rSec);
-
   if (distToNearest <= toleranceSec) {
     inPinkWindow = true;
   }
-
   return {
     diffMin: diffSec / 60,
     d: distToNearest / 60,
     rSec: rSec,
-    inPinkWindow: inPinkWindow
+    inPinkWindow: inPinkWindow,
+    isInitialCooldown: false,
+    cooldownRemainingSec: 0
   };
 }
 /* ---------------------------------------------------------
@@ -1045,7 +1165,7 @@ function calcMatchingDiagnostics(list) {
 /* ---------------------------------------------------------
    [28-B] calcMatchingScoreDetail
    ★ scoreの内訳返却版
-   ★ rankWeight / rankScore を正しく返す
+   ★ boost前後値返却
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
   if (!player || !player.updateDate) {
@@ -1061,10 +1181,11 @@ function calcMatchingScoreDetail(player) {
       activityScore: 0,
       miscRaw: 0,
       miscFactor: 1,
-      realtimeBoost: 1
+      realtimeBoost: 1,
+      baseScoreBeforeBoost: 0,
+      scoreAfterBoost: 0
     };
   }
-
   const cfg = State.scoringConfig;
   if (!cfg) {
     return {
@@ -1079,17 +1200,15 @@ function calcMatchingScoreDetail(player) {
       activityScore: 0,
       miscRaw: 0,
       miscFactor: 1,
-      realtimeBoost: 1
+      realtimeBoost: 1,
+      baseScoreBeforeBoost: 1,
+      scoreAfterBoost: 1
     };
   }
-
   // -------------------------
   // rankWeight（自ランク × 相手帯）
   // -------------------------
   const rankWeight = Number(getRankWeight(player) ?? 0);
-
-  // rankWeight <= 0 は「rank_model上は非対象」
-  // ただし score は 0 で返して、buildMatchingCandidates側で pool 制御する
   if (rankWeight <= 0) {
     return {
       score: 0,
@@ -1103,10 +1222,11 @@ function calcMatchingScoreDetail(player) {
       activityScore: 0,
       miscRaw: 0,
       miscFactor: 1,
-      realtimeBoost: Math.min(getRealtimeBoost(player), 2.5)
+      realtimeBoost: Math.min(getRealtimeBoost(player), 2.5),
+      baseScoreBeforeBoost: 0,
+      scoreAfterBoost: 0
     };
   }
-
   // -------------------------
   // rankScore（rankWeightの変換後）
   // -------------------------
@@ -1118,17 +1238,14 @@ function calcMatchingScoreDetail(player) {
   } else {
     rankBase = rankWeight;
   }
-
   const rankScale = Number(cfg.rank?.scale ?? 1);
   const rankScore = rankBase * rankScale;
-
   // -------------------------
   // pride / area / time
   // -------------------------
   const prideWeight = Number(getPrideWeight(player) ?? 1);
   const areaFactor = Number(getAreaScore(player) ?? 1);
   const timeWeight = Number(getTimeWeight(player) ?? 0);
-
   // -------------------------
   // phase / recency
   // -------------------------
@@ -1136,62 +1253,51 @@ function calcMatchingScoreDetail(player) {
   const phaseInfo = latestCopied
     ? getPhaseDistanceMin(latestCopied.copiedAt || latestCopied.time, 5)
     : { diffMin: Infinity, inPinkWindow: false };
-
   const isPinkTarget = isMatchingCandidateByPhase(player);
   const phaseScore =
     (isPinkTarget && phaseInfo.inPinkWindow) ? 1 : 0;
-
   const recencyScore =
     (isPinkTarget && isFinite(phaseInfo.diffMin))
       ? Math.exp(-phaseInfo.diffMin / MATCHING_SCORE_CONFIG.recencyTau)
       : 0;
-
   // -------------------------
   // activity
   // -------------------------
   const star = Number(player.starCnt ?? 0);
   const pride = Number(player.pridePoint ?? 0);
-
   const activityScore =
     (star > 0)
       ? Math.min(1, star / 7)
       : (pride > 0 ? 0.7 : 0);
-
   // -------------------------
   // misc
   // -------------------------
   const miscPhase = Number(cfg.misc?.phase ?? 0);
   const miscRecency = Number(cfg.misc?.recency ?? 0);
   const miscActivity = Number(cfg.misc?.activity ?? 0);
-
   const miscRaw =
       phaseScore    * miscPhase
     + recencyScore  * miscRecency
     + activityScore * miscActivity;
-
   const miscFactor = 1 + (miscRaw / 50);
-
   // -------------------------
   // realtimeBoost
   // -------------------------
   let realtimeBoost = getRealtimeBoost(player);
   realtimeBoost = Math.min(realtimeBoost, 2.5);
-
   // -------------------------
   // final score
   // -------------------------
-  const score =
+  const baseScoreBeforeBoost =
     rankScore
     * prideWeight
     * areaFactor
     * miscFactor
-    * timeWeight
-    * realtimeBoost;
-
+    * timeWeight;
+  const scoreAfterBoost = baseScoreBeforeBoost * realtimeBoost;
+  const score = Math.max(0.0001, scoreAfterBoost);
   return {
-    score: Math.max(0.0001, score),
-
-    // ★ debug / analysis 用
+    score,
     rankWeight,
     rankScore,
     prideWeight,
@@ -1202,7 +1308,9 @@ function calcMatchingScoreDetail(player) {
     activityScore,
     miscRaw,
     miscFactor,
-    realtimeBoost
+    realtimeBoost,
+    baseScoreBeforeBoost,
+    scoreAfterBoost
   };
 }
 /* ---------------------------------------------------------
@@ -1836,25 +1944,23 @@ function exportAllCSV() {
 }    
 /* ---------------------------------------------------------
    [46] copyToClipboard
-   ★ 欠落理由ログ追加版
+   ★ コピー + 詳細ログ + localStorage自動保存
+   ★ 重複定義を統合した最終版
 --------------------------------------------------------- */
 function copyToClipboard(text) {
-
   const buildCopyLogMessage = (rawText) => {
     const player = findPlayerFromCopiedText(rawText);
-
     if (!player) {
       return `コピー：${rawText} / reason:player_not_found`;
     }
 
     const areaName = AreaList[String(player.area)] || player.areaName || "";
-
     const updateLabel = player.updateDate
       ? formatYMDHM(parseDateJST(player.updateDate))
       : "--/-- --:--";
 
     const boost = getRealtimeBoostDetail(player);
-    const candidateInfo = findCandidateInfoForLog(player);
+    const candidateInfo = findCandidateInfoForLog(player) || {};
 
     const rankLabel =
       candidateInfo.candidateRank != null
@@ -1866,10 +1972,34 @@ function copyToClipboard(text) {
         ? candidateInfo.displayRank
         : "-";
 
+    const baseRankLabel =
+      candidateInfo.baseRank != null
+        ? candidateInfo.baseRank
+        : "-";
+
+    const boostedRankLabel =
+      candidateInfo.boostedRank != null
+        ? candidateInfo.boostedRank
+        : "-";
+
     const scoreLabel =
       candidateInfo.score != null
         ? Number(candidateInfo.score).toFixed(2)
         : "-";
+
+    const baseScoreLabel =
+      candidateInfo.baseScoreBeforeBoost != null
+        ? Number(candidateInfo.baseScoreBeforeBoost).toFixed(2)
+        : (candidateInfo.scoreDetail?.baseScoreBeforeBoost != null
+          ? Number(candidateInfo.scoreDetail.baseScoreBeforeBoost).toFixed(2)
+          : "-");
+
+    const boostedScoreLabel =
+      candidateInfo.scoreAfterBoost != null
+        ? Number(candidateInfo.scoreAfterBoost).toFixed(2)
+        : (candidateInfo.scoreDetail?.scoreAfterBoost != null
+          ? Number(candidateInfo.scoreDetail.scoreAfterBoost).toFixed(2)
+          : scoreLabel);
 
     const rankWeightLabel =
       candidateInfo.rankWeight != null
@@ -1880,95 +2010,96 @@ function copyToClipboard(text) {
       ? candidateInfo.missReasons.join("|")
       : "-";
 
+    const cooldownExcludedLabel =
+      candidateInfo.cooldownExcluded ? "YES" : "NO";
+
+    const cooldownRemainLabel =
+      Number.isFinite(Number(candidateInfo.cooldownRemainingSec))
+        ? Math.max(0, Math.round(Number(candidateInfo.cooldownRemainingSec)))
+        : "-";
+
+    const boostReasonLabel = Array.isArray(boost.reason) && boost.reason.length
+      ? boost.reason.join("+")
+      : "-";
+
     return `コピー：${rawText} / ${areaName} / Update:${updateLabel}`
-      + ` / Boost[rank=${boost.rank.toFixed(2)}`
-      + ` area=${boost.area.toFixed(2)}`
-      + ` shop=${boost.shop.toFixed(2)}`
-      + ` total=${boost.total.toFixed(2)}]`
+      + ` / Boost[rank=${Number(boost.rank ?? 0).toFixed(2)}`
+      + ` area=${Number(boost.area ?? 0).toFixed(2)}`
+      + ` shop=${Number(boost.shop ?? 0).toFixed(2)}`
+      + ` total=${Number(boost.total ?? 1).toFixed(2)}`
+      + ` reason=${boostReasonLabel}]`
+      + ` / BaseRank:${baseRankLabel}`
+      + ` / BoostedRank:${boostedRankLabel}`
       + ` / CandidateRank:${rankLabel}`
       + ` / DisplayRank:${displayRankLabel}`
-      + ` / Score:${scoreLabel}`
+      + ` / BaseScore:${baseScoreLabel}`
+      + ` / Score:${boostedScoreLabel}`
       + ` / rankWeight:${rankWeightLabel}`
+      + ` / CooldownExcluded:${cooldownExcludedLabel}`
+      + ` / CooldownRemainSec:${cooldownRemainLabel}`
       + ` / Miss:${missLabel}`;
   };
 
-  if (!navigator.clipboard) {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
-    log(buildCopyLogMessage(text));
-    recordClickFromCopiedText(text);
-    return;
-  }
-
-  navigator.clipboard.writeText(text)
-    .then(() => {
-      log(buildCopyLogMessage(text));
-      recordClickFromCopiedText(text);
-    })
-    .catch(() => {
-      logError("コピーに失敗しました");
-    });
-}
-/* ---------------------------------------------------------
-   [46] copyToClipboard
-   ★ 欠落理由ログ追加版
---------------------------------------------------------- */
-function copyToClipboard(text) {
-
-  const buildCopyLogMessage = (rawText) => {
+  const saveCopyEvent = (rawText) => {
     const player = findPlayerFromCopiedText(rawText);
+    const candidateInfo = player ? (findCandidateInfoForLog(player) || {}) : {};
+    const boost = player ? getRealtimeBoostDetail(player) : { rank: 0, area: 0, shop: 0, total: 1, reason: [] };
 
-    if (!player) {
-      return `コピー：${rawText} / reason:player_not_found`;
-    }
+    const eventRecord = {
+      savedAt: getNowLabelJa(),
+      rawText: String(rawText ?? ""),
+      foundPlayer: !!player,
+      playerName: player?.name ?? "",
+      updateDate: player?.updateDate ?? "",
+      area: player?.area ?? "",
+      areaName: player ? (AreaList[String(player.area)] || player.areaName || "") : "",
+      shopname: player?.shopname ?? "",
+      candidateRank: candidateInfo.candidateRank ?? null,
+      displayRank: candidateInfo.displayRank ?? null,
+      baseRank: candidateInfo.baseRank ?? null,
+      boostedRank: candidateInfo.boostedRank ?? null,
+      score: candidateInfo.score ?? null,
+      baseScoreBeforeBoost:
+        candidateInfo.baseScoreBeforeBoost ??
+        candidateInfo.scoreDetail?.baseScoreBeforeBoost ??
+        null,
+      scoreAfterBoost:
+        candidateInfo.scoreAfterBoost ??
+        candidateInfo.scoreDetail?.scoreAfterBoost ??
+        candidateInfo.score ??
+        null,
+      rankWeight: candidateInfo.rankWeight ?? null,
+      cooldownExcluded: !!candidateInfo.cooldownExcluded,
+      cooldownRemainingSec:
+        Number.isFinite(Number(candidateInfo.cooldownRemainingSec))
+          ? Number(candidateInfo.cooldownRemainingSec)
+          : null,
+      missReasons: candidateInfo.missReasons || [],
+      diagnostics: candidateInfo.diagnostics || State.matchingDiagnostics || null,
+      boost: {
+        rank: Number(boost.rank ?? 0),
+        area: Number(boost.area ?? 0),
+        shop: Number(boost.shop ?? 0),
+        total: Number(boost.total ?? 1),
+        reason: Array.isArray(boost.reason) ? boost.reason : []
+      },
+      currentView: State.currentView || "",
+      generatedAt: State.generatedAt || "",
+      latestRound: State.latestRound || "",
+      latestUpdateAt: State.latestUpdateAt || ""
+    };
 
-    const areaName = AreaList[String(player.area)] || player.areaName || "";
+    // ★ コピーイベント保存
+    saveCopyEventToStorage(eventRecord);
 
-    const updateLabel = player.updateDate
-      ? formatYMDHM(parseDateJST(player.updateDate))
-      : "--/-- --:--";
+    // ★ その時点のマッチングスナップショットも保存
+    saveMatchingSnapshotToStorage("copy");
+  };
 
-    const boost = getRealtimeBoostDetail(player);
-    const candidateInfo = findCandidateInfoForLog(player);
-
-    const rankLabel =
-      candidateInfo.candidateRank != null
-        ? candidateInfo.candidateRank
-        : "-";
-
-    const displayRankLabel =
-      candidateInfo.displayRank != null
-        ? candidateInfo.displayRank
-        : "-";
-
-    const scoreLabel =
-      candidateInfo.score != null
-        ? Number(candidateInfo.score).toFixed(2)
-        : "-";
-
-    const rankWeightLabel =
-      candidateInfo.rankWeight != null
-        ? Number(candidateInfo.rankWeight).toFixed(3)
-        : "-";
-
-    const missLabel = (candidateInfo.missReasons || []).length
-      ? candidateInfo.missReasons.join("|")
-      : "-";
-
-    return `コピー：${rawText} / ${areaName} / Update:${updateLabel}`
-      + ` / Boost[rank=${boost.rank.toFixed(2)}`
-      + ` area=${boost.area.toFixed(2)}`
-      + ` shop=${boost.shop.toFixed(2)}`
-      + ` total=${boost.total.toFixed(2)}]`
-      + ` / CandidateRank:${rankLabel}`
-      + ` / DisplayRank:${displayRankLabel}`
-      + ` / Score:${scoreLabel}`
-      + ` / rankWeight:${rankWeightLabel}`
-      + ` / Miss:${missLabel}`;
+  const afterCopySuccess = () => {
+    log(buildCopyLogMessage(text));
+    saveCopyEvent(text);
+    recordClickFromCopiedText(text);
   };
 
   if (!navigator.clipboard) {
@@ -1978,15 +2109,13 @@ function copyToClipboard(text) {
     ta.select();
     document.execCommand("copy");
     document.body.removeChild(ta);
-    log(buildCopyLogMessage(text));
-    recordClickFromCopiedText(text);
+    afterCopySuccess();
     return;
   }
 
   navigator.clipboard.writeText(text)
     .then(() => {
-      log(buildCopyLogMessage(text));
-      recordClickFromCopiedText(text);
+      afterCopySuccess();
     })
     .catch(() => {
       logError("コピーに失敗しました");
@@ -1994,90 +2123,39 @@ function copyToClipboard(text) {
 }
 /* ---------------------------------------------------------
    [46-A] findCandidateInfoForLog（完全差し替え）
-   ★ 欠落理由解析強化
+   ★ boost前後順位・除外理由返却
 --------------------------------------------------------- */
 function findCandidateInfoForLog(player) {
-
   if (!player) return { missReasons: ["player_not_found"] };
-
   const allRanked = State.matchingRankedAll || [];
   const displayList = State.matchingList || [];
   const scoreDetail = calcMatchingScoreDetail(player);
-
   const missReasons = [];
-
   const inFiltered = (State.filtered || []).some(p =>
     normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
     String(p.updateDate ?? "") === String(player.updateDate ?? "")
   );
-
   const inAllRanked = allRanked.findIndex(p =>
     normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
     String(p.updateDate ?? "") === String(player.updateDate ?? "")
   );
-
   const inDisplay = displayList.findIndex(p =>
     normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
     String(p.updateDate ?? "") === String(player.updateDate ?? "")
   );
-
   const rankKey = getPlayerRankKey(player);
-
-  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
-    .map(x => Number(x.value));
-
-  const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
-    .map(x => x.value);
-
-  let inUiPool = false;
-
-  if (rankKey) {
-    if (rankKey.startsWith("R")) {
-      inUiPool = selectedStars.includes(Number(player.starCnt));
-    } else {
-      inUiPool = selectedPrides.includes(rankKey);
-    }
-  }
-
-  // ★ 欠落原因分類
-  if (!player.updateDate) missReasons.push("no_updateDate");
-  else if (!parseDateJST(player.updateDate)) missReasons.push("invalid_updateDate");
-
-  if (!inFiltered) missReasons.push("outside_time_filter");
-  if (!rankKey) missReasons.push("no_rankKey");
-  if (rankKey && !inUiPool) missReasons.push("ui_filtered_out");
-  if (Number(scoreDetail.rankWeight ?? 0) <= 0) missReasons.push("rank_model_zero");
-
-  if (allRanked.length === 0) missReasons.push("candidate_not_built");
-  if (allRanked.length > 0 && inAllRanked < 0) missReasons.push("outside_analysis_pool");
-  if (displayList.length > 0 && inDisplay < 0) missReasons.push("outside_display_top10");
-
-  return {
-    candidateRank: inAllRanked >= 0 ? inAllRanked + 1 : null,
-    displayRank: inDisplay >= 0 ? inDisplay + 1 : null,
-    score: inAllRanked >= 0 ? allRanked[inAllRanked].__score : null,
-    rankingSource: allRanked.length ? "all" : "display",
-    diagnostics: State.matchingDiagnostics,
-    missReasons,
-    rankWeight: scoreDetail.rankWeight,
-    scoreDetail
-  };
-}
+  const selectedStars = [...document.querySelectorAll(".
 /* ---------------------------------------------------------
    [47] buildMatchingCandidates（完全差し替え）
-   ★ TOP固定削除版（最重要）
+   ★ コピー後5分45秒除外＋除外理由記録
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
-
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
-
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
-
   // ① 母集団
   const base = State.filtered;
-
   // ② スコア
   const scoredAll = base.map(p => {
     const detail = calcMatchingScoreDetail(p);
@@ -2088,87 +2166,101 @@ function buildMatchingCandidates() {
       __detail: detail
     };
   });
-
   // ③ UIフィルタ
   const filteredByUi = scoredAll.filter(p => {
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
-
     if (p.__rankKey.startsWith("R")) {
       return selectedStars.includes(Number(p.starCnt));
     } else {
       return selectedPrides.includes(p.__rankKey);
     }
   });
-
   // ④ rank_model
   const filteredByRankModel = filteredByUi.filter(p =>
     Number(p.__detail?.rankWeight ?? 0) > 0
   );
-
-  // ⑤ 分析順位
-  const analysisBase = filteredByRankModel.length > 0
-    ? filteredByRankModel
-    : filteredByUi;
-
+  // ⑤ cooldown除外（コピー後5分45秒）
+  const latestCopied = getLatestCopiedPlayer();
+  let cooldownExcludedNames = [];
+  let cooldownExcludedCount = 0;
+  let analysisBase = filteredByRankModel;
+  if (latestCopied) {
+    analysisBase = filteredByRankModel.filter(p => {
+      const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
+      const sameUpdateDate = String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
+      if (sameName && sameUpdateDate) {
+        const phase = getRoundedDiffMinAndPhaseDistance(latestCopied.copiedAt || latestCopied.time, 5);
+        if (phase.isInitialCooldown) {
+          cooldownExcludedNames.push(p.name);
+          cooldownExcludedCount++;
+          return false; // 除外
+        }
+      }
+      return true;
+    });
+  }
+  // ⑥ 分析順位
   const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
-
   State.matchingRankedAll = rankedAll;
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
-
   const diag = State.matchingDiagnostics;
   const isCluster = diag && diag.gap12 < 0.05;
-
   // ★ TOP固定完全撤廃
   let selected = [];
-
   const initialNeed = Math.min(10, rankedAll.length);
   if (initialNeed > 0) {
     selected = selectByWeight(rankedAll, initialNeed);
   }
-
   // 不足補完
   if (selected.length < 10) {
     const existing = new Set(
       selected.map(p => `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
     );
-
     const fallbackPool = filteredByUi.filter(p =>
       !existing.has(`${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
     );
-
+    // ★fallbackにもcooldown除外適用
+    let fallbackFiltered = fallbackPool;
+    if (latestCopied) {
+      fallbackFiltered = fallbackPool.filter(p => {
+        const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
+        const sameUpdateDate = String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
+        if (sameName && sameUpdateDate) {
+          const phase = getRoundedDiffMinAndPhaseDistance(latestCopied.copiedAt || latestCopied.time, 5);
+          if (phase.isInitialCooldown) {
+            return false;
+          }
+        }
+        return true;
+      });
+    }
     const restNeed = 10 - selected.length;
-    if (restNeed > 0 && fallbackPool.length > 0) {
-      selected = [...selected, ...selectByWeight(fallbackPool, restNeed)];
+    if (restNeed > 0 && fallbackFiltered.length > 0) {
+      selected = [...selected, ...selectByWeight(fallbackFiltered, restNeed)];
     }
   }
-
   selected.sort((a, b) => b.__score - a.__score);
-
   State.matchingList = selected;
-
   // ★ 必要最小ログ
   const rankKeyMissing = scoredAll.filter(p => !p.__rankKey).length;
   const rankModelExcluded = filteredByUi.filter(p => Number(p.__detail?.rankWeight ?? 0) <= 0).length;
-
   log(`候補生成: Base=${base.length}`
     + ` / UiPool=${filteredByUi.length}`
     + ` / RankModelPool=${filteredByRankModel.length}`
+    + ` / CooldownExcluded=${cooldownExcludedCount}`
     + ` / Selected=${selected.length}`
   );
-
   log(`候補欠落内訳: noRankKey=${rankKeyMissing}`
     + ` / rankModelZero=${rankModelExcluded}`
+    + ` / cooldownExcluded=${cooldownExcludedCount}`
     + ` / analysisFallback=${filteredByRankModel.length > 0 ? "NO" : "YES"}`
   );
-
   log(`診断: Gap12=${Number(diag?.gap12 ?? 0).toFixed(2)}`
     + ` / Ratio=${Number(diag?.top1Ratio ?? 0).toFixed(2)}`
     + ` / Cluster=${isCluster ? "YES" : "NO"}`
   );
-
   log(`表示TOP: ${formatMatchTopList(selected)}`);
-
   // 詳細ログ（手動ON）
   if (MATCHING_LOG_CONFIG.verboseTopDetails) {
     rankedAll.slice(0, 3).forEach((p, idx) => {
