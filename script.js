@@ -134,7 +134,7 @@ function switchDisplayView(view) {
 /* ---------------------------------------------------------
    [08] ログ（appendLog / log / logWarn / logError）
    ★ 画面ログ + localStorage 永続保存
-   ★ 既存UIログ機能は維持
+   ★ MATCHINGログ機能統合（formatMatchTopListを含む）
 --------------------------------------------------------- */
 const MAX_LOG_LINES = 200;
 
@@ -151,6 +151,24 @@ const LOG_STORAGE_LIMITS = {
   copyEvents: 200,
   matchingSnapshots: 100
 };
+
+/* ---------------------------------------------------------
+   MATCHINGログ制御設定（旧[08-A]統合）
+--------------------------------------------------------- */
+const MATCHING_LOG_CONFIG = {
+  verboseTopDetails: false,
+  topListCount: 5
+};
+
+/* ★ 表示TOPフォーマット（エラー原因だった関数） */
+function formatMatchTopList(list, count = MATCHING_LOG_CONFIG.topListCount) {
+  return (list || [])
+    .slice(0, count)
+    .map(p => `${p.name}(${Number(p.__score ?? 0).toFixed(2)})`)
+    .join(" / ");
+}
+
+/* --------------------------------------------------------- */
 
 function getNowLabelJa() {
   const now = new Date();
@@ -180,7 +198,6 @@ function writeStoredArraySafe(key, list) {
   try {
     localStorage.setItem(key, JSON.stringify(list));
   } catch (e) {
-    // 容量超過など。失敗しても画面ログは継続
     console.warn("localStorage write failed:", key, e);
   }
 }
@@ -191,6 +208,10 @@ function pushStoredRecord(key, record, limit = 200) {
   const trimmed = arr.slice(0, limit);
   writeStoredArraySafe(key, trimmed);
 }
+
+/* ---------------------------------------------------------
+   マッチングスナップショット保存
+--------------------------------------------------------- */
 
 function buildMatchingSnapshotForStorage() {
   const ranked = (State.matchingRankedAll || []).slice(0, 20).map((p, idx) => ({
@@ -260,18 +281,24 @@ function saveViewerLogToStorage(payload) {
   );
 }
 
+/* ---------------------------------------------------------
+   appendLog（画面 + 永続化）
+--------------------------------------------------------- */
+
 function appendLog(msg, type = "info") {
   const box = document.getElementById("logBox");
   const t = getNowLabelJa();
 
-  // ★ 画面ログ（既存維持）
+  // 画面ログ
   if (box) {
     const line = document.createElement("div");
     line.textContent = `[${t}] ${msg}`;
     line.dataset.type = type;
+
     if (type === "error") line.style.color = "#ff5555";
     else if (type === "warn") line.style.color = "#ffeb3b";
     else line.style.color = "#00ff00";
+
     box.prepend(line);
 
     while (box.children.length > MAX_LOG_LINES) {
@@ -279,7 +306,7 @@ function appendLog(msg, type = "info") {
     }
   }
 
-  // ★ 永続保存
+  // 永続保存
   saveViewerLogToStorage({
     savedAt: t,
     type,
@@ -290,6 +317,8 @@ function appendLog(msg, type = "info") {
     latestUpdateAt: State.latestUpdateAt || ""
   });
 }
+
+/* --------------------------------------------------------- */
 
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
