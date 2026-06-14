@@ -2123,28 +2123,206 @@ function copyToClipboard(text) {
 }
 /* ---------------------------------------------------------
    [46-A] findCandidateInfoForLog（完全差し替え）
-   ★ boost前後順位・除外理由返却
+   ★ 欠落理由解析強化
+   ★ boost前後順位・cooldown情報を返す
+   ★ 既存返却項目は維持
 --------------------------------------------------------- */
 function findCandidateInfoForLog(player) {
-  if (!player) return { missReasons: ["player_not_found"] };
+  if (!player) {
+    return {
+      missReasons: ["player_not_found"],
+      candidateRank: null,
+      displayRank: null,
+      baseRank: null,
+      boostedRank: null,
+      score: null,
+      baseScoreBeforeBoost: null,
+      scoreAfterBoost: null,
+      rankingSource: "none",
+      diagnostics: State.matchingDiagnostics || null,
+      cooldownExcluded: false,
+      cooldownRemainingSec: null,
+      rankWeight: 0,
+      scoreDetail: null
+    };
+  }
+
   const allRanked = State.matchingRankedAll || [];
   const displayList = State.matchingList || [];
   const scoreDetail = calcMatchingScoreDetail(player);
   const missReasons = [];
-  const inFiltered = (State.filtered || []).some(p =>
-    normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
-    String(p.updateDate ?? "") === String(player.updateDate ?? "")
-  );
-  const inAllRanked = allRanked.findIndex(p =>
-    normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
-    String(p.updateDate ?? "") === String(player.updateDate ?? "")
-  );
-  const inDisplay = displayList.findIndex(p =>
-    normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
-    String(p.updateDate ?? "") === String(player.updateDate ?? "")
-  );
+
+  const samePlayer = (a, b) =>
+    normalizePlayerName(a?.name) === normalizePlayerName(b?.name) &&
+    String(a?.updateDate ?? "") === String(b?.updateDate ?? "");
+
+  const inFiltered = (State.filtered || []).some(p => samePlayer(p, player));
+
+  const inAllRanked = allRanked.findIndex(p => samePlayer(p, player));
+  const inDisplay = displayList.findIndex(p => samePlayer(p, player));
+
   const rankKey = getPlayerRankKey(player);
-  const selectedStars = [...document.querySelectorAll(".
+
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+  const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
+    .map(x => x.value);
+
+  let inUiPool = false;
+  if (rankKey) {
+    if (rankKey.startsWith("R")) {
+      inUiPool = selectedStars.includes(Number(player.starCnt));
+    } else {
+      inUiPool = selectedPrides.includes(rankKey);
+    }
+  }
+
+  // -------------------------------------------------------
+  // cooldown 判定（最新コピー相手本人 + 5分45秒以内）
+  // -------------------------------------------------------
+  let cooldownExcluded = false;
+  let cooldownRemainingSec = null;
+  const latestCopied = getLatestCopiedPlayer();
+
+  if (latestCopied) {
+    const sameName = normalizePlayerName(player.name) === normalizePlayerName(latestCopied.name);
+    const sameUpdateDate =
+      String(player.updateDate ?? "") === String(latestCopied.updateDate ?? "");
+
+    if (sameName && sameUpdateDate) {
+      const phase = getRoundedDiffMinAndPhaseDistance(
+        latestCopied.copiedAt || latestCopied.time,
+        5
+      );
+      if (phase?.isInitialCooldown) {
+        cooldownExcluded = true;
+        cooldownRemainingSec = Number(phase.cooldownRemainingSec ?? 0);
+      }
+    }
+  }
+
+  // -------------------------------------------------------
+  // boost前 / boost後 順位算出用プールを再構築
+  // ※ buildMatchingCandidates の構造を壊さず、ログ時点で再現
+  // -------------------------------------------------------
+  const scoredAll = (State.filtered || []).map(p => {
+    const detail = calcMatchingScoreDetail(p);
+    return {
+      ...p,
+      __rankKey: getPlayerRankKey(p),
+      __score: Number(detail.score ?? 0),
+      __detail: detail
+    };
+  });
+
+  const filteredByUi = scoredAll.filter(p => {
+    if (!p.updateDate) return false;
+    if (!p.__rankKey) return false;
+    if (p.__rankKey.startsWith("R")) {
+      return selectedStars.includes(Number(p.starCnt));
+    } else {
+      return selectedPrides.includes(p.__rankKey);
+    }
+  });
+
+  const filteredByRankModel = filteredByUi.filter(p =>
+    Number(p.__detail?.rankWeight ?? 0) > 0
+  );
+
+  // fallbackロジックも現行構造に合わせて維持
+  const analysisBaseBeforeCooldown =
+    filteredByRankModel.length > 0
+      ? filteredByRankModel
+      : filteredByUi;
+
+  // cooldown除外前の base順位（boost前）
+  const baseRanked = [...analysisBaseBeforeCooldown].sort((a, b) => {
+    const aBase = Number(a.__detail?.baseScoreBeforeBoost ?? 0);
+    const bBase = Number(b.__detail?.baseScoreBeforeBoost ?? 0);
+    return bBase - aBase;
+  });
+
+  const baseRankIndex = baseRanked.findIndex(p => samePlayer(p, player));
+  const baseRank = baseRankIndex >= 0 ? baseRankIndex + 1 : null;
+
+  // cooldown除外後の boost後順位（analysis順位）
+  const analysisBaseAfterCooldown = analysisBaseBeforeCooldown.filter(p => {
+    if (!latestCopied) return true;
+
+    const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
+    const sameUpdateDate =
+      String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
+
+    if (sameName && sameUpdateDate) {
+      const phase = getRoundedDiffMinAndPhaseDistance(
+        latestCopied.copiedAt || latestCopied.time,
+        5
+      );
+      if (phase?.isInitialCooldown) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const boostedRanked = [...analysisBaseAfterCooldown].sort((a, b) => {
+    const aBoosted = Number(a.__detail?.scoreAfterBoost ?? a.__score ?? 0);
+    const bBoosted = Number(b.__detail?.scoreAfterBoost ?? b.__score ?? 0);
+    return bBoosted - aBoosted;
+  });
+
+  const boostedRankIndex = boostedRanked.findIndex(p => samePlayer(p, player));
+  const boostedRank = boostedRankIndex >= 0 ? boostedRankIndex + 1 : null;
+
+  // -------------------------------------------------------
+  // 欠落原因分類（既存維持 + cooldown追加）
+  // -------------------------------------------------------
+  if (!player.updateDate) {
+    missReasons.push("no_updateDate");
+  } else if (!parseDateJST(player.updateDate)) {
+    missReasons.push("invalid_updateDate");
+  }
+
+  if (!inFiltered) missReasons.push("outside_time_filter");
+  if (!rankKey) missReasons.push("no_rankKey");
+  if (rankKey && !inUiPool) missReasons.push("ui_filtered_out");
+  if (Number(scoreDetail?.rankWeight ?? 0) <= 0) missReasons.push("rank_model_zero");
+
+  if (cooldownExcluded) {
+    missReasons.push("cooldown_excluded");
+  }
+
+  if (allRanked.length === 0) missReasons.push("candidate_not_built");
+
+  // cooldown除外されている場合、analysis poolにいないのは正常なので miss理由を分離
+  if (allRanked.length > 0 && inAllRanked < 0 && !cooldownExcluded) {
+    missReasons.push("outside_analysis_pool");
+  }
+
+  if (displayList.length > 0 && inDisplay < 0) {
+    missReasons.push("outside_display_top10");
+  }
+
+  return {
+    // 既存項目
+    candidateRank: inAllRanked >= 0 ? inAllRanked + 1 : null,
+    displayRank: inDisplay >= 0 ? inDisplay + 1 : null,
+    score: inAllRanked >= 0 ? allRanked[inAllRanked].__score : null,
+    rankingSource: allRanked.length ? "all" : "display",
+    diagnostics: State.matchingDiagnostics || null,
+    missReasons,
+    rankWeight: Number(scoreDetail?.rankWeight ?? 0),
+    scoreDetail,
+
+    // 追加項目
+    baseRank,
+    boostedRank,
+    baseScoreBeforeBoost: Number(scoreDetail?.baseScoreBeforeBoost ?? 0),
+    scoreAfterBoost: Number(scoreDetail?.scoreAfterBoost ?? scoreDetail?.score ?? 0),
+    cooldownExcluded,
+    cooldownRemainingSec
+  };
+}
 /* ---------------------------------------------------------
    [47] buildMatchingCandidates（完全差し替え）
    ★ コピー後5分45秒除外＋除外理由記録
