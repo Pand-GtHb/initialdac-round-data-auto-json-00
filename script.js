@@ -136,6 +136,7 @@ function switchDisplayView(view) {
    ★ 画面ログ + localStorage 永続保存
    ★ MATCHINGログ機能統合（formatMatchTopListを含む）
    ★ IndexedDB 自動保存機能統合
+   ★ 本日分JSON出力機能統合
 --------------------------------------------------------- */
 const MAX_LOG_LINES = 200;
 
@@ -185,6 +186,20 @@ function getNowLabelJa() {
   });
 }
 
+/* ★ YYYY/MM/DD を返す（端末ローカル時刻基準） */
+function getTodayYMDJa() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = ("0" + (now.getMonth() + 1)).slice(-2);
+  const d = ("0" + now.getDate()).slice(-2);
+  return `${y}/${m}/${d}`;
+}
+
+/* ★ YYYY/MM/DD → YYYYMMDD（ファイル名用） */
+function compactYMD(ymd) {
+  return String(ymd || "").replace(/\//g, "");
+}
+
 /* ---------------------------------------------------------
    localStorage 読み書き
 --------------------------------------------------------- */
@@ -203,10 +218,8 @@ function writeStoredArraySafe(key, list) {
   try {
     localStorage.setItem(key, JSON.stringify(list));
   } catch (e) {
+    // ★ appendLogを呼ぶと再帰の危険があるため console.warn のみにする
     console.warn("localStorage write failed:", key, e);
-    try {
-      appendLog(`localStorage保存失敗: ${key}`, "warn");
-    } catch (_) {}
   }
 }
 
@@ -348,8 +361,17 @@ async function putViewerEventToIndexedDB(record) {
       tx.onabort = () => reject(tx.error || new Error("indexeddb_tx_aborted"));
     });
   } catch (e) {
+    console.warn("IndexedDB write failed:", e);
     try {
-      appendLog(`IndexedDB保存失敗: ${e.message || e}`, "warn");
+      const box = document.getElementById("logBox");
+      if (box) {
+        const t = getNowLabelJa();
+        const line = document.createElement("div");
+        line.textContent = `[${t}] IndexedDB保存失敗: ${e.message || e}`;
+        line.dataset.type = "warn";
+        line.style.color = "#ffeb3b";
+        box.prepend(line);
+      }
     } catch (_) {}
   }
 }
@@ -462,13 +484,71 @@ async function saveCopyToIndexedDB(rawText) {
 }
 
 /* ---------------------------------------------------------
+   [08-EXPORT] IndexedDB → 日付別JSON出力
+   ★ 同じ日付のログを1つのJSONにまとめて出力
+--------------------------------------------------------- */
+function downloadJSON(filename, dataObject) {
+  const blob = new Blob(
+    [JSON.stringify(dataObject, null, 2)],
+    { type: "application/json;charset=utf-8" }
+  );
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function exportIndexedDBLogsByDate(targetYmd = getTodayYMDJa()) {
+  try {
+    const db = await openViewerIndexedDB();
+
+    const events = await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_CONFIG.stores.events, "readonly");
+      const store = tx.objectStore(IDB_CONFIG.stores.events);
+      const req = store.getAll();
+
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error || new Error("indexeddb_read_failed"));
+    });
+
+    const dayEvents = events.filter(ev =>
+      String(ev.savedAt || "").startsWith(targetYmd)
+    );
+
+    const payload = {
+      exportedAt: getNowLabelJa(),
+      targetDate: targetYmd,
+      totalEvents: dayEvents.length,
+      appInfo: {
+        latestRound: State.latestRound || "",
+        generatedAt: State.generatedAt || "",
+        latestUpdateAt: State.latestUpdateAt || ""
+      },
+      events: dayEvents
+    };
+
+    const filename = `viewer_logs_${compactYMD(targetYmd)}.json`;
+    downloadJSON(filename, payload);
+
+    log(`JSON出力完了: ${filename} / ${dayEvents.length}件`);
+  } catch (e) {
+    logError(`JSON出力に失敗: ${e.message || e}`);
+  }
+}
+
+function exportTodayLogsAsJSON() {
+  exportIndexedDBLogsByDate(getTodayYMDJa());
+}
+
+/* ---------------------------------------------------------
    appendLog（画面 + localStorage）
 --------------------------------------------------------- */
 function appendLog(msg, type = "info") {
   const box = document.getElementById("logBox");
   const t = getNowLabelJa();
 
-  // ★ 画面ログ（既存維持）
   if (box) {
     const line = document.createElement("div");
     line.textContent = `[${t}] ${msg}`;
@@ -485,7 +565,6 @@ function appendLog(msg, type = "info") {
     }
   }
 
-  // ★ localStorageへ保存
   saveViewerLogToStorage({
     savedAt: t,
     type,
@@ -500,7 +579,6 @@ function appendLog(msg, type = "info") {
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
-
 /* ---------------------------------------------------------    
    [09] 進行中アニメーション
 --------------------------------------------------------- */    
@@ -1015,20 +1093,17 @@ function getRealtimeBoost(player) {
    [23-A] getRealtimeBoostDetail
    ★ ランク・エリア・店舗のブースト内訳を返す
    ★ コピー相手の属性（ランク＋エリア）への重みを強化
-   優先度：
-   1) 同ランク＋同エリア
-   2) 同ランクのみ
-   3) 同エリアのみ
-   4) 同店舗のみ
+   ★ ブースト理由返却
 --------------------------------------------------------- */
 function getRealtimeBoostDetail(player) {
   if (!State.recentClicks.length || !player) {
-    return { rank: 0, area: 0, shop: 0, total: 1 };
+    return { rank: 0, area: 0, shop: 0, total: 1, reason: [] };
   }
 
   let rankScore = 0;
   let areaScore = 0;
   let shopScore = 0;
+  let reason = [];
 
   const playerRankKey = getPlayerRankKey(player);
 
@@ -1039,8 +1114,7 @@ function getRealtimeBoostDetail(player) {
     const dtMin = (Date.now() - anchorTime) / 60000;
     if (!isFinite(dtMin) || dtMin < 0) continue;
 
-    const decay = Math.exp(-dtMin / 10);
-
+    const decay = Math.exp(-dtMin / 8); // ★ 減衰強化
     const sameRank =
       !!playerRankKey &&
       !!r.rankKey &&
@@ -1053,82 +1127,85 @@ function getRealtimeBoostDetail(player) {
       String(player.shopname ?? "") === String(r.shopname ?? "");
 
     if (sameRank && sameArea) {
-      rankScore += decay * 0.8;
-      areaScore += decay * 0.4;
+      rankScore += decay * 1.2;
+      areaScore += decay * 0.6;
+      reason.push("rank+area");
     } else if (sameRank) {
-      rankScore += decay * 0.6;
+      rankScore += decay * 0.9;
+      reason.push("rank");
     } else if (sameArea) {
-      areaScore += decay * 0.5;
+      areaScore += decay * 0.7;
+      reason.push("area");
     } else if (sameShop) {
-      shopScore += decay * 0.3;
+      shopScore += decay * 0.5;
+      reason.push("shop");
     }
   }
 
-  const totalBoost = 1 + Math.min(1.8, rankScore + areaScore + shopScore);
+  const totalBoost = 1 + Math.min(2.5, rankScore + areaScore + shopScore);
 
   return {
     rank: rankScore,
     area: areaScore,
     shop: shopScore,
-    total: totalBoost
+    total: totalBoost,
+    reason: reason
   };
 }
 /* ---------------------------------------------------------
    [24-A] getRoundedDiffMinAndPhaseDistance
    ★ copiedAt 基準の 5分±45秒 サイクル情報を返す
-   ★ 最初の対象窓は 4分15秒〜5分45秒、その後5分周期で繰り返し
-   ★ 5分±45秒 + 初回サイクル除外（5分45秒まで除外）
+   ★ 初回だけ 5分45秒 まで完全除外
+   ★ その後は 5分周期のピンク窓（±45秒）を判定
 --------------------------------------------------------- */
 function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
-  if (!copiedAtMs || !isFinite(Number(copiedAtMs))) {
-    return {
-      diffMin: Infinity,
-      d: Infinity,
-      rSec: Infinity,
-      inPinkWindow: false,
-      isInitialCooldown: false,
-      cooldownRemainingSec: Infinity
-    };
-  }
-  const now = Date.now();
+  const emptyResult = {
+    diffMin: Infinity,
+    d: Infinity,
+    rSec: Infinity,
+    inPinkWindow: false,
+    isInitialCooldown: false,
+    cooldownRemainingSec: 0
+  };
+
   const anchor = Number(copiedAtMs);
-  const diffSec = (now - anchor) / 1000;
-  if (!isFinite(diffSec) || diffSec < 0) {
-    return {
-      diffMin: Infinity,
-      d: Infinity,
-      rSec: Infinity,
-      inPinkWindow: false,
-      isInitialCooldown: false,
-      cooldownRemainingSec: Infinity
-    };
+  if (!anchor || !isFinite(anchor)) {
+    return { ...emptyResult, cooldownRemainingSec: Infinity };
   }
-  const cycleSec = cycleMin * 60;   // 300秒
-  const toleranceSec = 45;
-  const initialCooldownSec = cycleSec + toleranceSec; // 345秒
+
+  const now = Date.now();
+  const diffSec = (now - anchor) / 1000;
+
+  if (!isFinite(diffSec) || diffSec < 0) {
+    return { ...emptyResult, cooldownRemainingSec: Infinity };
+  }
+
+  const cycleSec = Number(cycleMin) * 60;   // 例: 5分 → 300秒
+  const toleranceSec = 45;                  // ±45秒
+  const initialCooldownSec = cycleSec + toleranceSec; // 345秒 = 5分45秒
   const rSec = diffSec % cycleSec;
-  // ★初回除外（5分45秒まで）
+
+  // ★ 初回だけ 5分45秒までは完全除外
   if (diffSec < initialCooldownSec) {
     return {
       diffMin: diffSec / 60,
       d: Infinity,
-      rSec: rSec,
+      rSec,
       inPinkWindow: false,
       isInitialCooldown: true,
-      cooldownRemainingSec: initialCooldownSec - diffSec
+      cooldownRemainingSec: Math.max(0, initialCooldownSec - diffSec)
     };
   }
-  // ★通常ピンク判定
-  let inPinkWindow = false;
+
+  // ★ 2周目以降の通常ピンク判定
   const distToNearest = Math.min(rSec, cycleSec - rSec);
-  if (distToNearest <= toleranceSec) {
-    inPinkWindow = true;
-  }
+  const inPinkWindow = distToNearest <= toleranceSec;
+
   return {
     diffMin: diffSec / 60,
     d: distToNearest / 60,
-    rSec: rSec,
-    inPinkWindow: inPinkWindow,
+    rSec,
+    inPinkWindow,
     isInitialCooldown: false,
     cooldownRemainingSec: 0
   };
@@ -2341,38 +2418,51 @@ function copyToClipboard(text) {
    ★ 既存返却項目は維持
 --------------------------------------------------------- */
 function findCandidateInfoForLog(player) {
+  const emptyResult = {
+    candidateRank: null,
+    displayRank: null,
+    baseRank: null,
+    boostedRank: null,
+    score: null,
+    baseScoreBeforeBoost: null,
+    scoreAfterBoost: null,
+    rankingSource: "none",
+    diagnostics: State.matchingDiagnostics || null,
+    missReasons: [],
+    rankWeight: 0,
+    scoreDetail: null,
+    cooldownExcluded: false,
+    cooldownRemainingSec: null
+  };
+
   if (!player) {
     return {
-      missReasons: ["player_not_found"],
-      candidateRank: null,
-      displayRank: null,
-      baseRank: null,
-      boostedRank: null,
-      score: null,
-      baseScoreBeforeBoost: null,
-      scoreAfterBoost: null,
-      rankingSource: "none",
-      diagnostics: State.matchingDiagnostics || null,
-      cooldownExcluded: false,
-      cooldownRemainingSec: null,
-      rankWeight: 0,
-      scoreDetail: null
+      ...emptyResult,
+      missReasons: ["player_not_found"]
     };
   }
 
-  const allRanked = State.matchingRankedAll || [];
-  const displayList = State.matchingList || [];
+  const normalizePair = (obj) => ({
+    name: normalizePlayerName(obj?.name || ""),
+    updateDate: String(obj?.updateDate || "")
+  });
+
+  const isSamePlayer = (a, b) => {
+    const aa = normalizePair(a);
+    const bb = normalizePair(b);
+    return aa.name === bb.name && aa.updateDate === bb.updateDate;
+  };
+
+  const allRanked = Array.isArray(State.matchingRankedAll) ? State.matchingRankedAll : [];
+  const displayList = Array.isArray(State.matchingList) ? State.matchingList : [];
+  const filtered = Array.isArray(State.filtered) ? State.filtered : [];
+
   const scoreDetail = calcMatchingScoreDetail(player);
   const missReasons = [];
 
-  const samePlayer = (a, b) =>
-    normalizePlayerName(a?.name) === normalizePlayerName(b?.name) &&
-    String(a?.updateDate ?? "") === String(b?.updateDate ?? "");
-
-  const inFiltered = (State.filtered || []).some(p => samePlayer(p, player));
-
-  const inAllRanked = allRanked.findIndex(p => samePlayer(p, player));
-  const inDisplay = displayList.findIndex(p => samePlayer(p, player));
+  const inFiltered = filtered.some(p => isSamePlayer(p, player));
+  const inAllRanked = allRanked.findIndex(p => isSamePlayer(p, player));
+  const inDisplay = displayList.findIndex(p => isSamePlayer(p, player));
 
   const rankKey = getPlayerRankKey(player);
 
@@ -2383,42 +2473,36 @@ function findCandidateInfoForLog(player) {
 
   let inUiPool = false;
   if (rankKey) {
-    if (rankKey.startsWith("R")) {
+    if (String(rankKey).startsWith("R")) {
       inUiPool = selectedStars.includes(Number(player.starCnt));
     } else {
       inUiPool = selectedPrides.includes(rankKey);
     }
   }
 
-  // -------------------------------------------------------
-  // cooldown 判定（最新コピー相手本人 + 5分45秒以内）
-  // -------------------------------------------------------
+  /* -------------------------------------------------------
+     cooldown 判定（最新コピー相手本人 + 5分45秒以内）
+  ------------------------------------------------------- */
   let cooldownExcluded = false;
   let cooldownRemainingSec = null;
+
   const latestCopied = getLatestCopiedPlayer();
-
-  if (latestCopied) {
-    const sameName = normalizePlayerName(player.name) === normalizePlayerName(latestCopied.name);
-    const sameUpdateDate =
-      String(player.updateDate ?? "") === String(latestCopied.updateDate ?? "");
-
-    if (sameName && sameUpdateDate) {
-      const phase = getRoundedDiffMinAndPhaseDistance(
-        latestCopied.copiedAt || latestCopied.time,
-        5
-      );
-      if (phase?.isInitialCooldown) {
-        cooldownExcluded = true;
-        cooldownRemainingSec = Number(phase.cooldownRemainingSec ?? 0);
-      }
+  if (latestCopied && isSamePlayer(player, latestCopied)) {
+    const phase = getRoundedDiffMinAndPhaseDistance(
+      latestCopied.copiedAt || latestCopied.time,
+      5
+    );
+    if (phase && phase.isInitialCooldown) {
+      cooldownExcluded = true;
+      cooldownRemainingSec = Number(phase.cooldownRemainingSec ?? 0);
     }
   }
 
-  // -------------------------------------------------------
-  // boost前 / boost後 順位算出用プールを再構築
-  // ※ buildMatchingCandidates の構造を壊さず、ログ時点で再現
-  // -------------------------------------------------------
-  const scoredAll = (State.filtered || []).map(p => {
+  /* -------------------------------------------------------
+     boost前 / boost後 順位再構築
+     ※ 現在の State.filtered を基準に再評価
+  ------------------------------------------------------- */
+  const rescoredAll = filtered.map(p => {
     const detail = calcMatchingScoreDetail(p);
     return {
       ...p,
@@ -2428,54 +2512,44 @@ function findCandidateInfoForLog(player) {
     };
   });
 
-  const filteredByUi = scoredAll.filter(p => {
+  const rescoredByUi = rescoredAll.filter(p => {
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
-    if (p.__rankKey.startsWith("R")) {
+
+    if (String(p.__rankKey).startsWith("R")) {
       return selectedStars.includes(Number(p.starCnt));
-    } else {
-      return selectedPrides.includes(p.__rankKey);
     }
+    return selectedPrides.includes(p.__rankKey);
   });
 
-  const filteredByRankModel = filteredByUi.filter(p =>
+  const rescoredByRankModel = rescoredByUi.filter(p =>
     Number(p.__detail?.rankWeight ?? 0) > 0
   );
 
-  // fallbackロジックも現行構造に合わせて維持
+  // ★ 現行 buildMatchingCandidates と整合：rankModel pool があれば優先、なければ UI pool
   const analysisBaseBeforeCooldown =
-    filteredByRankModel.length > 0
-      ? filteredByRankModel
-      : filteredByUi;
+    rescoredByRankModel.length > 0 ? rescoredByRankModel : rescoredByUi;
 
-  // cooldown除外前の base順位（boost前）
+  // boost前順位（baseScoreBeforeBoost基準）
   const baseRanked = [...analysisBaseBeforeCooldown].sort((a, b) => {
     const aBase = Number(a.__detail?.baseScoreBeforeBoost ?? 0);
     const bBase = Number(b.__detail?.baseScoreBeforeBoost ?? 0);
     return bBase - aBase;
   });
 
-  const baseRankIndex = baseRanked.findIndex(p => samePlayer(p, player));
+  const baseRankIndex = baseRanked.findIndex(p => isSamePlayer(p, player));
   const baseRank = baseRankIndex >= 0 ? baseRankIndex + 1 : null;
 
-  // cooldown除外後の boost後順位（analysis順位）
+  // cooldown除外後の boost後順位（scoreAfterBoost基準）
   const analysisBaseAfterCooldown = analysisBaseBeforeCooldown.filter(p => {
     if (!latestCopied) return true;
+    if (!isSamePlayer(p, latestCopied)) return true;
 
-    const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
-    const sameUpdateDate =
-      String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
-
-    if (sameName && sameUpdateDate) {
-      const phase = getRoundedDiffMinAndPhaseDistance(
-        latestCopied.copiedAt || latestCopied.time,
-        5
-      );
-      if (phase?.isInitialCooldown) {
-        return false;
-      }
-    }
-    return true;
+    const phase = getRoundedDiffMinAndPhaseDistance(
+      latestCopied.copiedAt || latestCopied.time,
+      5
+    );
+    return !(phase && phase.isInitialCooldown);
   });
 
   const boostedRanked = [...analysisBaseAfterCooldown].sort((a, b) => {
@@ -2484,12 +2558,12 @@ function findCandidateInfoForLog(player) {
     return bBoosted - aBoosted;
   });
 
-  const boostedRankIndex = boostedRanked.findIndex(p => samePlayer(p, player));
+  const boostedRankIndex = boostedRanked.findIndex(p => isSamePlayer(p, player));
   const boostedRank = boostedRankIndex >= 0 ? boostedRankIndex + 1 : null;
 
-  // -------------------------------------------------------
-  // 欠落原因分類（既存維持 + cooldown追加）
-  // -------------------------------------------------------
+  /* -------------------------------------------------------
+     欠落原因分類
+  ------------------------------------------------------- */
   if (!player.updateDate) {
     missReasons.push("no_updateDate");
   } else if (!parseDateJST(player.updateDate)) {
@@ -2500,14 +2574,9 @@ function findCandidateInfoForLog(player) {
   if (!rankKey) missReasons.push("no_rankKey");
   if (rankKey && !inUiPool) missReasons.push("ui_filtered_out");
   if (Number(scoreDetail?.rankWeight ?? 0) <= 0) missReasons.push("rank_model_zero");
-
-  if (cooldownExcluded) {
-    missReasons.push("cooldown_excluded");
-  }
-
+  if (cooldownExcluded) missReasons.push("cooldown_excluded");
   if (allRanked.length === 0) missReasons.push("candidate_not_built");
 
-  // cooldown除外されている場合、analysis poolにいないのは正常なので miss理由を分離
   if (allRanked.length > 0 && inAllRanked < 0 && !cooldownExcluded) {
     missReasons.push("outside_analysis_pool");
   }
@@ -2517,17 +2586,17 @@ function findCandidateInfoForLog(player) {
   }
 
   return {
-    // 既存項目
+    // ★ 既存返却項目
     candidateRank: inAllRanked >= 0 ? inAllRanked + 1 : null,
     displayRank: inDisplay >= 0 ? inDisplay + 1 : null,
-    score: inAllRanked >= 0 ? allRanked[inAllRanked].__score : null,
+    score: inAllRanked >= 0 ? Number(allRanked[inAllRanked].__score ?? 0) : null,
     rankingSource: allRanked.length ? "all" : "display",
     diagnostics: State.matchingDiagnostics || null,
     missReasons,
     rankWeight: Number(scoreDetail?.rankWeight ?? 0),
     scoreDetail,
 
-    // 追加項目
+    // ★ 追加返却項目
     baseRank,
     boostedRank,
     baseScoreBeforeBoost: Number(scoreDetail?.baseScoreBeforeBoost ?? 0),
@@ -2545,9 +2614,9 @@ function buildMatchingCandidates() {
     .map(x => Number(x.value));
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
-  // ① 母集団
+
   const base = State.filtered;
-  // ② スコア
+
   const scoredAll = base.map(p => {
     const detail = calcMatchingScoreDetail(p);
     return {
@@ -2557,7 +2626,7 @@ function buildMatchingCandidates() {
       __detail: detail
     };
   });
-  // ③ UIフィルタ
+
   const filteredByUi = scoredAll.filter(p => {
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
@@ -2567,58 +2636,67 @@ function buildMatchingCandidates() {
       return selectedPrides.includes(p.__rankKey);
     }
   });
-  // ④ rank_model
+
   const filteredByRankModel = filteredByUi.filter(p =>
     Number(p.__detail?.rankWeight ?? 0) > 0
   );
-  // ⑤ cooldown除外（コピー後5分45秒）
+
   const latestCopied = getLatestCopiedPlayer();
-  let cooldownExcludedNames = [];
   let cooldownExcludedCount = 0;
+
   let analysisBase = filteredByRankModel;
   if (latestCopied) {
     analysisBase = filteredByRankModel.filter(p => {
       const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
       const sameUpdateDate = String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
+
       if (sameName && sameUpdateDate) {
-        const phase = getRoundedDiffMinAndPhaseDistance(latestCopied.copiedAt || latestCopied.time, 5);
+        const phase = getRoundedDiffMinAndPhaseDistance(
+          latestCopied.copiedAt || latestCopied.time,
+          5
+        );
         if (phase.isInitialCooldown) {
-          cooldownExcludedNames.push(p.name);
           cooldownExcludedCount++;
-          return false; // 除外
+          return false;
         }
       }
       return true;
     });
   }
-  // ⑥ 分析順位
+
   const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
   State.matchingRankedAll = rankedAll;
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
+
   const diag = State.matchingDiagnostics;
   const isCluster = diag && diag.gap12 < 0.05;
-  // ★ TOP固定完全撤廃
+
   let selected = [];
   const initialNeed = Math.min(10, rankedAll.length);
   if (initialNeed > 0) {
     selected = selectByWeight(rankedAll, initialNeed);
   }
-  // 不足補完
+
   if (selected.length < 10) {
     const existing = new Set(
       selected.map(p => `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
     );
+
     const fallbackPool = filteredByUi.filter(p =>
       !existing.has(`${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
     );
-    // ★fallbackにもcooldown除外適用
+
     let fallbackFiltered = fallbackPool;
     if (latestCopied) {
       fallbackFiltered = fallbackPool.filter(p => {
         const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
         const sameUpdateDate = String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
+
         if (sameName && sameUpdateDate) {
-          const phase = getRoundedDiffMinAndPhaseDistance(latestCopied.copiedAt || latestCopied.time, 5);
+          const phase = getRoundedDiffMinAndPhaseDistance(
+            latestCopied.copiedAt || latestCopied.time,
+            5
+          );
           if (phase.isInitialCooldown) {
             return false;
           }
@@ -2626,33 +2704,39 @@ function buildMatchingCandidates() {
         return true;
       });
     }
+
     const restNeed = 10 - selected.length;
     if (restNeed > 0 && fallbackFiltered.length > 0) {
       selected = [...selected, ...selectByWeight(fallbackFiltered, restNeed)];
     }
   }
+
   selected.sort((a, b) => b.__score - a.__score);
   State.matchingList = selected;
-  // ★ 必要最小ログ
+
   const rankKeyMissing = scoredAll.filter(p => !p.__rankKey).length;
   const rankModelExcluded = filteredByUi.filter(p => Number(p.__detail?.rankWeight ?? 0) <= 0).length;
+
   log(`候補生成: Base=${base.length}`
     + ` / UiPool=${filteredByUi.length}`
     + ` / RankModelPool=${filteredByRankModel.length}`
     + ` / CooldownExcluded=${cooldownExcludedCount}`
     + ` / Selected=${selected.length}`
   );
+
   log(`候補欠落内訳: noRankKey=${rankKeyMissing}`
     + ` / rankModelZero=${rankModelExcluded}`
     + ` / cooldownExcluded=${cooldownExcludedCount}`
     + ` / analysisFallback=${filteredByRankModel.length > 0 ? "NO" : "YES"}`
   );
+
   log(`診断: Gap12=${Number(diag?.gap12 ?? 0).toFixed(2)}`
     + ` / Ratio=${Number(diag?.top1Ratio ?? 0).toFixed(2)}`
     + ` / Cluster=${isCluster ? "YES" : "NO"}`
   );
+
   log(`表示TOP: ${formatMatchTopList(selected)}`);
-  // 詳細ログ（手動ON）
+
   if (MATCHING_LOG_CONFIG.verboseTopDetails) {
     rankedAll.slice(0, 3).forEach((p, idx) => {
       const d = p.__detail || {};
@@ -2740,15 +2824,14 @@ function applyMatchingFilter(keyword) {
   if (countEl) countEl.textContent = fmt(list.length);    
   renderMatchingRows(list);    
 }    
-/* ---------------------------------------------------------
-   [52] showMatchingCandidates
+/* ---------------------------------------------------------/* ------------------------------------------------52] showMatchingCandidates
    ★ マッチング候補画面表示
    ★ IndexedDB自動保存：マッチング候補ボタン押下時
 --------------------------------------------------------- */
 function showMatchingCandidates(push = true) {
   buildMatchingCandidates();
 
-  // ★ 追加：候補画面を開いた瞬間の状態を自動保存
+  // ★ 候補画面を開いた瞬間の状態を自動保存
   saveMatchingOpenToIndexedDB();
 
   renderMatchingHeader();
@@ -2829,35 +2912,39 @@ async function init() {
   log("Viewer 初期化完了");
   startUpdateWatch();
 }
-/* ---------------------------------------------------------    
-   [56] DOMContentLoaded   DOMContentLoaded    
---------------------------------------------------------- */    
-document.addEventListener("DOMContentLoaded", () => {    
-  // ✅ 最優先で履歴を仕込む（初回戻るで閉じる対策）    
-  history.replaceState({ page: STATE.SUMMARY }, '', '');    
-  history.pushState({ page: STATE.SUMMARY }, '', '');    
-  // ★ ボタン群を1行に揃えて生成    
-  const btnArea = document.getElementById("buttonArea");    
-  if (btnArea) {    
-    btnArea.innerHTML = `    
-      <div class="button-row">    
-        <button id="reloadBtn">最新データ取得</button>    
-        <button id="filterBtn">フィルタ適用</button>    
-        <button id="summaryCsvBtn">サマリCSV出力</button>    
-        <button id="allCsvBtn">全データCSV出力</button>    
-      </div>    
-    `;    
-  }    
-  // ✅ 安全に要素取得（null防止）    
-  const reloadBtn = document.getElementById("reloadBtn");    
-  const filterBtn = document.getElementById("filterBtn");    
-  const summaryCsvBtn = document.getElementById("summaryCsvBtn");    
-  const allCsvBtn = document.getElementById("allCsvBtn");    
-  const backBtn = document.getElementById("backBtn");    
-  const matchingBtn = document.getElementById("matchingBtn");    
-  const matchingBackBtn = document.getElementById("matchingBackBtn");    
-  const searchInput = document.getElementById("searchInput");    
-  // ✅ reload
+
+/* ---------------------------------------------------------
+   [56] DOMContentLoaded
+--------------------------------------------------------- */
+document.addEventListener("DOMContentLoaded", () => {
+  // ✅ 最優先で履歴を仕込む（初回戻るで閉じる対策）
+  history.replaceState({ page: STATE.SUMMARY }, '', '');
+  history.pushState({ page: STATE.SUMMARY }, '', '');
+
+  // ★ ボタン群を1行に揃えて生成
+  const btnArea = document.getElementById("buttonArea");
+  if (btnArea) {
+    btnArea.innerHTML = `
+      <div class="button-row">
+        <button id="reloadBtn">最新データ取得</button>
+        <button id="filterBtn">フィルタ適用</button>
+        <button id="summaryCsvBtn">サマリCSV出力</button>
+        <button id="allCsvBtn">全データCSV出力</button>
+        <button id="exportJsonBtn">本日JSON出力</button>
+      </div>
+    `;
+  }
+
+  const reloadBtn = document.getElementById("reloadBtn");
+  const filterBtn = document.getElementById("filterBtn");
+  const summaryCsvBtn = document.getElementById("summaryCsvBtn");
+  const allCsvBtn = document.getElementById("allCsvBtn");
+  const exportJsonBtn = document.getElementById("exportJsonBtn");
+  const backBtn = document.getElementById("backBtn");
+  const matchingBtn = document.getElementById("matchingBtn");
+  const matchingBackBtn = document.getElementById("matchingBackBtn");
+  const searchInput = document.getElementById("searchInput");
+
   if (reloadBtn) {
     reloadBtn.classList.remove("update-alert");
     reloadBtn.style.cssText = "";
@@ -2865,86 +2952,75 @@ document.addEventListener("DOMContentLoaded", () => {
       await reloadLatestDataPreferPrefetch();
     };
   }
-  // ✅ filter    
-  if (filterBtn) {    
-    filterBtn.onclick = () => {    
-      startProgress();    
-      applyFilters();    
-      buildSummary();    
-      renderSummary();    
-      stopProgress();    
-    };    
-  }    
-  // ✅ CSV    
-  if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;    
-  if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;    
-  // ✅ 検索    
-  if (searchInput) {
-  searchInput.addEventListener("input", (e) => {  
-    State.searchText = e.target.value;  
 
-    if (isCurrentView(STATE.SUMMARY)) {  
-      renderSummary();  
-
-    } else if (isCurrentView(STATE.DETAIL)) {  
-      applyPlayerFilter(State.searchText, State.currentIsRubyBand);  
-
-      // ★修正（見出し保持）
-      renderDetailTable(
-        State.currentIsRubyBand,
-        State.currentDetailLabel || "",
-        State.currentDetailIcon || ""
-      );  
-
-    } else if (isCurrentView(STATE.MATCHING)) {  
-      applyMatchingFilter(State.searchText);  
-    }  
-  });  
+  if (filterBtn) {
+    filterBtn.onclick = () => {
+      startProgress();
+      applyFilters();
+      buildSummary();
+      renderSummary();
+      stopProgress();
+    };
   }
-// ✅ サマリ戻る（UIボタン）
-if (backBtn && searchInput) {
-  backBtn.onclick = () => {
 
-    State.searchText = "";
-    searchInput.value = "";
+  if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;
+  if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;
+  if (exportJsonBtn) exportJsonBtn.onclick = exportTodayLogsAsJSON;
 
-    showSummaryUI(true);
-  };
-}
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => {
+      State.searchText = e.target.value;
 
-// ✅ matching表示
-if (matchingBtn && searchInput) {
-  matchingBtn.onclick = () => {
+      if (isCurrentView(STATE.SUMMARY)) {
+        renderSummary();
+      } else if (isCurrentView(STATE.DETAIL)) {
+        applyPlayerFilter(State.searchText, State.currentIsRubyBand);
+        renderDetailTable(
+          State.currentIsRubyBand,
+          State.currentDetailLabel || "",
+          State.currentDetailIcon || ""
+        );
+      } else if (isCurrentView(STATE.MATCHING)) {
+        applyMatchingFilter(State.searchText);
+      }
+    });
+  }
 
-    State.searchText = "";
-    searchInput.value = "";
+  if (backBtn && searchInput) {
+    backBtn.onclick = () => {
+      State.searchText = "";
+      searchInput.value = "";
+      showSummaryUI(true);
+    };
+  }
 
-    showMatchingCandidates(true);
-  };
-}
+  if (matchingBtn && searchInput) {
+    matchingBtn.onclick = () => {
+      State.searchText = "";
+      searchInput.value = "";
+      showMatchingCandidates(true);
+    };
+  }
 
-// ✅ matching戻る
-if (matchingBackBtn && searchInput) {
-  matchingBackBtn.onclick = () => {
+  if (matchingBackBtn && searchInput) {
+    matchingBackBtn.onclick = () => {
+      State.searchText = "";
+      searchInput.value = "";
+      backToSummaryFromMatching(true);
+    };
+  }
 
-    State.searchText = "";
-    searchInput.value = "";
+  const myRankSelect = document.getElementById("myRankSelect");
+  if (myRankSelect) {
+    syncMyRankSelection(myRankSelect.value);
+    myRankSelect.addEventListener("change", (e) => {
+      const selectedMyRank = syncMyRankSelection(e.target.value);
+      log(`自分ランク変更：${selectedMyRank}`);
+    });
+  }
 
-    backToSummaryFromMatching(true);
-  };
-} 
-// ✅ ランク選択
-const myRankSelect = document.getElementById("myRankSelect");
-if (myRankSelect) {
-  syncMyRankSelection(myRankSelect.value);
-  myRankSelect.addEventListener("change", (e) => {
-    const selectedMyRank = syncMyRankSelection(e.target.value);
-    log(`自分ランク変更：${selectedMyRank}`);
-  });
-} 
-// ✅ 初期化（DOM後）
-  init();    
-  });    
+  init();
+});
 /* ---------------------------------------------------------
    [57] popstate（戻る制御   戻るボタン処理      
 --------------------------------------------------------- */
