@@ -2151,7 +2151,7 @@ function exportAllCSV() {
 }    
 /* ---------------------------------------------------------
    [46] copyToClipboard
-   ★ コピー + 詳細ログ + localStorage自動保存
+   ★ コピー + 詳細ログ + localStorage自動保存 + IndexedDB自動保存
    ★ 重複定義を統合した最終版
 --------------------------------------------------------- */
 function copyToClipboard(text) {
@@ -2250,7 +2250,9 @@ function copyToClipboard(text) {
   const saveCopyEvent = (rawText) => {
     const player = findPlayerFromCopiedText(rawText);
     const candidateInfo = player ? (findCandidateInfoForLog(player) || {}) : {};
-    const boost = player ? getRealtimeBoostDetail(player) : { rank: 0, area: 0, shop: 0, total: 1, reason: [] };
+    const boost = player
+      ? getRealtimeBoostDetail(player)
+      : { rank: 0, area: 0, shop: 0, total: 1, reason: [] };
 
     const eventRecord = {
       savedAt: getNowLabelJa(),
@@ -2296,16 +2298,20 @@ function copyToClipboard(text) {
       latestUpdateAt: State.latestUpdateAt || ""
     };
 
-    // ★ コピーイベント保存
+    // ★ 既存のlocalStorage保存
     saveCopyEventToStorage(eventRecord);
-
-    // ★ その時点のマッチングスナップショットも保存
     saveMatchingSnapshotToStorage("copy");
   };
 
   const afterCopySuccess = () => {
     log(buildCopyLogMessage(text));
+
+    // ★ 既存保存
     saveCopyEvent(text);
+
+    // ★ 追加：IndexedDB保存
+    saveCopyToIndexedDB(text);
+
     recordClickFromCopiedText(text);
   };
 
@@ -2735,16 +2741,19 @@ function applyMatchingFilter(keyword) {
   renderMatchingRows(list);    
 }    
 /* ---------------------------------------------------------
-   [52] showMatchingCandidates   ★ マッチング候補画面表示
+   [52] showMatchingCandidates
+   ★ マッチング候補画面表示
+   ★ IndexedDB自動保存：マッチング候補ボタン押下時
 --------------------------------------------------------- */
 function showMatchingCandidates(push = true) {
-
   buildMatchingCandidates();
+
+  // ★ 追加：候補画面を開いた瞬間の状態を自動保存
+  saveMatchingOpenToIndexedDB();
+
   renderMatchingHeader();
   renderMatchingTable();
-
   setCurrentView(STATE.MATCHING);
-
   switchDisplayView(STATE.MATCHING);
 
   if (push) {
