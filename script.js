@@ -135,17 +135,18 @@ function switchDisplayView(view) {
    [08] ログ（appendLog / log / logWarn / logError）
    ★ 画面ログ + localStorage 永続保存
    ★ MATCHINGログ機能統合（formatMatchTopListを含む）
+   ★ IndexedDB 自動保存機能統合
 --------------------------------------------------------- */
 const MAX_LOG_LINES = 200;
 
-/* ★ 永続保存キー */
+/* ★ 永続保存キー（localStorage） */
 const LOG_STORAGE_KEYS = {
   viewerLogs: "initialdac_viewer_logs",
   copyEvents: "initialdac_copy_events",
   matchingSnapshots: "initialdac_matching_snapshots"
 };
 
-/* ★ 保存上限 */
+/* ★ 保存上限（localStorage） */
 const LOG_STORAGE_LIMITS = {
   viewerLogs: 500,
   copyEvents: 200,
@@ -160,7 +161,7 @@ const MATCHING_LOG_CONFIG = {
   topListCount: 5
 };
 
-/* ★ 表示TOPフォーマット（エラー原因だった関数） */
+/* ★ 表示TOPフォーマット */
 function formatMatchTopList(list, count = MATCHING_LOG_CONFIG.topListCount) {
   return (list || [])
     .slice(0, count)
@@ -168,8 +169,9 @@ function formatMatchTopList(list, count = MATCHING_LOG_CONFIG.topListCount) {
     .join(" / ");
 }
 
-/* --------------------------------------------------------- */
-
+/* ---------------------------------------------------------
+   共通ユーティリティ
+--------------------------------------------------------- */
 function getNowLabelJa() {
   const now = new Date();
   return now.toLocaleString("ja-JP", {
@@ -183,6 +185,9 @@ function getNowLabelJa() {
   });
 }
 
+/* ---------------------------------------------------------
+   localStorage 読み書き
+--------------------------------------------------------- */
 function readStoredArraySafe(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -199,6 +204,9 @@ function writeStoredArraySafe(key, list) {
     localStorage.setItem(key, JSON.stringify(list));
   } catch (e) {
     console.warn("localStorage write failed:", key, e);
+    try {
+      appendLog(`localStorage保存失敗: ${key}`, "warn");
+    } catch (_) {}
   }
 }
 
@@ -210,9 +218,8 @@ function pushStoredRecord(key, record, limit = 200) {
 }
 
 /* ---------------------------------------------------------
-   マッチングスナップショット保存
+   localStorage: マッチングスナップショット保存
 --------------------------------------------------------- */
-
 function buildMatchingSnapshotForStorage() {
   const ranked = (State.matchingRankedAll || []).slice(0, 20).map((p, idx) => ({
     rank: idx + 1,
@@ -282,14 +289,186 @@ function saveViewerLogToStorage(payload) {
 }
 
 /* ---------------------------------------------------------
-   appendLog（画面 + 永続化）
+   [08-DB] IndexedDB 保存
+   ★ スマホ向け：matching_open / copy イベントを自動保存
 --------------------------------------------------------- */
+const IDB_CONFIG = {
+  dbName: "InitialDacViewerDB",
+  dbVersion: 1,
+  stores: {
+    events: "events"
+  }
+};
 
+let idbOpenPromise = null;
+
+function openViewerIndexedDB() {
+  if (idbOpenPromise) return idbOpenPromise;
+
+  idbOpenPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error("indexedDB_not_supported"));
+      return;
+    }
+
+    const req = indexedDB.open(IDB_CONFIG.dbName, IDB_CONFIG.dbVersion);
+
+    req.onupgradeneeded = (event) => {
+      const db = event.target.result;
+
+      if (!db.objectStoreNames.contains(IDB_CONFIG.stores.events)) {
+        const store = db.createObjectStore(IDB_CONFIG.stores.events, {
+          keyPath: "id",
+          autoIncrement: true
+        });
+        store.createIndex("type", "type", { unique: false });
+        store.createIndex("savedAt", "savedAt", { unique: false });
+        store.createIndex("reason", "reason", { unique: false });
+      }
+    };
+
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("indexeddb_open_failed"));
+  });
+
+  return idbOpenPromise;
+}
+
+async function putViewerEventToIndexedDB(record) {
+  try {
+    const db = await openViewerIndexedDB();
+
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_CONFIG.stores.events, "readwrite");
+      const store = tx.objectStore(IDB_CONFIG.stores.events);
+      store.add(record);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error("indexeddb_tx_failed"));
+      tx.onabort = () => reject(tx.error || new Error("indexeddb_tx_aborted"));
+    });
+  } catch (e) {
+    try {
+      appendLog(`IndexedDB保存失敗: ${e.message || e}`, "warn");
+    } catch (_) {}
+  }
+}
+
+function buildMatchingOpenEventRecord() {
+  const rankedTop20 = (State.matchingRankedAll || []).slice(0, 20).map((p, idx) => ({
+    rank: idx + 1,
+    name: p.name,
+    updateDate: p.updateDate || "",
+    area: p.area ?? "",
+    shopname: p.shopname ?? "",
+    rankKey: p.__rankKey ?? getPlayerRankKey(p),
+    score: Number(p.__score ?? 0),
+    rankWeight: Number(p.__detail?.rankWeight ?? 0),
+    realtimeBoost: Number(p.__detail?.realtimeBoost ?? 1),
+    baseScoreBeforeBoost: Number(p.__detail?.baseScoreBeforeBoost ?? 0),
+    scoreAfterBoost: Number(p.__detail?.scoreAfterBoost ?? p.__score ?? 0)
+  }));
+
+  const displayTop10 = (State.matchingList || []).map((p, idx) => ({
+    rank: idx + 1,
+    name: p.name,
+    updateDate: p.updateDate || "",
+    area: p.area ?? "",
+    shopname: p.shopname ?? "",
+    rankKey: p.__rankKey ?? getPlayerRankKey(p),
+    score: Number(p.__score ?? 0),
+    rankWeight: Number(p.__detail?.rankWeight ?? 0),
+    realtimeBoost: Number(p.__detail?.realtimeBoost ?? 1),
+    baseScoreBeforeBoost: Number(p.__detail?.baseScoreBeforeBoost ?? 0),
+    scoreAfterBoost: Number(p.__detail?.scoreAfterBoost ?? p.__score ?? 0)
+  }));
+
+  return {
+    type: "matching_open",
+    reason: "matching_button",
+    savedAt: getNowLabelJa(),
+    generatedAt: State.generatedAt || "",
+    latestRound: State.latestRound || "",
+    latestUpdateAt: State.latestUpdateAt || "",
+    currentView: State.currentView || "",
+    diagnostics: State.matchingDiagnostics || null,
+    rankedTop20,
+    displayTop10
+  };
+}
+
+function buildCopyEventRecord(rawText, player, candidateInfo, boost) {
+  return {
+    type: "copy",
+    reason: "copy_action",
+    savedAt: getNowLabelJa(),
+    rawText: String(rawText ?? ""),
+    foundPlayer: !!player,
+    playerName: player?.name ?? "",
+    updateDate: player?.updateDate ?? "",
+    area: player?.area ?? "",
+    areaName: player ? (AreaList[String(player.area)] || player.areaName || "") : "",
+    shopname: player?.shopname ?? "",
+    candidateRank: candidateInfo?.candidateRank ?? null,
+    displayRank: candidateInfo?.displayRank ?? null,
+    baseRank: candidateInfo?.baseRank ?? null,
+    boostedRank: candidateInfo?.boostedRank ?? null,
+    score: candidateInfo?.score ?? null,
+    baseScoreBeforeBoost:
+      candidateInfo?.baseScoreBeforeBoost ??
+      candidateInfo?.scoreDetail?.baseScoreBeforeBoost ??
+      null,
+    scoreAfterBoost:
+      candidateInfo?.scoreAfterBoost ??
+      candidateInfo?.scoreDetail?.scoreAfterBoost ??
+      candidateInfo?.score ??
+      null,
+    rankWeight: candidateInfo?.rankWeight ?? null,
+    cooldownExcluded: !!candidateInfo?.cooldownExcluded,
+    cooldownRemainingSec:
+      Number.isFinite(Number(candidateInfo?.cooldownRemainingSec))
+        ? Number(candidateInfo.cooldownRemainingSec)
+        : null,
+    missReasons: candidateInfo?.missReasons || [],
+    diagnostics: candidateInfo?.diagnostics || State.matchingDiagnostics || null,
+    boost: {
+      rank: Number(boost?.rank ?? 0),
+      area: Number(boost?.area ?? 0),
+      shop: Number(boost?.shop ?? 0),
+      total: Number(boost?.total ?? 1),
+      reason: Array.isArray(boost?.reason) ? boost.reason : []
+    },
+    generatedAt: State.generatedAt || "",
+    latestRound: State.latestRound || "",
+    latestUpdateAt: State.latestUpdateAt || "",
+    currentView: State.currentView || ""
+  };
+}
+
+async function saveMatchingOpenToIndexedDB() {
+  const record = buildMatchingOpenEventRecord();
+  await putViewerEventToIndexedDB(record);
+}
+
+async function saveCopyToIndexedDB(rawText) {
+  const player = findPlayerFromCopiedText(rawText);
+  const candidateInfo = player ? (findCandidateInfoForLog(player) || {}) : {};
+  const boost = player
+    ? getRealtimeBoostDetail(player)
+    : { rank: 0, area: 0, shop: 0, total: 1, reason: [] };
+
+  const record = buildCopyEventRecord(rawText, player, candidateInfo, boost);
+  await putViewerEventToIndexedDB(record);
+}
+
+/* ---------------------------------------------------------
+   appendLog（画面 + localStorage）
+--------------------------------------------------------- */
 function appendLog(msg, type = "info") {
   const box = document.getElementById("logBox");
   const t = getNowLabelJa();
 
-  // 画面ログ
+  // ★ 画面ログ（既存維持）
   if (box) {
     const line = document.createElement("div");
     line.textContent = `[${t}] ${msg}`;
@@ -306,7 +485,7 @@ function appendLog(msg, type = "info") {
     }
   }
 
-  // 永続保存
+  // ★ localStorageへ保存
   saveViewerLogToStorage({
     savedAt: t,
     type,
@@ -318,11 +497,10 @@ function appendLog(msg, type = "info") {
   });
 }
 
-/* --------------------------------------------------------- */
-
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
+
 /* ---------------------------------------------------------    
    [09] 進行中アニメーション
 --------------------------------------------------------- */    
