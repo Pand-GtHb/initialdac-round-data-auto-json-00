@@ -1,147 +1,364 @@
 <!DOCTYPE html>
-<head><html lang="ja">
-  <meta charset="UTF-8">
-  <title>Initial DAC Round Data Viewer</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>InitialD Round Data Viewer（auto-json-00）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 10px;
-      background: #000;
-      color: #fff;
-    }
+<!-- ★ スマホでのキャッシュ完全禁止（最重要） -->
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 
-    .button-row {
-      display: flex;
-      flex-wrap: nowrap;       /* ★折り返し防止 */
-      gap: 4px;
-      margin-bottom: 8px;
-    }
+<style>
+body {
+    font-family: sans-serif;
+    margin: 0;
+    padding: 10px;
+    background: #f5f5f5;
+}
 
-    .button-row button {
-      font-size: 12px;         /* ★スマホ対策 */
-      padding: 6px 8px;
-      white-space: nowrap;     /* ★改行防止 */
-    }
+#logBox {
+    background: #222;
+    padding: 10px;
+    font-size: 12px;
+    white-space: pre-wrap;
+    height: 120px;
+    overflow-y: auto;
+    border-radius: 6px;
+    margin: 15px 0;
+    width: 95%;
+}
 
-    h3 {
-      margin: 8px 0;
-    }
+table {
+    border-collapse: collapse;
+    width: 100%;
+    background: #fff;
+}
+th {
+    background: #0078D4;
+    color: white;
+    padding: 6px;
+}
+td {
+    border: 1px solid #ccc;
+    padding: 6px;
+    background: transparent;
+}
+td.left { text-align:left; }
+td.right { text-align:right; }
+td.center { text-align:center; }
+.clickable { cursor: pointer; color: #0078d4; font-weight: bold; }
 
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      font-size: 13px;
-    }
+#summaryView, #detailView { margin-top: 20px; }
+#detailView { display: none; }
+#matchingView { margin-top: 20px; display: none; }
 
-    th, td {
-      border-bottom: 1px solid #444;
-      padding: 4px;
-    }
+.bar-wrap {
+    width: 100%;
+    background: #ddd;
+    height: 12px;
+    border-radius: 4px;
+}
+.bar {
+    height: 12px;
+    background: #0078D4;
+    border-radius: 4px;
+}
 
-    th {
-      white-space: nowrap;
-    }
+.mt10 { margin-top:10px; }
 
-    .center { text-align: center; }
-    .right { text-align: right; }
-    .left { text-align: left; }
+.player-name {
+    white-space: nowrap;
+    overflow: hidden;
+}
 
-    .bar {
-      height: 6px;
-      background: #00c853;
-    }
+.store-name {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 
-    .bar-wrap {
-      width: 100%;
-      background: #333;
-    }
+    line-height: 1.2em;
+    max-height: calc(1.2em * 2);
 
-    .clickable {
-      cursor: pointer;
-    }
+    white-space: normal;
+    overflow-wrap: anywhere;
 
-  </style>
+    min-width: 150px;
+
+    background: transparent !important;
+    background-color: transparent !important;
+    background-clip: padding-box !important;
+}
+
+.rp-col {
+    max-width: 50px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.title-col {
+    max-width: 70px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.update-col {
+    max-width: 95px;
+    white-space: nowrap;
+}
+
+/* ---------------------------------------------------------
+   ★ periodBox（旧構造）※互換のため残すが使用しない
+--------------------------------------------------------- */
+#periodBox {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    row-gap: 2px;
+    column-gap: 6px;
+    margin-top: 5px;
+}
+
+#periodBox .label,
+.filter-label {
+    width: 5em;
+    text-align: right;
+    padding-right: 6px;
+    font-weight: bold;
+    font-family: inherit;
+    white-space: nowrap;
+}
+
+/* ★ ここを上書きして空白を消す */
+.filter-label {
+    width: 0 !important;
+    padding-right: 0 !important;
+}
+
+#periodBox .value {
+    text-align: left;
+}
+
+/* ---------------------------------------------------------
+   ★ ランク移動ボタン
+--------------------------------------------------------- */
+.rank-nav-box {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    margin-top: 10px;
+    margin-bottom: 8px;
+}
+
+.rank-nav-btn {
+    padding: 6px 14px;
+    font-size: 14px;
+}
+
+#nextRankBtn {
+    margin-left: 40px;
+}
+
+/* ---------------------------------------------------------
+   ★ Reload ボタンの色制御
+--------------------------------------------------------- */
+.update-alert {
+    background-color: #ff8800 !important;
+    color: #fff !important;
+}
+
+/* ---------------------------------------------------------
+   ★ マッチング可能性フラグ
+--------------------------------------------------------- */
+.match-row-pink {
+    background-color: #FFE4EC !important;
+}
+
+/* ---------------------------------------------------------
+   ★ サマリ行の左側にボタンを置く枠
+--------------------------------------------------------- */
+#summaryHeader {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+#summaryHeaderText {
+    font-weight: bold;
+}
+
+/* ---------------------------------------------------------
+   ★ マッチング候補 + 検索窓
+--------------------------------------------------------- */
+#searchRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 95%;
+    margin-top: 10px;
+}
+
+#searchInput {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    width: 95%;
+    max-width: 95%;
+}
+
+/* ---------------------------------------------------------
+   ★ script.js が生成する RUBY/PRIDE の行
+--------------------------------------------------------- */
+.filter-row {
+    display: flex;
+    align-items: center;
+    margin-top: 6px;
+}
+
+.filter-items label {
+    display: inline-flex;
+    align-items: center;
+    min-width: 3.0em;
+    margin-right: 2px;
+}
+
+/* ---------------------------------------------------------
+   ★ 3列レイアウト（今回の主役）
+--------------------------------------------------------- */
+.row3 {
+    display: grid;
+    grid-template-columns: 6em 1em auto;
+    align-items: center;
+    margin-top: 6px;
+}
+
+.row3 .label {
+    text-align: right;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.row3 .colon {
+    text-align: center;
+    font-weight: bold;
+}
+
+.row3 .value {
+    text-align: left;
+}
+</style>
 </head>
 
 <body>
 
-  <!-- =========================
-       上部情報
-  ========================== -->
-  <div>
-    <div>最新ラウンド：<span id="latestRound">読み込み中…</span></div>
-    <div>時間フィルタ：<span id="rangeSelect">15分</span></div>
-    <div>表示開始：<span id="filterStartTime">-</span></div>
-    <div>JSON更新：<span id="jsonUpdateTime">-</span></div>
-  </div>
+<h2>InitialD Round Data Viewer（auto-json-00 対応）</h2>
 
-  <!-- =========================
-       ボタン群（ここが今回の主修正）
-  ========================== -->
-  <div id="buttonArea">
-    <div class="button-row">
-      <button id="reloadBtn">最新データ取得</button>
-      <button id="filterBtn">フィルタ適用</button>
-      <button id="summaryCsvBtn">サマリCSV</button>
-      <button id="allCsvBtn">全データCSV</button>
-      <button id="exportJsonBtn">本日分Log</button>
-    </div>
-  </div>
+<div>
+  <b>最新ラウンド：</b>
+  <span id="latestRound">読み込み中…</span>
+</div>
 
-  <!-- =========================
-       フィルタ
-  ========================== -->
-  <div id="rubyFilters"></div>
-  <div id="prideFilters"></div>
+<div class="mt10">
+  <b>時間フィルタ：</b>
+  <select id="rangeSelect">
+      <option value="15">15分</option>
+      <option value="30">30分</option>
+      <option value="60" selected>1時間</option>
+      <option value="120">2時間</option>
+      <option value="180">3時間</option>
+  </select>
+</div>
 
-  <!-- =========================
-       ナビゲーション
-  ========================== -->
-  <div>
+<!-- ★ 表示開始 -->
+<div class="row3">
+  <div class="label">表示開始</div>
+  <div class="colon">：</div>
+  <div class="value"><span id="filterStartTime">-</span></div>
+</div>
+
+<!-- ★ JSON更新 -->
+<div class="row3">
+  <div class="label">JSON更新</div>
+  <div class="colon">：</div>
+  <div class="value"><span id="jsonUpdateTime">-</span></div>
+</div>
+
+<!-- ★ RUBY -->
+<div class="row3 mt10">
+  <div class="label">RUBY</div>
+  <div class="colon">：</div>
+  <div class="value"><div id="rubyFilters"></div></div>
+</div>
+
+<!-- ★ PRIDE -->
+<div class="row3">
+  <div class="label">PRIDE</div>
+  <div class="colon">：</div>
+  <div class="value"><div id="prideFilters"></div></div>
+</div>
+
+<div class="mt10">
+  <button id="reloadBtn">データReload</button>
+  <button id="summaryCsvBtn">サマリCSV</button>
+  <button id="allCsvBtn">全CSV</button>
+  <button id="exportJsonBtn">本日分Log</button>
+</div>
+
+<div id="logBox"></div>
+
+<div id="searchRow">
+
+    <select id="myRankSelect">
+        <option value="R1">★1</option>
+        <option value="R2">★2</option>
+        <option value="R3">★3</option>
+        <option value="R4">★4</option>
+        <option value="R5">★5</option>
+        <option value="R6" selected>★6</option>
+        <option value="R7">★7</option>
+        <option value="R8">★8</option>
+        <option value="P_A">PRIDE A</option>
+        <option value="P_B">PRIDE B</option>
+        <option value="P_C">PRIDE C</option>
+        <option value="P_D">PRIDE D</option>
+        <option value="P_E">PRIDE E</option>
+        <option value="P_F">PRIDE F</option>
+        <option value="P_G">PRIDE G</option>
+    </select>
+
     <button id="matchingBtn">マッチング候補</button>
-    <button id="backBtn">← サマリに戻る</button>
+    <input id="searchInput" type="text" placeholder="プレイヤー名で絞り込み（ランク横断）" />
+</div>
+
+<div id="summaryView">
+  <div id="summaryHeader">
+      <span id="summaryHeaderText"></span>
+  </div>
+  <div id="summaryArea"></div>
+</div>
+
+<div id="detailView">
+  <button id="backBtn">← サマリに戻る</button>
+
+  <div class="rank-nav-box">
+      <button id="prevRankBtn" class="rank-nav-btn">← 前のランク</button>
+      <button id="nextRankBtn" class="rank-nav-btn">次のランク →</button>
   </div>
 
-  <!-- =========================
-       検索
-  ========================== -->
-  <input id="searchInput" placeholder="検索">
+  <div id="detailArea" class="mt10"></div>
+</div>
 
-  <!-- =========================
-       表示エリア
-  ========================== -->
+<div id="matchingView">
+  <button id="matchingBackBtn">← サマリに戻る</button>
+  <div id="matchingHeader" class="mt10"></div>
+  <div id="matchingArea" class="mt10"></div>
+</div>
 
-  <!-- サマリ -->
-  <div id="summaryView">
-    <div id="summaryArea"></div>
-  </div>
-
-  <!-- 詳細 -->
-  <div id="detailView" style="display:none;">
-    <button id="prevRankBtn">← 前のランク</button>
-    <button id="nextRankBtn">次のランク →</button>
-    <div id="detailArea"></div>
-  </div>
-
-  <!-- マッチング -->
-  <div id="matchingView" style="display:none;">
-    <button id="matchingBackBtn">← サマリに戻る</button>
-    <div id="matchingHeader"></div>
-    <div id="matchingArea"></div>
-  </div>
-
-  <!-- =========================
-       ログ
-  ========================== -->
-  <div id="logBox" style="font-size:11px; margin-top:10px;"></div>
-
-  <!-- =========================
-       スクリプト
-  ========================== -->
-  <script src="script.js"></script>
+<script src="script.js?cb=4"></script>
 
 </body>
 </html>
-
