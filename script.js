@@ -2913,78 +2913,43 @@ async function init() {
   startUpdateWatch();
 }
 /* ---------------------------------------------------------
-   [56] DOMContentLoaded
-   ★ 初期イベント設定 + UIボタン生成
-   ★ スマホ対応：ボタン名短縮（1行維持）
-   ★ buttonArea未存在時の補完生成対応
---------------------------------------------------------- */
+ * [56] DOMContentLoaded
+ * 初期イベント設定
+ *
+ * ■役割
+ * ・HTMLで定義されたUI要素の取得
+ * ・各ボタンイベントの登録
+ * ・検索イベントの登録
+ * ・画面遷移処理の初期化
+ * ・アプリ初期化（init 呼び出し）
+ *
+ * ■変更点（今回）
+ * ・button生成処理を削除（index.htmlへ完全移行）
+ * ・UIはHTML管理、JSはロジック専用に分離
+ *
+ * ■注意
+ * ・DOM構造（id）は index.html と完全一致必須
+ * ・ボタン未存在時も安全に動作するよう if ガードあり
+ * --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
-  // ✅ 履歴初期化（戻る挙動対策）
+
+  // 履歴初期化（戻る対策）
   history.replaceState({ page: STATE.SUMMARY }, '', '');
   history.pushState({ page: STATE.SUMMARY }, '', '');
 
-  // -------------------------------------------------------
-  // ① buttonArea がある場合：ボタンをまとめて生成
-  // -------------------------------------------------------
-  const btnArea = document.getElementById("buttonArea");
-  if (btnArea) {
-    btnArea.innerHTML = `
-      <div class="button-row">
-        <button id="reloadBtn">最新データ取得</button>
-        <button id="filterBtn">フィルタ適用</button>
-        <button id="summaryCsvBtn">サマリCSV</button>
-        <button id="allCsvBtn">全データCSV</button>
-        <button id="exportJsonBtn">本日分Log</button>
-      </div>
-    `;
-  }
+  // 要素取得
+  const reloadBtn = document.getElementById("reloadBtn");
+  const filterBtn = document.getElementById("filterBtn");
+  const summaryCsvBtn = document.getElementById("summaryCsvBtn");
+  const allCsvBtn = document.getElementById("allCsvBtn");
+  const exportJsonBtn = document.getElementById("exportJsonBtn");
 
-  // -------------------------------------------------------
-  // ② buttonAreaが無い場合の補完生成
-  // -------------------------------------------------------
-  let reloadBtn = document.getElementById("reloadBtn");
-  let filterBtn = document.getElementById("filterBtn");
-  let summaryCsvBtn = document.getElementById("summaryCsvBtn");
-  let allCsvBtn = document.getElementById("allCsvBtn");
-  let exportJsonBtn = document.getElementById("exportJsonBtn");
-  let backBtn = document.getElementById("backBtn");
-  let matchingBtn = document.getElementById("matchingBtn");
-  let matchingBackBtn = document.getElementById("matchingBackBtn");
-  let searchInput = document.getElementById("searchInput");
+  const backBtn = document.getElementById("backBtn");
+  const matchingBtn = document.getElementById("matchingBtn");
+  const matchingBackBtn = document.getElementById("matchingBackBtn");
+  const searchInput = document.getElementById("searchInput");
 
-  // ★ JSONボタン未存在なら追加
-  if (!exportJsonBtn) {
-    if (allCsvBtn && allCsvBtn.parentElement) {
-      exportJsonBtn = document.createElement("button");
-      exportJsonBtn.id = "exportJsonBtn";
-      exportJsonBtn.textContent = "本日分Log";
-      allCsvBtn.parentElement.appendChild(exportJsonBtn);
-    } else {
-      exportJsonBtn = document.createElement("button");
-      exportJsonBtn.id = "exportJsonBtn";
-      exportJsonBtn.textContent = "本日分Log";
-      document.body.appendChild(exportJsonBtn);
-    }
-  }
-
-  // -------------------------------------------------------
-  // 再取得（DOM変更後の安全再取得）
-  // -------------------------------------------------------
-  reloadBtn = document.getElementById("reloadBtn");
-  filterBtn = document.getElementById("filterBtn");
-  summaryCsvBtn = document.getElementById("summaryCsvBtn");
-  allCsvBtn = document.getElementById("allCsvBtn");
-  exportJsonBtn = document.getElementById("exportJsonBtn");
-  backBtn = document.getElementById("backBtn");
-  matchingBtn = document.getElementById("matchingBtn");
-  matchingBackBtn = document.getElementById("matchingBackBtn");
-  searchInput = document.getElementById("searchInput");
-
-  // -------------------------------------------------------
-  // ボタンイベント設定
-  // -------------------------------------------------------
-
-  // ✅ 最新データ取得
+  // 最新データ取得
   if (reloadBtn) {
     reloadBtn.classList.remove("update-alert");
     reloadBtn.style.cssText = "";
@@ -2993,7 +2958,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  // ✅ フィルタ適用
+  // フィルタ適用
   if (filterBtn) {
     filterBtn.onclick = () => {
       startProgress();
@@ -3004,20 +2969,19 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  // ✅ CSV / JSON
+  // CSV / JSON
   if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;
   if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;
   if (exportJsonBtn) exportJsonBtn.onclick = exportTodayLogsAsJSON;
 
-  // -------------------------------------------------------
-  // 検索イベント
-  // -------------------------------------------------------
+  // 検索
   if (searchInput) {
     searchInput.addEventListener("input", (e) => {
       State.searchText = e.target.value;
 
       if (isCurrentView(STATE.SUMMARY)) {
         renderSummary();
+
       } else if (isCurrentView(STATE.DETAIL)) {
         applyPlayerFilter(State.searchText, State.currentIsRubyBand);
         renderDetailTable(
@@ -3025,15 +2989,14 @@ document.addEventListener("DOMContentLoaded", () => {
           State.currentDetailLabel || "",
           State.currentDetailIcon || ""
         );
+
       } else if (isCurrentView(STATE.MATCHING)) {
         applyMatchingFilter(State.searchText);
       }
     });
   }
 
-  // -------------------------------------------------------
-  // 戻るボタン（サマリ）
-  // -------------------------------------------------------
+  // サマリ戻る
   if (backBtn && searchInput) {
     backBtn.onclick = () => {
       State.searchText = "";
@@ -3042,9 +3005,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  // -------------------------------------------------------
   // マッチング表示
-  // -------------------------------------------------------
   if (matchingBtn && searchInput) {
     matchingBtn.onclick = () => {
       State.searchText = "";
@@ -3053,9 +3014,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  // -------------------------------------------------------
-  // マッチング → サマリ戻る
-  // -------------------------------------------------------
+  // マッチング戻る
   if (matchingBackBtn && searchInput) {
     matchingBackBtn.onclick = () => {
       State.searchText = "";
@@ -3064,9 +3023,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  // -------------------------------------------------------
   // ランク選択
-  // -------------------------------------------------------
   const myRankSelect = document.getElementById("myRankSelect");
   if (myRankSelect) {
     syncMyRankSelection(myRankSelect.value);
@@ -3077,9 +3034,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // -------------------------------------------------------
   // 初期化
-  // -------------------------------------------------------
   init();
 });
 /* ---------------------------------------------------------
