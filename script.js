@@ -287,6 +287,186 @@ function formatMatchTopList(list, count = MATCHING_LOG_CONFIG.topListCount) {
     .map(p => `${p.name}(${Number(p.__score ?? 0).toFixed(2)})`)
     .join(" / ");
 }
+/* ---------------------------------------------------------
+   [08-DB] IndexedDB 保存
+   ★ matching_open / copy イベントを自動保存
+--------------------------------------------------------- */
+const IDB_CONFIG = {
+  dbName: "InitialDacViewerDB",
+  dbVersion: 1,
+  stores: {
+    events: "events"
+  }
+};
+
+let idbOpenPromise = null;
+
+function openViewerIndexedDB() {
+  if (idbOpenPromise) return idbOpenPromise;
+
+  idbOpenPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error("indexedDB_not_supported"));
+      return;
+    }
+
+    const req = indexedDB.open(IDB_CONFIG.dbName, IDB_CONFIG.dbVersion);
+
+    req.onupgradeneeded = (event) => {
+      const db = event.target.result;
+
+      if (!db.objectStoreNames.contains(IDB_CONFIG.stores.events)) {
+        const store = db.createObjectStore(IDB_CONFIG.stores.events, {
+          keyPath: "id",
+          autoIncrement: true
+        });
+        store.createIndex("type", "type", { unique: false });
+        store.createIndex("savedAt", "savedAt", { unique: false });
+        store.createIndex("reason", "reason", { unique: false });
+      }
+    };
+
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("indexeddb_open_failed"));
+  });
+
+  return idbOpenPromise;
+}
+
+async function putViewerEventToIndexedDB(record) {
+  try {
+    const db = await openViewerIndexedDB();
+
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_CONFIG.stores.events, "readwrite");
+      const store = tx.objectStore(IDB_CONFIG.stores.events);
+      store.add(record);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error("indexeddb_tx_failed"));
+      tx.onabort = () => reject(tx.error || new Error("indexeddb_tx_aborted"));
+    });
+  } catch (e) {
+    console.warn("IndexedDB write failed:", e);
+    try {
+      const box = document.getElementById("logBox");
+      if (box) {
+        const t = getNowLabelJa();
+        const line = document.createElement("div");
+        line.textContent = `[${t}] IndexedDB保存失敗: ${e.message || e}`;
+        line.dataset.type = "warn";
+        line.style.color = "#ffeb3b";
+        box.prepend(line);
+      }
+    } catch (_) {}
+  }
+}
+
+function buildMatchingOpenEventRecord() {
+  const rankedTop20 = (State.matchingRankedAll || []).slice(0, 20).map((p, idx) => ({
+    rank: idx + 1,
+    name: p.name,
+    updateDate: p.updateDate || "",
+    area: p.area ?? "",
+    shopname: p.shopname ?? "",
+    rankKey: p.__rankKey ?? getPlayerRankKey(p),
+    score: Number(p.__score ?? 0),
+    rankWeight: Number(p.__detail?.rankWeight ?? 0),
+    realtimeBoost: Number(p.__detail?.realtimeBoost ?? 1),
+    baseScoreBeforeBoost: Number(p.__detail?.baseScoreBeforeBoost ?? 0),
+    scoreAfterBoost: Number(p.__detail?.scoreAfterBoost ?? p.__score ?? 0)
+  }));
+
+  const displayTop10 = (State.matchingList || []).map((p, idx) => ({
+    rank: idx + 1,
+    name: p.name,
+    updateDate: p.updateDate || "",
+    area: p.area ?? "",
+    shopname: p.shopname ?? "",
+    rankKey: p.__rankKey ?? getPlayerRankKey(p),
+    score: Number(p.__score ?? 0),
+    rankWeight: Number(p.__detail?.rankWeight ?? 0),
+    realtimeBoost: Number(p.__detail?.realtimeBoost ?? 1),
+    baseScoreBeforeBoost: Number(p.__detail?.baseScoreBeforeBoost ?? 0),
+    scoreAfterBoost: Number(p.__detail?.scoreAfterBoost ?? p.__score ?? 0)
+  }));
+
+  return {
+    type: "matching_open",
+    reason: "matching_button",
+    savedAt: getNowLabelJa(),
+    generatedAt: State.generatedAt || "",
+    latestRound: State.latestRound || "",
+    latestUpdateAt: State.latestUpdateAt || "",
+    currentView: State.currentView || "",
+    diagnostics: State.matchingDiagnostics || null,
+    rankedTop20,
+    displayTop10
+  };
+}
+
+async function saveMatchingOpenToIndexedDB() {
+  const record = buildMatchingOpenEventRecord();
+  await putViewerEventToIndexedDB(record);
+}
+/* ---------------------------------------------------------
+   [08-EXPORT] IndexedDB → 日付別JSON出力
+   ★ 同じ日付のログを1つのJSONにまとめて出力
+--------------------------------------------------------- */
+function downloadJSON(filename, dataObject) {
+  const blob = new Blob(
+    [JSON.stringify(dataObject, null, 2)],
+    { type: "application/json;charset=utf-8" }
+  );
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function exportIndexedDBLogsByDate(targetYmd = getTodayYMDJa()) {
+  try {
+    const db = await openViewerIndexedDB();
+
+    const events = await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_CONFIG.stores.events, "readonly");
+      const store = tx.objectStore(IDB_CONFIG.stores.events);
+      const req = store.getAll();
+
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error || new Error("indexeddb_read_failed"));
+    });
+
+    const dayEvents = events.filter(ev =>
+      String(ev.savedAt || "").startsWith(targetYmd)
+    );
+
+    const payload = {
+      exportedAt: getNowLabelJa(),
+      targetDate: targetYmd,
+      totalEvents: dayEvents.length,
+      appInfo: {
+        latestRound: State.latestRound || "",
+        generatedAt: State.generatedAt || "",
+        latestUpdateAt: State.latestUpdateAt || ""
+      },
+      events: dayEvents
+    };
+
+    const filename = `viewer_logs_${compactYMD(targetYmd)}.json`;
+    downloadJSON(filename, payload);
+
+    log(`JSON出力完了: ${filename} / ${dayEvents.length}件`);
+  } catch (e) {
+    logError(`JSON出力に失敗: ${e.message || e}`);
+  }
+}
+
+function exportTodayLogsAsJSON() {
+  exportIndexedDBLogsByDate(getTodayYMDJa());
+}
 /* ---------------------------------------------------------    
    [09] 進行中アニメーション
 --------------------------------------------------------- */    
@@ -2426,7 +2606,8 @@ function applyMatchingFilter(keyword) {
   if (countEl) countEl.textContent = fmt(list.length);    
   renderMatchingRows(list);    
 }    
-/* ---------------------------------------------------------/* ------------------------------------------------52] showMatchingCandidates
+/* ---------------------------------------------------------
+   [52] showMatchingCandidates
    ★ マッチング候補画面表示
    ★ IndexedDB自動保存：マッチング候補ボタン押下時
 --------------------------------------------------------- */
@@ -2434,7 +2615,9 @@ function showMatchingCandidates(push = true) {
   buildMatchingCandidates();
 
   // ★ 候補画面を開いた瞬間の状態を自動保存
-  saveMatchingOpenToIndexedDB();
+  if (typeof saveMatchingOpenToIndexedDB === "function") {
+    saveMatchingOpenToIndexedDB();
+  }
 
   renderMatchingHeader();
   renderMatchingTable();
@@ -2517,24 +2700,24 @@ async function init() {
 /* ---------------------------------------------------------
  * [56] DOMContentLoaded
  * 初期イベント設定
- *
+ * 
  * ■役割
  * ・HTMLで定義されたUI要素の取得
  * ・各ボタンイベントの登録
  * ・検索イベントの登録
  * ・画面遷移処理の初期化
  * ・アプリ初期化（init 呼び出し）
- *
+ * 
  * ■変更点（今回）
+ * ・未定義関数があっても起動全体を止めない保護を追加
  * ・button生成処理を削除（index.htmlへ完全移行）
  * ・UIはHTML管理、JSはロジック専用に分離
- *
+ * 
  * ■注意
  * ・DOM構造（id）は index.html と完全一致必須
  * ・ボタン未存在時も安全に動作するよう if ガードあり
  * --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
-
   // 履歴初期化（戻る対策）
   history.replaceState({ page: STATE.SUMMARY }, '', '');
   history.pushState({ page: STATE.SUMMARY }, '', '');
@@ -2545,7 +2728,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const summaryCsvBtn = document.getElementById("summaryCsvBtn");
   const allCsvBtn = document.getElementById("allCsvBtn");
   const exportJsonBtn = document.getElementById("exportJsonBtn");
-
   const backBtn = document.getElementById("backBtn");
   const matchingBtn = document.getElementById("matchingBtn");
   const matchingBackBtn = document.getElementById("matchingBackBtn");
@@ -2574,7 +2756,14 @@ document.addEventListener("DOMContentLoaded", () => {
   // CSV / JSON
   if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;
   if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;
-  if (exportJsonBtn) exportJsonBtn.onclick = exportTodayLogsAsJSON;
+  if (exportJsonBtn) {
+    if (typeof exportTodayLogsAsJSON === "function") {
+      exportJsonBtn.onclick = exportTodayLogsAsJSON;
+    } else {
+      logWarn("exportTodayLogsAsJSON が未定義のため JSON出力ボタンは無効化されました");
+      exportJsonBtn.disabled = true;
+    }
+  }
 
   // 検索
   if (searchInput) {
@@ -2583,7 +2772,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (isCurrentView(STATE.SUMMARY)) {
         renderSummary();
-
       } else if (isCurrentView(STATE.DETAIL)) {
         applyPlayerFilter(State.searchText, State.currentIsRubyBand);
         renderDetailTable(
@@ -2591,7 +2779,6 @@ document.addEventListener("DOMContentLoaded", () => {
           State.currentDetailLabel || "",
           State.currentDetailIcon || ""
         );
-
       } else if (isCurrentView(STATE.MATCHING)) {
         applyMatchingFilter(State.searchText);
       }
@@ -2629,7 +2816,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const myRankSelect = document.getElementById("myRankSelect");
   if (myRankSelect) {
     syncMyRankSelection(myRankSelect.value);
-
     myRankSelect.addEventListener("change", (e) => {
       const selectedMyRank = syncMyRankSelection(e.target.value);
       log(`自分ランク変更：${selectedMyRank}`);
