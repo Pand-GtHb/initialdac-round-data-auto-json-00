@@ -133,9 +133,11 @@ function switchDisplayView(view) {
 }
 /* ---------------------------------------------------------
    [08] ログ基盤（appendLog / log / logWarn / logError）
-   ★ 画面ログ + localStorage 永続保存
-   ※ copy / matching / snapshot / IndexedDB は分離
+   ★ 完全時系列保証
+   ★ 逆順表示（新しいものが上）
+   ★ progressLineを破壊しない設計
 --------------------------------------------------------- */
+
 const MAX_LOG_LINES = 200;
 
 /* ★ 永続保存キー（localStorage） */
@@ -151,12 +153,14 @@ const LOG_STORAGE_LIMITS = {
   copyEvents: 200,
   matchingSnapshots: 100
 };
+
 /* ---------------------------------------------------------
-   [08-LOGCORE] 完全時系列保証ログ基盤（表示は逆順）
+   [08-LOGCORE] 単一定義（重複削除済）
 --------------------------------------------------------- */
-let LOG_SEQ = 0;                // 絶対順序ID
-const LOG_BUFFER = [];          // viewerログ全保持（描画用）
-const MAX_LOG_RENDER = 200;     // 表示上限
+let LOG_SEQ = 0;
+const LOG_BUFFER = [];
+const MAX_LOG_RENDER = 200;
+
 /* ---------------------------------------------------------
    [08-1] 共通ユーティリティ（時間）
 --------------------------------------------------------- */
@@ -173,18 +177,6 @@ function getNowLabelJa() {
   });
 }
 
-function getTodayYMDJa() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = ("0" + (now.getMonth() + 1)).slice(-2);
-  const d = ("0" + now.getDate()).slice(-2);
-  return `${y}/${m}/${d}`;
-}
-
-function compactYMD(ymd) {
-  return String(ymd || "").replace(/\//g, "");
-}
-
 /* ---------------------------------------------------------
    [08-2] localStorage
 --------------------------------------------------------- */
@@ -194,7 +186,7 @@ function readStoredArraySafe(key) {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -210,8 +202,7 @@ function writeStoredArraySafe(key, list) {
 function pushStoredRecord(key, record, limit = 200) {
   const arr = readStoredArraySafe(key);
   arr.unshift(record);
-  const trimmed = arr.slice(0, limit);
-  writeStoredArraySafe(key, trimmed);
+  writeStoredArraySafe(key, arr.slice(0, limit));
 }
 
 /* ---------------------------------------------------------
@@ -224,14 +215,9 @@ function saveViewerLogToStorage(payload) {
     LOG_STORAGE_LIMITS.viewerLogs
   );
 }
+
 /* ---------------------------------------------------------
-   [08-LOGCORE] 完全時系列保証ログ基盤
---------------------------------------------------------- */
-let LOG_SEQ = 0;                // 絶対順序ID
-const LOG_BUFFER = [];          // ログ全保持
-const MAX_LOG_RENDER = 200;     // 表示上限
-/* ---------------------------------------------------------
-   [08-4] appendLog（完全時系列保証・逆順表示版）
+   [08-4] appendLog（完全時系列保証）
 --------------------------------------------------------- */
 function appendLog(msg, type = "info") {
   const box = document.getElementById("logBox");
@@ -244,7 +230,6 @@ function appendLog(msg, type = "info") {
     type,
     message: String(msg ?? ""),
 
-    // ★既存保存情報を維持
     currentView: State.currentView || "",
     generatedAt: State.generatedAt || "",
     latestRound: State.latestRound || "",
@@ -253,7 +238,6 @@ function appendLog(msg, type = "info") {
 
   LOG_BUFFER.push(record);
 
-  // ★localStorage保存（既存機能維持）
   saveViewerLogToStorage({
     savedAt: record.label,
     type: record.type,
@@ -264,25 +248,26 @@ function appendLog(msg, type = "info") {
     latestUpdateAt: record.latestUpdateAt
   });
 
-  // ★描画は専用関数へ委譲
   renderLogs(box);
 }
-``
-/* ★ ラッパー */
-const log = msg => appendLog(msg, "info");
-const logWarn = msg => appendLog(msg, "warn");
-const logError = msg => appendLog(msg, "error");
 
 /* ---------------------------------------------------------
-   [08-LOGRENDER] ログ描画（完全時系列保証＋逆順表示）
+   [08-LOGRENDER] ログ描画（逆順＋progress保護）
 --------------------------------------------------------- */
 function renderLogs(box) {
   if (!box) return;
 
-  // ★ timeが同一ならseqで絶対順序保証
+  // ★ progressLine退避
+  let progress = null;
+  if (window.progressLine && box.contains(progressLine)) {
+    progress = progressLine;
+    progress.remove();
+  }
+
+  // ★ 時系列ソート（新しい順）
   const sorted = [...LOG_BUFFER].sort((a, b) => {
-    if (a.time !== b.time) return b.time - a.time; // 新しいものが上
-    return b.seq - a.seq;                          // 新しいものが上
+    if (a.time !== b.time) return b.time - a.time;
+    return b.seq - a.seq;
   });
 
   const slice = sorted.slice(0, MAX_LOG_RENDER);
@@ -306,9 +291,22 @@ function renderLogs(box) {
 
   box.innerHTML = "";
   box.appendChild(frag);
+
+  // ★ progressLineを最上部へ戻す
+  if (progress) {
+    box.prepend(progress);
+  }
 }
+
 /* ---------------------------------------------------------
-   [08-A] copyログ（統一JSON）
+   [08-UTIL] ラッパー
+--------------------------------------------------------- */
+const log = msg => appendLog(msg, "info");
+const logWarn = msg => appendLog(msg, "warn");
+const logError = msg => appendLog(msg, "error");
+
+/* ---------------------------------------------------------
+   [08-A] copyログ
 --------------------------------------------------------- */
 function saveCopyEventToStorage(payload) {
   pushStoredRecord(
@@ -317,8 +315,9 @@ function saveCopyEventToStorage(payload) {
     LOG_STORAGE_LIMITS.copyEvents
   );
 }
+
 /* ---------------------------------------------------------
-   [08-B] MATCHINGログ
+   [08-B] MATCHINGログ補助
 --------------------------------------------------------- */
 const MATCHING_LOG_CONFIG = {
   verboseTopDetails: false,
@@ -364,6 +363,7 @@ function openViewerIndexedDB() {
           keyPath: "id",
           autoIncrement: true
         });
+
         store.createIndex("type", "type", { unique: false });
         store.createIndex("savedAt", "savedAt", { unique: false });
         store.createIndex("reason", "reason", { unique: false });
@@ -384,25 +384,19 @@ async function putViewerEventToIndexedDB(record) {
     await new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_CONFIG.stores.events, "readwrite");
       const store = tx.objectStore(IDB_CONFIG.stores.events);
+
       store.add(record);
 
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error || new Error("indexeddb_tx_failed"));
       tx.onabort = () => reject(tx.error || new Error("indexeddb_tx_aborted"));
     });
+
   } catch (e) {
     console.warn("IndexedDB write failed:", e);
-    try {
-      const box = document.getElementById("logBox");
-      if (box) {
-        const t = getNowLabelJa();
-        const line = document.createElement("div");
-        line.textContent = `[${t}] IndexedDB保存失敗: ${e.message || e}`;
-        line.dataset.type = "warn";
-        line.style.color = "#ffeb3b";
-        box.prepend(line);
-      }
-    } catch (_) {}
+
+    // ★修正：appendLog系へ統一
+    logWarn("IndexedDB保存失敗: " + (e.message || e));
   }
 }
 
@@ -495,40 +489,56 @@ function exportTodayLogsAsJSON() {
 
   log(`JSON出力完了: ${filename} / copy=${todayCopyEvents.length} / viewer=${todayViewerLogs.length}`);
 }
-/* ---------------------------------------------------------    
+/* ---------------------------------------------------------
    [09] 進行中アニメーション
---------------------------------------------------------- */    
-let progressTimer = null;    
-let progressPos = 0;    
-let progressLine = null;    
-function startProgress() {    
-  const box = document.getElementById("logBox");    
-  if (progressLine) progressLine.remove();    
-  progressPos = 0;    
-  progressLine = document.createElement("div");    
-  progressLine.style.color = "#ffeb3b";    
-  box.prepend(progressLine);    
-  updateProgressBar();    
-  progressTimer = setInterval(() => {    
-    progressPos = (progressPos + 1) % 20;    
-    updateProgressBar();    
-  }, 120);    
-}    
-function updateProgressBar() {    
-  const total = 20;    
-  const filled = "■".repeat(progressPos);    
-  const empty = "□".repeat(total - progressPos);    
-  progressLine.textContent = `進行中：${filled}${empty}`;    
-}    
-function stopProgress() {    
-  if (progressTimer) clearInterval(progressTimer);    
-  progressTimer = null;    
-  if (progressLine) {    
-    progressLine.remove();    
-    progressLine = null;    
-  }    
-  log("Viewer フィルタ完了");    
-}    
+--------------------------------------------------------- */
+let progressTimer = null;
+let progressPos = 0;
+
+// ★修正：global化
+window.progressLine = null;
+
+function startProgress() {
+  const box = document.getElementById("logBox");
+
+  if (window.progressLine) window.progressLine.remove();
+
+  progressPos = 0;
+
+  window.progressLine = document.createElement("div");
+  window.progressLine.style.color = "#ffeb3b";
+
+  box.prepend(window.progressLine);
+
+  updateProgressBar();
+
+  progressTimer = setInterval(() => {
+    progressPos = (progressPos + 1) % 20;
+    updateProgressBar();
+  }, 120);
+}
+
+function updateProgressBar() {
+  if (!window.progressLine) return;
+
+  const total = 20;
+  const filled = "■".repeat(progressPos);
+  const empty = "□".repeat(total - progressPos);
+
+  window.progressLine.textContent = `進行中：${filled}${empty}`;
+}
+
+function stopProgress() {
+  if (progressTimer) clearInterval(progressTimer);
+  progressTimer = null;
+
+  if (window.progressLine) {
+    window.progressLine.remove();
+    window.progressLine = null;
+  }
+
+  log("Viewer フィルタ完了");
+}   
 /* ---------------------------------------------------------
    [10] 日付・数値ユーティリティ（fmt / parseDateJST / formatYMDHM）
 --------------------------------------------------------- */
@@ -2216,22 +2226,28 @@ function exportAllCSV() {
 }    
 /* ---------------------------------------------------------
    [46] copyToClipboard
-   ★ コピー + copyログ完全保存（統一構造）
-   ★ ログは saveCopyEventUnified へ集約
-   ★ デバッグセッション開始/完了対応
+   ★ copy + matching完全解析対応版
 --------------------------------------------------------- */
 function copyToClipboard(text) {
-  // ★ copy操作単位でデバッグセッション開始
+
+  // ★ セッション開始
   State.debugSession = startDebugSession({
     type: "copy",
     rawText: String(text ?? "")
   });
 
   const afterCopySuccess = () => {
-    // ★ copyログ完全保存（統一）
+
+    // ★ ① 履歴更新（最優先）
+    recordClickFromCopiedText(text);
+
+    // ★ ② matching再計算（ここが重要）
+    buildMatchingCandidates();
+
+    // ★ ③ 結果保存
     const record = saveCopyEventUnified(text);
 
-    // ★ 表示ログ（簡潔）
+    // ★ 表示ログ
     log(
       "コピー: " + (record.name || "-")
       + " / CandidateRank:" + (record.candidateRank ?? "-")
@@ -2240,10 +2256,7 @@ function copyToClipboard(text) {
       + " / Miss:" + (record.missReason || "-")
     );
 
-    // ★ 既存：履歴アンカー
-    recordClickFromCopiedText(text);
-
-    // ★ デバッグセッション完了
+    // ★ セッション完了（完全データで）
     finalizeDebugSession(record.__debugSnapshot || {
       result: {
         name: record.name || "",
@@ -2255,9 +2268,7 @@ function copyToClipboard(text) {
     });
   };
 
-  // -----------------------------------------------------
-  // クリップボード処理（既存完全維持）
-  // -----------------------------------------------------
+  // ---- clipboard処理 ----
   if (!navigator.clipboard) {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -2270,11 +2281,10 @@ function copyToClipboard(text) {
   }
 
   navigator.clipboard.writeText(text)
-    .then(() => {
-      afterCopySuccess();
-    })
+    .then(afterCopySuccess)
     .catch(() => {
       logError("コピーに失敗しました");
+
       finalizeDebugSession({
         result: {
           name: "",
