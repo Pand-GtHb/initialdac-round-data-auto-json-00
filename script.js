@@ -690,6 +690,42 @@ function applyLatestRoundJson(json) {
   log("latest_round.json 読み込み完了");
 }
 /* ---------------------------------------------------------
+   [16-B] latest_update 取得/適用 分離
+   ★ 起動時にも latestUpdateAt を確実に反映
+   ★ lastUpdated / latestUpdateAt の両対応
+--------------------------------------------------------- */
+async function loadLatestUpdate() {
+  try {
+    const json = await fetchLatestUpdateJson();
+    applyLatestUpdateJson(json);
+  } catch (e) {
+    logWarn("latest_update.json 未取得：" + e.message);
+  }
+}
+
+async function fetchLatestUpdateJson() {
+  return fetchJSON("latest_update.json");
+}
+
+function applyLatestUpdateJson(json) {
+  let latest = json?.lastUpdated ?? json?.latestUpdateAt ?? "";
+
+  if (typeof latest !== "string") {
+    latest = String(latest ?? "");
+  }
+
+  State.latestUpdateAt = latest;
+
+  if (!latest) {
+    logWarn("latest_update.json に更新時刻が存在しません");
+    return;
+  }
+
+  const parsed = parseDateJST(latest);
+  const label = parsed ? formatYMDHM(parsed) : latest;
+  log("latest_update.json 読み込み完了 (" + label + ")");
+}
+/* ---------------------------------------------------------
    [17] loadRankModel（SeasonモデルからRankモデルに変更）
 --------------------------------------------------------- */
 async function loadRankModel() {
@@ -845,22 +881,23 @@ async function prefetchLatestRoundData(lastUpdatedValue) {
   return State.prefetchInFlight;
 }
 /* ---------------------------------------------------------
-   [19-B] checkUpdate（型安全補強版）
+   [19-B] checkUpdate（共通apply利用版）
 --------------------------------------------------------- */
 async function checkUpdate() {
   try {
-    const json = await fetchJSON("latest_update.json");
+    const prev = State.latestUpdateAt || "";
+    const json = await fetchLatestUpdateJson();
 
-    let latest = json.lastUpdated || "";
-
-    // ★ 型保証（重要）
+    let latest = json?.lastUpdated ?? json?.latestUpdateAt ?? "";
     if (typeof latest !== "string") {
       latest = String(latest || "");
     }
-
     if (!latest) return;
 
-    const changed = State.latestUpdateAt && State.latestUpdateAt !== latest;
+    const changed = prev && prev !== latest;
+
+    // ★ 安全代入
+    State.latestUpdateAt = latest;
 
     if (changed) {
       const btn = document.getElementById("reloadBtn");
@@ -868,21 +905,19 @@ async function checkUpdate() {
         btn.classList.add("update-alert");
         btn.style.cssText = "background:#ff4081;color:#fff;font-weight:bold;";
       }
+
       logWarn("新しいデータが公開されています。");
 
-      // ★ 先読み（既存）
+      // ★ 先読み（既存維持）
       prefetchLatestRoundData(latest);
     }
-
-    // ★ 安全代入
-    State.latestUpdateAt = latest;
-
   } catch (e) {
     logError("latest_update.json の取得に失敗：" + e.message);
   }
 }
 /* ---------------------------------------------------------    
-   [20] buildAreaDistribution（分布計算）「フィルタ後母集団のエリア分布」を自動計算して使う 分布計算関数
+   [20] buildAreaDistribution（分布計算）
+   「フィルタ後母集団のエリア分布」を自動計算して使う 分布計算関数
 --------------------------------------------------------- */    
 function buildAreaDistribution(list) {    
   const counts = {};    
@@ -2632,7 +2667,6 @@ function clearSearch() {
 async function init() {
   log("Viewer 初期化中");
   startProgress();
-
   buildRubyFilters();
   buildPrideFilters();
 
@@ -2642,12 +2676,14 @@ async function init() {
     const [
       areaJson,
       latestRoundJson,
+      latestUpdateJson,
       rankModelJson,
       scoringConfigJson,
       roundDataJson
     ] = await Promise.all([
       fetchAreaListJson(),
       fetchLatestRoundJson(),
+      fetchLatestUpdateJson(),
       fetchRankModelJson(),
       fetchScoringConfigJson(),
       fetchRoundDataJson()
@@ -2656,6 +2692,7 @@ async function init() {
     // ★ 適用順序だけ維持
     applyAreaListJson(areaJson);
     applyLatestRoundJson(latestRoundJson);
+    applyLatestUpdateJson(latestUpdateJson);
     applyRankModelJson(rankModelJson);
     applyScoringConfigJson(scoringConfigJson);
     applyRoundDataJson(roundDataJson, { resetReloadButton: true });
@@ -2664,9 +2701,10 @@ async function init() {
     logError("初期化並列取得に失敗：" + e.message);
     logWarn("逐次ロードへフォールバックします");
 
-    // ★ フォールバック：既存逐次処理
+    // ★ フォールバック：既存逐次処理 + latest_update追加
     await loadAreaList();
     await loadLatestRound();
+    await loadLatestUpdate();
     await loadRankModel();
     await loadScoringConfig();
     await loadRoundData();
@@ -2675,7 +2713,6 @@ async function init() {
   applyFilters();
   buildSummary();
   renderSummary();
-
   stopProgress();
   log("Viewer 初期化完了");
   startUpdateWatch();
