@@ -410,62 +410,46 @@ async function saveMatchingOpenToIndexedDB() {
   await putViewerEventToIndexedDB(record);
 }
 /* ---------------------------------------------------------
-   [08-EXPORT] IndexedDB → 日付別JSON出力
-   ★ 同じ日付のログを1つのJSONにまとめて出力
+   [08-EXPORT] localStorage → 本日分JSON出力
+   ★ IndexedDBは使用しない
+   ★ viewerLogs / copyEvents をまとめてJSON保存
 --------------------------------------------------------- */
-function downloadJSON(filename, dataObject) {
+function exportTodayLogsAsJSON() {
+
+  const today = getTodayYMDJa();
+
+  const viewerLogs = readStoredArraySafe(LOG_STORAGE_KEYS.viewerLogs);
+  const copyEvents = readStoredArraySafe(LOG_STORAGE_KEYS.copyEvents);
+
+  const isToday = (savedAt) => {
+    return String(savedAt || "").startsWith(today);
+  };
+
+  const todayViewerLogs = viewerLogs.filter(x => isToday(x.savedAt));
+  const todayCopyEvents = copyEvents.filter(x => isToday(x.savedAt));
+
+  const payload = {
+    exportedAt: getNowLabelJa(),
+    targetDate: today,
+    viewerLogs: todayViewerLogs,
+    copyEvents: todayCopyEvents
+  };
+
+  const filename = `viewer_logs_${compactYMD(today)}.json`;
+
   const blob = new Blob(
-    [JSON.stringify(dataObject, null, 2)],
+    [JSON.stringify(payload, null, 2)],
     { type: "application/json;charset=utf-8" }
   );
+
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
-}
 
-async function exportIndexedDBLogsByDate(targetYmd = getTodayYMDJa()) {
-  try {
-    const db = await openViewerIndexedDB();
-
-    const events = await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_CONFIG.stores.events, "readonly");
-      const store = tx.objectStore(IDB_CONFIG.stores.events);
-      const req = store.getAll();
-
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => reject(req.error || new Error("indexeddb_read_failed"));
-    });
-
-    const dayEvents = events.filter(ev =>
-      String(ev.savedAt || "").startsWith(targetYmd)
-    );
-
-    const payload = {
-      exportedAt: getNowLabelJa(),
-      targetDate: targetYmd,
-      totalEvents: dayEvents.length,
-      appInfo: {
-        latestRound: State.latestRound || "",
-        generatedAt: State.generatedAt || "",
-        latestUpdateAt: State.latestUpdateAt || ""
-      },
-      events: dayEvents
-    };
-
-    const filename = `viewer_logs_${compactYMD(targetYmd)}.json`;
-    downloadJSON(filename, payload);
-
-    log(`JSON出力完了: ${filename} / ${dayEvents.length}件`);
-  } catch (e) {
-    logError(`JSON出力に失敗: ${e.message || e}`);
-  }
-}
-
-function exportTodayLogsAsJSON() {
-  exportIndexedDBLogsByDate(getTodayYMDJa());
+  log(`JSON出力完了: ${filename} / copy=${todayCopyEvents.length} / viewer=${todayViewerLogs.length}`);
 }
 /* ---------------------------------------------------------    
    [09] 進行中アニメーション
@@ -2607,20 +2591,19 @@ function applyMatchingFilter(keyword) {
   renderMatchingRows(list);    
 }    
 /* ---------------------------------------------------------
-   [52] showMatchingCandidates
-   ★ マッチング候補画面表示
-   ★ IndexedDB自動保存：マッチング候補ボタン押下時
+   [52] showMatchingCandidates  
+   ★ マッチング候補画面表示  
+   ★ IndexedDB保存は使用しない（削除済み）  
 --------------------------------------------------------- */
 function showMatchingCandidates(push = true) {
+
   buildMatchingCandidates();
 
-  // ★ 候補画面を開いた瞬間の状態を自動保存
-  if (typeof saveMatchingOpenToIndexedDB === "function") {
-    saveMatchingOpenToIndexedDB();
-  }
+  // ★ IndexedDB保存は使用しないため削除
 
   renderMatchingHeader();
   renderMatchingTable();
+
   setCurrentView(STATE.MATCHING);
   switchDisplayView(STATE.MATCHING);
 
@@ -2709,15 +2692,16 @@ async function init() {
  * ・アプリ初期化（init 呼び出し）
  * 
  * ■変更点（今回）
- * ・未定義関数があっても起動全体を止めない保護を追加
- * ・button生成処理を削除（index.htmlへ完全移行）
- * ・UIはHTML管理、JSはロジック専用に分離
+ * ・JSON出力ボタンは exportTodayLogsAsJSON が定義されている場合のみ有効化
+ * ・未定義関数参照で起動全体が止まらないよう保護
+ * ・button生成処理は行わず、UIは index.html 側管理を維持
  * 
  * ■注意
  * ・DOM構造（id）は index.html と完全一致必須
  * ・ボタン未存在時も安全に動作するよう if ガードあり
  * --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
+
   // 履歴初期化（戻る対策）
   history.replaceState({ page: STATE.SUMMARY }, '', '');
   history.pushState({ page: STATE.SUMMARY }, '', '');
@@ -2756,12 +2740,14 @@ document.addEventListener("DOMContentLoaded", () => {
   // CSV / JSON
   if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;
   if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;
+
   if (exportJsonBtn) {
     if (typeof exportTodayLogsAsJSON === "function") {
       exportJsonBtn.onclick = exportTodayLogsAsJSON;
+      exportJsonBtn.disabled = false;
     } else {
-      logWarn("exportTodayLogsAsJSON が未定義のため JSON出力ボタンは無効化されました");
       exportJsonBtn.disabled = true;
+      logWarn("JSON出力機能が未定義のため、本日分Logボタンを無効化しました");
     }
   }
 
@@ -2896,9 +2882,9 @@ function startUpdateWatch() {
 
   log("更新監視を開始（30秒間隔）");
 }
-/* ---------------------------------------------------------
-   [59]  saveCopyEventUnified
-   saveCopy copyログ完全保存（仕様2-6準拠）
+/* ---------------------------------------------------------/* ------------------------------------------------CopyEventUnified
+   ★ copyログ完全保存（localStorage版）
+   ★ IndexedDBは使用しない
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
@@ -2922,16 +2908,15 @@ function saveCopyEventUnified(rawText) {
 
     missReason: (candidateInfo.missReasons || []).join("|"),
 
-    // 拡張（安全）
+    // 補助情報
     cooldownExcluded: !!candidateInfo.cooldownExcluded,
     cooldownRemainingSec: candidateInfo.cooldownRemainingSec ?? null
   };
 
-  // localStorage
+  // -----------------------------------------------------
+  // localStorage 保存のみ
+  // -----------------------------------------------------
   saveCopyEventToStorage(record);
-
-  // IndexedDB
-  // putViewerEventToIndexedDB(record); ← コメントアウト
 
   return record;
 }
