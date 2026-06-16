@@ -176,9 +176,22 @@ function getNowLabelJa() {
     second: "2-digit"
   });
 }
-
 /* ---------------------------------------------------------
-   [08-2] localStorage
+   [08-2] getTodayYMDJa
+--------------------------------------------------------- */
+function getTodayYMDJa() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = ("0" + (now.getMonth() + 1)).slice(-2);
+  const d = ("0" + now.getDate()).slice(-2);
+  return `${y}/${m}/${d}`;
+}
+
+function compactYMD(ymd) {
+  return String(ymd ?? "").replace(/\//g, "");
+}
+/* ---------------------------------------------------------
+   [08-3] localStorage
 --------------------------------------------------------- */
 function readStoredArraySafe(key) {
   try {
@@ -204,9 +217,8 @@ function pushStoredRecord(key, record, limit = 200) {
   arr.unshift(record);
   writeStoredArraySafe(key, arr.slice(0, limit));
 }
-
 /* ---------------------------------------------------------
-   [08-3] viewerログ保存
+   [08-4] viewerログ保存
 --------------------------------------------------------- */
 function saveViewerLogToStorage(payload) {
   pushStoredRecord(
@@ -215,9 +227,8 @@ function saveViewerLogToStorage(payload) {
     LOG_STORAGE_LIMITS.viewerLogs
   );
 }
-
 /* ---------------------------------------------------------
-   [08-4] appendLog（完全時系列保証）
+   [08-5] appendLog（完全時系列保証）
 --------------------------------------------------------- */
 function appendLog(msg, type = "info") {
   const box = document.getElementById("logBox");
