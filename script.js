@@ -219,50 +219,97 @@ function saveViewerLogToStorage(payload) {
     LOG_STORAGE_LIMITS.viewerLogs
   );
 }
-
 /* ---------------------------------------------------------
-   [08-4] appendLog
+   [08-LOGCORE] 完全時系列保証ログ基盤
+--------------------------------------------------------- */
+let LOG_SEQ = 0;                // 絶対順序ID
+const LOG_BUFFER = [];          // ログ全保持
+const MAX_LOG_RENDER = 200;     // 表示上限
+/* ---------------------------------------------------------
+   [08-4] appendLog（完全時系列保証版）
 --------------------------------------------------------- */
 function appendLog(msg, type = "info") {
 
   const box = document.getElementById("logBox");
-  const t = getNowLabelJa();
+  const now = new Date();
 
-  if (box) {
-    const line = document.createElement("div");
-    line.textContent = `[${t}] ${msg}`;
-    line.dataset.type = type;
-
-    if (type === "error") {
-      line.style.color = "#ff5555";
-    } else if (type === "warn") {
-      line.style.color = "#ffeb3b";
-    } else {
-      line.style.color = "#00ff00";
-    }
-
-    box.prepend(line);
-
-    while (box.children.length > MAX_LOG_LINES) {
-      box.removeChild(box.lastChild);
-    }
-  }
-
-  saveViewerLogToStorage({
-    savedAt: t,
-    type,
+  // ★ ログレコード生成（絶対順序付き）
+  const record = {
+    seq: ++LOG_SEQ,
+    time: now.getTime(),
+    label: getNowLabelJa(),
+    type: type,
     message: String(msg ?? ""),
+
+    // ★ 既存情報（完全維持）
     currentView: State.currentView || "",
     generatedAt: State.generatedAt || "",
     latestRound: State.latestRound || "",
     latestUpdateAt: State.latestUpdateAt || ""
+  };
+
+  // ★ バッファ追加
+  LOG_BUFFER.push(record);
+
+  // ★ localStorage保存（既存機能維持）
+  saveViewerLogToStorage({
+    savedAt: record.label,
+    type: record.type,
+    message: record.message,
+    currentView: record.currentView,
+    generatedAt: record.generatedAt,
+    latestRound: record.latestRound,
+    latestUpdateAt: record.latestUpdateAt
   });
+
+  // ★ 描画（順序保証）
+  renderLogs(box);
 }
 
 /* ★ ラッパー */
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
+
+/* ---------------------------------------------------------
+   [08-LOGRENDER] ログ描画（時系列保証）
+--------------------------------------------------------- */
+function renderLogs(box) {
+  if (!box) return;
+
+  // ★ 安全コピー + ソート
+  const sorted = [...LOG_BUFFER].sort((a, b) => {
+    if (a.time !== b.time) return a.time - b.time;
+    return a.seq - b.seq;
+  });
+
+  // ★ 表示上限
+  const slice = sorted.slice(-MAX_LOG_RENDER);
+
+  // ★ DOM再構築
+  const frag = document.createDocumentFragment();
+
+  for (const r of slice) {
+    const line = document.createElement("div");
+
+    line.textContent = `[${r.label}] ${r.message}`;
+    line.dataset.type = r.type;
+
+    if (r.type === "error") {
+      line.style.color = "#ff5555";
+    } else if (r.type === "warn") {
+      line.style.color = "#ffeb3b";
+    } else {
+      line.style.color = "#00ff00";
+    }
+
+    frag.appendChild(line);
+  }
+
+  // ★ 完全置き換え（順序保証）
+  box.innerHTML = "";
+  box.appendChild(frag);
+}
 /* ---------------------------------------------------------
    [08-A] copyログ（統一JSON）
 --------------------------------------------------------- */
