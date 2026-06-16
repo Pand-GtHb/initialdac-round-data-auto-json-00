@@ -31,23 +31,23 @@ const State = {
   currentDetailKey: "",
   currentDetailLabel: "",
   currentDetailIcon: "",
-
   matchingList: [],
-
   // ★追加：分析用
   matchingRankedAll: [],      // 抽選前の全件順位
   matchingDiagnostics: null,  // Gapなどの診断値
-
   rankModel: null,
   myStar: 6,
   recentClicks: [],
   areaModel: {},
   scoringConfig: null,
   updateWatchTimer: null,
-
   prefetchedRoundData: null,
   prefetchedForUpdateAt: "",
-  prefetchInFlight: null
+  prefetchInFlight: null,
+
+  // ★追加：デバッグセッション
+  debugSession: null,
+  debugHistory: []
 };
 /* ---------------------------------------------------------    
   [04] RUBY帯・PRIDE帯 定義
@@ -151,7 +151,12 @@ const LOG_STORAGE_LIMITS = {
   copyEvents: 200,
   matchingSnapshots: 100
 };
-
+/* ---------------------------------------------------------
+   [08-LOGCORE] 完全時系列保証ログ基盤（表示は逆順）
+--------------------------------------------------------- */
+let LOG_SEQ = 0;                // 絶対順序ID
+const LOG_BUFFER = [];          // viewerログ全保持（描画用）
+const MAX_LOG_RENDER = 200;     // 表示上限
 /* ---------------------------------------------------------
    [08-1] 共通ユーティリティ（時間）
 --------------------------------------------------------- */
@@ -226,32 +231,29 @@ let LOG_SEQ = 0;                // 絶対順序ID
 const LOG_BUFFER = [];          // ログ全保持
 const MAX_LOG_RENDER = 200;     // 表示上限
 /* ---------------------------------------------------------
-   [08-4] appendLog（完全時系列保証版）
+   [08-4] appendLog（完全時系列保証・逆順表示版）
 --------------------------------------------------------- */
 function appendLog(msg, type = "info") {
-
   const box = document.getElementById("logBox");
   const now = new Date();
 
-  // ★ ログレコード生成（絶対順序付き）
   const record = {
     seq: ++LOG_SEQ,
     time: now.getTime(),
     label: getNowLabelJa(),
-    type: type,
+    type,
     message: String(msg ?? ""),
 
-    // ★ 既存情報（完全維持）
+    // ★既存保存情報を維持
     currentView: State.currentView || "",
     generatedAt: State.generatedAt || "",
     latestRound: State.latestRound || "",
     latestUpdateAt: State.latestUpdateAt || ""
   };
 
-  // ★ バッファ追加
   LOG_BUFFER.push(record);
 
-  // ★ localStorage保存（既存機能維持）
+  // ★localStorage保存（既存機能維持）
   saveViewerLogToStorage({
     savedAt: record.label,
     type: record.type,
@@ -262,36 +264,32 @@ function appendLog(msg, type = "info") {
     latestUpdateAt: record.latestUpdateAt
   });
 
-  // ★ 描画（順序保証）
+  // ★描画は専用関数へ委譲
   renderLogs(box);
 }
-
+``
 /* ★ ラッパー */
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
 
 /* ---------------------------------------------------------
-   [08-LOGRENDER] ログ描画（時系列保証）
+   [08-LOGRENDER] ログ描画（完全時系列保証＋逆順表示）
 --------------------------------------------------------- */
 function renderLogs(box) {
   if (!box) return;
 
-  // ★ 安全コピー + ソート
+  // ★ timeが同一ならseqで絶対順序保証
   const sorted = [...LOG_BUFFER].sort((a, b) => {
-    if (a.time !== b.time) return a.time - b.time;
-    return a.seq - b.seq;
+    if (a.time !== b.time) return b.time - a.time; // 新しいものが上
+    return b.seq - a.seq;                          // 新しいものが上
   });
 
-  // ★ 表示上限
-  const slice = sorted.slice(-MAX_LOG_RENDER);
-
-  // ★ DOM再構築
+  const slice = sorted.slice(0, MAX_LOG_RENDER);
   const frag = document.createDocumentFragment();
 
   for (const r of slice) {
     const line = document.createElement("div");
-
     line.textContent = `[${r.label}] ${r.message}`;
     line.dataset.type = r.type;
 
@@ -306,7 +304,6 @@ function renderLogs(box) {
     frag.appendChild(line);
   }
 
-  // ★ 完全置き換え（順序保証）
   box.innerHTML = "";
   box.appendChild(frag);
 }
@@ -1632,7 +1629,6 @@ function selectByWeight(players, count) {
    - スコア計算には使用しない（フィルタ専用）
 ---------------------------------------------------------*/
 function applyFilters() {
-
   const minutes = Number(document.getElementById("rangeSelect").value);
 
   // ① フィルタ基準時刻の決定
@@ -1650,7 +1646,6 @@ function applyFilters() {
 
   // ② フィルタ範囲
   const filterStartMs = filterBaseMs - (minutes * 60 * 1000);
-
   const startDate = new Date(filterStartMs);
   const startLabel = formatYMDHM(startDate);
 
@@ -1662,7 +1657,6 @@ function applyFilters() {
   let invalidCount = 0;
 
   State.filtered = State.all.filter(p => {
-
     if (!p.updateDate) {
       invalidCount++;
       return false;
@@ -1689,14 +1683,25 @@ function applyFilters() {
     + "件 / 有効:" + validCount
     + "件 / 無効:" + invalidCount + "件"
   );
-
   log("フィルタ開始時刻: " + startLabel);
-
   log("areaModel top5=" + JSON.stringify(
     Object.entries(State.areaModel)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
   ));
+
+  // ⑥ デバッグセッションへ反映
+  if (State.debugSession) {
+    State.debugSession.filter = {
+      rangeMinutes: minutes,
+      filterBase: formatYMDHM(baseDate),
+      filterStart: startLabel,
+      totalCount: State.all.length,
+      filteredCount: State.filtered.length,
+      validCount,
+      invalidCount
+    };
+  }
 }
 /* ---------------------------------------------------------    
    [31] calcStats
@@ -2213,11 +2218,16 @@ function exportAllCSV() {
    [46] copyToClipboard
    ★ コピー + copyログ完全保存（統一構造）
    ★ ログは saveCopyEventUnified へ集約
+   ★ デバッグセッション開始/完了対応
 --------------------------------------------------------- */
 function copyToClipboard(text) {
+  // ★ copy操作単位でデバッグセッション開始
+  State.debugSession = startDebugSession({
+    type: "copy",
+    rawText: String(text ?? "")
+  });
 
   const afterCopySuccess = () => {
-
     // ★ copyログ完全保存（統一）
     const record = saveCopyEventUnified(text);
 
@@ -2232,6 +2242,17 @@ function copyToClipboard(text) {
 
     // ★ 既存：履歴アンカー
     recordClickFromCopiedText(text);
+
+    // ★ デバッグセッション完了
+    finalizeDebugSession(record.__debugSnapshot || {
+      result: {
+        name: record.name || "",
+        candidateRank: record.candidateRank ?? null,
+        displayRank: record.displayRank ?? null,
+        score: record.score ?? null,
+        missReason: record.missReason || ""
+      }
+    });
   };
 
   // -----------------------------------------------------
@@ -2240,13 +2261,10 @@ function copyToClipboard(text) {
   if (!navigator.clipboard) {
     const ta = document.createElement("textarea");
     ta.value = text;
-
     document.body.appendChild(ta);
     ta.select();
     document.execCommand("copy");
-
     document.body.removeChild(ta);
-
     afterCopySuccess();
     return;
   }
@@ -2257,6 +2275,15 @@ function copyToClipboard(text) {
     })
     .catch(() => {
       logError("コピーに失敗しました");
+      finalizeDebugSession({
+        result: {
+          name: "",
+          candidateRank: null,
+          displayRank: null,
+          score: null,
+          missReason: "clipboard_failed"
+        }
+      });
     });
 }
 /* ---------------------------------------------------------
@@ -2454,8 +2481,122 @@ function findCandidateInfoForLog(player) {
   };
 }
 /* ---------------------------------------------------------
+   [46-DEBUG] ログ + マッチング完全解析デバッグモード
+--------------------------------------------------------- */
+let DEBUG_SESSION_ID = 0;
+
+function startDebugSession(trigger) {
+  return {
+    id: ++DEBUG_SESSION_ID,
+    startedAt: getNowLabelJa(),
+    trigger: trigger || { type: "unknown" },
+    filter: null,
+    candidates: null,
+    diagnostics: null,
+    rankedTop: [],
+    selectedTop: [],
+    result: null,
+    note: ""
+  };
+}
+
+function cloneScoreDetailForDebug(detail) {
+  if (!detail) return null;
+  return {
+    score: Number(detail.score ?? 0),
+    rankWeight: Number(detail.rankWeight ?? 0),
+    rankScore: Number(detail.rankScore ?? 0),
+    prideWeight: Number(detail.prideWeight ?? 1),
+    areaFactor: Number(detail.areaFactor ?? 1),
+    timeWeight: Number(detail.timeWeight ?? 0),
+    phaseScore: Number(detail.phaseScore ?? 0),
+    recencyScore: Number(detail.recencyScore ?? 0),
+    activityScore: Number(detail.activityScore ?? 0),
+    miscRaw: Number(detail.miscRaw ?? 0),
+    miscFactor: Number(detail.miscFactor ?? 1),
+    realtimeBoost: Number(detail.realtimeBoost ?? 1),
+    baseScoreBeforeBoost: Number(detail.baseScoreBeforeBoost ?? 0),
+    scoreAfterBoost: Number(detail.scoreAfterBoost ?? 0)
+  };
+}
+
+function buildDebugTopEntries(list, count = 10) {
+  return (list || []).slice(0, count).map((p, idx) => ({
+    rank: idx + 1,
+    name: p.name || "",
+    updateDate: p.updateDate || "",
+    area: p.area ?? "",
+    shopname: p.shopname ?? "",
+    rankKey: p.__rankKey ?? getPlayerRankKey(p),
+    score: Number(p.__score ?? 0),
+    scoreDetail: cloneScoreDetailForDebug(p.__detail)
+  }));
+}
+
+function saveMatchingDebugSnapshotToStorage(payload) {
+  pushStoredRecord(
+    LOG_STORAGE_KEYS.matchingSnapshots,
+    payload,
+    LOG_STORAGE_LIMITS.matchingSnapshots
+  );
+}
+
+function emitDebugSessionLogs(session) {
+  if (!session) return;
+
+  log(`[DEBUG] Session#${session.id} trigger=${JSON.stringify(session.trigger)}`);
+  if (session.filter) {
+    log(`[DEBUG] filter=${JSON.stringify(session.filter)}`);
+  }
+  if (session.candidates) {
+    log(`[DEBUG] candidates=${JSON.stringify(session.candidates)}`);
+  }
+  if (session.diagnostics) {
+    log(`[DEBUG] diagnostics=${JSON.stringify(session.diagnostics)}`);
+  }
+  if (session.selectedTop && session.selectedTop.length) {
+    log(
+      `[DEBUG] selectedTop=${session.selectedTop
+        .map(x => `${x.rank}:${x.name}(${Number(x.score ?? 0).toFixed(2)})`)
+        .join(" / ")}`
+    );
+  }
+  if (session.result) {
+    log(`[DEBUG] result=${JSON.stringify(session.result)}`);
+  }
+}
+
+function finalizeDebugSession(extra = {}) {
+  if (!State.debugSession) return null;
+
+  const session = State.debugSession;
+
+  if (extra.filter) session.filter = extra.filter;
+  if (extra.candidates) session.candidates = extra.candidates;
+  if (extra.diagnostics) session.diagnostics = extra.diagnostics;
+  if (extra.rankedTop) session.rankedTop = extra.rankedTop;
+  if (extra.selectedTop) session.selectedTop = extra.selectedTop;
+  if (extra.result) session.result = extra.result;
+  if (extra.note) session.note = extra.note;
+
+  const snapshot = {
+    ...session,
+    completedAt: getNowLabelJa()
+  };
+
+  State.debugHistory.unshift(snapshot);
+  State.debugHistory = State.debugHistory.slice(0, 30);
+
+  saveMatchingDebugSnapshotToStorage(snapshot);
+  State.debugSession = null;
+
+  emitDebugSessionLogs(snapshot);
+  return snapshot;
+}
+/* ---------------------------------------------------------
    [47] buildMatchingCandidates（完全差し替え）
    ★ コピー後5分45秒除外＋除外理由記録
+   ★ デバッグセッションへ候補母集団・TOP・診断を格納
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
@@ -2478,6 +2619,7 @@ function buildMatchingCandidates() {
   const filteredByUi = scoredAll.filter(p => {
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
+
     if (p.__rankKey.startsWith("R")) {
       return selectedStars.includes(Number(p.starCnt));
     } else {
@@ -2491,8 +2633,8 @@ function buildMatchingCandidates() {
 
   const latestCopied = getLatestCopiedPlayer();
   let cooldownExcludedCount = 0;
-
   let analysisBase = filteredByRankModel;
+
   if (latestCopied) {
     analysisBase = filteredByRankModel.filter(p => {
       const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
@@ -2513,6 +2655,7 @@ function buildMatchingCandidates() {
   }
 
   const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
+
   State.matchingRankedAll = rankedAll;
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
 
@@ -2521,6 +2664,7 @@ function buildMatchingCandidates() {
 
   let selected = [];
   const initialNeed = Math.min(10, rankedAll.length);
+
   if (initialNeed > 0) {
     selected = selectByWeight(rankedAll, initialNeed);
   }
@@ -2535,6 +2679,7 @@ function buildMatchingCandidates() {
     );
 
     let fallbackFiltered = fallbackPool;
+
     if (latestCopied) {
       fallbackFiltered = fallbackPool.filter(p => {
         const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
@@ -2571,18 +2716,15 @@ function buildMatchingCandidates() {
     + ` / CooldownExcluded=${cooldownExcludedCount}`
     + ` / Selected=${selected.length}`
   );
-
   log(`候補欠落内訳: noRankKey=${rankKeyMissing}`
     + ` / rankModelZero=${rankModelExcluded}`
     + ` / cooldownExcluded=${cooldownExcludedCount}`
     + ` / analysisFallback=${filteredByRankModel.length > 0 ? "NO" : "YES"}`
   );
-
   log(`診断: Gap12=${Number(diag?.gap12 ?? 0).toFixed(2)}`
     + ` / Ratio=${Number(diag?.top1Ratio ?? 0).toFixed(2)}`
     + ` / Cluster=${isCluster ? "YES" : "NO"}`
   );
-
   log(`表示TOP: ${formatMatchTopList(selected)}`);
 
   if (MATCHING_LOG_CONFIG.verboseTopDetails) {
@@ -2599,6 +2741,32 @@ function buildMatchingCandidates() {
         + ` / boost=${Number(d.realtimeBoost ?? 1).toFixed(3)}`
       );
     });
+  }
+
+  // ★ デバッグセッションへ解析結果を反映
+  if (State.debugSession) {
+    State.debugSession.candidates = {
+      baseCount: base.length,
+      uiPoolCount: filteredByUi.length,
+      rankModelPoolCount: filteredByRankModel.length,
+      cooldownExcludedCount,
+      selectedCount: selected.length,
+      noRankKeyCount: rankKeyMissing,
+      rankModelZeroCount: rankModelExcluded,
+      analysisFallback: filteredByRankModel.length > 0 ? "NO" : "YES"
+    };
+
+    State.debugSession.diagnostics = diag ? {
+      gap12: Number(diag.gap12 ?? 0),
+      gap15: Number(diag.gap15 ?? 0),
+      top5Mean: Number(diag.top5Mean ?? 0),
+      top1Ratio: Number(diag.top1Ratio ?? 0),
+      totalRanked: Number(diag.totalRanked ?? 0),
+      cluster: isCluster ? "YES" : "NO"
+    } : null;
+
+    State.debugSession.rankedTop = buildDebugTopEntries(rankedAll, 10);
+    State.debugSession.selectedTop = buildDebugTopEntries(selected, 10);
   }
 }
 /* ---------------------------------------------------------    
@@ -2673,16 +2841,21 @@ function applyMatchingFilter(keyword) {
   renderMatchingRows(list);    
 }    
 /* ---------------------------------------------------------
-   [52] showMatchingCandidates  
-   ★ マッチング候補画面表示  
-   ★ IndexedDB保存は使用しない（削除済み）  
+   [52] showMatchingCandidates
+   ★ マッチング候補画面表示
+   ★ デバッグセッション対応
 --------------------------------------------------------- */
 function showMatchingCandidates(push = true) {
+  const createdForOpen = !State.debugSession;
+
+  // ★ マッチング画面を単独で開いた場合も解析セッション化
+  if (createdForOpen) {
+    State.debugSession = startDebugSession({
+      type: "matching_open"
+    });
+  }
 
   buildMatchingCandidates();
-
-  // ★ IndexedDB保存は使用しないため削除
-
   renderMatchingHeader();
   renderMatchingTable();
 
@@ -2691,6 +2864,20 @@ function showMatchingCandidates(push = true) {
 
   if (push) {
     history.pushState({ page: STATE.MATCHING }, '', '');
+  }
+
+  // ★ matching_open 単独操作はここで完了
+  if (createdForOpen) {
+    finalizeDebugSession({
+      result: {
+        name: "",
+        candidateRank: null,
+        displayRank: null,
+        score: null,
+        missReason: "matching_open_only"
+      },
+      note: "matching画面表示のみ"
+    });
   }
 }
 /* ---------------------------------------------------------    
@@ -2966,9 +3153,11 @@ function startUpdateWatch() {
 
   log("更新監視を開始（30秒間隔）");
 }
-/* ---------------------------------------------------------/* ------------------------------------------------CopyEventUnified
+/* ---------------------------------------------------------
+   [59] saveCopyEventUnified
    ★ copyログ完全保存（localStorage版）
    ★ IndexedDBは使用しない
+   ★ デバッグセッション連携対応
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
@@ -2977,30 +3166,83 @@ function saveCopyEventUnified(rawText) {
 
   const record = {
     type: "copy",
-
     name: player?.name || "",
     savedAt: getNowLabelJa(),
-
     generatedAt: State.generatedAt || "",
     latestUpdateAt: State.latestUpdateAt || "",
 
+    // ★ ランキング系
     candidateRank: candidateInfo.candidateRank ?? null,
     displayRank: candidateInfo.displayRank ?? null,
     baseRank: candidateInfo.baseRank ?? null,
 
+    // ★ スコア
     score: candidateInfo.score ?? null,
 
+    // ★ 欠落理由
     missReason: (candidateInfo.missReasons || []).join("|"),
 
-    // 補助情報
+    // ★ cooldown補助
     cooldownExcluded: !!candidateInfo.cooldownExcluded,
     cooldownRemainingSec: candidateInfo.cooldownRemainingSec ?? null
   };
 
-  // -----------------------------------------------------
-  // localStorage 保存のみ
-  // -----------------------------------------------------
+  //-----------------------------------------------------
+  // localStorage 保存（既存機能維持）
+  //-----------------------------------------------------
   saveCopyEventToStorage(record);
+
+  //-----------------------------------------------------
+  // ★ デバッグセッション用情報（メモリのみ）
+  //-----------------------------------------------------
+  record.__debugSnapshot = {
+    result: {
+      name: record.name || "",
+      candidateRank: record.candidateRank ?? null,
+      displayRank: record.displayRank ?? null,
+      baseRank: record.baseRank ?? null,
+      score: record.score ?? null,
+      missReason: record.missReason || "",
+      cooldownExcluded: record.cooldownExcluded,
+      cooldownRemainingSec: record.cooldownRemainingSec ?? null
+    },
+    note: player
+      ? "copy player resolved"
+      : "copy player not resolved"
+  };
+
+  if (player) {
+    record.__debugSnapshot.result.player = {
+      name: player.name || "",
+      updateDate: player.updateDate || "",
+      area: player.area ?? "",
+      shopname: player.shopname ?? "",
+      rankKey: getPlayerRankKey(player)
+    };
+  }
+
+  if (candidateInfo) {
+    record.__debugSnapshot.result.candidateInfo = {
+      candidateRank: candidateInfo.candidateRank ?? null,
+      displayRank: candidateInfo.displayRank ?? null,
+      baseRank: candidateInfo.baseRank ?? null,
+      boostedRank: candidateInfo.boostedRank ?? null,
+
+      score: candidateInfo.score ?? null,
+      baseScoreBeforeBoost: candidateInfo.baseScoreBeforeBoost ?? null,
+      scoreAfterBoost: candidateInfo.scoreAfterBoost ?? null,
+
+      rankWeight: candidateInfo.rankWeight ?? 0,
+
+      cooldownExcluded: !!candidateInfo.cooldownExcluded,
+      cooldownRemainingSec: candidateInfo.cooldownRemainingSec ?? null,
+
+      missReasons: candidateInfo.missReasons || [],
+
+      // ★ detailまるごと保持
+      scoreDetail: cloneScoreDetailForDebug(candidateInfo.scoreDetail)
+    };
+  }
 
   return record;
 }
