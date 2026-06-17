@@ -1591,21 +1591,32 @@ function selectByWeight(players, count) {
   return result;
 }
 /*---------------------------------------------------------
-   [30] applyFilters  
+   [30] applyFilters
+　　フィルタ起点時刻を　latest_update.json　の　lastUpdated　から
+　　integrated_data.json　の　generatedAt"　に変更
 ---------------------------------------------------------*/
 function applyFilters() {
-
   const minutes = Number(document.getElementById("rangeSelect").value);
 
-  // ① フィルタ基準時刻の決定
-  let baseDate = parseDateJST(State.latestUpdateAt);
+  // ① フィルタ基準時刻の決定（修正）
+  let baseDate = parseDateJST(State.generatedAt);
 
-  // fallback（latestUpdateAtが不正 or 未取得）
+  // fallback（generatedAtが不正）
   if (!baseDate || isNaN(baseDate.getTime())) {
-    baseDate = new Date();
-    logWarn("latestUpdateAt未取得 → 現在時刻を使用");
+
+    // ★ 後方互換として latestUpdateAt を使用
+    baseDate = parseDateJST(State.latestUpdateAt);
+
+    if (!baseDate || isNaN(baseDate.getTime())) {
+      // ★ 最終fallback：現在時刻
+      baseDate = new Date();
+      logWarn("generatedAt / latestUpdateAt 未取得 → 現在時刻を使用");
+    } else {
+      log("フィルタ基準(latest_update fallback): " + formatYMDHM(baseDate));
+    }
+
   } else {
-    log("フィルタ基準(JSON): " + formatYMDHM(baseDate));
+    log("フィルタ基準(integrated_data): " + formatYMDHM(baseDate));
   }
 
   const filterBaseMs = baseDate.getTime();
@@ -1639,7 +1650,6 @@ function applyFilters() {
     }
 
     validCount++;
-
     return date.getTime() >= filterStartMs;
   });
 
@@ -1661,7 +1671,6 @@ function applyFilters() {
       .slice(0, 5)
   ));
 }
-
 /* ---------------------------------------------------------      
    [31] calcStats      
 --------------------------------------------------------- */
