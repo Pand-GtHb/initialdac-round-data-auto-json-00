@@ -134,7 +134,8 @@ function switchDisplayView(view) {
 /* ---------------------------------------------------------
    [08] ログ基盤（appendLog / log / logWarn / logError）
    ★ 画面ログ + localStorage 永続保存
-   ※ copy / matching / snapshot / IndexedDB は分離
+   ★ copy / matching / snapshot は localStorage に統一
+   ※ IndexedDBは完全削除
 --------------------------------------------------------- */
 const MAX_LOG_LINES = 200;
 
@@ -263,6 +264,7 @@ function appendLog(msg, type = "info") {
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
+
 /* ---------------------------------------------------------
    [08-A] copyログ（統一JSON）
 --------------------------------------------------------- */
@@ -273,6 +275,7 @@ function saveCopyEventToStorage(payload) {
     LOG_STORAGE_LIMITS.copyEvents
   );
 }
+
 /* ---------------------------------------------------------
    [08-B] MATCHINGログ
 --------------------------------------------------------- */
@@ -287,128 +290,7 @@ function formatMatchTopList(list, count = MATCHING_LOG_CONFIG.topListCount) {
     .map(p => `${p.name}(${Number(p.__score ?? 0).toFixed(2)})`)
     .join(" / ");
 }
-/* ---------------------------------------------------------
-   [08-DB] IndexedDB 保存
-   ★ matching_open / copy イベントを自動保存
---------------------------------------------------------- */
-const IDB_CONFIG = {
-  dbName: "InitialDacViewerDB",
-  dbVersion: 1,
-  stores: {
-    events: "events"
-  }
-};
 
-let idbOpenPromise = null;
-
-function openViewerIndexedDB() {
-  if (idbOpenPromise) return idbOpenPromise;
-
-  idbOpenPromise = new Promise((resolve, reject) => {
-    if (!window.indexedDB) {
-      reject(new Error("indexedDB_not_supported"));
-      return;
-    }
-
-    const req = indexedDB.open(IDB_CONFIG.dbName, IDB_CONFIG.dbVersion);
-
-    req.onupgradeneeded = (event) => {
-      const db = event.target.result;
-
-      if (!db.objectStoreNames.contains(IDB_CONFIG.stores.events)) {
-        const store = db.createObjectStore(IDB_CONFIG.stores.events, {
-          keyPath: "id",
-          autoIncrement: true
-        });
-        store.createIndex("type", "type", { unique: false });
-        store.createIndex("savedAt", "savedAt", { unique: false });
-        store.createIndex("reason", "reason", { unique: false });
-      }
-    };
-
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error || new Error("indexeddb_open_failed"));
-  });
-
-  return idbOpenPromise;
-}
-
-async function putViewerEventToIndexedDB(record) {
-  try {
-    const db = await openViewerIndexedDB();
-
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_CONFIG.stores.events, "readwrite");
-      const store = tx.objectStore(IDB_CONFIG.stores.events);
-      store.add(record);
-
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error || new Error("indexeddb_tx_failed"));
-      tx.onabort = () => reject(tx.error || new Error("indexeddb_tx_aborted"));
-    });
-  } catch (e) {
-    console.warn("IndexedDB write failed:", e);
-    try {
-      const box = document.getElementById("logBox");
-      if (box) {
-        const t = getNowLabelJa();
-        const line = document.createElement("div");
-        line.textContent = `[${t}] IndexedDB保存失敗: ${e.message || e}`;
-        line.dataset.type = "warn";
-        line.style.color = "#ffeb3b";
-        box.prepend(line);
-      }
-    } catch (_) {}
-  }
-}
-
-function buildMatchingOpenEventRecord() {
-  const rankedTop20 = (State.matchingRankedAll || []).slice(0, 20).map((p, idx) => ({
-    rank: idx + 1,
-    name: p.name,
-    updateDate: p.updateDate || "",
-    area: p.area ?? "",
-    shopname: p.shopname ?? "",
-    rankKey: p.__rankKey ?? getPlayerRankKey(p),
-    score: Number(p.__score ?? 0),
-    rankWeight: Number(p.__detail?.rankWeight ?? 0),
-    realtimeBoost: Number(p.__detail?.realtimeBoost ?? 1),
-    baseScoreBeforeBoost: Number(p.__detail?.baseScoreBeforeBoost ?? 0),
-    scoreAfterBoost: Number(p.__detail?.scoreAfterBoost ?? p.__score ?? 0)
-  }));
-
-  const displayTop10 = (State.matchingList || []).map((p, idx) => ({
-    rank: idx + 1,
-    name: p.name,
-    updateDate: p.updateDate || "",
-    area: p.area ?? "",
-    shopname: p.shopname ?? "",
-    rankKey: p.__rankKey ?? getPlayerRankKey(p),
-    score: Number(p.__score ?? 0),
-    rankWeight: Number(p.__detail?.rankWeight ?? 0),
-    realtimeBoost: Number(p.__detail?.realtimeBoost ?? 1),
-    baseScoreBeforeBoost: Number(p.__detail?.baseScoreBeforeBoost ?? 0),
-    scoreAfterBoost: Number(p.__detail?.scoreAfterBoost ?? p.__score ?? 0)
-  }));
-
-  return {
-    type: "matching_open",
-    reason: "matching_button",
-    savedAt: getNowLabelJa(),
-    generatedAt: State.generatedAt || "",
-    latestRound: State.latestRound || "",
-    latestUpdateAt: State.latestUpdateAt || "",
-    currentView: State.currentView || "",
-    diagnostics: State.matchingDiagnostics || null,
-    rankedTop20,
-    displayTop10
-  };
-}
-
-async function saveMatchingOpenToIndexedDB() {
-  const record = buildMatchingOpenEventRecord();
-  await putViewerEventToIndexedDB(record);
-}
 /* ---------------------------------------------------------
    [08-EXPORT] localStorage → 本日分JSON出力
    ★ IndexedDBは使用しない
