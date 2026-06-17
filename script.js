@@ -31,23 +31,23 @@ const State = {
   currentDetailKey: "",
   currentDetailLabel: "",
   currentDetailIcon: "",
+
   matchingList: [],
+
   // ★追加：分析用
   matchingRankedAll: [],      // 抽選前の全件順位
   matchingDiagnostics: null,  // Gapなどの診断値
+
   rankModel: null,
   myStar: 6,
   recentClicks: [],
   areaModel: {},
   scoringConfig: null,
   updateWatchTimer: null,
+
   prefetchedRoundData: null,
   prefetchedForUpdateAt: "",
-  prefetchInFlight: null,
-
-  // ★追加：デバッグセッション
-  debugSession: null,
-  debugHistory: []
+  prefetchInFlight: null
 };
 /* ---------------------------------------------------------    
   [04] RUBY帯・PRIDE帯 定義
@@ -133,11 +133,9 @@ function switchDisplayView(view) {
 }
 /* ---------------------------------------------------------
    [08] ログ基盤（appendLog / log / logWarn / logError）
-   ★ 完全時系列保証
-   ★ 逆順表示（新しいものが上）
-   ★ progressLineを破壊しない設計
+   ★ 画面ログ + localStorage 永続保存
+   ※ copy / matching / snapshot / IndexedDB は分離
 --------------------------------------------------------- */
-
 const MAX_LOG_LINES = 200;
 
 /* ★ 永続保存キー（localStorage） */
@@ -155,13 +153,6 @@ const LOG_STORAGE_LIMITS = {
 };
 
 /* ---------------------------------------------------------
-   [08-LOGCORE] 単一定義（重複削除済）
---------------------------------------------------------- */
-let LOG_SEQ = 0;
-const LOG_BUFFER = [];
-const MAX_LOG_RENDER = 200;
-
-/* ---------------------------------------------------------
    [08-1] 共通ユーティリティ（時間）
 --------------------------------------------------------- */
 function getNowLabelJa() {
@@ -176,9 +167,7 @@ function getNowLabelJa() {
     second: "2-digit"
   });
 }
-/* ---------------------------------------------------------
-   [08-2] getTodayYMDJa
---------------------------------------------------------- */
+
 function getTodayYMDJa() {
   const now = new Date();
   const y = now.getFullYear();
@@ -188,10 +177,11 @@ function getTodayYMDJa() {
 }
 
 function compactYMD(ymd) {
-  return String(ymd ?? "").replace(/\//g, "");
+  return String(ymd || "").replace(/\//g, "");
 }
+
 /* ---------------------------------------------------------
-   [08-3] localStorage
+   [08-2] localStorage
 --------------------------------------------------------- */
 function readStoredArraySafe(key) {
   try {
@@ -199,7 +189,7 @@ function readStoredArraySafe(key) {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
-  } catch {
+  } catch (e) {
     return [];
   }
 }
@@ -215,10 +205,12 @@ function writeStoredArraySafe(key, list) {
 function pushStoredRecord(key, record, limit = 200) {
   const arr = readStoredArraySafe(key);
   arr.unshift(record);
-  writeStoredArraySafe(key, arr.slice(0, limit));
+  const trimmed = arr.slice(0, limit);
+  writeStoredArraySafe(key, trimmed);
 }
+
 /* ---------------------------------------------------------
-   [08-4] viewerログ保存
+   [08-3] viewerログ保存
 --------------------------------------------------------- */
 function saveViewerLogToStorage(payload) {
   pushStoredRecord(
@@ -227,97 +219,52 @@ function saveViewerLogToStorage(payload) {
     LOG_STORAGE_LIMITS.viewerLogs
   );
 }
+
 /* ---------------------------------------------------------
-   [08-5] appendLog（完全時系列保証）
+   [08-4] appendLog
 --------------------------------------------------------- */
 function appendLog(msg, type = "info") {
+
   const box = document.getElementById("logBox");
-  const now = new Date();
+  const t = getNowLabelJa();
 
-  const record = {
-    seq: ++LOG_SEQ,
-    time: now.getTime(),
-    label: getNowLabelJa(),
-    type,
-    message: String(msg ?? ""),
-
-    currentView: State.currentView || "",
-    generatedAt: State.generatedAt || "",
-    latestRound: State.latestRound || "",
-    latestUpdateAt: State.latestUpdateAt || ""
-  };
-
-  LOG_BUFFER.push(record);
-
-  saveViewerLogToStorage({
-    savedAt: record.label,
-    type: record.type,
-    message: record.message,
-    currentView: record.currentView,
-    generatedAt: record.generatedAt,
-    latestRound: record.latestRound,
-    latestUpdateAt: record.latestUpdateAt
-  });
-
-  renderLogs(box);
-}
-
-/* ---------------------------------------------------------
-   [08-LOGRENDER] ログ描画（逆順＋progress保護）
---------------------------------------------------------- */
-function renderLogs(box) {
-  if (!box) return;
-
-  // ★ progressLine退避
-  let progress = null;
-  if (window.progressLine && box.contains(progressLine)) {
-    progress = progressLine;
-    progress.remove();
-  }
-
-  // ★ 時系列ソート（新しい順）
-  const sorted = [...LOG_BUFFER].sort((a, b) => {
-    if (a.time !== b.time) return b.time - a.time;
-    return b.seq - a.seq;
-  });
-
-  const slice = sorted.slice(0, MAX_LOG_RENDER);
-  const frag = document.createDocumentFragment();
-
-  for (const r of slice) {
+  if (box) {
     const line = document.createElement("div");
-    line.textContent = `[${r.label}] ${r.message}`;
-    line.dataset.type = r.type;
+    line.textContent = `[${t}] ${msg}`;
+    line.dataset.type = type;
 
-    if (r.type === "error") {
+    if (type === "error") {
       line.style.color = "#ff5555";
-    } else if (r.type === "warn") {
+    } else if (type === "warn") {
       line.style.color = "#ffeb3b";
     } else {
       line.style.color = "#00ff00";
     }
 
-    frag.appendChild(line);
+    box.prepend(line);
+
+    while (box.children.length > MAX_LOG_LINES) {
+      box.removeChild(box.lastChild);
+    }
   }
 
-  box.innerHTML = "";
-  box.appendChild(frag);
-
-  // ★ progressLineを最上部へ戻す
-  if (progress) {
-    box.prepend(progress);
-  }
+  saveViewerLogToStorage({
+    savedAt: t,
+    type,
+    message: String(msg ?? ""),
+    currentView: State.currentView || "",
+    generatedAt: State.generatedAt || "",
+    latestRound: State.latestRound || "",
+    latestUpdateAt: State.latestUpdateAt || ""
+  });
 }
 
-/* ---------------------------------------------------------
-   [08-UTIL] ラッパー
---------------------------------------------------------- */
+/* ★ ラッパー */
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
 const logError = msg => appendLog(msg, "error");
-
 /* ---------------------------------------------------------
-   [08-A] copyログ
+   [08-A] copyログ（統一JSON）
 --------------------------------------------------------- */
 function saveCopyEventToStorage(payload) {
   pushStoredRecord(
@@ -326,9 +273,8 @@ function saveCopyEventToStorage(payload) {
     LOG_STORAGE_LIMITS.copyEvents
   );
 }
-
 /* ---------------------------------------------------------
-   [08-B] MATCHINGログ補助
+   [08-B] MATCHINGログ
 --------------------------------------------------------- */
 const MATCHING_LOG_CONFIG = {
   verboseTopDetails: false,
@@ -374,7 +320,6 @@ function openViewerIndexedDB() {
           keyPath: "id",
           autoIncrement: true
         });
-
         store.createIndex("type", "type", { unique: false });
         store.createIndex("savedAt", "savedAt", { unique: false });
         store.createIndex("reason", "reason", { unique: false });
@@ -395,19 +340,25 @@ async function putViewerEventToIndexedDB(record) {
     await new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_CONFIG.stores.events, "readwrite");
       const store = tx.objectStore(IDB_CONFIG.stores.events);
-
       store.add(record);
 
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error || new Error("indexeddb_tx_failed"));
       tx.onabort = () => reject(tx.error || new Error("indexeddb_tx_aborted"));
     });
-
   } catch (e) {
     console.warn("IndexedDB write failed:", e);
-
-    // ★修正：appendLog系へ統一
-    logWarn("IndexedDB保存失敗: " + (e.message || e));
+    try {
+      const box = document.getElementById("logBox");
+      if (box) {
+        const t = getNowLabelJa();
+        const line = document.createElement("div");
+        line.textContent = `[${t}] IndexedDB保存失敗: ${e.message || e}`;
+        line.dataset.type = "warn";
+        line.style.color = "#ffeb3b";
+        box.prepend(line);
+      }
+    } catch (_) {}
   }
 }
 
@@ -500,56 +451,40 @@ function exportTodayLogsAsJSON() {
 
   log(`JSON出力完了: ${filename} / copy=${todayCopyEvents.length} / viewer=${todayViewerLogs.length}`);
 }
-/* ---------------------------------------------------------
+/* ---------------------------------------------------------    
    [09] 進行中アニメーション
---------------------------------------------------------- */
-let progressTimer = null;
-let progressPos = 0;
-
-// ★修正：global化
-window.progressLine = null;
-
-function startProgress() {
-  const box = document.getElementById("logBox");
-
-  if (window.progressLine) window.progressLine.remove();
-
-  progressPos = 0;
-
-  window.progressLine = document.createElement("div");
-  window.progressLine.style.color = "#ffeb3b";
-
-  box.prepend(window.progressLine);
-
-  updateProgressBar();
-
-  progressTimer = setInterval(() => {
-    progressPos = (progressPos + 1) % 20;
-    updateProgressBar();
-  }, 120);
-}
-
-function updateProgressBar() {
-  if (!window.progressLine) return;
-
-  const total = 20;
-  const filled = "■".repeat(progressPos);
-  const empty = "□".repeat(total - progressPos);
-
-  window.progressLine.textContent = `進行中：${filled}${empty}`;
-}
-
-function stopProgress() {
-  if (progressTimer) clearInterval(progressTimer);
-  progressTimer = null;
-
-  if (window.progressLine) {
-    window.progressLine.remove();
-    window.progressLine = null;
-  }
-
-  log("Viewer フィルタ完了");
-}   
+--------------------------------------------------------- */    
+let progressTimer = null;    
+let progressPos = 0;    
+let progressLine = null;    
+function startProgress() {    
+  const box = document.getElementById("logBox");    
+  if (progressLine) progressLine.remove();    
+  progressPos = 0;    
+  progressLine = document.createElement("div");    
+  progressLine.style.color = "#ffeb3b";    
+  box.prepend(progressLine);    
+  updateProgressBar();    
+  progressTimer = setInterval(() => {    
+    progressPos = (progressPos + 1) % 20;    
+    updateProgressBar();    
+  }, 120);    
+}    
+function updateProgressBar() {    
+  const total = 20;    
+  const filled = "■".repeat(progressPos);    
+  const empty = "□".repeat(total - progressPos);    
+  progressLine.textContent = `進行中：${filled}${empty}`;    
+}    
+function stopProgress() {    
+  if (progressTimer) clearInterval(progressTimer);    
+  progressTimer = null;    
+  if (progressLine) {    
+    progressLine.remove();    
+    progressLine = null;    
+  }    
+  log("Viewer フィルタ完了");    
+}    
 /* ---------------------------------------------------------
    [10] 日付・数値ユーティリティ（fmt / parseDateJST / formatYMDHM）
 --------------------------------------------------------- */
@@ -1650,6 +1585,7 @@ function selectByWeight(players, count) {
    - スコア計算には使用しない（フィルタ専用）
 ---------------------------------------------------------*/
 function applyFilters() {
+
   const minutes = Number(document.getElementById("rangeSelect").value);
 
   // ① フィルタ基準時刻の決定
@@ -1667,6 +1603,7 @@ function applyFilters() {
 
   // ② フィルタ範囲
   const filterStartMs = filterBaseMs - (minutes * 60 * 1000);
+
   const startDate = new Date(filterStartMs);
   const startLabel = formatYMDHM(startDate);
 
@@ -1678,6 +1615,7 @@ function applyFilters() {
   let invalidCount = 0;
 
   State.filtered = State.all.filter(p => {
+
     if (!p.updateDate) {
       invalidCount++;
       return false;
@@ -1704,25 +1642,14 @@ function applyFilters() {
     + "件 / 有効:" + validCount
     + "件 / 無効:" + invalidCount + "件"
   );
+
   log("フィルタ開始時刻: " + startLabel);
+
   log("areaModel top5=" + JSON.stringify(
     Object.entries(State.areaModel)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
   ));
-
-  // ⑥ デバッグセッションへ反映
-  if (State.debugSession) {
-    State.debugSession.filter = {
-      rangeMinutes: minutes,
-      filterBase: formatYMDHM(baseDate),
-      filterStart: startLabel,
-      totalCount: State.all.length,
-      filteredCount: State.filtered.length,
-      validCount,
-      invalidCount
-    };
-  }
 }
 /* ---------------------------------------------------------    
    [31] calcStats
@@ -2237,28 +2164,17 @@ function exportAllCSV() {
 }    
 /* ---------------------------------------------------------
    [46] copyToClipboard
-   ★ copy + matching完全解析対応版
+   ★ コピー + copyログ完全保存（統一構造）
+   ★ ログは saveCopyEventUnified へ集約
 --------------------------------------------------------- */
 function copyToClipboard(text) {
 
-  // ★ セッション開始
-  State.debugSession = startDebugSession({
-    type: "copy",
-    rawText: String(text ?? "")
-  });
-
   const afterCopySuccess = () => {
 
-    // ★ ① 履歴更新（最優先）
-    recordClickFromCopiedText(text);
-
-    // ★ ② matching再計算（ここが重要）
-    buildMatchingCandidates();
-
-    // ★ ③ 結果保存
+    // ★ copyログ完全保存（統一）
     const record = saveCopyEventUnified(text);
 
-    // ★ 表示ログ
+    // ★ 表示ログ（簡潔）
     log(
       "コピー: " + (record.name || "-")
       + " / CandidateRank:" + (record.candidateRank ?? "-")
@@ -2267,44 +2183,33 @@ function copyToClipboard(text) {
       + " / Miss:" + (record.missReason || "-")
     );
 
-    // ★ セッション完了（完全データで）
-    finalizeDebugSession(record.__debugSnapshot || {
-      result: {
-        name: record.name || "",
-        candidateRank: record.candidateRank ?? null,
-        displayRank: record.displayRank ?? null,
-        score: record.score ?? null,
-        missReason: record.missReason || ""
-      }
-    });
+    // ★ 既存：履歴アンカー
+    recordClickFromCopiedText(text);
   };
 
-  // ---- clipboard処理 ----
+  // -----------------------------------------------------
+  // クリップボード処理（既存完全維持）
+  // -----------------------------------------------------
   if (!navigator.clipboard) {
     const ta = document.createElement("textarea");
     ta.value = text;
+
     document.body.appendChild(ta);
     ta.select();
     document.execCommand("copy");
+
     document.body.removeChild(ta);
+
     afterCopySuccess();
     return;
   }
 
   navigator.clipboard.writeText(text)
-    .then(afterCopySuccess)
+    .then(() => {
+      afterCopySuccess();
+    })
     .catch(() => {
       logError("コピーに失敗しました");
-
-      finalizeDebugSession({
-        result: {
-          name: "",
-          candidateRank: null,
-          displayRank: null,
-          score: null,
-          missReason: "clipboard_failed"
-        }
-      });
     });
 }
 /* ---------------------------------------------------------
@@ -2502,122 +2407,8 @@ function findCandidateInfoForLog(player) {
   };
 }
 /* ---------------------------------------------------------
-   [46-DEBUG] ログ + マッチング完全解析デバッグモード
---------------------------------------------------------- */
-let DEBUG_SESSION_ID = 0;
-
-function startDebugSession(trigger) {
-  return {
-    id: ++DEBUG_SESSION_ID,
-    startedAt: getNowLabelJa(),
-    trigger: trigger || { type: "unknown" },
-    filter: null,
-    candidates: null,
-    diagnostics: null,
-    rankedTop: [],
-    selectedTop: [],
-    result: null,
-    note: ""
-  };
-}
-
-function cloneScoreDetailForDebug(detail) {
-  if (!detail) return null;
-  return {
-    score: Number(detail.score ?? 0),
-    rankWeight: Number(detail.rankWeight ?? 0),
-    rankScore: Number(detail.rankScore ?? 0),
-    prideWeight: Number(detail.prideWeight ?? 1),
-    areaFactor: Number(detail.areaFactor ?? 1),
-    timeWeight: Number(detail.timeWeight ?? 0),
-    phaseScore: Number(detail.phaseScore ?? 0),
-    recencyScore: Number(detail.recencyScore ?? 0),
-    activityScore: Number(detail.activityScore ?? 0),
-    miscRaw: Number(detail.miscRaw ?? 0),
-    miscFactor: Number(detail.miscFactor ?? 1),
-    realtimeBoost: Number(detail.realtimeBoost ?? 1),
-    baseScoreBeforeBoost: Number(detail.baseScoreBeforeBoost ?? 0),
-    scoreAfterBoost: Number(detail.scoreAfterBoost ?? 0)
-  };
-}
-
-function buildDebugTopEntries(list, count = 10) {
-  return (list || []).slice(0, count).map((p, idx) => ({
-    rank: idx + 1,
-    name: p.name || "",
-    updateDate: p.updateDate || "",
-    area: p.area ?? "",
-    shopname: p.shopname ?? "",
-    rankKey: p.__rankKey ?? getPlayerRankKey(p),
-    score: Number(p.__score ?? 0),
-    scoreDetail: cloneScoreDetailForDebug(p.__detail)
-  }));
-}
-
-function saveMatchingDebugSnapshotToStorage(payload) {
-  pushStoredRecord(
-    LOG_STORAGE_KEYS.matchingSnapshots,
-    payload,
-    LOG_STORAGE_LIMITS.matchingSnapshots
-  );
-}
-
-function emitDebugSessionLogs(session) {
-  if (!session) return;
-
-  log(`[DEBUG] Session#${session.id} trigger=${JSON.stringify(session.trigger)}`);
-  if (session.filter) {
-    log(`[DEBUG] filter=${JSON.stringify(session.filter)}`);
-  }
-  if (session.candidates) {
-    log(`[DEBUG] candidates=${JSON.stringify(session.candidates)}`);
-  }
-  if (session.diagnostics) {
-    log(`[DEBUG] diagnostics=${JSON.stringify(session.diagnostics)}`);
-  }
-  if (session.selectedTop && session.selectedTop.length) {
-    log(
-      `[DEBUG] selectedTop=${session.selectedTop
-        .map(x => `${x.rank}:${x.name}(${Number(x.score ?? 0).toFixed(2)})`)
-        .join(" / ")}`
-    );
-  }
-  if (session.result) {
-    log(`[DEBUG] result=${JSON.stringify(session.result)}`);
-  }
-}
-
-function finalizeDebugSession(extra = {}) {
-  if (!State.debugSession) return null;
-
-  const session = State.debugSession;
-
-  if (extra.filter) session.filter = extra.filter;
-  if (extra.candidates) session.candidates = extra.candidates;
-  if (extra.diagnostics) session.diagnostics = extra.diagnostics;
-  if (extra.rankedTop) session.rankedTop = extra.rankedTop;
-  if (extra.selectedTop) session.selectedTop = extra.selectedTop;
-  if (extra.result) session.result = extra.result;
-  if (extra.note) session.note = extra.note;
-
-  const snapshot = {
-    ...session,
-    completedAt: getNowLabelJa()
-  };
-
-  State.debugHistory.unshift(snapshot);
-  State.debugHistory = State.debugHistory.slice(0, 30);
-
-  saveMatchingDebugSnapshotToStorage(snapshot);
-  State.debugSession = null;
-
-  emitDebugSessionLogs(snapshot);
-  return snapshot;
-}
-/* ---------------------------------------------------------
    [47] buildMatchingCandidates（完全差し替え）
    ★ コピー後5分45秒除外＋除外理由記録
-   ★ デバッグセッションへ候補母集団・TOP・診断を格納
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
@@ -2640,7 +2431,6 @@ function buildMatchingCandidates() {
   const filteredByUi = scoredAll.filter(p => {
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
-
     if (p.__rankKey.startsWith("R")) {
       return selectedStars.includes(Number(p.starCnt));
     } else {
@@ -2654,8 +2444,8 @@ function buildMatchingCandidates() {
 
   const latestCopied = getLatestCopiedPlayer();
   let cooldownExcludedCount = 0;
-  let analysisBase = filteredByRankModel;
 
+  let analysisBase = filteredByRankModel;
   if (latestCopied) {
     analysisBase = filteredByRankModel.filter(p => {
       const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
@@ -2676,7 +2466,6 @@ function buildMatchingCandidates() {
   }
 
   const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
-
   State.matchingRankedAll = rankedAll;
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
 
@@ -2685,7 +2474,6 @@ function buildMatchingCandidates() {
 
   let selected = [];
   const initialNeed = Math.min(10, rankedAll.length);
-
   if (initialNeed > 0) {
     selected = selectByWeight(rankedAll, initialNeed);
   }
@@ -2700,7 +2488,6 @@ function buildMatchingCandidates() {
     );
 
     let fallbackFiltered = fallbackPool;
-
     if (latestCopied) {
       fallbackFiltered = fallbackPool.filter(p => {
         const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
@@ -2737,15 +2524,18 @@ function buildMatchingCandidates() {
     + ` / CooldownExcluded=${cooldownExcludedCount}`
     + ` / Selected=${selected.length}`
   );
+
   log(`候補欠落内訳: noRankKey=${rankKeyMissing}`
     + ` / rankModelZero=${rankModelExcluded}`
     + ` / cooldownExcluded=${cooldownExcludedCount}`
     + ` / analysisFallback=${filteredByRankModel.length > 0 ? "NO" : "YES"}`
   );
+
   log(`診断: Gap12=${Number(diag?.gap12 ?? 0).toFixed(2)}`
     + ` / Ratio=${Number(diag?.top1Ratio ?? 0).toFixed(2)}`
     + ` / Cluster=${isCluster ? "YES" : "NO"}`
   );
+
   log(`表示TOP: ${formatMatchTopList(selected)}`);
 
   if (MATCHING_LOG_CONFIG.verboseTopDetails) {
@@ -2762,32 +2552,6 @@ function buildMatchingCandidates() {
         + ` / boost=${Number(d.realtimeBoost ?? 1).toFixed(3)}`
       );
     });
-  }
-
-  // ★ デバッグセッションへ解析結果を反映
-  if (State.debugSession) {
-    State.debugSession.candidates = {
-      baseCount: base.length,
-      uiPoolCount: filteredByUi.length,
-      rankModelPoolCount: filteredByRankModel.length,
-      cooldownExcludedCount,
-      selectedCount: selected.length,
-      noRankKeyCount: rankKeyMissing,
-      rankModelZeroCount: rankModelExcluded,
-      analysisFallback: filteredByRankModel.length > 0 ? "NO" : "YES"
-    };
-
-    State.debugSession.diagnostics = diag ? {
-      gap12: Number(diag.gap12 ?? 0),
-      gap15: Number(diag.gap15 ?? 0),
-      top5Mean: Number(diag.top5Mean ?? 0),
-      top1Ratio: Number(diag.top1Ratio ?? 0),
-      totalRanked: Number(diag.totalRanked ?? 0),
-      cluster: isCluster ? "YES" : "NO"
-    } : null;
-
-    State.debugSession.rankedTop = buildDebugTopEntries(rankedAll, 10);
-    State.debugSession.selectedTop = buildDebugTopEntries(selected, 10);
   }
 }
 /* ---------------------------------------------------------    
@@ -2862,21 +2626,16 @@ function applyMatchingFilter(keyword) {
   renderMatchingRows(list);    
 }    
 /* ---------------------------------------------------------
-   [52] showMatchingCandidates
-   ★ マッチング候補画面表示
-   ★ デバッグセッション対応
+   [52] showMatchingCandidates  
+   ★ マッチング候補画面表示  
+   ★ IndexedDB保存は使用しない（削除済み）  
 --------------------------------------------------------- */
 function showMatchingCandidates(push = true) {
-  const createdForOpen = !State.debugSession;
-
-  // ★ マッチング画面を単独で開いた場合も解析セッション化
-  if (createdForOpen) {
-    State.debugSession = startDebugSession({
-      type: "matching_open"
-    });
-  }
 
   buildMatchingCandidates();
+
+  // ★ IndexedDB保存は使用しないため削除
+
   renderMatchingHeader();
   renderMatchingTable();
 
@@ -2885,20 +2644,6 @@ function showMatchingCandidates(push = true) {
 
   if (push) {
     history.pushState({ page: STATE.MATCHING }, '', '');
-  }
-
-  // ★ matching_open 単独操作はここで完了
-  if (createdForOpen) {
-    finalizeDebugSession({
-      result: {
-        name: "",
-        candidateRank: null,
-        displayRank: null,
-        score: null,
-        missReason: "matching_open_only"
-      },
-      note: "matching画面表示のみ"
-    });
   }
 }
 /* ---------------------------------------------------------    
@@ -3174,11 +2919,9 @@ function startUpdateWatch() {
 
   log("更新監視を開始（30秒間隔）");
 }
-/* ---------------------------------------------------------
-   [59] saveCopyEventUnified
+/* ---------------------------------------------------------/* ------------------------------------------------CopyEventUnified
    ★ copyログ完全保存（localStorage版）
    ★ IndexedDBは使用しない
-   ★ デバッグセッション連携対応
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
@@ -3187,83 +2930,30 @@ function saveCopyEventUnified(rawText) {
 
   const record = {
     type: "copy",
+
     name: player?.name || "",
     savedAt: getNowLabelJa(),
+
     generatedAt: State.generatedAt || "",
     latestUpdateAt: State.latestUpdateAt || "",
 
-    // ★ ランキング系
     candidateRank: candidateInfo.candidateRank ?? null,
     displayRank: candidateInfo.displayRank ?? null,
     baseRank: candidateInfo.baseRank ?? null,
 
-    // ★ スコア
     score: candidateInfo.score ?? null,
 
-    // ★ 欠落理由
     missReason: (candidateInfo.missReasons || []).join("|"),
 
-    // ★ cooldown補助
+    // 補助情報
     cooldownExcluded: !!candidateInfo.cooldownExcluded,
     cooldownRemainingSec: candidateInfo.cooldownRemainingSec ?? null
   };
 
-  //-----------------------------------------------------
-  // localStorage 保存（既存機能維持）
-  //-----------------------------------------------------
+  // -----------------------------------------------------
+  // localStorage 保存のみ
+  // -----------------------------------------------------
   saveCopyEventToStorage(record);
-
-  //-----------------------------------------------------
-  // ★ デバッグセッション用情報（メモリのみ）
-  //-----------------------------------------------------
-  record.__debugSnapshot = {
-    result: {
-      name: record.name || "",
-      candidateRank: record.candidateRank ?? null,
-      displayRank: record.displayRank ?? null,
-      baseRank: record.baseRank ?? null,
-      score: record.score ?? null,
-      missReason: record.missReason || "",
-      cooldownExcluded: record.cooldownExcluded,
-      cooldownRemainingSec: record.cooldownRemainingSec ?? null
-    },
-    note: player
-      ? "copy player resolved"
-      : "copy player not resolved"
-  };
-
-  if (player) {
-    record.__debugSnapshot.result.player = {
-      name: player.name || "",
-      updateDate: player.updateDate || "",
-      area: player.area ?? "",
-      shopname: player.shopname ?? "",
-      rankKey: getPlayerRankKey(player)
-    };
-  }
-
-  if (candidateInfo) {
-    record.__debugSnapshot.result.candidateInfo = {
-      candidateRank: candidateInfo.candidateRank ?? null,
-      displayRank: candidateInfo.displayRank ?? null,
-      baseRank: candidateInfo.baseRank ?? null,
-      boostedRank: candidateInfo.boostedRank ?? null,
-
-      score: candidateInfo.score ?? null,
-      baseScoreBeforeBoost: candidateInfo.baseScoreBeforeBoost ?? null,
-      scoreAfterBoost: candidateInfo.scoreAfterBoost ?? null,
-
-      rankWeight: candidateInfo.rankWeight ?? 0,
-
-      cooldownExcluded: !!candidateInfo.cooldownExcluded,
-      cooldownRemainingSec: candidateInfo.cooldownRemainingSec ?? null,
-
-      missReasons: candidateInfo.missReasons || [],
-
-      // ★ detailまるごと保持
-      scoreDetail: cloneScoreDetailForDebug(candidateInfo.scoreDetail)
-    };
-  }
 
   return record;
 }
