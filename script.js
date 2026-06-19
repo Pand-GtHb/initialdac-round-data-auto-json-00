@@ -1593,7 +1593,7 @@ function selectByWeight(players, count) {
 /*---------------------------------------------------------
    [30] applyFilters
 　　フィルタ起点時刻を　latest_update.json　の　lastUpdated　から
-　　integrated_data.json　の　generatedAt"　に変更
+　　integrated_data.json　の　generatedAt　に変更
 ---------------------------------------------------------*/
 function applyFilters() {
   const minutes = Number(document.getElementById("rangeSelect").value);
@@ -2625,6 +2625,10 @@ function buildMatchingCandidates() {
       );
     });
   }
+  logEvent("cycle", {
+    total: rankedAll.length,
+    sel: selected.length
+  });
 }
 /* ---------------------------------------------------------
    [48] renderMatchingHeader      
@@ -2760,6 +2764,9 @@ async function init() {
 
   log("Viewer 初期化中");
 
+  // ★追加
+  await initLogDB();
+
   startProgress();
 
   buildRubyFilters();
@@ -2809,9 +2816,6 @@ async function init() {
   buildSummary();
   renderSummary();
 
-  stopProgress();
-
-  log("Viewer 初期化完了");
 
   startUpdateWatch();
 }
@@ -3009,8 +3013,7 @@ function startUpdateWatch() {
 }
 /* ---------------------------------------------------------/
    [59]CopyEventUnified
-   ★ copyログ完全保存（localStorage版）
-   ★ IndexedDBは使用しない
+   ★ copyログ完全保存（localStorage + IndexedDB併用）
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
@@ -3044,5 +3047,121 @@ function saveCopyEventUnified(rawText) {
   // -----------------------------------------------------
   saveCopyEventToStorage(record);
 
+  // ★追加（これが今回の本体）
+  logEvent("copy", {
+    n: record.name,
+    cR: record.candidateRank ?? -1,
+    dR: record.displayRank ?? -1,
+    s: record.score ?? 0,
+    m: record.missReason ?? ""
+  });
+
   return record;
+}
+
+/* =========================================================
+ [60-01] LOG IndexedDBスキーマ定義（最小）
+========================================================= */
+const LOG_DB_NAME = "viewer_logs_db";
+const LOG_DB_VERSION = 1;
+
+const LOG_STORE = {
+  events: "events",          // 汎用イベント
+  copyEvents: "copyEvents",  // copy専用
+  cycleEvents: "cycleEvents" // cycle専用
+};
+
+let logDB = null;
+
+/* =========================================================
+ [60-02]  LOG 初期化
+========================================================= */
+function initLogDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(LOG_DB_NAME, LOG_DB_VERSION);
+
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+
+      if (!db.objectStoreNames.contains(LOG_STORE.events)) {
+        db.createObjectStore(LOG_STORE.events, {
+          keyPath: "id",
+          autoIncrement: true
+        });
+      }
+
+      if (!db.objectStoreNames.contains(LOG_STORE.copyEvents)) {
+        db.createObjectStore(LOG_STORE.copyEvents, {
+          keyPath: "id",
+          autoIncrement: true
+        });
+      }
+
+      if (!db.objectStoreNames.contains(LOG_STORE.cycleEvents)) {
+        db.createObjectStore(LOG_STORE.cycleEvents, {
+          keyPath: "id",
+          autoIncrement: true
+        });
+      }
+    };
+
+    req.onsuccess = (e) => {
+      logDB = e.target.result;
+      console.log("[LOG] IndexedDB ready");
+      resolve();
+    };
+
+    req.onerror = (e) => {
+      console.error("[LOG] DB init failed", e);
+      reject(e);
+    };
+  });
+}
+
+/* =========================================================
+ [60-03] LOG 共通保存（append）
+========================================================= */
+function putLog(storeName, data) {
+  if (!logDB) return;
+
+  const tx = logDB.transaction(storeName, "readwrite");
+  const store = tx.objectStore(storeName);
+
+  store.put(data); // append（autoIncrement）
+}
+
+/* =========================================================
+ [60-04] LOG logEvent（単一入口）
+========================================================= */
+function logEvent(type, payload = {}) {
+  const now = Date.now();
+
+  // ★ 軽量フォーマット（キー短縮）
+  const record = {
+    t: now,        // timestamp
+    e: type,       // event type
+    ...payload     // data
+  };
+
+  // -------- store振り分け --------
+  if (type === "copy") {
+    putLog(LOG_STORE.copyEvents, record);
+  } else if (type === "cycle") {
+    putLog(LOG_STORE.cycleEvents, record);
+  } else {
+    putLog(LOG_STORE.events, record);
+  }
+}
+
+/* =========================================================
+ [60-05] LOG 動作確認（テスト）
+========================================================= */
+async function testLog() {
+  await initLogDB();
+
+  logEvent("test", { a: 1 });
+  logEvent("copy", { n: "player1", r: 3 });
+  logEvent("cycle", { step: 2 });
+
+  console.log("[LOG] test events saved");
 }
