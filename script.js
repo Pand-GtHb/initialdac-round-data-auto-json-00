@@ -2625,9 +2625,20 @@ function buildMatchingCandidates() {
       );
     });
   }
+
+  // ★追加：Top候補情報抽出（軽量）
+  const top3 = rankedAll.slice(0, 3).map((p, i) => ({
+    n: p.name,
+    s: Number(p.__score ?? 0),
+    r: i + 1
+  }));
+
   logEvent("cycle", {
     total: rankedAll.length,
-    sel: selected.length
+    sel: selected.length,
+
+    // ★追加ログ
+    t3: top3
   });
 }
 /* ---------------------------------------------------------
