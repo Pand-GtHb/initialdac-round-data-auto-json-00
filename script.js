@@ -2764,7 +2764,6 @@ async function init() {
 
   log("Viewer 初期化中");
 
-  // ★追加
   await initLogDB();
 
   startProgress();
@@ -2816,6 +2815,8 @@ async function init() {
   buildSummary();
   renderSummary();
 
+  // ✅ ★ここ追加（必須）
+  stopProgress();
 
   startUpdateWatch();
 }
