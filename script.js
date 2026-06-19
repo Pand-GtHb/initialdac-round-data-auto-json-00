@@ -295,7 +295,7 @@ function formatMatchTopList(list, count = MATCHING_LOG_CONFIG.topListCount) {
 /* ---------------------------------------------------------  
    [08-EXPORT] localStorage → 本日分JSON出力  
 --------------------------------------------------------- */
-function exportTodayLogsAsJSON() {
+function exportTodayViewerLogsAsJSON() {
   const today = getTodayYMDJa();
 
   const viewerLogs = readStoredArraySafe(LOG_STORAGE_KEYS.viewerLogs);
@@ -2833,11 +2833,27 @@ document.addEventListener("DOMContentLoaded", () => {
   const filterBtn = document.getElementById("filterBtn");
   const summaryCsvBtn = document.getElementById("summaryCsvBtn");
   const allCsvBtn = document.getElementById("allCsvBtn");
-  const exportJsonBtn = document.getElementById("exportJsonBtn");
   const backBtn = document.getElementById("backBtn");
   const matchingBtn = document.getElementById("matchingBtn");
   const matchingBackBtn = document.getElementById("matchingBackBtn");
   const searchInput = document.getElementById("searchInput");
+  const exportJsonBtn = document.getElementById("exportJsonBtn");
+  const analysisLogBtn = document.getElementById("analysisLogBtn");
+
+
+  // 本日分Logボタン
+  if (exportJsonBtn) {
+    if (typeof exportTodayViewerLogsAsJSON === "function") {
+      exportJsonBtn.onclick = exportTodayViewerLogsAsJSON;
+    } else {
+      exportJsonBtn.disabled = true;
+    }
+  }
+
+  // 分析Logボタン
+  if (analysisLogBtn) {
+    analysisLogBtn.onclick = exportTodayLogsAsJSON;
+  }
 
   // 最新データ取得
   if (reloadBtn) {
@@ -2862,16 +2878,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // CSV / JSON
   if (summaryCsvBtn) summaryCsvBtn.onclick = exportSummaryCSV;
   if (allCsvBtn) allCsvBtn.onclick = exportAllCSV;
-
-  if (exportJsonBtn) {
-    if (typeof exportTodayLogsAsJSON === "function") {
-      exportJsonBtn.onclick = exportTodayLogsAsJSON;
-      exportJsonBtn.disabled = false;
-    } else {
-      exportJsonBtn.disabled = true;
-      logWarn("JSON出力機能が未定義のため、本日分Logボタンを無効化しました");
-    }
-  }
 
   // 検索
   if (searchInput) {
@@ -3226,4 +3232,65 @@ function downloadJSON(data) {
   a.click();
 
   URL.revokeObjectURL(url);
+}
+/* =========================================================
+ [60-08] LOG export（今日のみ）
+========================================================= */
+function exportTodayLogsAsJSON() {
+  if (!logDB) {
+    console.warn("DB未初期化");
+    return;
+  }
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const startTs = todayStart.getTime();
+
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
+  const endTs = todayEnd.getTime();
+
+  const result = {
+    exportedAt: new Date().toISOString(),
+    range: {
+      start: startTs,
+      end: endTs
+    },
+    events: [],
+    copyEvents: [],
+    cycleEvents: []
+  };
+
+  const storeNames = Object.values(LOG_STORE);
+  let remaining = storeNames.length;
+
+  storeNames.forEach(name => {
+    const tx = logDB.transaction(name, "readonly");
+    const store = tx.objectStore(name);
+    const req = store.getAll();
+
+    req.onsuccess = () => {
+      const all = req.result || [];
+
+      // ★ 今日分フィルタ
+      result[name] = all.filter(x =>
+        x.t >= startTs && x.t <= endTs
+      );
+
+      remaining--;
+
+      if (remaining === 0) {
+        downloadJSON(result);
+      }
+    };
+
+    req.onerror = () => {
+      console.error("read error:", name);
+      remaining--;
+
+      if (remaining === 0) {
+        downloadJSON(result);
+      }
+    };
+  });
 }
