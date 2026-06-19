@@ -3165,3 +3165,65 @@ async function testLog() {
 
   console.log("[LOG] test events saved");
 }
+/* =========================================================
+ [60-06] LOG export（IndexedDB → JSON）
+========================================================= */
+function exportLogsAsJSON() {
+  if (!logDB) {
+    console.warn("DB未初期化");
+    return;
+  }
+
+  const result = {
+    exportedAt: new Date().toISOString(),
+    events: [],
+    copyEvents: [],
+    cycleEvents: []
+  };
+
+  const storeNames = Object.values(LOG_STORE);
+  let remaining = storeNames.length;
+
+  storeNames.forEach(name => {
+    const tx = logDB.transaction(name, "readonly");
+    const store = tx.objectStore(name);
+
+    const req = store.getAll();
+
+    req.onsuccess = () => {
+      result[name] = req.result || [];
+      remaining--;
+
+      if (remaining === 0) {
+        downloadJSON(result);
+      }
+    };
+
+    req.onerror = () => {
+      console.error("read error:", name);
+      remaining--;
+      if (remaining === 0) {
+        downloadJSON(result);
+      }
+    };
+  });
+}
+
+/* =========================================================
+ [60-07] LOG JSONダウンロード
+========================================================= */
+function downloadJSON(data) {
+  const blob = new Blob(
+    [JSON.stringify(data, null, 2)],
+    { type: "application/json" }
+  );
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  a.href = url;
+  a.download = "viewer_analysis_logs.json";
+  a.click();
+
+  URL.revokeObjectURL(url);
+}
