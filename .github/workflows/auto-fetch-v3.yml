@@ -8,15 +8,18 @@ permissions:
 
 concurrency:
   group: auto-integrate
-  cancel-in-progress: true
+  cancel-in-progress: false   # ★中断しない（競合防止）
 
 jobs:
   fetch-and-merge:
     runs-on: ubuntu-latest
 
     steps:
+      # ▼ Checkout（履歴全部取得）
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ★重要
 
       # ▼ ① latest_round.json を取得
       - name: Fetch latest_round.json
@@ -32,7 +35,7 @@ jobs:
           echo "Latest round = $ROUND"
           echo "round=$ROUND" >> $GITHUB_OUTPUT
 
-      # ▼ ③ 全エリア JSON を 20 並列で取得（失敗時は {}）
+      # ▼ ③ 全エリア JSON を並列取得
       - name: Fetch JSON (parallel 20)
         run: |
           mkdir -p tmp
@@ -53,7 +56,7 @@ jobs:
             fi
           '
 
-      # ▼ ④ jq reduce（area を filename から抽出）
+      # ▼ ④ JSON統合
       - name: Merge JSON (reduce optimized)
         run: |
           jq -n '
@@ -94,21 +97,29 @@ jobs:
           jq -c '.' integrated_data.json > integrated_data.min.json
           mv integrated_data.min.json integrated_data.json
 
-      # ▼ ⑥ latest_update.json を生成（JST）
+      # ▼ ⑥ latest_update.json（JST）
       - name: Generate latest_update.json
         run: |
           NOW_JST=$(TZ=Asia/Tokyo date +"%Y-%m-%d %H:%M:%S")
           echo "{\"lastUpdated\":\"${NOW_JST}\"}" > latest_update.json
 
-      # ▼ ⑦ integrated_data.json + latest_update.json をコミット
-      - name: Commit JSON files
+      # ▼ ⑦ Commit & Push（競合耐性あり）
+      - name: Commit & Push (with retry)
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
           git add integrated_data.json latest_update.json
 
+          # 変更なければ終了
           git diff --cached --quiet && echo "No changes" && exit 0
 
           git commit -m "Auto update integrated_data.json & latest_update.json (round ${{ steps.round.outputs.round }})"
-          git push
+
+          # ★競合耐性付き push
+          for i in 1 2 3; do
+            echo "Attempt $i: pull --rebase + push"
+            git pull --rebase origin main && git push origin main && break
+            echo "Retrying in 5 seconds..."
+            sleep 5
+          done
