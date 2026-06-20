@@ -2479,9 +2479,28 @@ function findCandidateInfoForLog(player) {
   };
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（追加修正版）
+   [47] buildMatchingCandidates（TTL + DataReset対応）
 --------------------------------------------------------- */
+
+// ★ Data世代保持（関数外でもOK）
+buildMatchingCandidates._lastGeneratedAt =
+  buildMatchingCandidates._lastGeneratedAt || null;
+
 function buildMatchingCandidates() {
+
+  const currentGen = State.generatedAt || null;
+
+  // ✅ Dataリロード検知 → cooldownリセット
+  if (
+    buildMatchingCandidates._lastGeneratedAt &&
+    currentGen &&
+    buildMatchingCandidates._lastGeneratedAt !== currentGen
+  ) {
+    State.recentClicks = [];
+    console.log("[RESET] Data updated → cooldown reset");
+  }
+
+  buildMatchingCandidates._lastGeneratedAt = currentGen;
 
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
@@ -2491,12 +2510,39 @@ function buildMatchingCandidates() {
 
   const base = State.filtered;
 
+  const now = Date.now();
+
+  // ✅ TTL設定（60秒でほぼ消滅）
+  const TTL_TAU_SEC = 30; // 減衰速度
+  const TTL_MAX_SEC = 90; // 完全切断ライン
+
   const scoredAll = base.map(p => {
+
     const detail = calcMatchingScoreDetail(p);
+
+    // ✅ TTL処理
+    let ttlDecay = 1;
+
+    if (p.updateDate) {
+      const last = parseDateJST(p.updateDate)?.getTime();
+      if (last) {
+        const ageSec = (now - last) / 1000;
+
+        if (ageSec > TTL_MAX_SEC) {
+          ttlDecay = 0; // 強制消滅
+        } else {
+          ttlDecay = Math.exp(-ageSec / TTL_TAU_SEC);
+        }
+      }
+    }
+
+    const finalScore =
+      Number(detail.score ?? 0) * ttlDecay;
+
     return {
       ...p,
       __rankKey: getPlayerRankKey(p),
-      __score: Number(detail.score ?? 0),
+      __score: finalScore,
       __detail: detail
     };
   });
@@ -2516,19 +2562,19 @@ function buildMatchingCandidates() {
     Number(p.__detail?.rankWeight ?? 0) > 0
   );
 
+  let analysisBase =
+    filteredByRankModel.length > 0
+      ? filteredByRankModel
+      : filteredByUi;
+
   const latestCopied = getLatestCopiedPlayer();
 
   let cooldownExcludedCount = 0;
 
-  let analysisBase = filteredByRankModel;
-
-  // ✅ No① Pool fallback（最重要）
-  if (!analysisBase || analysisBase.length === 0) {
-    analysisBase = filteredByUi;
-  }
-
+  // ✅ Cooldown維持（既存）
   if (latestCopied) {
     analysisBase = analysisBase.filter(p => {
+
       const sameName =
         normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
 
@@ -2546,105 +2592,37 @@ function buildMatchingCandidates() {
           return false;
         }
       }
+
       return true;
     });
   }
 
-  // ✅ 基本ランキング
   const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
 
-  // ✅ No② score保証（finalScore追加）
   const safePool = rankedAll.map(p => ({
     ...p,
-    __finalScore:
-      (p.__score !== undefined && p.__score !== null)
-        ? p.__score
-        : 0
+    __finalScore: p.__score ?? 0
   }));
 
-  // ✅ No③ スコア順強制
   safePool.sort((a, b) => b.__finalScore - a.__finalScore);
 
-  State.matchingRankedAll = rankedAll;
-  State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
+  // ✅ TOP10確定（完全スコア主導）
+  let selected = safePool.slice(0, 10);
 
-  const diag = State.matchingDiagnostics;
-  const isCluster = diag && diag.gap12 < 0.05;
-
-  let selected = [];
-
-  // ✅ 既存select保持（壊さない）
-  const initialNeed = Math.min(10, rankedAll.length);
-
-  if (initialNeed > 0) {
-    selected = selectByWeight(rankedAll, initialNeed);
-  }
-
-  // ✅ fallback補充（既存維持）
-  if (selected.length < 10) {
-
-    const existing = new Set(
-      selected.map(p =>
-        `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
-      )
-    );
-
-    const fallbackPool = filteredByUi.filter(p =>
-      !existing.has(
-        `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
-      )
-    );
-
-    let fallbackFiltered = fallbackPool;
-
-    if (latestCopied) {
-      fallbackFiltered = fallbackPool.filter(p => {
-        const sameName =
-          normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
-
-        const sameUpdateDate =
-          String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
-
-        if (sameName && sameUpdateDate) {
-          const phase = getRoundedDiffMinAndPhaseDistance(
-            latestCopied.copiedAt || latestCopied.time,
-            5
-          );
-          if (phase.isInitialCooldown) {
-            return false;
-          }
-        }
-        return true;
-      });
-    }
-
-    const restNeed = 10 - selected.length;
-
-    if (restNeed > 0 && fallbackFiltered.length > 0) {
-      selected = [
-        ...selected,
-        ...selectByWeight(fallbackFiltered, restNeed)
-      ];
-    }
-  }
-
-  // ✅ No④ TOP10強制（最終決定）
-  selected = safePool.slice(0, 10);
-
-  // ✅ No⑤ displayRank付与
+  // ✅ displayRank
   selected.forEach((p, i) => {
     p.displayRank = i + 1;
   });
 
-  // ✅ state更新
+  State.matchingRankedAll = rankedAll;
   State.matchingList = selected;
 
-  // ✅ 統計ログ
-  const rankKeyMissing = scoredAll.filter(p => !p.__rankKey).length;
-
-  const rankModelExcluded = filteredByUi.filter(p =>
-    Number(p.__detail?.rankWeight ?? 0) <= 0
-  ).length;
+  // ✅ ログ
+  console.log("[FINAL_TOP10]", selected.map(p => ({
+    name: p.name,
+    score: p.__finalScore,
+    rank: p.displayRank
+  })));
 
   log(`候補生成: Base=${base.length}`
     + ` / UiPool=${filteredByUi.length}`
@@ -2652,57 +2630,6 @@ function buildMatchingCandidates() {
     + ` / CooldownExcluded=${cooldownExcludedCount}`
     + ` / Selected=${selected.length}`
   );
-
-  log(`候補欠落内訳: noRankKey=${rankKeyMissing}`
-    + ` / rankModelZero=${rankModelExcluded}`
-    + ` / cooldownExcluded=${cooldownExcludedCount}`
-    + ` / analysisFallback=${filteredByRankModel.length > 0 ? "NO" : "YES"}`
-  );
-
-  log(`診断: Gap12=${Number(diag?.gap12 ?? 0).toFixed(2)}`
-    + ` / Ratio=${Number(diag?.top1Ratio ?? 0).toFixed(2)}`
-    + ` / Cluster=${isCluster ? "YES" : "NO"}`
-  );
-
-  // ✅ No⑥ 最終TOP10ログ
-  console.log("[FINAL_TOP10]",
-    selected.map(p => ({
-      name: p.name,
-      score: p.__finalScore,
-      rank: p.displayRank
-    }))
-  );
-
-  log(`表示TOP: ${formatMatchTopList(selected)}`);
-
-  // ★既存ログ維持
-  if (MATCHING_LOG_CONFIG.verboseTopDetails) {
-    rankedAll.slice(0, 3).forEach((p, idx) => {
-      const d = p.__detail || {};
-      log(
-        `[DEBUG] Rank=${idx + 1}`
-        + ` / name=${p.name}`
-        + ` / score=${p.__score.toFixed(3)}`
-        + ` / rankWeight=${Number(d.rankWeight ?? 0).toFixed(3)}`
-        + ` / rankScore=${Number(d.rankScore ?? 0).toFixed(3)}`
-        + ` / timeWeight=${Number(d.timeWeight ?? 0).toFixed(3)}`
-        + ` / areaFactor=${Number(d.areaFactor ?? 1).toFixed(3)}`
-        + ` / boost=${Number(d.realtimeBoost ?? 1).toFixed(3)}`
-      );
-    });
-  }
-
-  const top3 = rankedAll.slice(0, 3).map((p, i) => ({
-    n: p.name,
-    s: Number(p.__score ?? 0),
-    r: i + 1
-  }));
-
-  logEvent("cycle", {
-    total: rankedAll.length,
-    sel: selected.length,
-    t3: top3
-  });
 }
 /* ---------------------------------------------------------
    [48] renderMatchingHeader      
