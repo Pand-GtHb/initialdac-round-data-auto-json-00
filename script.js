@@ -2479,10 +2479,10 @@ function findCandidateInfoForLog(player) {
   };
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（TTL + DataReset対応）
+   [47] buildMatchingCandidates（位相TTL対応）
 --------------------------------------------------------- */
 
-// ★ Data世代保持（関数外でもOK）
+// ★ 世代保持
 buildMatchingCandidates._lastGeneratedAt =
   buildMatchingCandidates._lastGeneratedAt || null;
 
@@ -2490,7 +2490,7 @@ function buildMatchingCandidates() {
 
   const currentGen = State.generatedAt || null;
 
-  // ✅ Dataリロード検知 → cooldownリセット
+  // ✅ Data更新時：cooldownリセット
   if (
     buildMatchingCandidates._lastGeneratedAt &&
     currentGen &&
@@ -2510,28 +2510,33 @@ function buildMatchingCandidates() {
 
   const base = State.filtered;
 
-  const now = Date.now();
-
-  // ✅ TTL設定（60秒でほぼ消滅）
-  const TTL_TAU_SEC = 30; // 減衰速度
-  const TTL_MAX_SEC = 90; // 完全切断ライン
-
   const scoredAll = base.map(p => {
 
     const detail = calcMatchingScoreDetail(p);
 
-    // ✅ TTL処理
     let ttlDecay = 1;
 
+    // ✅ 位相ベースTTL
     if (p.updateDate) {
-      const last = parseDateJST(p.updateDate)?.getTime();
-      if (last) {
-        const ageSec = (now - last) / 1000;
 
-        if (ageSec > TTL_MAX_SEC) {
-          ttlDecay = 0; // 強制消滅
-        } else {
-          ttlDecay = Math.exp(-ageSec / TTL_TAU_SEC);
+      const updateMs = parseDateJST(p.updateDate)?.getTime();
+
+      if (updateMs) {
+        const phase = getRoundedDiffMinAndPhaseDistance(updateMs, 5);
+
+        if (phase.isInitialCooldown) {
+          // ※ここは通常 false（コピー対象のみtrueになる設計）
+          ttlDecay = 0;
+        } else if (isFinite(phase.d)) {
+          const dSec = phase.d * 60;
+
+          // 減衰（ここが調整ポイント）
+          ttlDecay = Math.exp(-dSec / 20);
+
+          // 遠すぎるものは切る（任意制御）
+          if (dSec > 90) {
+            ttlDecay = 0;
+          }
         }
       }
     }
@@ -2571,7 +2576,7 @@ function buildMatchingCandidates() {
 
   let cooldownExcludedCount = 0;
 
-  // ✅ Cooldown維持（既存）
+  // ✅ Cooldown（既存維持）
   if (latestCopied) {
     analysisBase = analysisBase.filter(p => {
 
@@ -2582,6 +2587,7 @@ function buildMatchingCandidates() {
         String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
 
       if (sameName && sameUpdateDate) {
+
         const phase = getRoundedDiffMinAndPhaseDistance(
           latestCopied.copiedAt || latestCopied.time,
           5
@@ -2597,7 +2603,8 @@ function buildMatchingCandidates() {
     });
   }
 
-  const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
+  const rankedAll =
+    [...analysisBase].sort((a, b) => b.__score - a.__score);
 
   const safePool = rankedAll.map(p => ({
     ...p,
@@ -2606,8 +2613,7 @@ function buildMatchingCandidates() {
 
   safePool.sort((a, b) => b.__finalScore - a.__finalScore);
 
-  // ✅ TOP10確定（完全スコア主導）
-  let selected = safePool.slice(0, 10);
+  const selected = safePool.slice(0, 10);
 
   // ✅ displayRank
   selected.forEach((p, i) => {
@@ -2618,11 +2624,13 @@ function buildMatchingCandidates() {
   State.matchingList = selected;
 
   // ✅ ログ
-  console.log("[FINAL_TOP10]", selected.map(p => ({
-    name: p.name,
-    score: p.__finalScore,
-    rank: p.displayRank
-  })));
+  console.log("[FINAL_TOP10]",
+    selected.map(p => ({
+      name: p.name,
+      score: p.__finalScore,
+      rank: p.displayRank
+    }))
+  );
 
   log(`候補生成: Base=${base.length}`
     + ` / UiPool=${filteredByUi.length}`
