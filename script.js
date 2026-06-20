@@ -2479,12 +2479,13 @@ function findCandidateInfoForLog(player) {
   };
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（完全差し替え）
-   ★ コピー後5分45秒除外＋除外理由記録
+   [47] buildMatchingCandidates（追加修正版）
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
+
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
+
   const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
     .map(x => x.value);
 
@@ -2503,6 +2504,7 @@ function buildMatchingCandidates() {
   const filteredByUi = scoredAll.filter(p => {
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
+
     if (p.__rankKey.startsWith("R")) {
       return selectedStars.includes(Number(p.starCnt));
     } else {
@@ -2515,19 +2517,30 @@ function buildMatchingCandidates() {
   );
 
   const latestCopied = getLatestCopiedPlayer();
+
   let cooldownExcludedCount = 0;
 
   let analysisBase = filteredByRankModel;
+
+  // ✅ No① Pool fallback（最重要）
+  if (!analysisBase || analysisBase.length === 0) {
+    analysisBase = filteredByUi;
+  }
+
   if (latestCopied) {
-    analysisBase = filteredByRankModel.filter(p => {
-      const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
-      const sameUpdateDate = String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
+    analysisBase = analysisBase.filter(p => {
+      const sameName =
+        normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
+
+      const sameUpdateDate =
+        String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
 
       if (sameName && sameUpdateDate) {
         const phase = getRoundedDiffMinAndPhaseDistance(
           latestCopied.copiedAt || latestCopied.time,
           5
         );
+
         if (phase.isInitialCooldown) {
           cooldownExcludedCount++;
           return false;
@@ -2537,7 +2550,21 @@ function buildMatchingCandidates() {
     });
   }
 
+  // ✅ 基本ランキング
   const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
+
+  // ✅ No② score保証（finalScore追加）
+  const safePool = rankedAll.map(p => ({
+    ...p,
+    __finalScore:
+      (p.__score !== undefined && p.__score !== null)
+        ? p.__score
+        : 0
+  }));
+
+  // ✅ No③ スコア順強制
+  safePool.sort((a, b) => b.__finalScore - a.__finalScore);
+
   State.matchingRankedAll = rankedAll;
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
 
@@ -2545,25 +2572,38 @@ function buildMatchingCandidates() {
   const isCluster = diag && diag.gap12 < 0.05;
 
   let selected = [];
+
+  // ✅ 既存select保持（壊さない）
   const initialNeed = Math.min(10, rankedAll.length);
+
   if (initialNeed > 0) {
     selected = selectByWeight(rankedAll, initialNeed);
   }
 
+  // ✅ fallback補充（既存維持）
   if (selected.length < 10) {
+
     const existing = new Set(
-      selected.map(p => `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
+      selected.map(p =>
+        `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
+      )
     );
 
     const fallbackPool = filteredByUi.filter(p =>
-      !existing.has(`${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`)
+      !existing.has(
+        `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
+      )
     );
 
     let fallbackFiltered = fallbackPool;
+
     if (latestCopied) {
       fallbackFiltered = fallbackPool.filter(p => {
-        const sameName = normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
-        const sameUpdateDate = String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
+        const sameName =
+          normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
+
+        const sameUpdateDate =
+          String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
 
         if (sameName && sameUpdateDate) {
           const phase = getRoundedDiffMinAndPhaseDistance(
@@ -2579,16 +2619,32 @@ function buildMatchingCandidates() {
     }
 
     const restNeed = 10 - selected.length;
+
     if (restNeed > 0 && fallbackFiltered.length > 0) {
-      selected = [...selected, ...selectByWeight(fallbackFiltered, restNeed)];
+      selected = [
+        ...selected,
+        ...selectByWeight(fallbackFiltered, restNeed)
+      ];
     }
   }
 
-  selected.sort((a, b) => b.__score - a.__score);
+  // ✅ No④ TOP10強制（最終決定）
+  selected = safePool.slice(0, 10);
+
+  // ✅ No⑤ displayRank付与
+  selected.forEach((p, i) => {
+    p.displayRank = i + 1;
+  });
+
+  // ✅ state更新
   State.matchingList = selected;
 
+  // ✅ 統計ログ
   const rankKeyMissing = scoredAll.filter(p => !p.__rankKey).length;
-  const rankModelExcluded = filteredByUi.filter(p => Number(p.__detail?.rankWeight ?? 0) <= 0).length;
+
+  const rankModelExcluded = filteredByUi.filter(p =>
+    Number(p.__detail?.rankWeight ?? 0) <= 0
+  ).length;
 
   log(`候補生成: Base=${base.length}`
     + ` / UiPool=${filteredByUi.length}`
@@ -2608,8 +2664,18 @@ function buildMatchingCandidates() {
     + ` / Cluster=${isCluster ? "YES" : "NO"}`
   );
 
+  // ✅ No⑥ 最終TOP10ログ
+  console.log("[FINAL_TOP10]",
+    selected.map(p => ({
+      name: p.name,
+      score: p.__finalScore,
+      rank: p.displayRank
+    }))
+  );
+
   log(`表示TOP: ${formatMatchTopList(selected)}`);
 
+  // ★既存ログ維持
   if (MATCHING_LOG_CONFIG.verboseTopDetails) {
     rankedAll.slice(0, 3).forEach((p, idx) => {
       const d = p.__detail || {};
@@ -2626,7 +2692,6 @@ function buildMatchingCandidates() {
     });
   }
 
-  // ★追加：Top候補情報抽出（軽量）
   const top3 = rankedAll.slice(0, 3).map((p, i) => ({
     n: p.name,
     s: Number(p.__score ?? 0),
@@ -2636,8 +2701,6 @@ function buildMatchingCandidates() {
   logEvent("cycle", {
     total: rankedAll.length,
     sel: selected.length,
-
-    // ★追加ログ
     t3: top3
   });
 }
