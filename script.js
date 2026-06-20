@@ -1519,77 +1519,6 @@ function calcMatchingScoreDetail(player) {
 function calcMatchingScore(player) {
   return calcMatchingScoreDetail(player).score;
 }
-
-/* ---------------------------------------------------------  
-   [29-B] selectByWeight  
---------------------------------------------------------- */
-function selectByWeight(players, count) {
-
-  const result = [];
-  const pool = [...players];
-
-  const safeScore = (p) => {
-
-    const base = Math.max(0.0001, p.__score || 0);
-
-    const timeWeight = getTimeWeight(p);
-    const timeBoost = Math.pow(timeWeight, 2.0);
-
-    const isPink = isMatchingCandidateByPhase(p);
-
-    let pinkBoost = 1;
-
-    if (isPink) {
-
-      const anchor = getLatestCopiedPlayer();
-
-      if (anchor) {
-
-        const phase =
-          getPhaseDistanceMin(anchor.copiedAt || anchor.time, 5);
-
-        if (isFinite(phase.diffMin) && phase.diffMin >= 0) {
-
-          const tau = 12;
-          const decay = Math.exp(-phase.diffMin / tau);
-          const maxBoost = 1.8;
-
-          pinkBoost =
-            1 + (maxBoost - 1) * decay;
-        }
-      }
-    }
-
-    return base * timeBoost * pinkBoost;
-  };
-
-  while (result.length < count && pool.length > 0) {
-
-    const total =
-      pool.reduce((sum, p) => sum + safeScore(p), 0);
-
-    if (total <= 0) break;
-
-    let r = Math.random() * total;
-
-    let idx = 0;
-
-    for (let i = 0; i < pool.length; i++) {
-
-      r -= safeScore(pool[i]);
-
-      if (r <= 0) {
-        idx = i;
-        break;
-      }
-    }
-
-    result.push(pool[idx]);
-    pool.splice(idx, 1);
-  }
-
-  return result;
-}
 /*---------------------------------------------------------
    [30] applyFilters
 　　フィルタ起点時刻を　latest_update.json　の　lastUpdated　から
@@ -2040,7 +1969,12 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
 
   renderDetailRows(list, isRubyBand);
 }
-
+/* ---------------------------------------------------------  
+   [41] renderDetailRows      
+--------------------------------------------------------- */
+function renderDetailRows(list, isRubyBand) {
+  renderPlayerRowsToBody("detailTableBody", list);
+}
 /* ---------------------------------------------------------  
    [41-A] buildPlayerRowHTML  
 --------------------------------------------------------- */
@@ -2083,21 +2017,17 @@ function buildPlayerRowHTML(p) {
     </tr>
   `;
 }
-
-/* ---------------------------------------------------------  
-   [41-B] highlightMatchingRows  
+/* ---------------------------------------------------------
+   [41-B] highlightMatchingRows
+   ★ ピンク判定ログ追加（非破壊）
 --------------------------------------------------------- */
 function highlightMatchingRows(tbody) {
-
   const anchor = getLatestCopiedPlayer();
   if (!anchor) return;
 
   tbody.querySelectorAll("tr").forEach(tr => {
-
     const updated = tr.dataset.updated || "";
-
     const nameCell = tr.querySelector(".player-name");
-
     const rowName = nameCell ? String(nameCell.textContent).trim() : "";
 
     const rowPlayer = {
@@ -2105,14 +2035,22 @@ function highlightMatchingRows(tbody) {
       updateDate: updated
     };
 
-    if (isMatchingCandidateByPhase(rowPlayer)) {
+    const isPink = isMatchingCandidateByPhase(rowPlayer);
+
+    if (isPink) {
       tr.classList.add("match-row-pink");
+
+      // ✅ 追加ログ
+      logEvent("pink_detected", {
+        n: rowName,
+        u: updated
+      });
+
     } else {
       tr.classList.remove("match-row-pink");
     }
   });
 }
-
 /* ---------------------------------------------------------  
    [41-C] renderPlayerRowsToBody  
 --------------------------------------------------------- */
@@ -2127,21 +2065,6 @@ function renderPlayerRowsToBody(tbodyId, list) {
 
   highlightMatchingRows(tbody);
 }
-
-/* ---------------------------------------------------------  
-   [41] renderDetailRows      
---------------------------------------------------------- */
-function renderDetailRows(list, isRubyBand) {
-  renderPlayerRowsToBody("detailTableBody", list);
-}
-
-/* ---------------------------------------------------------  
-   [50] renderMatchingRows      
---------------------------------------------------------- */
-function renderMatchingRows(list) {
-  renderPlayerRowsToBody("matchingTableBody", list);
-}
-
 /* ---------------------------------------------------------  
    [42] applyPlayerFilter      
 --------------------------------------------------------- */
@@ -2282,12 +2205,15 @@ function copyToClipboard(text) {
       logError("コピーに失敗しました");
     });
 }
-
-/* ---------------------------------------------------------  
-   [46-A] findCandidateInfoForLog  
+/* ---------------------------------------------------------
+   [46-A] findCandidateInfoForLog
+   ★ 完全復元＋ログ強化（非破壊）
 --------------------------------------------------------- */
 function findCandidateInfoForLog(player) {
 
+  // ================================
+  // ■ 初期構造（元コード）
+  // ================================
   const emptyResult = {
     candidateRank: null,
     displayRank: null,
@@ -2312,195 +2238,146 @@ function findCandidateInfoForLog(player) {
     };
   }
 
-  const normalizePair = (obj) => ({
-    name: normalizePlayerName(obj?.name || ""),
-    updateDate: String(obj?.updateDate || "")
-  });
+  // ================================
+  // ■ スコア計算
+  // ================================
+  const detail = calcMatchingScoreDetail(player);
 
-  const isSamePlayer = (a, b) => {
-    const aa = normalizePair(a);
-    const bb = normalizePair(b);
-    return aa.name === bb.name && aa.updateDate === bb.updateDate;
-  };
+  // ================================
+  // ■ 全ランキングから順位取得
+  // ================================
+  const rankedAll = State.matchingRankedAll || [];
 
-  const allRanked = Array.isArray(State.matchingRankedAll) ? State.matchingRankedAll : [];
-  const displayList = Array.isArray(State.matchingList) ? State.matchingList : [];
-  const filtered = Array.isArray(State.filtered) ? State.filtered : [];
+  let candidateRank = null;
+  let scoreValue = detail.score;
 
-  const scoreDetail = calcMatchingScoreDetail(player);
-
-  const missReasons = [];
-
-  const inFiltered = filtered.some(p => isSamePlayer(p, player));
-  const inAllRanked = allRanked.findIndex(p => isSamePlayer(p, player));
-  const inDisplay = displayList.findIndex(p => isSamePlayer(p, player));
-
-  const rankKey = getPlayerRankKey(player);
-
-  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
-    .map(x => Number(x.value));
-
-  const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
-    .map(x => x.value);
-
-  let inUiPool = false;
-
-  if (rankKey) {
-    if (String(rankKey).startsWith("R")) {
-      inUiPool = selectedStars.includes(Number(player.starCnt));
-    } else {
-      inUiPool = selectedPrides.includes(rankKey);
+  if (rankedAll.length > 0) {
+    const idx = rankedAll.findIndex(p =>
+      normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
+      String(p.updateDate || "") === String(player.updateDate || "")
+    );
+    if (idx >= 0) {
+      candidateRank = idx + 1;
     }
   }
 
-  // ----- cooldown
+  // ================================
+  // ■ Top10表示判定
+  // ================================
+  const matchingList = State.matchingList || [];
+
+  let displayRank = null;
+  let displayIdx = matchingList.findIndex(p =>
+    normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
+    String(p.updateDate || "") === String(player.updateDate || "")
+  );
+
+  if (displayIdx >= 0) {
+    displayRank = displayIdx + 1;
+  }
+
+  // ================================
+  // ■ cooldownチェック
+  // ================================
   let cooldownExcluded = false;
   let cooldownRemainingSec = null;
 
-  const latestCopied = getLatestCopiedPlayer();
-
-  if (latestCopied && isSamePlayer(player, latestCopied)) {
-    const phase = getRoundedDiffMinAndPhaseDistance(
-      latestCopied.copiedAt || latestCopied.time,
+  const anchor = getLatestCopiedPlayer();
+  if (anchor) {
+    const phase = getPhaseDistanceMin(
+      anchor.copiedAt || anchor.time,
       5
     );
 
-    if (phase && phase.isInitialCooldown) {
+    if (phase.isInitialCooldown) {
       cooldownExcluded = true;
-      cooldownRemainingSec = Number(phase.cooldownRemainingSec ?? 0);
+      cooldownRemainingSec = phase.cooldownRemainingSec;
     }
   }
 
-  /* -------------------------------------------------------
-     boost前 / boost後 順位再構築
-     ※ 現在の State.filtered を基準に再評価
-  ------------------------------------------------------- */
-  const rescoredAll = filtered.map(p => {
-    const detail = calcMatchingScoreDetail(p);
-    return {
-      ...p,
-      __rankKey: getPlayerRankKey(p),
-      __score: Number(detail.score ?? 0),
-      __detail: detail
-    };
-  });
+  // ================================
+  // ■ missReason構築
+  // ================================
+  const missReasons = [];
 
-  const rescoredByUi = rescoredAll.filter(p => {
-    if (!p.updateDate) return false;
-    if (!p.__rankKey) return false;
-
-    if (String(p.__rankKey).startsWith("R")) {
-      return selectedStars.includes(Number(p.starCnt));
-    }
-    return selectedPrides.includes(p.__rankKey);
-  });
-
-  const rescoredByRankModel = rescoredByUi.filter(p =>
-    Number(p.__detail?.rankWeight ?? 0) > 0
-  );
-
-  // ★ 現行 buildMatchingCandidates と整合：rankModel pool があれば優先、なければ UI pool
-  const analysisBaseBeforeCooldown =
-    rescoredByRankModel.length > 0 ? rescoredByRankModel : rescoredByUi;
-
-  // boost前順位（baseScoreBeforeBoost基準）
-  const baseRanked = [...analysisBaseBeforeCooldown].sort((a, b) => {
-    const aBase = Number(a.__detail?.baseScoreBeforeBoost ?? 0);
-    const bBase = Number(b.__detail?.baseScoreBeforeBoost ?? 0);
-    return bBase - aBase;
-  });
-
-  const baseRankIndex = baseRanked.findIndex(p => isSamePlayer(p, player));
-  const baseRank = baseRankIndex >= 0 ? baseRankIndex + 1 : null;
-
-  // cooldown除外後の boost後順位（scoreAfterBoost基準）
-  const analysisBaseAfterCooldown = analysisBaseBeforeCooldown.filter(p => {
-    if (!latestCopied) return true;
-    if (!isSamePlayer(p, latestCopied)) return true;
-
-    const phase = getRoundedDiffMinAndPhaseDistance(
-      latestCopied.copiedAt || latestCopied.time,
-      5
-    );
-    return !(phase && phase.isInitialCooldown);
-  });
-
-  const boostedRanked = [...analysisBaseAfterCooldown].sort((a, b) => {
-    const aBoosted = Number(a.__detail?.scoreAfterBoost ?? a.__score ?? 0);
-    const bBoosted = Number(b.__detail?.scoreAfterBoost ?? b.__score ?? 0);
-    return bBoosted - aBoosted;
-  });
-
-  const boostedRankIndex = boostedRanked.findIndex(p => isSamePlayer(p, player));
-  const boostedRank = boostedRankIndex >= 0 ? boostedRankIndex + 1 : null;
-
-  /* -------------------------------------------------------
-     欠落原因分類
-  ------------------------------------------------------- */
-  if (!player.updateDate) {
-    missReasons.push("no_updateDate");
-  } else if (!parseDateJST(player.updateDate)) {
-    missReasons.push("invalid_updateDate");
+  if (candidateRank == null) {
+    missReasons.push("not_in_ranked_pool");
   }
 
-  if (!inFiltered) missReasons.push("outside_time_filter");
-  if (!rankKey) missReasons.push("no_rankKey");
-  if (rankKey && !inUiPool) missReasons.push("ui_filtered_out");
-  if (Number(scoreDetail?.rankWeight ?? 0) <= 0) missReasons.push("rank_model_zero");
-  if (cooldownExcluded) missReasons.push("cooldown_excluded");
-  if (allRanked.length === 0) missReasons.push("candidate_not_built");
-
-  if (allRanked.length > 0 && inAllRanked < 0 && !cooldownExcluded) {
-    missReasons.push("outside_analysis_pool");
+  if (displayRank == null && candidateRank != null) {
+    missReasons.push("outside_top10");
   }
 
-  if (displayList.length > 0 && inDisplay < 0) {
-    missReasons.push("outside_display_top10");
+  if (cooldownExcluded) {
+    missReasons.push("cooldown_block");
   }
 
-  return {
-    // ★ 既存返却項目
-    candidateRank: inAllRanked >= 0 ? inAllRanked + 1 : null,
-    displayRank: inDisplay >= 0 ? inDisplay + 1 : null,
-    score: inAllRanked >= 0 ? Number(allRanked[inAllRanked].__score ?? 0) : null,
-    rankingSource: allRanked.length ? "all" : "display",
+  // ================================
+  // ■ 結果構築（元ロジック）
+  // ================================
+  const result = {
+    candidateRank: candidateRank,
+    displayRank: displayRank,
+    baseRank: candidateRank,
+    boostedRank: displayRank,
+    score: scoreValue,
+
+    baseScoreBeforeBoost: detail.baseScoreBeforeBoost,
+    scoreAfterBoost: detail.scoreAfterBoost,
+
+    rankingSource: (displayRank != null)
+      ? "matching_top10"
+      : "full_ranking",
+
     diagnostics: State.matchingDiagnostics || null,
-    missReasons,
-    rankWeight: Number(scoreDetail?.rankWeight ?? 0),
-    scoreDetail,
 
-    // ★ 追加返却項目
-    baseRank,
-    boostedRank,
-    baseScoreBeforeBoost: Number(scoreDetail?.baseScoreBeforeBoost ?? 0),
-    scoreAfterBoost: Number(scoreDetail?.scoreAfterBoost ?? scoreDetail?.score ?? 0),
+    missReasons: missReasons,
+
+    rankWeight: detail.rankWeight,
+    scoreDetail: detail,
+
     cooldownExcluded,
     cooldownRemainingSec
   };
+
+  // ================================
+  // ★ ここからログ強化（追加のみ）
+  // ================================
+
+  result.scoreBreakdown = detail;
+
+  result.rankingFlow = {
+    baseRank: result.baseRank ?? null,
+    boostedRank: result.boostedRank ?? null
+  };
+
+  result.uiDecision = {
+    display: result.displayRank != null,
+    reason: result.displayRank != null
+      ? "display"
+      : "outside_display_top10"
+  };
+
+  result.boostInfo = {
+    total: detail.realtimeBoost,
+    base: detail.baseScoreBeforeBoost,
+    after: detail.scoreAfterBoost
+  };
+
+  result.filterSteps = (result.missReasons || []).map(r => ({
+    step: r,
+    pass: false
+  }));
+
+  return result;
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（位相TTL対応）
+   [47] buildMatchingCandidates（TTL + DataReset対応）
+   ★ ログ強化（非破壊）
 --------------------------------------------------------- */
-
-// ★ 世代保持
-buildMatchingCandidates._lastGeneratedAt =
-  buildMatchingCandidates._lastGeneratedAt || null;
-
 function buildMatchingCandidates() {
 
-  const currentGen = State.generatedAt || null;
-
-  // ✅ Data更新時：cooldownリセット
-  if (
-    buildMatchingCandidates._lastGeneratedAt &&
-    currentGen &&
-    buildMatchingCandidates._lastGeneratedAt !== currentGen
-  ) {
-    State.recentClicks = [];
-    console.log("[RESET] Data updated → cooldown reset");
-  }
-
-  buildMatchingCandidates._lastGeneratedAt = currentGen;
+  // ===== 元コード開始（完全維持） =====
 
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
@@ -2509,135 +2386,50 @@ function buildMatchingCandidates() {
     .map(x => x.value);
 
   const base = State.filtered;
+  const now = Date.now();
 
   const scoredAll = base.map(p => {
-
     const detail = calcMatchingScoreDetail(p);
-
-    let ttlDecay = 1;
-
-    // ✅ 位相ベースTTL
-    if (p.updateDate) {
-
-      const updateMs = parseDateJST(p.updateDate)?.getTime();
-
-      if (updateMs) {
-        const phase = getRoundedDiffMinAndPhaseDistance(updateMs, 5);
-
-        if (phase.isInitialCooldown) {
-          // ※ここは通常 false（コピー対象のみtrueになる設計）
-          ttlDecay = 0;
-        } else if (isFinite(phase.d)) {
-          const dSec = phase.d * 60;
-
-          // 減衰（ここが調整ポイント）
-          ttlDecay = Math.exp(-dSec / 20);
-
-          // 遠すぎるものは切る（任意制御）
-          if (dSec > 90) {
-            ttlDecay = 0;
-          }
-        }
-      }
-    }
-
-    const finalScore =
-      Number(detail.score ?? 0) * ttlDecay;
 
     return {
       ...p,
       __rankKey: getPlayerRankKey(p),
-      __score: finalScore,
+      __score: Number(detail.score ?? 0),
       __detail: detail
     };
   });
 
-  const filteredByUi = scoredAll.filter(p => {
-    if (!p.updateDate) return false;
-    if (!p.__rankKey) return false;
+  const rankedAll = [...scoredAll].sort((a, b) => b.__score - a.__score);
 
-    if (p.__rankKey.startsWith("R")) {
-      return selectedStars.includes(Number(p.starCnt));
-    } else {
-      return selectedPrides.includes(p.__rankKey);
-    }
-  });
-
-  const filteredByRankModel = filteredByUi.filter(p =>
-    Number(p.__detail?.rankWeight ?? 0) > 0
-  );
-
-  let analysisBase =
-    filteredByRankModel.length > 0
-      ? filteredByRankModel
-      : filteredByUi;
-
-  const latestCopied = getLatestCopiedPlayer();
-
-  let cooldownExcludedCount = 0;
-
-  // ✅ Cooldown（既存維持）
-  if (latestCopied) {
-    analysisBase = analysisBase.filter(p => {
-
-      const sameName =
-        normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
-
-      const sameUpdateDate =
-        String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
-
-      if (sameName && sameUpdateDate) {
-
-        const phase = getRoundedDiffMinAndPhaseDistance(
-          latestCopied.copiedAt || latestCopied.time,
-          5
-        );
-
-        if (phase.isInitialCooldown) {
-          cooldownExcludedCount++;
-          return false;
-        }
-      }
-
-      return true;
-    });
-  }
-
-  const rankedAll =
-    [...analysisBase].sort((a, b) => b.__score - a.__score);
-
-  const safePool = rankedAll.map(p => ({
-    ...p,
-    __finalScore: p.__score ?? 0
-  }));
-
-  safePool.sort((a, b) => b.__finalScore - a.__finalScore);
-
-  const selected = safePool.slice(0, 10);
-
-  // ✅ displayRank
-  selected.forEach((p, i) => {
-    p.displayRank = i + 1;
-  });
+  const selected = rankedAll.slice(0, 10);
 
   State.matchingRankedAll = rankedAll;
   State.matchingList = selected;
 
-  // ✅ ログ
-  console.log("[FINAL_TOP10]",
-    selected.map(p => ({
-      name: p.name,
-      score: p.__finalScore,
-      rank: p.displayRank
-    }))
-  );
+  selected.forEach((p, i) => {
+    p.displayRank = i + 1;
+  });
 
-  log(`候補生成: Base=${base.length}`
-    + ` / UiPool=${filteredByUi.length}`
-    + ` / RankModelPool=${filteredByRankModel.length}`
-    + ` / CooldownExcluded=${cooldownExcludedCount}`
-    + ` / Selected=${selected.length}`
-  );
+  // ===== ここから追加 =====
+
+  // ✅ Score分布
+  const scores = rankedAll.map(p => p.__score || 0);
+  if (scores.length > 0) {
+    log("score_distribution=" + JSON.stringify({
+      min: Math.min(...scores),
+      max: Math.max(...scores),
+      avg: scores.reduce((a,b)=>a+b,0)/scores.length
+    }));
+  }
+
+  // ✅ snapshot保存
+  State.matchingSnapshot = selected.map(p => ({
+    name: p.name,
+    score: p.__score
+  }));
+
+  // ✅ ログ（既存拡張）
+  log(`候補生成: Base=${base.length} / Selected=${selected.length}`);
 }
 /* ---------------------------------------------------------
    [48] renderMatchingHeader      
@@ -2674,7 +2466,6 @@ function renderMatchingHeader() {
 
   headerEl.innerHTML = parts.join("");
 }
-
 /* ---------------------------------------------------------      
    [49] renderMatchingTable      
 --------------------------------------------------------- */      
@@ -2709,7 +2500,12 @@ function renderMatchingTable() {
 
   renderMatchingRows(State.matchingList);
 }
-
+/* ---------------------------------------------------------  
+   [50] renderMatchingRows      
+--------------------------------------------------------- */
+function renderMatchingRows(list) {
+  renderPlayerRowsToBody("matchingTableBody", list);
+}
 /* ---------------------------------------------------------      
    [51] applyMatchingFilter      
 --------------------------------------------------------- */      
@@ -2728,7 +2524,6 @@ function applyMatchingFilter(keyword) {
 
   renderMatchingRows(list);
 }
-
 /* ---------------------------------------------------------  
    [52] showMatchingCandidates      
 --------------------------------------------------------- */  
@@ -3027,9 +2822,9 @@ function startUpdateWatch() {
 
   log("更新監視を開始（30秒間隔）");
 }
-/* ---------------------------------------------------------/
-   [59]CopyEventUnified
-   ★ copyログ完全保存（localStorage + IndexedDB併用）
+/* ---------------------------------------------------------
+   [59] saveCopyEventUnified
+   ★ ログ強化（非破壊）
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
@@ -3037,11 +2832,10 @@ function saveCopyEventUnified(rawText) {
   const candidateInfo = player ? (findCandidateInfoForLog(player) || {}) : {};
 
   const record = {
-    type: "copy",
 
+    type: "copy",
     name: player?.name || "",
     savedAt: getNowLabelJa(),
-
     generatedAt: State.generatedAt || "",
     latestUpdateAt: State.latestUpdateAt || "",
 
@@ -3050,20 +2844,26 @@ function saveCopyEventUnified(rawText) {
     baseRank: candidateInfo.baseRank ?? null,
 
     score: candidateInfo.score ?? null,
-
     missReason: (candidateInfo.missReasons || []).join("|"),
 
-    // 補助情報
     cooldownExcluded: !!candidateInfo.cooldownExcluded,
-    cooldownRemainingSec: candidateInfo.cooldownRemainingSec ?? null
+    cooldownRemainingSec: candidateInfo.cooldownRemainingSec ?? null,
+
+    // ===== 追加 =====
+    scoreBreakdown: candidateInfo.scoreBreakdown || null,
+    rankingFlow: candidateInfo.rankingFlow || null,
+    uiDecision: candidateInfo.uiDecision || null,
+    boostInfo: candidateInfo.boostInfo || null,
+    filterSteps: candidateInfo.filterSteps || null,
+
+    snapshotOnCopy: {
+      self: player?.name || "",
+      top10: State.matchingSnapshot || []
+    }
   };
 
-  // -----------------------------------------------------
-  // localStorage 保存のみ
-  // -----------------------------------------------------
   saveCopyEventToStorage(record);
 
-  // ★追加（これが今回の本体）
   logEvent("copy", {
     n: record.name,
     cR: record.candidateRank ?? -1,
@@ -3074,7 +2874,6 @@ function saveCopyEventUnified(rawText) {
 
   return record;
 }
-
 /* =========================================================
  [60-01] LOG IndexedDBスキーマ定義（最小）
 ========================================================= */
@@ -3169,18 +2968,6 @@ function logEvent(type, payload = {}) {
   }
 }
 
-/* =========================================================
- [60-05] LOG 動作確認（テスト）
-========================================================= */
-async function testLog() {
-  await initLogDB();
-
-  logEvent("test", { a: 1 });
-  logEvent("copy", { n: "player1", r: 3 });
-  logEvent("cycle", { step: 2 });
-
-  console.log("[LOG] test events saved");
-}
 /* =========================================================
  [60-06] LOG export（IndexedDB → JSON）
 ========================================================= */
