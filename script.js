@@ -1292,29 +1292,50 @@ function getPrideWeight(player) {
 
   return 1.0;
 }
-
-/* ---------------------------------------------------------  
-   [26-6] getTimeWeight  
+/* ---------------------------------------------------------
+   [26-6] getTimeWeight（安全強化版）
+   ★ 08の「時間支配」を復元
+   ★ 既存構造維持（非破壊）
+   ★ 強化ポイント：
+      - 減衰を指数強化（0.7 → 1.8）
+      - 初期をより高く、後半を急落
+      - 異常値安全ガード追加
 --------------------------------------------------------- */
 function getTimeWeight(player) {
 
-  if (!player.updateDate) return 0;
+  // 最低防御
+  if (!player || !player.updateDate) return 0;
 
   const now = Date.now();
   const last = parseDateJST(player.updateDate)?.getTime();
 
-  if (!last) return 0;
+  if (!last || !isFinite(last)) return 0;
 
   const diffMin = (now - last) / 60000;
-  if (diffMin < 0) return 0;
+
+  // 異常値ガード
+  if (!isFinite(diffMin) || diffMin < 0) return 0;
 
   const maxRange = Number(document.getElementById("rangeSelect").value);
 
+  if (!maxRange || !isFinite(maxRange) || maxRange <= 0) return 0;
+
+  // ===============================
+  // ■ 正規化
+  // ===============================
   const normalized = Math.max(0, 1 - diffMin / maxRange);
 
-  return Math.pow(normalized, 0.7);
-}
+  // ===============================
+  // ■ 強化ポイント
+  //   → 初期重視・後半急減
+  // ===============================
+  const weight = Math.pow(normalized, 1.8);
 
+  // 安全クランプ
+  if (!isFinite(weight)) return 0;
+
+  return weight;
+}
 /* ---------------------------------------------------------  
    [27] MATCHING_SCORE_CONFIG  
 --------------------------------------------------------- */
@@ -1518,6 +1539,173 @@ function calcMatchingScoreDetail(player) {
 --------------------------------------------------------- */
 function calcMatchingScore(player) {
   return calcMatchingScoreDetail(player).score;
+}
+/* ---------------------------------------------------------
+   [47] buildMatchingCandidates（08完全寄せ + selectByWeight統合）
+   ★ UIフィルタ + rankModel + TTL + cooldown
+   ★ TOP10抽出を selectByWeight に変更
+   ★ 11ログは維持
+--------------------------------------------------------- */
+function buildMatchingCandidates() {
+
+  const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
+    .map(x => Number(x.value));
+
+  const selectedPrides = [...document.querySelectorAll(".pride-filter:checked")]
+    .map(x => x.value);
+
+  const base = State.filtered;
+  const now = Date.now();
+
+  // ===============================
+  // ■ TTL設定
+  // ===============================
+  const TTL_TAU_SEC = 30;
+  const TTL_MAX_SEC = 90;
+
+  // ===============================
+  // ■ スコア計算 + TTL
+  // ===============================
+  const scoredAll = base.map(p => {
+
+    const detail = calcMatchingScoreDetail(p);
+
+    let ttlDecay = 1;
+
+    if (p.updateDate) {
+      const last = parseDateJST(p.updateDate)?.getTime();
+      if (last) {
+        const ageSec = (now - last) / 1000;
+        if (ageSec > TTL_MAX_SEC) {
+          ttlDecay = 0;
+        } else {
+          ttlDecay = Math.exp(-ageSec / TTL_TAU_SEC);
+        }
+      }
+    }
+
+    return {
+      ...p,
+      __rankKey: getPlayerRankKey(p),
+      __score: Number(detail.score ?? 0) * ttlDecay,
+      __detail: detail
+    };
+  });
+
+  // ===============================
+  // ■ UIフィルタ
+  // ===============================
+  const filteredByUi = scoredAll.filter(p => {
+
+    if (!p.updateDate) return false;
+    if (!p.__rankKey) return false;
+
+    if (p.__rankKey.startsWith("R")) {
+      return selectedStars.includes(Number(p.starCnt));
+    } else {
+      return selectedPrides.includes(p.__rankKey);
+    }
+  });
+
+  // ===============================
+  // ■ rankModelフィルタ
+  // ===============================
+  const filteredByRankModel = filteredByUi.filter(p =>
+    Number(p.__detail?.rankWeight ?? 0) > 0
+  );
+
+  // ===============================
+  // ■ analysisBase
+  // ===============================
+  let analysisBase =
+    filteredByRankModel.length > 0
+      ? filteredByRankModel
+      : filteredByUi;
+
+  // ===============================
+  // ■ cooldown除外
+  // ===============================
+  const latestCopied = getLatestCopiedPlayer();
+  let cooldownExcludedCount = 0;
+
+  if (latestCopied) {
+    analysisBase = analysisBase.filter(p => {
+
+      const sameName =
+        normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
+
+      const sameUpdateDate =
+        String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
+
+      if (sameName && sameUpdateDate) {
+
+        const phase = getRoundedDiffMinAndPhaseDistance(
+          latestCopied.copiedAt || latestCopied.time,
+          5
+        );
+
+        if (phase.isInitialCooldown) {
+          cooldownExcludedCount++;
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }
+
+  // ===============================
+  // ■ ランキング母集団
+  // ===============================
+  const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
+
+  // ===============================
+  // ■ ★ここ重要：抽選方式
+  // ===============================
+  let selected = [];
+
+  if (typeof selectByWeight === "function") {
+    selected = selectByWeight(rankedAll, 10);
+  } else {
+    selected = rankedAll.slice(0, 10); // fallback
+  }
+
+  // ランク付与
+  selected.forEach((p, i) => {
+    p.displayRank = i + 1;
+  });
+
+  // ===============================
+  // ■ State保存
+  // ===============================
+  State.matchingRankedAll = rankedAll;
+  State.matchingList = selected;
+
+  // ===============================
+  // ■ ログ（維持）
+  // ===============================
+  const scores = rankedAll.map(p => p.__score || 0);
+
+  if (scores.length > 0) {
+    log("score_distribution=" + JSON.stringify({
+      min: Math.min(...scores),
+      max: Math.max(...scores),
+      avg: scores.reduce((a, b) => a + b, 0) / scores.length
+    }));
+  }
+
+  State.matchingSnapshot = selected.map(p => ({
+    name: p.name,
+    score: p.__score
+  }));
+
+  log(
+    `候補生成: Base=${base.length}` +
+    ` / UiPool=${filteredByUi.length}` +
+    ` / RankModelPool=${filteredByRankModel.length}` +
+    ` / CooldownExcluded=${cooldownExcludedCount}` +
+    ` / Selected=${selected.length}`
+  );
 }
 /*---------------------------------------------------------
    [30] applyFilters
@@ -2372,12 +2560,11 @@ function findCandidateInfoForLog(player) {
   return result;
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（TTL + DataReset対応）
-   ★ ログ強化（非破壊）
+   [47] buildMatchingCandidates（08互換復元 + 11ログ維持）
+   ★ UIフィルタ + rankModel + TTL + cooldown を復活
+   ★ スコアは現行維持（非破壊）
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
-
-  // ===== 元コード開始（完全維持） =====
 
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
@@ -2388,48 +2575,145 @@ function buildMatchingCandidates() {
   const base = State.filtered;
   const now = Date.now();
 
+  // ✅ TTL設定（08復元）
+  const TTL_TAU_SEC = 30;
+  const TTL_MAX_SEC = 90;
+
+  // ===============================
+  // ■ スコア計算 + TTL適用
+  // ===============================
   const scoredAll = base.map(p => {
+
     const detail = calcMatchingScoreDetail(p);
+
+    // TTL減衰
+    let ttlDecay = 1;
+    if (p.updateDate) {
+      const last = parseDateJST(p.updateDate)?.getTime();
+      if (last) {
+        const ageSec = (now - last) / 1000;
+        if (ageSec > TTL_MAX_SEC) {
+          ttlDecay = 0;
+        } else {
+          ttlDecay = Math.exp(-ageSec / TTL_TAU_SEC);
+        }
+      }
+    }
 
     return {
       ...p,
       __rankKey: getPlayerRankKey(p),
-      __score: Number(detail.score ?? 0),
+      __score: Number(detail.score ?? 0) * ttlDecay,
       __detail: detail
     };
   });
 
-  const rankedAll = [...scoredAll].sort((a, b) => b.__score - a.__score);
+  // ===============================
+  // ■ UIフィルタ（08復元）
+  // ===============================
+  const filteredByUi = scoredAll.filter(p => {
 
+    if (!p.updateDate) return false;
+    if (!p.__rankKey) return false;
+
+    if (p.__rankKey.startsWith("R")) {
+      return selectedStars.includes(Number(p.starCnt));
+    } else {
+      return selectedPrides.includes(p.__rankKey);
+    }
+  });
+
+  // ===============================
+  // ■ rankModelフィルタ（08復元）
+  // ===============================
+  const filteredByRankModel = filteredByUi.filter(p =>
+    Number(p.__detail?.rankWeight ?? 0) > 0
+  );
+
+  // ===============================
+  // ■ analysisBase（最重要）
+  // ===============================
+  let analysisBase =
+    filteredByRankModel.length > 0
+      ? filteredByRankModel
+      : filteredByUi;
+
+  // ===============================
+  // ■ cooldown除外（08復元）
+  // ===============================
+  const latestCopied = getLatestCopiedPlayer();
+  let cooldownExcludedCount = 0;
+
+  if (latestCopied) {
+    analysisBase = analysisBase.filter(p => {
+
+      const sameName =
+        normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
+
+      const sameUpdateDate =
+        String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
+
+      if (sameName && sameUpdateDate) {
+        const phase = getRoundedDiffMinAndPhaseDistance(
+          latestCopied.copiedAt || latestCopied.time,
+          5
+        );
+
+        if (phase.isInitialCooldown) {
+          cooldownExcludedCount++;
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }
+
+  // ===============================
+  // ■ ランキング（analysisBase）
+  // ===============================
+  const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
+
+  // ===============================
+  // ■ TOP10抽出（現行維持：固定）
+  // ===============================
   const selected = rankedAll.slice(0, 10);
-
-  State.matchingRankedAll = rankedAll;
-  State.matchingList = selected;
 
   selected.forEach((p, i) => {
     p.displayRank = i + 1;
   });
 
-  // ===== ここから追加 =====
+  // ===============================
+  // ■ State保存
+  // ===============================
+  State.matchingRankedAll = rankedAll;
+  State.matchingList = selected;
 
-  // ✅ Score分布
+  // ===============================
+  // ■ ログ強化（11維持）
+  // ===============================
   const scores = rankedAll.map(p => p.__score || 0);
+
   if (scores.length > 0) {
     log("score_distribution=" + JSON.stringify({
       min: Math.min(...scores),
       max: Math.max(...scores),
-      avg: scores.reduce((a,b)=>a+b,0)/scores.length
+      avg: scores.reduce((a, b) => a + b, 0) / scores.length
     }));
   }
 
-  // ✅ snapshot保存
   State.matchingSnapshot = selected.map(p => ({
     name: p.name,
     score: p.__score
   }));
 
-  // ✅ ログ（既存拡張）
-  log(`候補生成: Base=${base.length} / Selected=${selected.length}`);
+  log(
+    `候補生成: Base=${base.length}` +
+    ` / UiPool=${filteredByUi.length}` +
+    ` / RankModelPool=${filteredByRankModel.length}` +
+    ` / CooldownExcluded=${cooldownExcludedCount}` +
+    ` / Selected=${selected.length}`
+  );
 }
 /* ---------------------------------------------------------
    [48] renderMatchingHeader      
