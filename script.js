@@ -1189,19 +1189,14 @@ function getLatestCopiedPlayer() {
 }
 /* ---------------------------------------------------------
    [24-D] isMatchingCandidateByCopyPhase  
-   ★ 最終版：コピー＋Phase＋filtered条件＋即ピンク対応  
-   ★ 仕様：
-   ★   ・コピー直後 → 即ピンク表示（cooldown中でもOK）
-   ★   ・cooldown後 → Phase一致時のみピンク
-   ★   ・filtered外は常に除外
-   ★   ・マッチング候補（score）は従来通りcooldown保持
+   ★ 修正版：表示もcos波ベースで判定（スコアと一致）  
 --------------------------------------------------------- */
 function isMatchingCandidateByCopyPhase(player) {
 
   if (!player || !player.updateDate) return false;
 
   /* =============================== */
-  /* ✅ filtered内存在チェック */
+  /* ✅ filtered内チェック */
   /* =============================== */
 
   const existsInFiltered = State.filtered.some(p =>
@@ -1212,7 +1207,7 @@ function isMatchingCandidateByCopyPhase(player) {
   if (!existsInFiltered) return false;
 
   /* =============================== */
-  /* ✅ コピー履歴チェック */
+  /* ✅ コピー履歴 */
   /* =============================== */
 
   const click = State.recentClicks.find(r =>
@@ -1226,48 +1221,46 @@ function isMatchingCandidateByCopyPhase(player) {
   if (!anchor) return false;
 
   /* =============================== */
-  /* ✅ config取得 */
+  /* ✅ config */
   /* =============================== */
 
   const phaseCfg = State.scoringConfig?.phase ?? {};
 
   const cycleMin       = Number(phaseCfg.cycleMin ?? 5);
-  const toleranceSec   = Number(phaseCfg.toleranceSec ?? 45);
   const cooldownCycles = Number(phaseCfg.cooldownCycles ?? 1);
+  const toleranceSec   = Number(phaseCfg.toleranceSec ?? 45);
+  const amplitude      = Number(phaseCfg.amplitude ?? 0.8);
 
   const cycleSec = cycleMin * 60;
-
-  /* =============================== */
-  /* ✅ 経過時間 */
-  /* =============================== */
 
   const now = Date.now();
   const diffSec = (now - anchor) / 1000;
 
   if (!isFinite(diffSec) || diffSec < 0) return false;
 
-  /* =============================== */
-  /* ✅ cooldown判定（表示と分離） */
-  /* =============================== */
-
   const cooldownEnd = (cycleSec * cooldownCycles) + toleranceSec;
 
   /* =============================== */
-  /* ✅ ★即ピンク表示（重要） */
+  /* ✅ 即ピンク（cooldown中） */
   /* =============================== */
 
   if (diffSec < cooldownEnd) {
-    return true; // ←ここが今回の追加
+    return true;
   }
 
   /* =============================== */
-  /* ✅ Phase判定（cooldown後） */
+  /* ✅ cosベースPhase判定 */
   /* =============================== */
 
   const rSec = diffSec % cycleSec;
-  const distToPeak = Math.min(rSec, cycleSec - rSec);
+  const theta = (2 * Math.PI * rSec) / cycleSec;
+  const cosValue = Math.cos(theta);
 
-  return distToPeak <= toleranceSec;
+  /* =============================== */
+  /* ✅ 閾値（ここが重要） */
+  /* =============================== */
+
+  return cosValue >= 0.7;  
 }
 /*--------------------------------------------------------
    [25] scoring_config 取得/適用 分離  
