@@ -1188,39 +1188,74 @@ function getLatestCopiedPlayer() {
   return State.recentClicks[0] || null;
 }
 /* ---------------------------------------------------------
-   [24-D] isMatchingCandidateByCopyPhase（修正版）  
-   ★ 修正：プレイヤー個別コピーのみ対象  
+   [24-D] isMatchingCandidateByCopyPhase  
+   ★ コピー＋Phase＋フィルタ存在条件  
 --------------------------------------------------------- */
 function isMatchingCandidateByCopyPhase(player) {
 
   if (!player || !player.updateDate) return false;
 
-  /* ✅ そのプレイヤーのコピー履歴だけ探す */
+  /* =============================== */
+  /* ✅ フィルタ後データに存在するか */
+  /* =============================== */
+
+  const existsInFiltered = State.filtered.some(p =>
+    normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
+    String(p.updateDate ?? "") === String(player.updateDate ?? "")
+  );
+
+  if (!existsInFiltered) return false;
+
+  /* =============================== */
+  /* ✅ コピー履歴チェック */
+  /* =============================== */
+
   const click = State.recentClicks.find(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
     String(r.updateDate ?? "") === String(player.updateDate ?? "")
   );
 
-  // ✅ コピー履歴が無い人はピンクにならない
   if (!click) return false;
 
   const anchor = click.copiedAt || click.time;
   if (!anchor) return false;
 
+  /* =============================== */
+  /* ✅ config取得 */
+  /* =============================== */
+
   const phaseCfg = State.scoringConfig?.phase ?? {};
 
-  const cycleMin     = Number(phaseCfg.cycleMin ?? 5);
-  const toleranceSec = Number(phaseCfg.toleranceSec ?? 45);
+  const cycleMin       = Number(phaseCfg.cycleMin ?? 5);
+  const toleranceSec   = Number(phaseCfg.toleranceSec ?? 45);
+  const cooldownCycles = Number(phaseCfg.cooldownCycles ?? 1);
 
   const cycleSec = cycleMin * 60;
+
+  /* =============================== */
+  /* ✅ 時間差 */
+  /* =============================== */
 
   const now = Date.now();
   const diffSec = (now - anchor) / 1000;
 
   if (!isFinite(diffSec) || diffSec < 0) return false;
 
-  const rSec = diffSec % cycleSec;
+  /* =============================== */
+  /* ✅ cooldown */
+  /* =============================== */
 
+  const cooldownEnd = (cycleSec * cooldownCycles) + toleranceSec;
+
+  if (diffSec < cooldownEnd) {
+    return false;
+  }
+
+  /* =============================== */
+  /* ✅ Phase判定 */
+  /* =============================== */
+
+  const rSec = diffSec % cycleSec;
   const distToPeak = Math.min(rSec, cycleSec - rSec);
 
   return distToPeak <= toleranceSec;
