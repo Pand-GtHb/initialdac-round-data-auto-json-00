@@ -1189,14 +1189,19 @@ function getLatestCopiedPlayer() {
 }
 /* ---------------------------------------------------------
    [24-D] isMatchingCandidateByCopyPhase  
-   ★ コピー＋Phase＋フィルタ存在条件  
+   ★ 最終版：コピー＋Phase＋filtered条件＋即ピンク対応  
+   ★ 仕様：
+   ★   ・コピー直後 → 即ピンク表示（cooldown中でもOK）
+   ★   ・cooldown後 → Phase一致時のみピンク
+   ★   ・filtered外は常に除外
+   ★   ・マッチング候補（score）は従来通りcooldown保持
 --------------------------------------------------------- */
 function isMatchingCandidateByCopyPhase(player) {
 
   if (!player || !player.updateDate) return false;
 
   /* =============================== */
-  /* ✅ フィルタ後データに存在するか */
+  /* ✅ filtered内存在チェック */
   /* =============================== */
 
   const existsInFiltered = State.filtered.some(p =>
@@ -1233,7 +1238,7 @@ function isMatchingCandidateByCopyPhase(player) {
   const cycleSec = cycleMin * 60;
 
   /* =============================== */
-  /* ✅ 時間差 */
+  /* ✅ 経過時間 */
   /* =============================== */
 
   const now = Date.now();
@@ -1242,17 +1247,21 @@ function isMatchingCandidateByCopyPhase(player) {
   if (!isFinite(diffSec) || diffSec < 0) return false;
 
   /* =============================== */
-  /* ✅ cooldown */
+  /* ✅ cooldown判定（表示と分離） */
   /* =============================== */
 
   const cooldownEnd = (cycleSec * cooldownCycles) + toleranceSec;
 
+  /* =============================== */
+  /* ✅ ★即ピンク表示（重要） */
+  /* =============================== */
+
   if (diffSec < cooldownEnd) {
-    return false;
+    return true; // ←ここが今回の追加
   }
 
   /* =============================== */
-  /* ✅ Phase判定 */
+  /* ✅ Phase判定（cooldown後） */
   /* =============================== */
 
   const rSec = diffSec % cycleSec;
