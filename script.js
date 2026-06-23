@@ -1129,15 +1129,13 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
 }
 /* ---------------------------------------------------------
    [24-B] isMatchingCandidateByPhase  
-   ★ 修正：プレイヤー単位anchor + config完全対応  
+   ★ 修正：name＋shopnameで識別  
+   ★ updateDate依存を除去（安定化）  
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(player) {
 
   if (!player || !player.updateDate) return false;
 
-  /* =============================== */
-  /* ✅ config                       */
-  /* =============================== */
   const phaseCfg = State.scoringConfig?.phase ?? {};
 
   const cycleMin     = Number(phaseCfg.cycleMin ?? 5);
@@ -1146,14 +1144,14 @@ function isMatchingCandidateByPhase(player) {
   const cycleSec = cycleMin * 60;
 
   /* =============================== */
-  /* ✅ anchor（重要：player単位）   */
+  /* ✅ anchor取得（店舗一致） */
   /* =============================== */
 
   let anchor = null;
 
   const click = State.recentClicks.find(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
-    String(r.updateDate ?? "") === String(player.updateDate ?? "")
+    String(r.shopname ?? "") === String(player.shopname ?? "")
   );
 
   if (click) {
@@ -1169,16 +1167,9 @@ function isMatchingCandidateByPhase(player) {
 
   if (!isFinite(diffSec) || diffSec < 0) return false;
 
-  /* =============================== */
-  /* ✅ 周期内位置                  */
-  /* =============================== */
   const rSec = diffSec % cycleSec;
-
   const distToPeak = Math.min(rSec, cycleSec - rSec);
 
-  /* =============================== */
-  /* ✅ イエロー判定（±tolerance）    */
-  /* =============================== */
   return distToPeak <= toleranceSec;
 }
 /* ---------------------------------------------------------  
@@ -1189,7 +1180,11 @@ function getLatestCopiedPlayer() {
 }
 /* ---------------------------------------------------------
    [24-D] isMatchingCandidateByCopyPhase  
-   ★ 修正版：表示もcos波ベースで判定（スコアと一致）  
+   ★ 修正：name＋shopnameで識別（updateDate廃止）  
+   ★ 仕様：
+   ★   ・コピー対象は名前＋店舗で一致
+   ★   ・updateDateは使用しない（リロード耐性）
+   ★   ・即ピンク＋Phase継続
 --------------------------------------------------------- */
 function isMatchingCandidateByCopyPhase(player) {
 
@@ -1201,7 +1196,7 @@ function isMatchingCandidateByCopyPhase(player) {
 
   const existsInFiltered = State.filtered.some(p =>
     normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
-    String(p.updateDate ?? "") === String(player.updateDate ?? "")
+    String(p.shopname ?? "") === String(player.shopname ?? "")
   );
 
   if (!existsInFiltered) return false;
@@ -1212,7 +1207,7 @@ function isMatchingCandidateByCopyPhase(player) {
 
   const click = State.recentClicks.find(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
-    String(r.updateDate ?? "") === String(player.updateDate ?? "")
+    String(r.shopname ?? "") === String(player.shopname ?? "")
   );
 
   if (!click) return false;
@@ -1227,9 +1222,8 @@ function isMatchingCandidateByCopyPhase(player) {
   const phaseCfg = State.scoringConfig?.phase ?? {};
 
   const cycleMin       = Number(phaseCfg.cycleMin ?? 5);
-  const cooldownCycles = Number(phaseCfg.cooldownCycles ?? 1);
   const toleranceSec   = Number(phaseCfg.toleranceSec ?? 45);
-  const amplitude      = Number(phaseCfg.amplitude ?? 0.8);
+  const cooldownCycles = Number(phaseCfg.cooldownCycles ?? 1);
 
   const cycleSec = cycleMin * 60;
 
@@ -1240,27 +1234,16 @@ function isMatchingCandidateByCopyPhase(player) {
 
   const cooldownEnd = (cycleSec * cooldownCycles) + toleranceSec;
 
-  /* =============================== */
-  /* ✅ 即ピンク（cooldown中） */
-  /* =============================== */
-
+  /* ✅ 即ピンク */
   if (diffSec < cooldownEnd) {
     return true;
   }
 
-  /* =============================== */
-  /* ✅ cosベースPhase判定 */
-  /* =============================== */
-
+  /* ✅ Phase */
   const rSec = diffSec % cycleSec;
-  const theta = (2 * Math.PI * rSec) / cycleSec;
-  const cosValue = Math.cos(theta);
+  const distToPeak = Math.min(rSec, cycleSec - rSec);
 
-  /* =============================== */
-  /* ✅ 閾値（ここが重要） */
-  /* =============================== */
-
-  return cosValue >= 0.7;  
+  return distToPeak <= toleranceSec;
 }
 /*--------------------------------------------------------
    [25] scoring_config 取得/適用 分離  
@@ -1510,9 +1493,8 @@ function calcMatchingDiagnostics(list) {
 }
 /* ---------------------------------------------------------
    [28-B] calcMatchingScoreDetail  
-   ★ 最終修正：Phaseをconfig制御 sin(cos)波化 + player単位anchor  
-   ★ cycle / tolerance / cooldown / amplitude を完全config化  
-   ★ 既存構造完全維持  
+   ★ 修正版：name＋shopnameでコピー履歴識別（updateDate非依存）  
+   ★ Phase・score・構造は完全維持  
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
 
@@ -1549,7 +1531,7 @@ function calcMatchingScoreDetail(player) {
   }
 
   /* =============================== */
-  /* 基本要素                       */
+  /* 基本要素 */
   /* =============================== */
 
   const rankWeight = Number(getRankWeight(player) ?? 0);
@@ -1575,7 +1557,7 @@ function calcMatchingScoreDetail(player) {
   const timeWeight  = Number(getTimeWeight(player) ?? 0);
 
   /* ===================================================== */
-  /* ✅ PhaseWeight（config完全連動 + sin波）               */
+  /* ✅ PhaseWeight（name＋shopnameでanchor取得）           */
   /* ===================================================== */
 
   const phaseCfg = cfg.phase ?? {};
@@ -1592,10 +1574,10 @@ function calcMatchingScoreDetail(player) {
 
   let anchor = null;
 
-  // ✅ コピー履歴（そのプレイヤー）
+  /* ✅ コピー履歴（name＋shopname一致） */
   const click = State.recentClicks.find(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
-    String(r.updateDate ?? "") === String(player.updateDate ?? "")
+    String(r.shopname ?? "") === String(player.shopname ?? "")
   );
 
   if (click) {
@@ -1607,41 +1589,38 @@ function calcMatchingScoreDetail(player) {
   let phaseWeight = 1;
 
   if (anchor) {
-
     const now = Date.now();
     const diffSec = (now - anchor) / 1000;
 
     /* ------------------------------ */
-    /* ✅ cooldown（完全config化）   */
+    /* ✅ cooldown */
     /* ------------------------------ */
+
     const cooldownEnd = (cycleSec * cooldownCycles) + toleranceSec;
 
     if (diffSec < cooldownEnd) {
-
       phaseWeight = 0;
-
     } else {
 
       /* ------------------------------ */
-      /* ✅ 周期内位置                 */
+      /* ✅ 周期位置 */
       /* ------------------------------ */
+
       const rSec = diffSec % cycleSec;
 
       /* ------------------------------ */
-      /* ✅ 位相角                     */
+      /* ✅ cos波 */
       /* ------------------------------ */
-      const theta = (2 * Math.PI * rSec) / cycleSec;
 
-      /* ------------------------------ */
-      /* ✅ cos波                      */
-      /* ------------------------------ */
+      const theta = (2 * Math.PI * rSec) / cycleSec;
       const cosValue = Math.cos(theta);
 
       phaseWeight = base + amplitude * cosValue;
 
       /* ------------------------------ */
-      /* ✅ 数値防御                   */
+      /* ✅ 数値防御 */
       /* ------------------------------ */
+
       if (!isFinite(phaseWeight)) {
         phaseWeight = base;
       }
@@ -1649,8 +1628,9 @@ function calcMatchingScoreDetail(player) {
       phaseWeight = Math.max(floor, phaseWeight);
 
       /* ------------------------------ */
-      /* ✅ イエロー領域強調（±tolerance）*/
+      /* ✅ ピーク強調 */
       /* ------------------------------ */
+
       const distToPeak = Math.min(rSec, cycleSec - rSec);
 
       if (distToPeak <= toleranceSec) {
@@ -1660,14 +1640,14 @@ function calcMatchingScoreDetail(player) {
   }
 
   /* =============================== */
-  /* realtimeBoost                   */
+  /* realtimeBoost */
   /* =============================== */
 
   const realtimeBoost =
     Math.min(getRealtimeBoost(player), 2.5);
 
   /* =============================== */
-  /* ✅ 最終スコア                   */
+  /* 最終スコア */
   /* =============================== */
 
   const baseScoreBeforeBoost =
