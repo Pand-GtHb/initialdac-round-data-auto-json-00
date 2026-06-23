@@ -2431,8 +2431,9 @@ function findCandidateInfoForLog(player) {
   return result;
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates  
-   ★ 修正：抽選廃止 + cooldown前段除外  
+   [47] buildMatchingCandidates（分布再現対応版）  
+   ★ 修正：rank_modelに基づく分布生成＋ランク別選出  
+   ★ 既存構造完全維持（fallback／ログ／rankedAll保持）  
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
@@ -2444,6 +2445,9 @@ function buildMatchingCandidates() {
 
   const base = State.filtered;
 
+  /* ===================================================== */
+  /* ① スコア計算（既存維持）                             */
+  /* ===================================================== */
   const scoredAll = base.map(p => {
     const detail = calcMatchingScoreDetail(p);
     return {
@@ -2454,9 +2458,9 @@ function buildMatchingCandidates() {
     };
   });
 
-  /* ------------------------ */
-  /* UIフィルタ */
-  /* ------------------------ */
+  /* ===================================================== */
+  /* ② UIフィルタ（既存維持）                             */
+  /* ===================================================== */
   const filteredByUi = scoredAll.filter(p => {
 
     if (!p.updateDate) return false;
@@ -2469,45 +2473,179 @@ function buildMatchingCandidates() {
     }
   });
 
-  /* ------------------------ */
-  /* rankModelフィルタ */
-  /* ------------------------ */
+  /* ===================================================== */
+  /* ③ rankModelフィルタ（既存維持）                       */
+  /* ===================================================== */
   const filteredByRankModel = filteredByUi.filter(p =>
     Number(p.__detail?.rankWeight ?? 0) > 0
   );
 
   let analysisBase =
-    filteredByRankModel.length > 0
+    (filteredByRankModel.length > 0)
       ? filteredByRankModel
       : filteredByUi;
 
-  /* ------------------------ */
-  /* ✅ cooldown除外 */
-  /* ------------------------ */
+  /* ===================================================== */
+  /* ④ cooldown除外（既存準拠・前段化）                   */
+  /* ===================================================== */
   const afterCooldown = analysisBase.filter(p =>
     Number(p.__detail?.phaseWeight ?? 1) > 0
   );
 
-  /* ------------------------ */
-  /* ✅ ランキング決定 */
-  /* ------------------------ */
+  /* ===================================================== */
+  /* ⑤ rankedAll生成（既存維持）                           */
+  /* ===================================================== */
   const rankedAll = [...afterCooldown]
     .sort((a, b) => b.__score - a.__score);
 
   State.matchingRankedAll = rankedAll;
 
-  /* ------------------------ */
-  /* ✅ TOP10固定採用 */
-  /* ------------------------ */
-  const selected = rankedAll.slice(0, 10);
+  /* ===================================================== */
+  /* ⑥ 分布再現（ここが核心：新規ロジック）               */
+  /* ===================================================== */
 
+  const totalCount = Math.min(10, rankedAll.length);
+
+  const myStar = String(State.myStar);
+
+  const dist =
+    State.rankModel?.models?.[myStar]?.vs;
+
+  let selected = [];
+
+  if (dist && totalCount > 0) {
+
+    /* ------------------------------ */
+    /* ⑥-1 枠生成                     */
+    /* ------------------------------ */
+    const quota = {};
+    let sum = 0;
+
+    const entries = Object.entries(dist);
+
+    entries.forEach(([key, ratio]) => {
+      const cnt = Math.floor(ratio * totalCount);
+      quota[key] = cnt;
+      sum += cnt;
+    });
+
+    /* ------------------------------ */
+    /* ⑥-2 誤差補正                   */
+    /* ------------------------------ */
+    const sortedKeys = entries
+      .sort((a, b) => b[1] - a[1])
+      .map(x => x[0]);
+
+    let idx = 0;
+    while (sum < totalCount && sortedKeys.length > 0) {
+      const key = sortedKeys[idx % sortedKeys.length];
+      quota[key] = (quota[key] || 0) + 1;
+      sum++;
+      idx++;
+    }
+
+    /* ------------------------------ */
+    /* ⑥-3 ランク別プール生成         */
+    /* ------------------------------ */
+    const poolByRank = {};
+
+    rankedAll.forEach(p => {
+      const key = p.__rankKey;
+      if (!poolByRank[key]) poolByRank[key] = [];
+      poolByRank[key].push(p);
+    });
+
+    /* ------------------------------ */
+    /* ⑥-4 ランク別選出               */
+    /* ------------------------------ */
+    for (const rankKey in quota) {
+
+      const need = quota[rankKey] || 0;
+
+      if (need <= 0) continue;
+
+      const pool = poolByRank[rankKey] || [];
+
+      if (pool.length === 0) continue;
+
+      const picked = selectByWeight(
+        pool.sort((a,b)=>b.__score-a.__score),
+        Math.min(need, pool.length)
+      );
+
+      selected.push(...picked);
+    }
+
+    /* ------------------------------ */
+    /* ⑥-5 不足分補完                 */
+    /* ------------------------------ */
+    if (selected.length < totalCount) {
+
+      const existing = new Set(
+        selected.map(p =>
+          `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
+        )
+      );
+
+      const rest = rankedAll.filter(p =>
+        !existing.has(
+          `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
+        )
+      );
+
+      const need = totalCount - selected.length;
+
+      if (need > 0 && rest.length > 0) {
+        selected.push(
+          ...selectByWeight(rest, need)
+        );
+      }
+    }
+
+  } else {
+
+    /* ===================================================== */
+    /* fallback（元ロジック完全維持）                      */
+    /* ===================================================== */
+    selected = rankedAll.slice(0, totalCount);
+  }
+
+  /* ===================================================== */
+  /* ⑦ 最終ソート（既存維持）                             */
+  /* ===================================================== */
+  selected.sort((a, b) => b.__score - a.__score);
+
+  /* ===================================================== */
+  /* ⑧ 表示順位（既存維持）                               */
+  /* ===================================================== */
   selected.forEach((p, i) => {
     p.displayRank = i + 1;
   });
 
   State.matchingList = selected;
 
-  log(`候補生成FIX: Base=${base.length} → Selected=${selected.length}`);
+  /* ===================================================== */
+  /* ⑨ snapshot（既存維持）                                */
+  /* ===================================================== */
+  State.matchingSnapshot = selected.map(p => ({
+    name: p.name,
+    score: p.__score
+  }));
+
+  /* ===================================================== */
+  /* ⑩ ログ（既存維持＋強化）                              */
+  /* ===================================================== */
+  log(`候補生成(DIST): Base=${base.length} / Selected=${selected.length}`);
+
+  logEvent("matching_distribution", {
+    total: totalCount,
+    quota: dist ? true : false,
+    selected: selected.map(p => ({
+      n: p.name,
+      r: p.__rankKey,
+      s: p.__score
+    }))
+  });
 }
 /* ---------------------------------------------------------
    [48] renderMatchingHeader      
