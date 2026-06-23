@@ -1076,7 +1076,7 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
     diffMin: Infinity,
     d: Infinity,
     rSec: Infinity,
-    inPinkWindow: false,
+    inyellowWindow: false,
     isInitialCooldown: false,
     cooldownRemainingSec: 0
   };
@@ -1105,7 +1105,7 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
       diffMin: diffSec / 60,
       d: Infinity,
       rSec,
-      inPinkWindow: false,
+      inyellowWindow: false,
       isInitialCooldown: true,
       cooldownRemainingSec:
         Math.max(0, initialCooldownSec - diffSec)
@@ -1115,14 +1115,14 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
   const distToNearest =
     Math.min(rSec, cycleSec - rSec);
 
-  const inPinkWindow =
+  const inyellowWindow =
     distToNearest <= toleranceSec;
 
   return {
     diffMin: diffSec / 60,
     d: distToNearest / 60,
     rSec,
-    inPinkWindow,
+    inyellowWindow,
     isInitialCooldown: false,
     cooldownRemainingSec: 0
   };
@@ -1177,7 +1177,7 @@ function isMatchingCandidateByPhase(player) {
   const distToPeak = Math.min(rSec, cycleSec - rSec);
 
   /* =============================== */
-  /* ✅ ピンク判定（±tolerance）    */
+  /* ✅ イエロー判定（±tolerance）    */
   /* =============================== */
   return distToPeak <= toleranceSec;
 }
@@ -1188,17 +1188,23 @@ function getLatestCopiedPlayer() {
   return State.recentClicks[0] || null;
 }
 /* ---------------------------------------------------------
-   [24-D] isMatchingCandidateByCopyPhase（赤判定）  
-   ★ コピー時刻基準でphase一致判定  
+   [24-D] isMatchingCandidateByCopyPhase（修正版）  
+   ★ 修正：プレイヤー個別コピーのみ対象  
 --------------------------------------------------------- */
 function isMatchingCandidateByCopyPhase(player) {
 
   if (!player || !player.updateDate) return false;
 
-  const latestCopied = getLatestCopiedPlayer();
-  if (!latestCopied) return false;
+  /* ✅ そのプレイヤーのコピー履歴だけ探す */
+  const click = State.recentClicks.find(r =>
+    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
+    String(r.updateDate ?? "") === String(player.updateDate ?? "")
+  );
 
-  const anchor = latestCopied.copiedAt || latestCopied.time;
+  // ✅ コピー履歴が無い人はピンクにならない
+  if (!click) return false;
+
+  const anchor = click.copiedAt || click.time;
   if (!anchor) return false;
 
   const phaseCfg = State.scoringConfig?.phase ?? {};
@@ -1219,7 +1225,7 @@ function isMatchingCandidateByCopyPhase(player) {
 
   return distToPeak <= toleranceSec;
 }
-/* ---------------------------------------------------------
+--------------------------------------------------------
    [25] scoring_config 取得/適用 分離  
 --------------------------------------------------------- */
 async function loadScoringConfig() {
@@ -1606,7 +1612,7 @@ function calcMatchingScoreDetail(player) {
       phaseWeight = Math.max(floor, phaseWeight);
 
       /* ------------------------------ */
-      /* ✅ ピンク領域強調（±tolerance）*/
+      /* ✅ イエロー領域強調（±tolerance）*/
       /* ------------------------------ */
       const distToPeak = Math.min(rSec, cycleSec - rSec);
 
@@ -2161,7 +2167,7 @@ function buildPlayerRowHTML(p) {
 }
 /* ---------------------------------------------------------
    [41-B] highlightMatchingRows  
-   ★ 修正：ピンク（個別）＋赤（コピー）両対応  
+   ★ 修正：イエロー（個別）＋ピンク（コピー）両対応  
 --------------------------------------------------------- */
 function highlightMatchingRows(tbody) {
 
@@ -2182,36 +2188,36 @@ function highlightMatchingRows(tbody) {
     };
 
     /* =============================== */
-    /* ✅ ピンク（LastUpdate基準）      */
+    /* ✅ イエロー（LastUpdate基準）      */
     /* =============================== */
-    const isPink = isMatchingCandidateByPhase(rowPlayer);
+    const isyellow = isMatchingCandidateByPhase(rowPlayer);
 
     /* =============================== */
-    /* ✅ 赤（コピー基準）              */
+    /* ✅ ピンク（コピー基準）              */
     /* =============================== */
-    const isRed = isMatchingCandidateByCopyPhase(rowPlayer);
+    const ispink = isMatchingCandidateByCopyPhase(rowPlayer);
 
     /* =============================== */
     /* 表示制御（優先順位あり）        */
     /* =============================== */
 
+    tr.classList.remove("match-row-yellow");
     tr.classList.remove("match-row-pink");
-    tr.classList.remove("match-row-red");
 
-    if (isRed) {
-
-      tr.classList.add("match-row-red");
-
-      logEvent("red_detected", {
-        n: rowName,
-        u: updated
-      });
-
-    } else if (isPink) {
+    if (ispink) {
 
       tr.classList.add("match-row-pink");
 
       logEvent("pink_detected", {
+        n: rowName,
+        u: updated
+      });
+
+    } else if (isyellow) {
+
+      tr.classList.add("match-row-yellow");
+
+      logEvent("yellow_detected", {
         n: rowName,
         u: updated
       });
