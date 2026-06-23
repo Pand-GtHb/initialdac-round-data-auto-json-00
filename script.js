@@ -1127,36 +1127,33 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
     cooldownRemainingSec: 0
   };
 }
-
-/* ---------------------------------------------------------  
-   [24-B] isMatchingCandidateByPhase  
+/* ---------------------------------------------------------
+   [24-B] isMatchingCandidateByPhase    
+   ★ 修正：全プレイヤー対象 + latestUpdate対応    
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(player) {
 
   if (!player) return false;
 
-  const anchor = getLatestCopiedPlayer();
+  let anchor = null;
+
+  const latestCopied = getLatestCopiedPlayer();
+
+  // ✅ コピー履歴優先
+  if (latestCopied) {
+    anchor = latestCopied.copiedAt || latestCopied.time;
+  } 
+  // ✅ コピー履歴なし → latestUpdateAt
+  else {
+    anchor = parseDateJST(State.latestUpdateAt)?.getTime();
+  }
+
   if (!anchor) return false;
 
-  const sameName =
-    normalizePlayerName(player.name) ===
-    normalizePlayerName(anchor.name);
-
-  const sameUpdateDate =
-    String(player.updateDate ?? "") ===
-    String(anchor.updateDate ?? "");
-
-  if (!sameName || !sameUpdateDate) return false;
-
-  const phase =
-    getPhaseDistanceMin(
-      anchor.copiedAt || anchor.time,
-      5
-    );
+  const phase = getPhaseDistanceMin(anchor, 5);
 
   return !!phase.inPinkWindow;
 }
-
 /* ---------------------------------------------------------  
    [24-C] getLatestCopiedPlayer  
 --------------------------------------------------------- */
@@ -1410,138 +1407,92 @@ function calcMatchingDiagnostics(list) {
   };
 }
 /* ---------------------------------------------------------
-   [28-B] calcMatchingScoreDetail
-   ★ phase影響強化（miscFactor 50 → 10）
+   [28-B] calcMatchingScoreDetail  
+   ★ 修正：Phase起点を player単位に変更  
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
 
   if (!player || !player.updateDate) {
-    return {
-      score: 0,
-      rankWeight: 0,
-      rankScore: 0,
-      prideWeight: 1,
-      areaFactor: 1,
-      timeWeight: 0,
-      phaseScore: 0,
-      recencyScore: 0,
-      activityScore: 0,
-      miscRaw: 0,
-      miscFactor: 1,
-      realtimeBoost: 1,
-      baseScoreBeforeBoost: 0,
-      scoreAfterBoost: 0
-    };
+    return { score: 0 };
   }
 
   const cfg = State.scoringConfig;
-
   if (!cfg) {
-    return {
-      score: 1,
-      rankWeight: 0,
-      rankScore: 1,
-      prideWeight: 1,
-      areaFactor: 1,
-      timeWeight: 1,
-      phaseScore: 0,
-      recencyScore: 0,
-      activityScore: 0,
-      miscRaw: 0,
-      miscFactor: 1,
-      realtimeBoost: 1,
-      baseScoreBeforeBoost: 1,
-      scoreAfterBoost: 1
-    };
+    return { score: 1 };
   }
 
   const rankWeight = Number(getRankWeight(player) ?? 0);
-
   if (rankWeight <= 0) {
-    return {
-      score: 0,
-      rankWeight: 0,
-      rankScore: 0,
-      prideWeight: 1,
-      areaFactor: getAreaScore(player),
-      timeWeight: getTimeWeight(player),
-      phaseScore: 0,
-      recencyScore: 0,
-      activityScore: 0,
-      miscRaw: 0,
-      miscFactor: 1,
-      realtimeBoost: Math.min(getRealtimeBoost(player), 2.5),
-      baseScoreBeforeBoost: 0,
-      scoreAfterBoost: 0
-    };
+    return { score: 0 };
   }
 
-  let rankBase;
+  const rankScore   = rankWeight;
+  const prideWeight = Number(getPrideWeight(player) ?? 1);
+  const areaFactor  = Number(getAreaScore(player) ?? 1);
+  const timeWeight  = Number(getTimeWeight(player) ?? 0);
 
-  if (cfg.rank?.mode === "sqrt") {
-    rankBase = Math.sqrt(rankWeight);
-  } else if (cfg.rank?.mode === "linear") {
-    rankBase = rankWeight;
-  } else {
-    rankBase = rankWeight;
+  /* =============================== */
+  /* ✅ PhaseWeight（ここが核心）     */
+  /* =============================== */
+
+  let anchor = null;
+
+  // ✅ ① コピー履歴がある場合（そのプレイヤー）
+  const click = State.recentClicks.find(r =>
+    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
+    String(r.updateDate ?? "") === String(player.updateDate ?? "")
+  );
+
+  if (click) {
+    anchor = click.copiedAt || click.time;
+  }
+  // ✅ ② コピー履歴がない場合 → LastUpdate
+  else {
+    anchor = parseDateJST(player.updateDate)?.getTime();
   }
 
-  const rankScore =
-    rankBase * Number(cfg.rank?.scale ?? 1);
+  let phaseWeight = 1;
 
-  const prideWeight =
-    Number(getPrideWeight(player) ?? 1);
+  if (anchor) {
 
-  const areaFactor =
-    Number(getAreaScore(player) ?? 1);
+    const phase = getPhaseDistanceMin(anchor, 5);
 
-  const timeWeight =
-    Number(getTimeWeight(player) ?? 0);
+    // ✅ cooldown（除外）
+    if (phase.isInitialCooldown) {
+      phaseWeight = 0;
 
-  const latestCopied = getLatestCopiedPlayer();
+    // ✅ ピンク窓
+    } else if (phase.inPinkWindow) {
+      phaseWeight = 2.0;
 
-  const phaseInfo = latestCopied
-    ? getPhaseDistanceMin(latestCopied.copiedAt || latestCopied.time, 5)
-    : { diffMin: Infinity, inPinkWindow: false };
+    // ✅ その他
+    } else {
+      phaseWeight = 0.7;
+    }
+  }
 
-  const isPinkTarget =
-    isMatchingCandidateByPhase(player);
-
-  const phaseScore =
-    (isPinkTarget && phaseInfo.inPinkWindow) ? 1 : 0;
-
-  const recencyScore =
-    (isPinkTarget && isFinite(phaseInfo.diffMin))
-      ? Math.exp(-phaseInfo.diffMin / MATCHING_SCORE_CONFIG.recencyTau)
-      : 0;
-
-  const star = Number(player.starCnt ?? 0);
-  const pride = Number(player.pridePoint ?? 0);
-
-  const activityScore =
-    (star > 0)
-      ? Math.min(1, star / 7)
-      : (pride > 0 ? 0.7 : 0);
-
-  const miscRaw =
-      phaseScore   * Number(cfg.misc?.phase ?? 0)
-    + recencyScore * Number(cfg.misc?.recency ?? 0)
-    + activityScore * Number(cfg.misc?.activity ?? 0);
-
-  // ✅ 修正ポイント（ここ）
-  const miscFactor = 1 + (miscRaw / 10);
-
-  let realtimeBoost =
+  /* =============================== */
+  /* realtimeBoost                   */
+  /* =============================== */
+  const realtimeBoost =
     Math.min(getRealtimeBoost(player), 2.5);
 
+  /* =============================== */
+  /* ✅ 完全乗算                     */
+  /* =============================== */
   const baseScoreBeforeBoost =
-    rankScore * prideWeight * areaFactor * miscFactor * timeWeight;
+      rankScore *
+      prideWeight *
+      areaFactor *
+      timeWeight *
+      phaseWeight;
 
   const scoreAfterBoost =
-    baseScoreBeforeBoost * realtimeBoost;
+      baseScoreBeforeBoost *
+      realtimeBoost;
 
   const score =
-    Math.max(0.0001, scoreAfterBoost);
+      Math.max(0.0001, scoreAfterBoost);
 
   return {
     score,
@@ -1550,11 +1501,7 @@ function calcMatchingScoreDetail(player) {
     prideWeight,
     areaFactor,
     timeWeight,
-    phaseScore,
-    recencyScore,
-    activityScore,
-    miscRaw,
-    miscFactor,
+    phaseWeight,
     realtimeBoost,
     baseScoreBeforeBoost,
     scoreAfterBoost
@@ -1567,59 +1514,14 @@ function calcMatchingScore(player) {
   return calcMatchingScoreDetail(player).score;
 }
 /* ---------------------------------------------------------
-   [29-B] selectByWeight
-   ★ 抽選トレースログ追加
+   [29-B] selectByWeight  
+   ★ 修正：抽選無効化（構造維持）  
 --------------------------------------------------------- */
 function selectByWeight(players, count) {
 
-  const result = [];
-  const pool = [...players];
-
-  const safeScore = (p) => {
-    const base = Math.max(0.0001, p.__score || 0);
-    const timeWeight = getTimeWeight(p);
-    const timeBoost = Math.pow(timeWeight, 2.0);
-
-    return base * timeBoost;
-  };
-
-  while (result.length < count && pool.length > 0) {
-
-    const total = pool.reduce((sum, p) => sum + safeScore(p), 0);
-    if (total <= 0) break;
-
-    // ✅ 候補ログ
-    logEvent("selection_candidates", {
-      pool: pool.slice(0, 10).map(p => ({
-        n: p.name,
-        w: safeScore(p)
-      }))
-    });
-
-    let r = Math.random() * total;
-    let idx = 0;
-
-    for (let i = 0; i < pool.length; i++) {
-      r -= safeScore(pool[i]);
-      if (r <= 0) {
-        idx = i;
-        break;
-      }
-    }
-
-    const chosen = pool[idx];
-
-    // ✅ 選択ログ
-    logEvent("selection_result", {
-      selected: chosen.name,
-      score: chosen.__score
-    });
-
-    result.push(chosen);
-    pool.splice(idx, 1);
-  }
-
-  return result;
+  // ✅ 修正：ランダム抽選を廃止
+  // 上位固定返却（互換維持）
+  return players.slice(0, count);
 }
 /*---------------------------------------------------------
    [30] applyFilters
@@ -2441,9 +2343,8 @@ function findCandidateInfoForLog(player) {
   return result;
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（ログ簡略版）
-   ★ coreロジック維持
-   ★ ログ最小化（top候補のみ）
+   [47] buildMatchingCandidates  
+   ★ 修正：抽選廃止 + cooldown前段除外  
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
@@ -2465,8 +2366,11 @@ function buildMatchingCandidates() {
     };
   });
 
-  // ✅ UIフィルタ
+  /* ------------------------ */
+  /* UIフィルタ */
+  /* ------------------------ */
   const filteredByUi = scoredAll.filter(p => {
+
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
 
@@ -2477,81 +2381,45 @@ function buildMatchingCandidates() {
     }
   });
 
-  // ✅ rankModelフィルタ
+  /* ------------------------ */
+  /* rankModelフィルタ */
+  /* ------------------------ */
   const filteredByRankModel = filteredByUi.filter(p =>
     Number(p.__detail?.rankWeight ?? 0) > 0
   );
 
-  // ✅ 分母決定
   let analysisBase =
     filteredByRankModel.length > 0
       ? filteredByRankModel
       : filteredByUi;
 
-  // ✅ ランキング生成
-  const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
+  /* ------------------------ */
+  /* ✅ cooldown除外 */
+  /* ------------------------ */
+  const afterCooldown = analysisBase.filter(p =>
+    Number(p.__detail?.phaseWeight ?? 1) > 0
+  );
+
+  /* ------------------------ */
+  /* ✅ ランキング決定 */
+  /* ------------------------ */
+  const rankedAll = [...afterCooldown]
+    .sort((a, b) => b.__score - a.__score);
 
   State.matchingRankedAll = rankedAll;
-  State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
 
-  // ✅ ログ（top5のみ）
-  logEvent("top", {
-    list: rankedAll.slice(0, 5).map(p => ({
-      n: p.name,
-      s: p.__score
-    }))
-  });
+  /* ------------------------ */
+  /* ✅ TOP10固定採用 */
+  /* ------------------------ */
+  const selected = rankedAll.slice(0, 10);
 
-  // ✅ 抽選
-  let selected = [];
-  if (rankedAll.length > 0) {
-    selected = selectByWeight(
-      rankedAll,
-      Math.min(10, rankedAll.length)
-    );
-  }
-
-  // ✅ fallback補完
-  if (selected.length < 10) {
-    const existing = new Set(
-      selected.map(p =>
-        `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
-      )
-    );
-
-    const fallbackPool = filteredByUi.filter(p =>
-      !existing.has(
-        `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
-      )
-    );
-
-    const need = 10 - selected.length;
-
-    if (need > 0 && fallbackPool.length > 0) {
-      selected = [
-        ...selected,
-        ...selectByWeight(fallbackPool, need)
-      ];
-    }
-  }
-
-  // ✅ 並び替え
-  selected.sort((a, b) => b.__score - a.__score);
-
-  State.matchingList = selected;
-
-  // ✅ 表示順位
   selected.forEach((p, i) => {
     p.displayRank = i + 1;
   });
 
-  // ✅ snapshot（軽量）
-  State.matchingSnapshot = selected.map(p => ({
-    name: p.name,
-    score: p.__score
-  }));
+  State.matchingList = selected;
 
-  log(`候補生成: Base=${base.length} / Selected=${selected.length}`);
+  log(`候補生成FIX: Base=${base.length} → Selected=${selected.length}`);
 }
 /* ---------------------------------------------------------
    [48] renderMatchingHeader      
@@ -2623,45 +2491,15 @@ function renderMatchingTable() {
   renderMatchingRows(State.matchingList);
 }
 /* ---------------------------------------------------------
-   [50] renderMatchingRows
-   ★ クールダウン判定ログ追加
+   [50] renderMatchingRows  
+   ★ 修正：cooldown除外削除（前段へ移動）  
 --------------------------------------------------------- */
 function renderMatchingRows(list) {
 
-  const anchor = getLatestCopiedPlayer();
+  // ✅ 修正：ここでは除外しない
+  // すでに候補生成段階で処理済
 
-  let finalList = list;
-
-  if (anchor) {
-    finalList = list.filter(p => {
-
-      const sameName =
-        normalizePlayerName(p.name) === normalizePlayerName(anchor.name);
-
-      const sameUpdate =
-        String(p.updateDate) === String(anchor.updateDate);
-
-      if (sameName && sameUpdate) {
-
-        const phase = getPhaseDistanceMin(
-          anchor.copiedAt || anchor.time,
-          5
-        );
-
-        logEvent("cooldown_check", {
-          n: p.name,
-          excluded: phase.isInitialCooldown,
-          remain: phase.cooldownRemainingSec
-        });
-
-        if (phase.isInitialCooldown) return false;
-      }
-
-      return true;
-    });
-  }
-
-  renderPlayerRowsToBody("matchingTableBody", finalList);
+  renderPlayerRowsToBody("matchingTableBody", list);
 }
 /* ---------------------------------------------------------      
    [51] applyMatchingFilter      
