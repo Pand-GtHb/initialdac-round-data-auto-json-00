@@ -1076,7 +1076,7 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
     diffMin: Infinity,
     d: Infinity,
     rSec: Infinity,
-    inyellowWindow: false,
+    inYellowWindow: false,
     isInitialCooldown: false,
     cooldownRemainingSec: 0
   };
@@ -1105,7 +1105,7 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
       diffMin: diffSec / 60,
       d: Infinity,
       rSec,
-      inyellowWindow: false,
+      inYellowWindow: false,
       isInitialCooldown: true,
       cooldownRemainingSec:
         Math.max(0, initialCooldownSec - diffSec)
@@ -1115,14 +1115,14 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
   const distToNearest =
     Math.min(rSec, cycleSec - rSec);
 
-  const inyellowWindow =
+  const inYellowWindow =
     distToNearest <= toleranceSec;
 
   return {
     diffMin: diffSec / 60,
     d: distToNearest / 60,
     rSec,
-    inyellowWindow,
+    inYellowWindow,
     isInitialCooldown: false,
     cooldownRemainingSec: 0
   };
@@ -1225,7 +1225,7 @@ function isMatchingCandidateByCopyPhase(player) {
 
   return distToPeak <= toleranceSec;
 }
---------------------------------------------------------
+/--------------------------------------------------------
    [25] scoring_config 取得/適用 分離  
 --------------------------------------------------------- */
 async function loadScoringConfig() {
@@ -2190,12 +2190,12 @@ function highlightMatchingRows(tbody) {
     /* =============================== */
     /* ✅ イエロー（LastUpdate基準）      */
     /* =============================== */
-    const isyellow = isMatchingCandidateByPhase(rowPlayer);
+    const isYellow = isMatchingCandidateByPhase(rowPlayer);
 
     /* =============================== */
     /* ✅ ピンク（コピー基準）              */
     /* =============================== */
-    const ispink = isMatchingCandidateByCopyPhase(rowPlayer);
+    const isPink = isMatchingCandidateByCopyPhase(rowPlayer);
 
     /* =============================== */
     /* 表示制御（優先順位あり）        */
@@ -2204,7 +2204,7 @@ function highlightMatchingRows(tbody) {
     tr.classList.remove("match-row-yellow");
     tr.classList.remove("match-row-pink");
 
-    if (ispink) {
+    if (isPink) {
 
       tr.classList.add("match-row-pink");
 
@@ -2213,7 +2213,7 @@ function highlightMatchingRows(tbody) {
         u: updated
       });
 
-    } else if (isyellow) {
+    } else if (isYellow) {
 
       tr.classList.add("match-row-yellow");
 
