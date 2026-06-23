@@ -1128,31 +1128,58 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
   };
 }
 /* ---------------------------------------------------------
-   [24-B] isMatchingCandidateByPhase    
-   ★ 修正：全プレイヤー対象 + latestUpdate対応    
+   [24-B] isMatchingCandidateByPhase  
+   ★ 修正：プレイヤー単位anchor + config完全対応  
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(player) {
 
-  if (!player) return false;
+  if (!player || !player.updateDate) return false;
+
+  /* =============================== */
+  /* ✅ config                       */
+  /* =============================== */
+  const phaseCfg = State.scoringConfig?.phase ?? {};
+
+  const cycleMin     = Number(phaseCfg.cycleMin ?? 5);
+  const toleranceSec = Number(phaseCfg.toleranceSec ?? 45);
+
+  const cycleSec = cycleMin * 60;
+
+  /* =============================== */
+  /* ✅ anchor（重要：player単位）   */
+  /* =============================== */
 
   let anchor = null;
 
-  const latestCopied = getLatestCopiedPlayer();
+  const click = State.recentClicks.find(r =>
+    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
+    String(r.updateDate ?? "") === String(player.updateDate ?? "")
+  );
 
-  // ✅ コピー履歴優先
-  if (latestCopied) {
-    anchor = latestCopied.copiedAt || latestCopied.time;
-  } 
-  // ✅ コピー履歴なし → latestUpdateAt
-  else {
-    anchor = parseDateJST(State.latestUpdateAt)?.getTime();
+  if (click) {
+    anchor = click.copiedAt || click.time;
+  } else {
+    anchor = parseDateJST(player.updateDate)?.getTime();
   }
 
   if (!anchor) return false;
 
-  const phase = getPhaseDistanceMin(anchor, 5);
+  const now = Date.now();
+  const diffSec = (now - anchor) / 1000;
 
-  return !!phase.inPinkWindow;
+  if (!isFinite(diffSec) || diffSec < 0) return false;
+
+  /* =============================== */
+  /* ✅ 周期内位置                  */
+  /* =============================== */
+  const rSec = diffSec % cycleSec;
+
+  const distToPeak = Math.min(rSec, cycleSec - rSec);
+
+  /* =============================== */
+  /* ✅ ピンク判定（±tolerance）    */
+  /* =============================== */
+  return distToPeak <= toleranceSec;
 }
 /* ---------------------------------------------------------  
    [24-C] getLatestCopiedPlayer  
@@ -2101,35 +2128,44 @@ function buildPlayerRowHTML(p) {
   `;
 }
 /* ---------------------------------------------------------
-   [41-B] highlightMatchingRows
-   ★ ピンク判定ログ追加（非破壊）
+   [41-B] highlightMatchingRows  
+   ★ 修正：player単位phase判定に統一  
 --------------------------------------------------------- */
 function highlightMatchingRows(tbody) {
-  const anchor = getLatestCopiedPlayer();
-  if (!anchor) return;
+
+  if (!tbody) return;
 
   tbody.querySelectorAll("tr").forEach(tr => {
+
     const updated = tr.dataset.updated || "";
+
     const nameCell = tr.querySelector(".player-name");
-    const rowName = nameCell ? String(nameCell.textContent).trim() : "";
+    const rowName = nameCell
+      ? String(nameCell.textContent).trim()
+      : "";
 
     const rowPlayer = {
       name: rowName,
       updateDate: updated
     };
 
+    /* =============================== */
+    /* ✅ 個別phase判定                */
+    /* =============================== */
     const isPink = isMatchingCandidateByPhase(rowPlayer);
 
     if (isPink) {
+
       tr.classList.add("match-row-pink");
 
-      // ✅ 追加ログ
+      // ✅ ログ（維持）
       logEvent("pink_detected", {
         n: rowName,
         u: updated
       });
 
     } else {
+
       tr.classList.remove("match-row-pink");
     }
   });
