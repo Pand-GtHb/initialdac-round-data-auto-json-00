@@ -1188,40 +1188,70 @@ function getLatestCopiedPlayer() {
   return State.recentClicks[0] || null;
 }
 /* ---------------------------------------------------------
-   [24-D] isMatchingCandidateByCopyPhase（修正版）  
-   ★ 修正：プレイヤー個別コピーのみ対象  
+   [24-D] isMatchingCandidateByCopyPhase  
+   ★ 最終版：player個別コピー + config + cooldown完全対応  
 --------------------------------------------------------- */
 function isMatchingCandidateByCopyPhase(player) {
 
   if (!player || !player.updateDate) return false;
 
-  /* ✅ そのプレイヤーのコピー履歴だけ探す */
+  /* =============================== */
+  /* ✅ 該当プレイヤーのコピー履歴取得 */
+  /* =============================== */
+
   const click = State.recentClicks.find(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
     String(r.updateDate ?? "") === String(player.updateDate ?? "")
   );
 
-  // ✅ コピー履歴が無い人はピンクにならない
+  // ✅ コピー履歴が無い人は対象外
   if (!click) return false;
 
   const anchor = click.copiedAt || click.time;
   if (!anchor) return false;
 
+  /* =============================== */
+  /* ✅ config取得                   */
+  /* =============================== */
+
   const phaseCfg = State.scoringConfig?.phase ?? {};
 
-  const cycleMin     = Number(phaseCfg.cycleMin ?? 5);
-  const toleranceSec = Number(phaseCfg.toleranceSec ?? 45);
+  const cycleMin       = Number(phaseCfg.cycleMin ?? 5);
+  const toleranceSec   = Number(phaseCfg.toleranceSec ?? 45);
+  const cooldownCycles = Number(phaseCfg.cooldownCycles ?? 1);
 
   const cycleSec = cycleMin * 60;
+
+  /* =============================== */
+  /* ✅ 時間差計算                   */
+  /* =============================== */
 
   const now = Date.now();
   const diffSec = (now - anchor) / 1000;
 
   if (!isFinite(diffSec) || diffSec < 0) return false;
 
+  /* =============================== */
+  /* ✅ cooldown（最重要）            */
+  /* =============================== */
+
+  const cooldownEnd = (cycleSec * cooldownCycles) + toleranceSec;
+
+  if (diffSec < cooldownEnd) {
+    return false;
+  }
+
+  /* =============================== */
+  /* ✅ 周期位置                     */
+  /* =============================== */
+
   const rSec = diffSec % cycleSec;
 
   const distToPeak = Math.min(rSec, cycleSec - rSec);
+
+  /* =============================== */
+  /* ✅ Phaseヒット判定              */
+  /* =============================== */
 
   return distToPeak <= toleranceSec;
 }
