@@ -985,9 +985,9 @@ function getRealtimeBoost(player) {
   const detail = getRealtimeBoostDetail(player);
   return detail.total;
 }
-
-/* ---------------------------------------------------------  
-   [23-A] getRealtimeBoostDetail  
+/* ---------------------------------------------------------
+   [23-A] getRealtimeBoostDetail
+   ★ 本人一致boost追加（最重要修正）
 --------------------------------------------------------- */
 function getRealtimeBoostDetail(player) {
 
@@ -1008,14 +1008,15 @@ function getRealtimeBoostDetail(player) {
     if (!anchorTime) continue;
 
     const dtMin = (Date.now() - anchorTime) / 60000;
-
     if (!isFinite(dtMin) || dtMin < 0) continue;
 
     const decay = Math.exp(-dtMin / 8);
 
+    const samePlayer =
+      normalizePlayerName(player.name) === normalizePlayerName(r.name) &&
+      String(player.updateDate ?? "") === String(r.updateDate ?? "");
+
     const sameRank =
-      !!playerRankKey &&
-      !!r.rankKey &&
       String(playerRankKey) === String(r.rankKey);
 
     const sameArea =
@@ -1024,20 +1025,26 @@ function getRealtimeBoostDetail(player) {
     const sameShop =
       String(player.shopname ?? "") === String(r.shopname ?? "");
 
-    if (sameRank && sameArea) {
+    // ✅ 本人優先
+    if (samePlayer) {
+      rankScore += decay * 2.5;
+      areaScore += decay * 1.0;
+      reason.push("self");
+    }
+    else if (sameRank && sameArea) {
       rankScore += decay * 1.2;
       areaScore += decay * 0.6;
       reason.push("rank+area");
-
-    } else if (sameRank) {
+    }
+    else if (sameRank) {
       rankScore += decay * 0.9;
       reason.push("rank");
-
-    } else if (sameArea) {
+    }
+    else if (sameArea) {
       areaScore += decay * 0.7;
       reason.push("area");
-
-    } else if (sameShop) {
+    }
+    else if (sameShop) {
       shopScore += decay * 0.5;
       reason.push("shop");
     }
@@ -1054,7 +1061,6 @@ function getRealtimeBoostDetail(player) {
     reason: reason
   };
 }
-
 /* ---------------------------------------------------------  
    [24-A] getRoundedDiffMinAndPhaseDistance  
 --------------------------------------------------------- */
@@ -1294,12 +1300,9 @@ function getPrideWeight(player) {
 }
 /* ---------------------------------------------------------
    [26-6] getTimeWeight（安全強化版）
-   ★ 08の「時間支配」を復元
+   ★ 時間圧緩和（1.8 → 1.2）
    ★ 既存構造維持（非破壊）
-   ★ 強化ポイント：
-      - 減衰を指数強化（0.7 → 1.8）
-      - 初期をより高く、後半を急落
-      - 異常値安全ガード追加
+   ★ 初期優勢維持＋後半減衰を緩和
 --------------------------------------------------------- */
 function getTimeWeight(player) {
 
@@ -1326,10 +1329,10 @@ function getTimeWeight(player) {
   const normalized = Math.max(0, 1 - diffMin / maxRange);
 
   // ===============================
-  // ■ 強化ポイント
-  //   → 初期重視・後半急減
+  // ■ 修正ポイント
+  //   → 減衰を緩やかに（1.8 → 1.2）
   // ===============================
-  const weight = Math.pow(normalized, 1.8);
+  const weight = Math.pow(normalized, 1.2);
 
   // 安全クランプ
   if (!isFinite(weight)) return 0;
@@ -1383,9 +1386,9 @@ function calcMatchingDiagnostics(list) {
     totalRanked: ranked.length
   };
 }
-
-/* ---------------------------------------------------------  
-   [28-B] calcMatchingScoreDetail  
+/* ---------------------------------------------------------
+   [28-B] calcMatchingScoreDetail
+   ★ phase影響強化（miscFactor 50 → 10）
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
 
@@ -1502,7 +1505,8 @@ function calcMatchingScoreDetail(player) {
     + recencyScore * Number(cfg.misc?.recency ?? 0)
     + activityScore * Number(cfg.misc?.activity ?? 0);
 
-  const miscFactor = 1 + (miscRaw / 50);
+  // ✅ 修正ポイント（ここ）
+  const miscFactor = 1 + (miscRaw / 10);
 
   let realtimeBoost =
     Math.min(getRealtimeBoost(player), 2.5);
@@ -2440,13 +2444,11 @@ function findCandidateInfoForLog(player) {
    [47] buildMatchingCandidates（完全復元版）
    ★ -00ベース維持
    ★ -09の抽選ロジック復元
-   ★ cooldown除外復元
-   ★ fallback補完追加
-   ★ 既存ログ・構造は一切削除しない
+   ★ cooldown除外削除（評価段階から排除）
+   ★ fallback補完維持
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
-  // ===== 元コード開始（完全維持） =====
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
@@ -2454,7 +2456,6 @@ function buildMatchingCandidates() {
     .map(x => x.value);
 
   const base = State.filtered;
-  const now = Date.now();
 
   const scoredAll = base.map(p => {
     const detail = calcMatchingScoreDetail(p);
@@ -2465,8 +2466,6 @@ function buildMatchingCandidates() {
       __detail: detail
     };
   });
-
-  // ===== ここから -00既存構造維持 =====
 
   // ✅ UIフィルタ
   const filteredByUi = scoredAll.filter(p => {
@@ -2485,49 +2484,22 @@ function buildMatchingCandidates() {
     Number(p.__detail?.rankWeight ?? 0) > 0
   );
 
-  // ===== ✅ -09に戻す（分母決定ロジック） =====
+  // ✅ 分母決定（維持）
   let analysisBase =
     filteredByRankModel.length > 0
       ? filteredByRankModel
       : filteredByUi;
 
-  // ===== ✅ -09復元（cooldown除外） =====
-  const latestCopied = getLatestCopiedPlayer();
+  // ✅ cooldown除外は削除（重要）
 
-  if (latestCopied) {
-    analysisBase = analysisBase.filter(p => {
-
-      const sameName =
-        normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
-
-      const sameUpdate =
-        String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
-
-      if (sameName && sameUpdate) {
-        const phase = getPhaseDistanceMin(
-          latestCopied.copiedAt || latestCopied.time,
-          5
-        );
-
-        if (phase.isInitialCooldown) {
-          return false;
-        }
-      }
-      return true;
-    });
-  }
-
-  // ===== ✅ ランキング生成（維持） =====
+  // ✅ ランキング
   const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
 
   State.matchingRankedAll = rankedAll;
-
-  // ★ 既存診断
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
 
-  // ===== ✅ ここが最重要修正（抽選復元） =====
+  // ✅ 抽選
   let selected = [];
-
   if (rankedAll.length > 0) {
     selected = selectByWeight(
       rankedAll,
@@ -2535,9 +2507,8 @@ function buildMatchingCandidates() {
     );
   }
 
-  // ===== ✅ fallback補完（-09復元） =====
+  // ✅ fallback補完（cooldown削除のみ）
   if (selected.length < 10) {
-
     const existing = new Set(
       selected.map(p =>
         `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
@@ -2550,67 +2521,23 @@ function buildMatchingCandidates() {
       )
     );
 
-    let fallbackFiltered = fallbackPool;
-
-    if (latestCopied) {
-      fallbackFiltered = fallbackPool.filter(p => {
-
-        const sameName =
-          normalizePlayerName(p.name) === normalizePlayerName(latestCopied.name);
-
-        const sameUpdate =
-          String(p.updateDate ?? "") === String(latestCopied.updateDate ?? "");
-
-        if (sameName && sameUpdate) {
-          const phase = getPhaseDistanceMin(
-            latestCopied.copiedAt || latestCopied.time,
-            5
-          );
-
-          if (phase.isInitialCooldown) {
-            return false;
-          }
-        }
-
-        return true;
-      });
-    }
-
     const need = 10 - selected.length;
 
-    if (need > 0 && fallbackFiltered.length > 0) {
+    if (need > 0 && fallbackPool.length > 0) {
       selected = [
         ...selected,
-        ...selectByWeight(fallbackFiltered, need)
+        ...selectByWeight(fallbackPool, need)
       ];
     }
   }
 
-  // ===== ✅ 表示整形（既存仕様に合わせる） =====
   selected.sort((a, b) => b.__score - a.__score);
 
   State.matchingList = selected;
 
-  // ✅ -00のdisplayRank付与は維持
   selected.forEach((p, i) => {
     p.displayRank = i + 1;
   });
-
-  // ===== ✅ 既存ログ（完全維持） =====
-
-  const scores = rankedAll.map(p => p.__score || 0);
-  if (scores.length > 0) {
-    log("score_distribution=" + JSON.stringify({
-      min: Math.min(...scores),
-      max: Math.max(...scores),
-      avg: scores.reduce((a,b)=>a+b,0)/scores.length
-    }));
-  }
-
-  State.matchingSnapshot = selected.map(p => ({
-    name: p.name,
-    score: p.__score
-  }));
 
   log(`候補生成: Base=${base.length} / Selected=${selected.length}`);
 }
@@ -2683,11 +2610,38 @@ function renderMatchingTable() {
 
   renderMatchingRows(State.matchingList);
 }
-/* ---------------------------------------------------------  
-   [50] renderMatchingRows      
+/* ---------------------------------------------------------
+   [50] renderMatchingRows
+   ★ クールダウンを表示直前に適用（新規追加）
 --------------------------------------------------------- */
 function renderMatchingRows(list) {
-  renderPlayerRowsToBody("matchingTableBody", list);
+
+  const anchor = getLatestCopiedPlayer();
+
+  let finalList = list;
+
+  if (anchor) {
+    finalList = list.filter(p => {
+
+      const sameName =
+        normalizePlayerName(p.name) === normalizePlayerName(anchor.name);
+
+      const sameUpdate =
+        String(p.updateDate) === String(anchor.updateDate);
+
+      if (sameName && sameUpdate) {
+        const phase = getPhaseDistanceMin(
+          anchor.copiedAt || anchor.time,
+          5
+        );
+        if (phase.isInitialCooldown) return false;
+      }
+
+      return true;
+    });
+  }
+
+  renderPlayerRowsToBody("matchingTableBody", finalList);
 }
 /* ---------------------------------------------------------      
    [51] applyMatchingFilter      
