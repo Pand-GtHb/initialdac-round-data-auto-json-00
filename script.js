@@ -1188,6 +1188,38 @@ function getLatestCopiedPlayer() {
   return State.recentClicks[0] || null;
 }
 /* ---------------------------------------------------------
+   [24-D] isMatchingCandidateByCopyPhase（赤判定）  
+   ★ コピー時刻基準でphase一致判定  
+--------------------------------------------------------- */
+function isMatchingCandidateByCopyPhase(player) {
+
+  if (!player || !player.updateDate) return false;
+
+  const latestCopied = getLatestCopiedPlayer();
+  if (!latestCopied) return false;
+
+  const anchor = latestCopied.copiedAt || latestCopied.time;
+  if (!anchor) return false;
+
+  const phaseCfg = State.scoringConfig?.phase ?? {};
+
+  const cycleMin     = Number(phaseCfg.cycleMin ?? 5);
+  const toleranceSec = Number(phaseCfg.toleranceSec ?? 45);
+
+  const cycleSec = cycleMin * 60;
+
+  const now = Date.now();
+  const diffSec = (now - anchor) / 1000;
+
+  if (!isFinite(diffSec) || diffSec < 0) return false;
+
+  const rSec = diffSec % cycleSec;
+
+  const distToPeak = Math.min(rSec, cycleSec - rSec);
+
+  return distToPeak <= toleranceSec;
+}
+/* ---------------------------------------------------------
    [25] scoring_config 取得/適用 分離  
 --------------------------------------------------------- */
 async function loadScoringConfig() {
@@ -2129,7 +2161,7 @@ function buildPlayerRowHTML(p) {
 }
 /* ---------------------------------------------------------
    [41-B] highlightMatchingRows  
-   ★ 修正：player単位phase判定に統一  
+   ★ 修正：ピンク（個別）＋赤（コピー）両対応  
 --------------------------------------------------------- */
 function highlightMatchingRows(tbody) {
 
@@ -2150,23 +2182,39 @@ function highlightMatchingRows(tbody) {
     };
 
     /* =============================== */
-    /* ✅ 個別phase判定                */
+    /* ✅ ピンク（LastUpdate基準）      */
     /* =============================== */
     const isPink = isMatchingCandidateByPhase(rowPlayer);
 
-    if (isPink) {
+    /* =============================== */
+    /* ✅ 赤（コピー基準）              */
+    /* =============================== */
+    const isRed = isMatchingCandidateByCopyPhase(rowPlayer);
 
-      tr.classList.add("match-row-pink");
+    /* =============================== */
+    /* 表示制御（優先順位あり）        */
+    /* =============================== */
 
-      // ✅ ログ（維持）
-      logEvent("pink_detected", {
+    tr.classList.remove("match-row-pink");
+    tr.classList.remove("match-row-red");
+
+    if (isRed) {
+
+      tr.classList.add("match-row-red");
+
+      logEvent("red_detected", {
         n: rowName,
         u: updated
       });
 
-    } else {
+    } else if (isPink) {
 
-      tr.classList.remove("match-row-pink");
+      tr.classList.add("match-row-pink");
+
+      logEvent("pink_detected", {
+        n: rowName,
+        u: updated
+      });
     }
   });
 }
