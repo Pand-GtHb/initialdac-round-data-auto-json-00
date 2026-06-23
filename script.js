@@ -2183,8 +2183,8 @@ function buildPlayerRowHTML(p) {
   `;
 }
 /* ---------------------------------------------------------
-   [41-B] highlightMatchingRows  
-   ★ 修正：イエロー（個別）＋ピンク（コピー）両対応  
+   [41-B] highlightMatchingRows    
+   ★ 修正：shopnameを含めて判定（name＋shopname識別対応）  
 --------------------------------------------------------- */
 function highlightMatchingRows(tbody) {
 
@@ -2199,45 +2199,38 @@ function highlightMatchingRows(tbody) {
       ? String(nameCell.textContent).trim()
       : "";
 
+    /* ✅ 追加（重要） */
+    const shopCell = tr.querySelector(".store-name");
+    const rowShop = shopCell
+      ? String(shopCell.textContent).trim()
+      : "";
+
     const rowPlayer = {
       name: rowName,
+      shopname: rowShop,   // ←これが今回の修正
       updateDate: updated
     };
 
     /* =============================== */
-    /* ✅ イエロー（LastUpdate基準）      */
+    /* ✅ イエロー */
     /* =============================== */
     const isYellow = isMatchingCandidateByPhase(rowPlayer);
 
     /* =============================== */
-    /* ✅ ピンク（コピー基準）              */
+    /* ✅ ピンク */
     /* =============================== */
     const isPink = isMatchingCandidateByCopyPhase(rowPlayer);
 
     /* =============================== */
-    /* 表示制御（優先順位あり）        */
+    /* 表示制御 */
     /* =============================== */
-
     tr.classList.remove("match-row-yellow");
     tr.classList.remove("match-row-pink");
 
     if (isPink) {
-
       tr.classList.add("match-row-pink");
-
-      logEvent("pink_detected", {
-        n: rowName,
-        u: updated
-      });
-
     } else if (isYellow) {
-
       tr.classList.add("match-row-yellow");
-
-      logEvent("yellow_detected", {
-        n: rowName,
-        u: updated
-      });
     }
   });
 }
