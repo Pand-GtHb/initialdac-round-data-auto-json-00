@@ -910,17 +910,23 @@ function buildAreaDistribution(list) {
 
   return dist;
 }
-
-/* ---------------------------------------------------------      
-   [21] getAreaScore      
+/* ---------------------------------------------------------
+   [21] getAreaScore
+   ★ config対応（area.scale外部化）
 --------------------------------------------------------- */
 function getAreaScore(player) {
+
   const areaKey = String(player?.area ?? "");
+
   const areaWeight = State.areaModel?.[areaKey] ?? 0;
 
-  return 1 + (areaWeight * 3.0);
-}
+  // ✅ configからscale取得（fallback維持）
+  const scale = Number(
+    State.scoringConfig?.area?.scale ?? 3.0
+  );
 
+  return 1 + (areaWeight * scale);
+}
 /* ---------------------------------------------------------  
    [22] recordClickFromCopiedText  
 --------------------------------------------------------- */
@@ -1299,10 +1305,10 @@ function getPrideWeight(player) {
   return 1.0;
 }
 /* ---------------------------------------------------------
-   [26-6] getTimeWeight（安全強化版）
-   ★ 時間圧緩和（1.8 → 1.2）
+   [26-6] getTimeWeight（config対応版）
+   ★ time設定をconfig化
+   ★ exp追加（指数調整）
    ★ 既存構造維持（非破壊）
-   ★ 初期優勢維持＋後半減衰を緩和
 --------------------------------------------------------- */
 function getTimeWeight(player) {
 
@@ -1329,10 +1335,27 @@ function getTimeWeight(player) {
   const normalized = Math.max(0, 1 - diffMin / maxRange);
 
   // ===============================
-  // ■ 修正ポイント
-  //   → 減衰を緩やかに（1.8 → 1.2）
+  // ■ config取得
   // ===============================
-  const weight = Math.pow(normalized, 1.2);
+  const mode = State.scoringConfig?.time?.mode ?? "multiply";
+
+  // ★ 新規追加（exp）
+  const exp = Number(
+    State.scoringConfig?.time?.exp ?? 1.2
+  );
+
+  // ===============================
+  // ■ weight計算
+  // ===============================
+  let weight;
+
+  if (mode === "multiply") {
+    weight = Math.pow(normalized, exp);
+  } else if (mode === "linear") {
+    weight = normalized;
+  } else {
+    weight = Math.pow(normalized, exp);
+  }
 
   // 安全クランプ
   if (!isFinite(weight)) return 0;
