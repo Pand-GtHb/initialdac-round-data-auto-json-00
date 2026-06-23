@@ -1408,22 +1408,63 @@ function calcMatchingDiagnostics(list) {
 }
 /* ---------------------------------------------------------
    [28-B] calcMatchingScoreDetail  
-   ★ 修正：Phase起点を player単位に変更  
+   ★ 最終修正：Phaseをconfig制御 sin(cos)波化 + player単位anchor  
+   ★ cycle / tolerance / cooldown / amplitude を完全config化  
+   ★ 既存構造完全維持  
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
 
   if (!player || !player.updateDate) {
-    return { score: 0 };
+    return {
+      score: 0,
+      rankWeight: 0,
+      rankScore: 0,
+      prideWeight: 1,
+      areaFactor: 1,
+      timeWeight: 0,
+      phaseWeight: 0,
+      realtimeBoost: 1,
+      baseScoreBeforeBoost: 0,
+      scoreAfterBoost: 0
+    };
   }
 
   const cfg = State.scoringConfig;
+
   if (!cfg) {
-    return { score: 1 };
+    return {
+      score: 1,
+      rankWeight: 0,
+      rankScore: 1,
+      prideWeight: 1,
+      areaFactor: 1,
+      timeWeight: 1,
+      phaseWeight: 1,
+      realtimeBoost: 1,
+      baseScoreBeforeBoost: 1,
+      scoreAfterBoost: 1
+    };
   }
 
+  /* =============================== */
+  /* 基本要素                       */
+  /* =============================== */
+
   const rankWeight = Number(getRankWeight(player) ?? 0);
+
   if (rankWeight <= 0) {
-    return { score: 0 };
+    return {
+      score: 0,
+      rankWeight: 0,
+      rankScore: 0,
+      prideWeight: 1,
+      areaFactor: getAreaScore(player),
+      timeWeight: getTimeWeight(player),
+      phaseWeight: 0,
+      realtimeBoost: Math.min(getRealtimeBoost(player), 2.5),
+      baseScoreBeforeBoost: 0,
+      scoreAfterBoost: 0
+    };
   }
 
   const rankScore   = rankWeight;
@@ -1431,13 +1472,25 @@ function calcMatchingScoreDetail(player) {
   const areaFactor  = Number(getAreaScore(player) ?? 1);
   const timeWeight  = Number(getTimeWeight(player) ?? 0);
 
-  /* =============================== */
-  /* ✅ PhaseWeight（ここが核心）     */
-  /* =============================== */
+  /* ===================================================== */
+  /* ✅ PhaseWeight（config完全連動 + sin波）               */
+  /* ===================================================== */
+
+  const phaseCfg = cfg.phase ?? {};
+
+  const cycleMin       = Number(phaseCfg.cycleMin ?? 5);
+  const toleranceSec   = Number(phaseCfg.toleranceSec ?? 45);
+  const amplitude      = Number(phaseCfg.amplitude ?? 0.8);
+  const base           = Number(phaseCfg.base ?? 1.0);
+  const floor          = Number(phaseCfg.floor ?? 0.2);
+  const cooldownCycles = Number(phaseCfg.cooldownCycles ?? 1);
+  const peakBoost      = Number(phaseCfg.peakBoost ?? 1.3);
+
+  const cycleSec = cycleMin * 60;
 
   let anchor = null;
 
-  // ✅ ① コピー履歴がある場合（そのプレイヤー）
+  // ✅ コピー履歴（そのプレイヤー）
   const click = State.recentClicks.find(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
     String(r.updateDate ?? "") === String(player.updateDate ?? "")
@@ -1445,9 +1498,7 @@ function calcMatchingScoreDetail(player) {
 
   if (click) {
     anchor = click.copiedAt || click.time;
-  }
-  // ✅ ② コピー履歴がない場合 → LastUpdate
-  else {
+  } else {
     anchor = parseDateJST(player.updateDate)?.getTime();
   }
 
@@ -1455,31 +1506,68 @@ function calcMatchingScoreDetail(player) {
 
   if (anchor) {
 
-    const phase = getPhaseDistanceMin(anchor, 5);
+    const now = Date.now();
+    const diffSec = (now - anchor) / 1000;
 
-    // ✅ cooldown（除外）
-    if (phase.isInitialCooldown) {
+    /* ------------------------------ */
+    /* ✅ cooldown（完全config化）   */
+    /* ------------------------------ */
+    const cooldownEnd = (cycleSec * cooldownCycles) + toleranceSec;
+
+    if (diffSec < cooldownEnd) {
+
       phaseWeight = 0;
 
-    // ✅ ピンク窓
-    } else if (phase.inPinkWindow) {
-      phaseWeight = 2.0;
-
-    // ✅ その他
     } else {
-      phaseWeight = 0.7;
+
+      /* ------------------------------ */
+      /* ✅ 周期内位置                 */
+      /* ------------------------------ */
+      const rSec = diffSec % cycleSec;
+
+      /* ------------------------------ */
+      /* ✅ 位相角                     */
+      /* ------------------------------ */
+      const theta = (2 * Math.PI * rSec) / cycleSec;
+
+      /* ------------------------------ */
+      /* ✅ cos波                      */
+      /* ------------------------------ */
+      const cosValue = Math.cos(theta);
+
+      phaseWeight = base + amplitude * cosValue;
+
+      /* ------------------------------ */
+      /* ✅ 数値防御                   */
+      /* ------------------------------ */
+      if (!isFinite(phaseWeight)) {
+        phaseWeight = base;
+      }
+
+      phaseWeight = Math.max(floor, phaseWeight);
+
+      /* ------------------------------ */
+      /* ✅ ピンク領域強調（±tolerance）*/
+      /* ------------------------------ */
+      const distToPeak = Math.min(rSec, cycleSec - rSec);
+
+      if (distToPeak <= toleranceSec) {
+        phaseWeight *= peakBoost;
+      }
     }
   }
 
   /* =============================== */
   /* realtimeBoost                   */
   /* =============================== */
+
   const realtimeBoost =
     Math.min(getRealtimeBoost(player), 2.5);
 
   /* =============================== */
-  /* ✅ 完全乗算                     */
+  /* ✅ 最終スコア                   */
   /* =============================== */
+
   const baseScoreBeforeBoost =
       rankScore *
       prideWeight *
