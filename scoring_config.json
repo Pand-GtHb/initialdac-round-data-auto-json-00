@@ -1,14 +1,15 @@
 {
   "meta": {
-    "version": "scoring_config_v4_full_param",
-    "updatedAt": "2026-06-23T10:30:00+09:00",
-    "description": "完全config制御版（area・time・phase強化対応）",
+    "version": "scoring_config_v5_phase_cycle_control",
+    "updatedAt": "2026-06-23T14:50:00+09:00",
+    "description": "完全config制御版（phase周期・sin波対応）",
     "notes": [
       "rank linear",
       "area scale 外部化",
       "time exp 外部化",
-      "phase強化対応（miscFactor調整済み）",
-      "安定性重視バランス"
+      "phase sin波 + cycle/tolerance完全制御",
+      "cooldown対応",
+      "安定性＋回転性強化"
     ]
   },
 
@@ -31,5 +32,17 @@
     "recency": 20,
     "activity": 10,
     "divisor": 10
+  },
+
+  "phase": {
+    "cycleMin": 5,
+    "toleranceSec": 45,
+
+    "amplitude": 0.8,
+    "base": 1.0,
+    "floor": 0.2,
+
+    "cooldownCycles": 1,
+    "peakBoost": 1.3
   }
 }
