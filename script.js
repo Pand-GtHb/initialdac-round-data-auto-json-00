@@ -1568,41 +1568,33 @@ function calcMatchingScore(player) {
 }
 /* ---------------------------------------------------------
    [29-B] selectByWeight
-   ★ 抽選ロジック（復旧）
-   ★ スコアを重みにして確率的に候補を選択
+   ★ 抽選トレースログ追加
 --------------------------------------------------------- */
 function selectByWeight(players, count) {
+
   const result = [];
   const pool = [...players];
 
   const safeScore = (p) => {
     const base = Math.max(0.0001, p.__score || 0);
-
     const timeWeight = getTimeWeight(p);
     const timeBoost = Math.pow(timeWeight, 2.0);
 
-    const isPink = isMatchingCandidateByPhase(p);
-    let pinkBoost = 1;
-
-    if (isPink) {
-      const anchor = getLatestCopiedPlayer();
-      if (anchor) {
-        const phase = getPhaseDistanceMin(anchor.copiedAt || anchor.time, 5);
-        if (isFinite(phase.diffMin) && phase.diffMin >= 0) {
-          const tau = 12;
-          const decay = Math.exp(-phase.diffMin / tau);
-          const maxBoost = 1.8;
-          pinkBoost = 1 + (maxBoost - 1) * decay;
-        }
-      }
-    }
-
-    return base * timeBoost * pinkBoost;
+    return base * timeBoost;
   };
 
   while (result.length < count && pool.length > 0) {
+
     const total = pool.reduce((sum, p) => sum + safeScore(p), 0);
     if (total <= 0) break;
+
+    // ✅ 候補ログ
+    logEvent("selection_candidates", {
+      pool: pool.slice(0, 10).map(p => ({
+        n: p.name,
+        w: safeScore(p)
+      }))
+    });
 
     let r = Math.random() * total;
     let idx = 0;
@@ -1615,7 +1607,15 @@ function selectByWeight(players, count) {
       }
     }
 
-    result.push(pool[idx]);
+    const chosen = pool[idx];
+
+    // ✅ 選択ログ
+    logEvent("selection_result", {
+      selected: chosen.name,
+      score: chosen.__score
+    });
+
+    result.push(chosen);
     pool.splice(idx, 1);
   }
 
@@ -2464,11 +2464,10 @@ function findCandidateInfoForLog(player) {
   return result;
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（完全復元版）
-   ★ -00ベース維持
-   ★ -09の抽選ロジック復元
-   ★ cooldown除外削除（評価段階から排除）
-   ★ fallback補完維持
+   [47] buildMatchingCandidates（完全復元＋ログ強化）
+   ★ score可視化
+   ★ pool可視化
+   ★ repeat検知
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
@@ -2507,19 +2506,37 @@ function buildMatchingCandidates() {
     Number(p.__detail?.rankWeight ?? 0) > 0
   );
 
-  // ✅ 分母決定（維持）
   let analysisBase =
     filteredByRankModel.length > 0
       ? filteredByRankModel
       : filteredByUi;
 
-  // ✅ cooldown除外は削除（重要）
+  // ✅ poolログ
+  logEvent("candidate_pool", {
+    total: base.length,
+    ui: filteredByUi.length,
+    rank: filteredByRankModel.length,
+    final: analysisBase.length
+  });
 
   // ✅ ランキング
   const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
 
   State.matchingRankedAll = rankedAll;
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
+
+  // ✅ スコアスナップショット
+  logEvent("matching_score_snapshot", {
+    top10: rankedAll.slice(0, 10).map(p => ({
+      n: p.name,
+      s: p.__score,
+      r: p.__detail?.rankScore ?? 0,
+      t: p.__detail?.timeWeight ?? 0,
+      a: p.__detail?.areaFactor ?? 0,
+      m: p.__detail?.miscFactor ?? 1,
+      b: p.__detail?.realtimeBoost ?? 1
+    }))
+  });
 
   // ✅ 抽選
   let selected = [];
@@ -2530,7 +2547,18 @@ function buildMatchingCandidates() {
     );
   }
 
-  // ✅ fallback補完（cooldown削除のみ）
+  // ✅ repeat検知
+  const lastNames = (State.matchingSnapshot ?? []).map(x => x.name);
+  selected.forEach(p => {
+    if (lastNames.includes(p.name)) {
+      logEvent("repeat_detected", {
+        n: p.name,
+        score: p.__score
+      });
+    }
+  });
+
+  // ✅ fallback
   if (selected.length < 10) {
     const existing = new Set(
       selected.map(p =>
@@ -2561,6 +2589,12 @@ function buildMatchingCandidates() {
   selected.forEach((p, i) => {
     p.displayRank = i + 1;
   });
+
+  // ✅ snapshot保存
+  State.matchingSnapshot = selected.map(p => ({
+    name: p.name,
+    score: p.__score
+  }));
 
   log(`候補生成: Base=${base.length} / Selected=${selected.length}`);
 }
@@ -2635,7 +2669,7 @@ function renderMatchingTable() {
 }
 /* ---------------------------------------------------------
    [50] renderMatchingRows
-   ★ クールダウンを表示直前に適用（新規追加）
+   ★ クールダウン判定ログ追加
 --------------------------------------------------------- */
 function renderMatchingRows(list) {
 
@@ -2653,10 +2687,18 @@ function renderMatchingRows(list) {
         String(p.updateDate) === String(anchor.updateDate);
 
       if (sameName && sameUpdate) {
+
         const phase = getPhaseDistanceMin(
           anchor.copiedAt || anchor.time,
           5
         );
+
+        logEvent("cooldown_check", {
+          n: p.name,
+          excluded: phase.isInitialCooldown,
+          remain: phase.cooldownRemainingSec
+        });
+
         if (phase.isInitialCooldown) return false;
       }
 
