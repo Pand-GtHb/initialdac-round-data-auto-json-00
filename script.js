@@ -2255,8 +2255,8 @@ function exportAllCSV() {
 
   downloadCSV("all_records.csv", header, body);      
 }      
-/* ---------------------------------------------------------  
-   [46] copyToClipboard  
+/* ---------------------------------------------------------
+   [46] copyToClipboard（ログ簡素化）
 --------------------------------------------------------- */
 function copyToClipboard(text) {
 
@@ -2264,38 +2264,15 @@ function copyToClipboard(text) {
 
     const record = saveCopyEventUnified(text);
 
-    log(
-      "コピー: " + (record.name || "-")
-      + " / CandidateRank:" + (record.candidateRank || "-")
-      + " / DisplayRank:" + (record.displayRank || "-")
-      + " / Score:" + (record.score || "-")
-      + " / Miss:" + (record.missReason || "-")
-    );
+    // ✅ 簡略ログのみ
+    log(`COPY: ${record.n} / cR:${record.cR} / dR:${record.dR} / s:${record.s}`);
 
     recordClickFromCopiedText(text);
   };
 
-  if (!navigator.clipboard) {
-
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    document.body.appendChild(ta);
-
-    ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
-
-    afterCopySuccess();
-    return;
-  }
-
   navigator.clipboard.writeText(text)
-    .then(() => {
-      afterCopySuccess();
-    })
-    .catch(() => {
-      logError("コピーに失敗しました");
-    });
+    .then(afterCopySuccess)
+    .catch(() => logError("コピー失敗"));
 }
 /* ---------------------------------------------------------
    [46-A] findCandidateInfoForLog
@@ -2464,10 +2441,9 @@ function findCandidateInfoForLog(player) {
   return result;
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（完全復元＋ログ強化）
-   ★ score可視化
-   ★ pool可視化
-   ★ repeat検知
+   [47] buildMatchingCandidates（ログ簡略版）
+   ★ coreロジック維持
+   ★ ログ最小化（top候補のみ）
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
@@ -2506,35 +2482,23 @@ function buildMatchingCandidates() {
     Number(p.__detail?.rankWeight ?? 0) > 0
   );
 
+  // ✅ 分母決定
   let analysisBase =
     filteredByRankModel.length > 0
       ? filteredByRankModel
       : filteredByUi;
 
-  // ✅ poolログ
-  logEvent("candidate_pool", {
-    total: base.length,
-    ui: filteredByUi.length,
-    rank: filteredByRankModel.length,
-    final: analysisBase.length
-  });
-
-  // ✅ ランキング
+  // ✅ ランキング生成
   const rankedAll = [...analysisBase].sort((a, b) => b.__score - a.__score);
 
   State.matchingRankedAll = rankedAll;
   State.matchingDiagnostics = calcMatchingDiagnostics(rankedAll);
 
-  // ✅ スコアスナップショット
-  logEvent("matching_score_snapshot", {
-    top10: rankedAll.slice(0, 10).map(p => ({
+  // ✅ ログ（top5のみ）
+  logEvent("top", {
+    list: rankedAll.slice(0, 5).map(p => ({
       n: p.name,
-      s: p.__score,
-      r: p.__detail?.rankScore ?? 0,
-      t: p.__detail?.timeWeight ?? 0,
-      a: p.__detail?.areaFactor ?? 0,
-      m: p.__detail?.miscFactor ?? 1,
-      b: p.__detail?.realtimeBoost ?? 1
+      s: p.__score
     }))
   });
 
@@ -2547,18 +2511,7 @@ function buildMatchingCandidates() {
     );
   }
 
-  // ✅ repeat検知
-  const lastNames = (State.matchingSnapshot ?? []).map(x => x.name);
-  selected.forEach(p => {
-    if (lastNames.includes(p.name)) {
-      logEvent("repeat_detected", {
-        n: p.name,
-        score: p.__score
-      });
-    }
-  });
-
-  // ✅ fallback
+  // ✅ fallback補完
   if (selected.length < 10) {
     const existing = new Set(
       selected.map(p =>
@@ -2582,15 +2535,17 @@ function buildMatchingCandidates() {
     }
   }
 
+  // ✅ 並び替え
   selected.sort((a, b) => b.__score - a.__score);
 
   State.matchingList = selected;
 
+  // ✅ 表示順位
   selected.forEach((p, i) => {
     p.displayRank = i + 1;
   });
 
-  // ✅ snapshot保存
+  // ✅ snapshot（軽量）
   State.matchingSnapshot = selected.map(p => ({
     name: p.name,
     score: p.__score
@@ -3025,54 +2980,41 @@ function startUpdateWatch() {
   log("更新監視を開始（30秒間隔）");
 }
 /* ---------------------------------------------------------
-   [59] saveCopyEventUnified
-   ★ ログ強化（非破壊）
+   [59] saveCopyEventUnified（最小ログ構造）
+   ★ 予測改善専用ログ
+   ★ 不要情報全削除
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
   const player = findPlayerFromCopiedText(rawText);
-  const candidateInfo = player ? (findCandidateInfoForLog(player) || {}) : {};
+  const info = player ? (findCandidateInfoForLog(player) || {}) : {};
 
   const record = {
 
-    type: "copy",
-    name: player?.name || "",
-    savedAt: getNowLabelJa(),
-    generatedAt: State.generatedAt || "",
-    latestUpdateAt: State.latestUpdateAt || "",
+    // ✅ 戦ID
+    id: Date.now(),
 
-    candidateRank: candidateInfo.candidateRank ?? null,
-    displayRank: candidateInfo.displayRank ?? null,
-    baseRank: candidateInfo.baseRank ?? null,
+    // ✅ プレイヤー
+    n: player?.name || "",
 
-    score: candidateInfo.score ?? null,
-    missReason: (candidateInfo.missReasons || []).join("|"),
+    // ✅ 時刻
+    t: Date.now(),
 
-    cooldownExcluded: !!candidateInfo.cooldownExcluded,
-    cooldownRemainingSec: candidateInfo.cooldownRemainingSec ?? null,
+    // ✅ 順位
+    cR: info.candidateRank ?? -1,
+    dR: info.displayRank ?? -1,
 
-    // ===== 追加 =====
-    scoreBreakdown: candidateInfo.scoreBreakdown || null,
-    rankingFlow: candidateInfo.rankingFlow || null,
-    uiDecision: candidateInfo.uiDecision || null,
-    boostInfo: candidateInfo.boostInfo || null,
-    filterSteps: candidateInfo.filterSteps || null,
+    // ✅ スコア
+    s: info.score ?? 0,
 
-    snapshotOnCopy: {
-      self: player?.name || "",
-      top10: State.matchingSnapshot || []
-    }
+    // ✅ 結果フラグ
+    cd: info.cooldownExcluded ? 1 : 0
+
   };
 
   saveCopyEventToStorage(record);
 
-  logEvent("copy", {
-    n: record.name,
-    cR: record.candidateRank ?? -1,
-    dR: record.displayRank ?? -1,
-    s: record.score ?? 0,
-    m: record.missReason ?? ""
-  });
+  logEvent("copy", record);
 
   return record;
 }
@@ -3146,30 +3088,24 @@ function putLog(storeName, data) {
 
   store.put(data); // append（autoIncrement）
 }
-
-/* =========================================================
- [60-04] LOG logEvent（単一入口）
-========================================================= */
+/* ---------------------------------------------------------
+   [60-04] logEvent（軽量化版）
+   ★ copy＋最小イベントのみ記録
+   ★ 無駄ストア削除
+--------------------------------------------------------- */
 function logEvent(type, payload = {}) {
-  const now = Date.now();
 
-  // ★ 軽量フォーマット（キー短縮）
   const record = {
-    t: now,        // timestamp
+    t: Date.now(), // timestamp
     e: type,       // event type
-    ...payload     // data
+    ...payload
   };
 
-  // -------- store振り分け --------
-  if (type === "copy") {
+  // ✅ copy系のみ保存（ログ肥大防止）
+  if (type === "copy" || type === "top") {
     putLog(LOG_STORE.copyEvents, record);
-  } else if (type === "cycle") {
-    putLog(LOG_STORE.cycleEvents, record);
-  } else {
-    putLog(LOG_STORE.events, record);
   }
 }
-
 /* =========================================================
  [60-06] LOG export（IndexedDB → JSON）
 ========================================================= */
@@ -3232,10 +3168,13 @@ function downloadJSON(data) {
 
   URL.revokeObjectURL(url);
 }
-/* =========================================================
- [60-08] LOG export（今日のみ）
-========================================================= */
+/* ---------------------------------------------------------
+   [60-08] exportTodayLogsAsJSON（軽量版）
+   ★ copyEventsのみ出力
+   ★ 不要ログ完全排除
+--------------------------------------------------------- */
 function exportTodayLogsAsJSON() {
+
   if (!logDB) {
     console.warn("DB未初期化");
     return;
@@ -3250,46 +3189,33 @@ function exportTodayLogsAsJSON() {
   const endTs = todayEnd.getTime();
 
   const result = {
-    exportedAt: new Date().toISOString(),
+    exportedAt: Date.now(),
     range: {
       start: startTs,
       end: endTs
     },
-    events: [],
-    copyEvents: [],
-    cycleEvents: []
+    copyEvents: []
   };
 
-  const storeNames = Object.values(LOG_STORE);
-  let remaining = storeNames.length;
+  const tx = logDB.transaction(LOG_STORE.copyEvents, "readonly");
+  const store = tx.objectStore(LOG_STORE.copyEvents);
 
-  storeNames.forEach(name => {
-    const tx = logDB.transaction(name, "readonly");
-    const store = tx.objectStore(name);
-    const req = store.getAll();
+  const req = store.getAll();
 
-    req.onsuccess = () => {
-      const all = req.result || [];
+  req.onsuccess = () => {
 
-      // ★ 今日分フィルタ
-      result[name] = all.filter(x =>
-        x.t >= startTs && x.t <= endTs
-      );
+    const all = req.result || [];
 
-      remaining--;
+    // ✅ 今日分のみ抽出
+    result.copyEvents = all.filter(x =>
+      x.t >= startTs && x.t <= endTs
+    );
 
-      if (remaining === 0) {
-        downloadJSON(result);
-      }
-    };
+    downloadJSON(result);
+  };
 
-    req.onerror = () => {
-      console.error("read error:", name);
-      remaining--;
-
-      if (remaining === 0) {
-        downloadJSON(result);
-      }
-    };
-  });
+  req.onerror = () => {
+    console.error("read error: copyEvents");
+    downloadJSON(result);
+  };
 }
