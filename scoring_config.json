@@ -1,17 +1,18 @@
 {
   "meta": {
-    "version": "scoring_config_v6_full_cos",
+    "version": "scoring_config_v7_cos_threshold_display",
     "updatedAt": "2026-06-24T00:00:00+09:00",
-    "description": "完全Cos波版（tolerance削除・peakBoost無効化）",
+    "description": "完全Cos波 + 閾値表示制御版（Yellow/Pink分離）",
     "notes": [
       "rank linear",
       "area scale 外部化",
       "time exp 外部化",
-      "phase cos波（完全連続化）",
-      "tolerance無効化",
-      "peakBoost無効化",
-      "cooldown維持",
-      "分布再現と周期性の統一"
+      "phase Cos波（完全連続）",
+      "tolerance廃止",
+      "peakBoost廃止",
+      "表示はthreshold制御",
+      "Yellow/Pink閾値分離",
+      "cooldown維持"
     ]
   },
 
@@ -37,9 +38,8 @@
   },
 
   "phase": {
-    "cycleMin": 5,
 
-    "toleranceSec": 0,
+    "cycleMin": 5,
 
     "amplitude": 0.8,
     "base": 1.0,
@@ -47,6 +47,14 @@
 
     "cooldownCycles": 1,
 
-    "peakBoost": 1.0
+    "toleranceSec": 0,
+    "peakBoost": 1.0,
+
+    "displayThreshold": 0.5,
+
+    "display": {
+      "yellowThreshold": 0.5,
+      "pinkThreshold": 0.6
+    }
   }
 }
