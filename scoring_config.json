@@ -1,15 +1,17 @@
 {
   "meta": {
-    "version": "scoring_config_v5_phase_cycle_control",
-    "updatedAt": "2026-06-23T14:50:00+09:00",
-    "description": "完全config制御版（phase周期・sin波対応）",
+    "version": "scoring_config_v6_full_cos",
+    "updatedAt": "2026-06-24T00:00:00+09:00",
+    "description": "完全Cos波版（tolerance削除・peakBoost無効化）",
     "notes": [
       "rank linear",
       "area scale 外部化",
       "time exp 外部化",
-      "phase sin波 + cycle/tolerance完全制御",
-      "cooldown対応",
-      "安定性＋回転性強化"
+      "phase cos波（完全連続化）",
+      "tolerance無効化",
+      "peakBoost無効化",
+      "cooldown維持",
+      "分布再現と周期性の統一"
     ]
   },
 
@@ -36,13 +38,15 @@
 
   "phase": {
     "cycleMin": 5,
-    "toleranceSec": 45,
+
+    "toleranceSec": 0,
 
     "amplitude": 0.8,
     "base": 1.0,
     "floor": 0.2,
 
     "cooldownCycles": 1,
-    "peakBoost": 1.3
+
+    "peakBoost": 1.0
   }
 }
