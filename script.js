@@ -1128,14 +1128,19 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
 /* ---------------------------------------------------------
    [24-B] isMatchingCandidateByPhase    
    ★ 修正：name＋shopnameで識別    
-   ★ updateDate依存を除去（安定化）    
+   ★ 完全Cos波＋閾値制御    
+   ★ 表示制御をthresholdへ完全移行    
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(player) {
+
   if (!player || !player.updateDate) return false;
 
   const phaseCfg = State.scoringConfig?.phase ?? {};
-  const cycleMin     = Number(phaseCfg.cycleMin ?? 5);
-  const toleranceSec = Number(phaseCfg.toleranceSec ?? 45);
+
+  const cycleMin = Number(phaseCfg.cycleMin ?? 5);
+  const threshold =
+    Number(phaseCfg.display?.yellowThreshold ?? phaseCfg.displayThreshold ?? 0);
+
   const cycleSec = cycleMin * 60;
 
   let anchor = null;
@@ -1159,9 +1164,12 @@ function isMatchingCandidateByPhase(player) {
   if (!isFinite(diffSec) || diffSec < 0) return false;
 
   const rSec = diffSec % cycleSec;
-  const distToPeak = Math.min(rSec, cycleSec - rSec);
 
-  return distToPeak <= toleranceSec;
+  const theta = (2 * Math.PI * rSec) / cycleSec;
+  const cosValue = Math.cos(theta);
+
+  // ✅ Cos波 + 閾値制御
+  return cosValue > threshold;
 }
 /* ---------------------------------------------------------  
    [24-C] getLatestCopiedPlayer  
@@ -1172,12 +1180,11 @@ function getLatestCopiedPlayer() {
 /* ---------------------------------------------------------
    [24-D] isMatchingCandidateByCopyPhase    
    ★ 修正：name＋shopnameで識別（updateDate廃止）    
-   ★ 仕様：  
-   ★   ・コピー対象は名前＋店舗で一致  
-   ★   ・updateDateは使用しない（リロード耐性）  
-   ★   ・即ピンク＋Phase継続  
+   ★ 完全Cos波＋閾値制御    
+   ★ cooldown維持    
 --------------------------------------------------------- */
 function isMatchingCandidateByCopyPhase(player) {
+
   if (!player || !player.updateDate) return false;
 
   const existsInFiltered = State.filtered.some(p =>
@@ -1199,9 +1206,11 @@ function isMatchingCandidateByCopyPhase(player) {
   if (!anchor) return false;
 
   const phaseCfg = State.scoringConfig?.phase ?? {};
+
   const cycleMin       = Number(phaseCfg.cycleMin ?? 5);
-  const toleranceSec   = Number(phaseCfg.toleranceSec ?? 45);
   const cooldownCycles = Number(phaseCfg.cooldownCycles ?? 1);
+  const threshold =
+    Number(phaseCfg.display?.pinkThreshold ?? phaseCfg.displayThreshold ?? 0);
 
   const cycleSec = cycleMin * 60;
 
@@ -1210,16 +1219,20 @@ function isMatchingCandidateByCopyPhase(player) {
 
   if (!isFinite(diffSec) || diffSec < 0) return false;
 
-  const cooldownEnd = (cycleSec * cooldownCycles) + toleranceSec;
+  const cooldownEnd = (cycleSec * cooldownCycles);
 
+  // ✅ cooldown中は必ずPink
   if (diffSec < cooldownEnd) {
     return true;
   }
 
   const rSec = diffSec % cycleSec;
-  const distToPeak = Math.min(rSec, cycleSec - rSec);
 
-  return distToPeak <= toleranceSec;
+  const theta = (2 * Math.PI * rSec) / cycleSec;
+  const cosValue = Math.cos(theta);
+
+  // ✅ Cos波 + 閾値制御
+  return cosValue > threshold;
 }
 /*--------------------------------------------------------
    [25] scoring_config 取得/適用 分離  
@@ -1469,10 +1482,11 @@ function calcMatchingDiagnostics(list) {
 }
 /* ---------------------------------------------------------
    [28-B] calcMatchingScoreDetail    
-   ★ 修正版：name＋shopnameでコピー履歴識別（updateDate非依存）    
-   ★ Phase・score・構造は完全維持    
+   ★ 完全Cos波版（tolerance / peakBoost完全撤去）    
+   ★ スコアは連続Cosのみ    
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
+
   if (!player || !player.updateDate) {
     return {
       score: 0,
@@ -1489,6 +1503,7 @@ function calcMatchingScoreDetail(player) {
   }
 
   const cfg = State.scoringConfig;
+
   if (!cfg) {
     return {
       score: 1,
@@ -1527,13 +1542,12 @@ function calcMatchingScoreDetail(player) {
   const timeWeight  = Number(getTimeWeight(player) ?? 0);
 
   const phaseCfg = cfg.phase ?? {};
+
   const cycleMin       = Number(phaseCfg.cycleMin ?? 5);
-  const toleranceSec   = Number(phaseCfg.toleranceSec ?? 45);
   const amplitude      = Number(phaseCfg.amplitude ?? 0.8);
   const base           = Number(phaseCfg.base ?? 1.0);
   const floor          = Number(phaseCfg.floor ?? 0.2);
   const cooldownCycles = Number(phaseCfg.cooldownCycles ?? 1);
-  const peakBoost      = Number(phaseCfg.peakBoost ?? 1.3);
 
   const cycleSec = cycleMin * 60;
 
@@ -1553,31 +1567,33 @@ function calcMatchingScoreDetail(player) {
   let phaseWeight = 1;
 
   if (anchor) {
+
     const now = Date.now();
     const diffSec = (now - anchor) / 1000;
 
-    const cooldownEnd = (cycleSec * cooldownCycles) + toleranceSec;
+    const cooldownEnd = (cycleSec * cooldownCycles);
+
     if (diffSec < cooldownEnd) {
+
+      // ✅ クールダウン（完全除外）
       phaseWeight = 0;
+
     } else {
+
       const rSec = diffSec % cycleSec;
 
       const theta = (2 * Math.PI * rSec) / cycleSec;
       const cosValue = Math.cos(theta);
 
+      // ✅ 完全Cos波（ここが核心）
       phaseWeight = base + amplitude * cosValue;
 
       if (!isFinite(phaseWeight)) {
         phaseWeight = base;
       }
 
+      // ✅ 安全クランプ
       phaseWeight = Math.max(floor, phaseWeight);
-
-      const distToPeak = Math.min(rSec, cycleSec - rSec);
-
-      if (distToPeak <= toleranceSec) {
-        phaseWeight *= peakBoost;
-      }
     }
   }
 
