@@ -3094,41 +3094,63 @@ function startUpdateWatch() {
   log("更新監視を開始（30秒間隔）");
 }
 /* ---------------------------------------------------------
-   [59] saveCopyEventUnified（最小ログ構造）
-   ★ 予測改善専用ログ
-   ★ 不要情報全削除
+   [59] saveCopyEventUnified（軽量ログ完成版）
+   ★ 目的：予測精度チューニング用（トランケート防止）
+   ★ 方針：
+   ★   ・最小構成（6項目のみ）
+   ★   ・phase / realtime のみ保持
+   ★   ・不要な巨大構造（detail/info）は保存しない
+   ★   ・25～50件でも安全サイズ
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
   const player = findPlayerFromCopiedText(rawText);
-  const info = player ? (findCandidateInfoForLog(player) || {}) : {};
 
+  if (!player) {
+    return {
+      t: Date.now(),
+      n: "",
+      s: 0,
+      p: 0,
+      r: 0,
+      c: -1
+    };
+  }
+
+  // ✅ スコア詳細（軽量取得）
+  const detail = calcMatchingScoreDetail(player);
+
+  // ✅ 順位（軽量取得：既存構造を利用）
+  const rankedAll = State.matchingRankedAll || [];
+  let candidateRank = -1;
+
+  if (rankedAll.length > 0) {
+    const idx = rankedAll.findIndex(p =>
+      normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
+      String(p.updateDate ?? "") === String(player.updateDate ?? "")
+    );
+    if (idx >= 0) {
+      candidateRank = idx + 1;
+    }
+  }
+
+  // ✅ 軽量ログ構造（最重要）
   const record = {
+    t: Date.now(),                            // time
+    n: player.name || "",                     // name
 
-    // ✅ 戦ID
-    id: Date.now(),
+    s: Number(detail.score || 0).toFixed(2),  // score
+    p: Number(detail.phaseWeight || 0).toFixed(2), // phaseWeight（Cos）
+    r: Number(detail.realtimeBoost || 0).toFixed(2), // boost
 
-    // ✅ プレイヤー
-    n: player?.name || "",
-
-    // ✅ 時刻
-    t: Date.now(),
-
-    // ✅ 順位
-    cR: info.candidateRank ?? -1,
-    dR: info.displayRank ?? -1,
-
-    // ✅ スコア
-    s: info.score ?? 0,
-
-    // ✅ 結果フラグ
-    cd: info.cooldownExcluded ? 1 : 0
-
+    c: candidateRank                          // rank
   };
 
+  // ✅ 保存（既存ロジック利用）
   saveCopyEventToStorage(record);
 
-  logEvent("copy", record);
+  // ✅ 必要最小ログ出力
+  log(`COPY: ${record.n} / c:${record.c} / s:${record.s}`);
 
   return record;
 }
