@@ -3097,20 +3097,21 @@ function startUpdateWatch() {
   log("更新監視を開始（30秒間隔）");
 }
 /* ---------------------------------------------------------
-   [59] saveCopyEventUnified（軽量ログ完成版）
-   ★ 目的：予測精度チューニング用（トランケート防止）
+   [59] saveCopyEventUnified（軽量ログ完成版・Export同期対応）
+   ★ 目的：予測精度チューニング用（トランケート防止＋Export一致）
    ★ 方針：
    ★   ・最小構成（6項目のみ）
    ★   ・phase / realtime のみ保持
-   ★   ・不要な巨大構造（detail/info）は保存しない
-   ★   ・25～50件でも安全サイズ
+   ★   ・localStorage + IndexedDB 両方に保存
+   ★   ・ViewerログとExportログを完全一致させる
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
   const player = findPlayerFromCopiedText(rawText);
 
+  // ✅ player未取得時（安全）
   if (!player) {
-    return {
+    const record = {
       t: Date.now(),
       n: "",
       s: 0,
@@ -3118,12 +3119,20 @@ function saveCopyEventUnified(rawText) {
       r: 0,
       c: -1
     };
+
+    // 両方保存
+    saveCopyEventToStorage(record);
+    logEvent("copy", record);
+
+    log(`COPY: ${record.n} / c:${record.c} / s:${record.s}`);
+
+    return record;
   }
 
-  // ✅ スコア詳細（軽量取得）
+  // ✅ スコア計算
   const detail = calcMatchingScoreDetail(player);
 
-  // ✅ 順位（軽量取得：既存構造を利用）
+  // ✅ 順位取得
   const rankedAll = State.matchingRankedAll || [];
   let candidateRank = -1;
 
@@ -3137,26 +3146,30 @@ function saveCopyEventUnified(rawText) {
     }
   }
 
-  // ✅ 軽量ログ構造（最重要）
+  // ✅ 軽量ログ本体（最重要）
   const record = {
-    t: Date.now(),                            // time
-    n: player.name || "",                     // name
+    t: Date.now(),                                 // time
+    n: player.name || "",                          // name
 
-    s: Number(detail.score || 0).toFixed(2),  // score
-    p: Number(detail.phaseWeight || 0).toFixed(2), // phaseWeight（Cos）
-    r: Number(detail.realtimeBoost || 0).toFixed(2), // boost
+    s: Number(detail.score || 0),                  // score（数値のまま）
+    p: Number(detail.phaseWeight || 0),            // Cos波
+    r: Number(detail.realtimeBoost || 0),          // boost
 
-    c: candidateRank                          // rank
+    c: candidateRank                               // rank
   };
 
-  // ✅ 保存（既存ロジック利用）
+  // ✅ localStorage保存（既存）
   saveCopyEventToStorage(record);
 
-  // ✅ 必要最小ログ出力
-  log(`COPY: ${record.n} / c:${record.c} / s:${record.s}`);
+  // ✅ ★重要：IndexedDB保存（Export用）
+  logEvent("copy", record);
+
+  // ✅ Viewerログ
+  log(`COPY: ${record.n} / c:${record.c} / s:${record.s.toFixed(2)}`);
 
   return record;
 }
+
 /* =========================================================
  [60-01] LOG IndexedDBスキーマ定義（最小）
 ========================================================= */
