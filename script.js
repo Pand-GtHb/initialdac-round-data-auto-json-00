@@ -2296,17 +2296,20 @@ function exportAllCSV() {
   downloadCSV("all_records.csv", header, body);      
 }      
 /* ---------------------------------------------------------
-   [46] copyToClipboard（ログ簡素化）
+   [46] copyToClipboard（ログ統一版）
+   ★ 修正内容：
+   ★   ・旧ログ（cR / dR）完全削除
+   ★   ・ログ出力は[59]に統一
+   ★   ・コピー成功時は保存処理のみ実行
 --------------------------------------------------------- */
 function copyToClipboard(text) {
 
   const afterCopySuccess = () => {
 
-    const record = saveCopyEventUnified(text);
+    // ✅ ログ生成・保存（[59]に一元化）
+    saveCopyEventUnified(text);
 
-    // ✅ 簡略ログのみ
-    log(`COPY: ${record.n} / cR:${record.cR} / dR:${record.dR} / s:${record.s}`);
-
+    // ✅ クリック履歴記録（既存維持）
     recordClickFromCopiedText(text);
   };
 
