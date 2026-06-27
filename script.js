@@ -45,9 +45,12 @@ const State = {
   updateWatchTimer: null,
   prefetchedRoundData: null,
   prefetchedForUpdateAt: "",
-  prefetchInFlight: null
+  prefetchInFlight: null,
+  phaseAdjust: {
+    yellow: 0,
+    pink: 0
+  }
 };
-
 /* ---------------------------------------------------------      
   [04] RUBY帯・PRIDE帯 定義  
 --------------------------------------------------------- */
@@ -993,20 +996,18 @@ function getRealtimeBoost(player) {
 }
 /* ---------------------------------------------------------
    [23-A] getRealtimeBoostDetail
-   ★ 本人一致boost追加（最重要修正）
+   ★ 修正：加算 → 最大一致レベル方式
 --------------------------------------------------------- */
 function getRealtimeBoostDetail(player) {
 
   if (!State.recentClicks.length || !player) {
-    return { rank: 0, area: 0, shop: 0, total: 1, reason: [] };
+    return { total: 1.0 };
   }
 
-  let rankScore = 0;
-  let areaScore = 0;
-  let shopScore = 0;
-  let reason = [];
-
   const playerRankKey = getPlayerRankKey(player);
+
+  let bestLevel = 0;
+  let bestDecay = 0;
 
   for (const r of State.recentClicks) {
 
@@ -1028,43 +1029,27 @@ function getRealtimeBoostDetail(player) {
     const sameArea =
       String(player.area ?? "") === String(r.area ?? "");
 
-    const sameShop =
-      String(player.shopname ?? "") === String(r.shopname ?? "");
+    let level = 0;
 
-    // ✅ 本人優先
-    if (samePlayer) {
-      rankScore += decay * 2.5;
-      areaScore += decay * 1.0;
-      reason.push("self");
-    }
-    else if (sameRank && sameArea) {
-      rankScore += decay * 1.2;
-      areaScore += decay * 0.6;
-      reason.push("rank+area");
-    }
-    else if (sameRank) {
-      rankScore += decay * 0.9;
-      reason.push("rank");
-    }
-    else if (sameArea) {
-      areaScore += decay * 0.7;
-      reason.push("area");
-    }
-    else if (sameShop) {
-      shopScore += decay * 0.5;
-      reason.push("shop");
+    if (samePlayer) level = 3;
+    else if (sameRank && sameArea) level = 2;
+    else if (sameRank || sameArea) level = 1;
+
+    if (level > bestLevel) {
+      bestLevel = level;
+      bestDecay = decay;
     }
   }
 
-  const totalBoost =
-    1 + Math.min(2.5, rankScore + areaScore + shopScore);
+  const boostByLevel = {
+    0: 1.0,
+    1: 1.2,
+    2: 1.6,
+    3: 2.5
+  };
 
   return {
-    rank: rankScore,
-    area: areaScore,
-    shop: shopScore,
-    total: totalBoost,
-    reason: reason
+    total: boostByLevel[bestLevel] * bestDecay
   };
 }
 /* ---------------------------------------------------------
@@ -1126,6 +1111,124 @@ function getRoundedDiffMinAndPhaseDistance(copiedAtMs, cycleMin = 5) {
   };
 }
 /* ---------------------------------------------------------
+   [24-E] getCurrentCycle
+--------------------------------------------------------- */
+function getCurrentCycle(player) {
+  return isCopiedPlayer(player)
+    ? calcPinkCycle(player)
+    : calcYellowCycle(player);
+}
+/* ---------------------------------------------------------
+   [24-F] calcYellowCycle（修正）
+   ★ shopname追加＋EMA安定化
+--------------------------------------------------------- */
+function calcYellowCycle(player) {
+
+  const cfg = State.scoringConfig?.phase?.yellow || {};
+  const base = cfg.baseCycleSec || 300;
+
+  // ★修正：name＋shopnameで識別
+  const click = State.recentClicks.find(r =>
+    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
+    String(r.shopname ?? "") === String(player.shopname ?? "")
+  );
+
+  if (!click) return base;
+
+  const last = parseDateJST(player.updateDate)?.getTime();
+  if (!last) return base;
+
+  const diffSec = (click.copiedAt - last) / 1000;
+  const folded = foldToCycle(diffSec, base);
+
+  const prev = State.phaseAdjust?.yellow || 0;
+
+  const updated = (prev === 0)
+    ? folded
+    : updateAdjust(prev, folded, cfg.alpha || 0.2);
+
+  const maxShift = cfg.maxShiftSec || 45;
+
+  // ★修正：clampして保存（暴走防止）
+  const clamped = clamp(updated, -maxShift, maxShift);
+
+  State.phaseAdjust.yellow = clamped;
+
+  return base + clamped;
+}
+/* ---------------------------------------------------------
+   [24-G] calcPinkCycle（改善）
+   ★ player単位履歴化
+--------------------------------------------------------- */
+function calcPinkCycle(player) {
+
+  const cfg = State.scoringConfig?.phase?.pink || {};
+  const base = cfg.baseCycleSec || 300;
+
+  // ★修正：player単位に限定
+  const clicks = State.recentClicks.filter(r =>
+    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
+    String(r.shopname ?? "") === String(player.shopname ?? "")
+  );
+
+  if (clicks.length < 2) return base;
+
+  const interval =
+    (clicks[0].copiedAt - clicks[1].copiedAt) / 1000;
+
+  const folded = foldToCycle(interval, base);
+
+  const prev = State.phaseAdjust?.pink || 0;
+
+  const updated = (prev === 0)
+    ? folded
+    : updateAdjust(prev, folded, cfg.alpha || 0.3);
+
+  const maxShift = cfg.maxShiftSec || 45;
+
+  const clamped = clamp(updated, -maxShift, maxShift);
+
+  State.phaseAdjust.pink = clamped;
+
+  return base + clamped;
+}
+/* ---------------------------------------------------------
+   [24-H] foldToCycle
+--------------------------------------------------------- */
+function foldToCycle(diff, cycle) {
+
+  const mod = diff % cycle;
+  const half = cycle / 2;
+
+  return (mod <= half)
+    ? mod
+    : mod - cycle;
+}
+
+/* ---------------------------------------------------------
+   [24-I] updateAdjust
+--------------------------------------------------------- */
+function updateAdjust(prev, value, alpha) {
+  return (1 - alpha) * prev + alpha * value;
+}
+
+/* ---------------------------------------------------------
+   [24-J] clamp ★追加（必須）
+--------------------------------------------------------- */
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+/* ---------------------------------------------------------
+   [24-K] isCopiedPlayer ★追加（必須）
+--------------------------------------------------------- */
+function isCopiedPlayer(player) {
+  return State.recentClicks.some(r =>
+    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
+    String(r.shopname ?? "") === String(player.shopname ?? "")
+  );
+}
+/* ---------------------------------------------------------
    [24-B] isMatchingCandidateByPhase    
    ★ 修正：name＋shopnameで識別    
    ★ 完全Cos波＋閾値制御    
@@ -1136,40 +1239,20 @@ function isMatchingCandidateByPhase(player) {
   if (!player || !player.updateDate) return false;
 
   const phaseCfg = State.scoringConfig?.phase ?? {};
-
-  const cycleMin = Number(phaseCfg.cycleMin ?? 5);
   const threshold =
-    Number(phaseCfg.display?.yellowThreshold ?? phaseCfg.displayThreshold ?? 0);
+    Number(phaseCfg.display?.yellowThreshold ?? 0);
 
-  const cycleSec = cycleMin * 60;
+  const cycleSec = getCurrentCycle(player); // ★修正
 
-  let anchor = null;
-
-  const click = State.recentClicks.find(r =>
-    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
-    String(r.shopname ?? "") === String(player.shopname ?? "")
-  );
-
-  if (click) {
-    anchor = click.copiedAt || click.time;
-  } else {
-    anchor = parseDateJST(player.updateDate)?.getTime();
-  }
-
+  const anchor = parseDateJST(player.updateDate)?.getTime();
   if (!anchor) return false;
 
-  const now = Date.now();
-  const diffSec = (now - anchor) / 1000;
-
-  if (!isFinite(diffSec) || diffSec < 0) return false;
+  const diffSec = (Date.now() - anchor) / 1000;
 
   const rSec = diffSec % cycleSec;
-
   const theta = (2 * Math.PI * rSec) / cycleSec;
-  const cosValue = Math.cos(theta);
 
-  // ✅ Cos波 + 閾値制御
-  return cosValue > threshold;
+  return Math.cos(theta) > threshold;
 }
 /* ---------------------------------------------------------  
    [24-C] getLatestCopiedPlayer  
@@ -1178,21 +1261,11 @@ function getLatestCopiedPlayer() {
   return State.recentClicks[0] || null;
 }
 /* ---------------------------------------------------------
-   [24-D] isMatchingCandidateByCopyPhase    
-   ★ 修正：name＋shopnameで識別（updateDate廃止）    
-   ★ 完全Cos波＋閾値制御    
-   ★ cooldown維持    
+   [24-D] isMatchingCandidateByCopyPhase（修正）
 --------------------------------------------------------- */
 function isMatchingCandidateByCopyPhase(player) {
 
-  if (!player || !player.updateDate) return false;
-
-  const existsInFiltered = State.filtered.some(p =>
-    normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
-    String(p.shopname ?? "") === String(player.shopname ?? "")
-  );
-
-  if (!existsInFiltered) return false;
+  if (!player) return false;
 
   const click = State.recentClicks.find(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
@@ -1201,39 +1274,20 @@ function isMatchingCandidateByCopyPhase(player) {
 
   if (!click) return false;
 
-  const anchor = click.copiedAt || click.time;
+  const cycleSec = getCurrentCycle(player); // ★修正
 
-  if (!anchor) return false;
+  const diffSec = (Date.now() - (click.copiedAt || click.time)) / 1000;
 
-  const phaseCfg = State.scoringConfig?.phase ?? {};
-
-  const cycleMin       = Number(phaseCfg.cycleMin ?? 5);
-  const cooldownCycles = Number(phaseCfg.cooldownCycles ?? 1);
-  const threshold =
-    Number(phaseCfg.display?.pinkThreshold ?? phaseCfg.displayThreshold ?? 0);
-
-  const cycleSec = cycleMin * 60;
-
-  const now = Date.now();
-  const diffSec = (now - anchor) / 1000;
-
-  if (!isFinite(diffSec) || diffSec < 0) return false;
-
-  const cooldownEnd = (cycleSec * cooldownCycles);
-
-  // ✅ cooldown中は必ずPink
-  if (diffSec < cooldownEnd) {
+  if (diffSec < cycleSec) {
     return true;
   }
 
-  const rSec = diffSec % cycleSec;
+  const theta =
+    (2 * Math.PI * (diffSec % cycleSec)) / cycleSec;
 
-  const theta = (2 * Math.PI * rSec) / cycleSec;
-  const cosValue = Math.cos(theta);
-
-  // ✅ Cos波 + 閾値制御
-  return cosValue > threshold;
+  return Math.cos(theta) > 0;
 }
+
 /*--------------------------------------------------------
    [25] scoring_config 取得/適用 分離  
 --------------------------------------------------------- */
@@ -1481,150 +1535,51 @@ function calcMatchingDiagnostics(list) {
   };
 }
 /* ---------------------------------------------------------
-   [28-B] calcMatchingScoreDetail    
-   ★ 完全Cos波版（tolerance / peakBoost完全撤去）    
-   ★ スコアは連続Cosのみ    
+   [28-B] calcMatchingScoreDetail（微修正）
+   ★ realtime暴走抑制
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
 
   if (!player || !player.updateDate) {
-    return {
-      score: 0,
-      rankWeight: 0,
-      rankScore: 0,
-      prideWeight: 1,
-      areaFactor: 1,
-      timeWeight: 0,
-      phaseWeight: 0,
-      realtimeBoost: 1,
-      baseScoreBeforeBoost: 0,
-      scoreAfterBoost: 0
-    };
+    return { score: 0 };
   }
 
-  const cfg = State.scoringConfig;
+  const rankScore = Number(getRankWeight(player) || 0);
+  if (rankScore <= 0) return { score: 0 };
 
-  if (!cfg) {
-    return {
-      score: 1,
-      rankWeight: 0,
-      rankScore: 1,
-      prideWeight: 1,
-      areaFactor: 1,
-      timeWeight: 1,
-      phaseWeight: 1,
-      realtimeBoost: 1,
-      baseScoreBeforeBoost: 1,
-      scoreAfterBoost: 1
-    };
-  }
+  const prideWeight = Number(getPrideWeight(player) || 1);
+  const areaFactor = Number(getAreaScore(player) || 1);
+  const timeWeight = Number(getTimeWeight(player) || 0);
 
-  const rankWeight = Number(getRankWeight(player) ?? 0);
+  const rankingScore =
+    rankScore * prideWeight * areaFactor * timeWeight;
 
-  if (rankWeight <= 0) {
-    return {
-      score: 0,
-      rankWeight: 0,
-      rankScore: 0,
-      prideWeight: 1,
-      areaFactor: getAreaScore(player),
-      timeWeight: getTimeWeight(player),
-      phaseWeight: 0,
-      realtimeBoost: Math.min(getRealtimeBoost(player), 2.5),
-      baseScoreBeforeBoost: 0,
-      scoreAfterBoost: 0
-    };
-  }
+  const cycleSec = getCurrentCycle(player);
 
-  const rankScore   = rankWeight;
-  const prideWeight = Number(getPrideWeight(player) ?? 1);
-  const areaFactor  = Number(getAreaScore(player) ?? 1);
-  const timeWeight  = Number(getTimeWeight(player) ?? 0);
+  const anchor = parseDateJST(player.updateDate)?.getTime();
+  const diffSec = (Date.now() - anchor) / 1000;
 
-  const phaseCfg = cfg.phase ?? {};
+  const theta =
+    (2 * Math.PI * (diffSec % cycleSec)) / cycleSec;
 
-  const cycleMin       = Number(phaseCfg.cycleMin ?? 5);
-  const amplitude      = Number(phaseCfg.amplitude ?? 0.8);
-  const base           = Number(phaseCfg.base ?? 1.0);
-  const floor          = Number(phaseCfg.floor ?? 0.2);
-  const cooldownCycles = Number(phaseCfg.cooldownCycles ?? 1);
-
-  const cycleSec = cycleMin * 60;
-
-  let anchor = null;
-
-  const click = State.recentClicks.find(r =>
-    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
-    String(r.shopname ?? "") === String(player.shopname ?? "")
-  );
-
-  if (click) {
-    anchor = click.copiedAt || click.time;
-  } else {
-    anchor = parseDateJST(player.updateDate)?.getTime();
-  }
-
-  let phaseWeight = 1;
-
-  if (anchor) {
-
-    const now = Date.now();
-    const diffSec = (now - anchor) / 1000;
-
-    const cooldownEnd = (cycleSec * cooldownCycles);
-
-    if (diffSec < cooldownEnd) {
-
-      // ✅ クールダウン（完全除外）
-      phaseWeight = 0;
-
-    } else {
-
-      const rSec = diffSec % cycleSec;
-
-      const theta = (2 * Math.PI * rSec) / cycleSec;
-      const cosValue = Math.cos(theta);
-
-      // ✅ 完全Cos波（ここが核心）
-      phaseWeight = base + amplitude * cosValue;
-
-      if (!isFinite(phaseWeight)) {
-        phaseWeight = base;
-      }
-
-      // ✅ 安全クランプ
-      phaseWeight = Math.max(floor, phaseWeight);
-    }
-  }
+  const phaseWeight =
+    Math.max(0.1, 1.0 + 0.8 * Math.cos(theta));
 
   const realtimeBoost =
     Math.min(getRealtimeBoost(player), 2.5);
 
-  const baseScoreBeforeBoost =
-      rankScore *
-      prideWeight *
-      areaFactor *
-      timeWeight *
-      phaseWeight;
-
-  const scoreAfterBoost =
-      baseScoreBeforeBoost *
-      realtimeBoost;
-
-  const score =
-      Math.max(0.0001, scoreAfterBoost);
+  // ★修正：増幅弱化
+  const selectionWeight =
+    rankingScore *
+    phaseWeight *
+    (1 + (realtimeBoost - 1) * 0.5 * (phaseWeight - 1));
 
   return {
-    score,
-    rankWeight,
-    rankScore,
-    prideWeight,
-    areaFactor,
-    timeWeight,
+    score: Math.max(0.0001, selectionWeight),
+    rankingScore,
     phaseWeight,
     realtimeBoost,
-    baseScoreBeforeBoost,
-    scoreAfterBoost
+    selectionWeight
   };
 }
 /* ---------------------------------------------------------  
@@ -1634,16 +1589,33 @@ function calcMatchingScore(player) {
   return calcMatchingScoreDetail(player).score;
 }
 /* ---------------------------------------------------------
-   [29-B] selectByWeight  
-   ★ 修正：抽選無効化（構造維持）  
+   [29-B] selectByWeight
+   ★ 修正：重み抽選
 --------------------------------------------------------- */
 function selectByWeight(players, count) {
 
-  // ✅ 修正：ランダム抽選を廃止
-  // 上位固定返却（互換維持）
-  return players.slice(0, count);
+  const result = [];
+  let pool = [...players];
+
+  for (let i = 0; i < count && pool.length > 0; i++) {
+
+    const total =
+      pool.reduce((s, p) => s + (p.__weight || p.__score || 0), 0);
+
+    let r = Math.random() * total;
+
+    for (let j = 0; j < pool.length; j++) {
+      r -= (pool[j].__weight || pool[j].__score || 0);
+      if (r <= 0) {
+        result.push(pool[j]);
+        pool.splice(j, 1);
+        break;
+      }
+    }
+  }
+  return result;
 }
-/*---------------------------------------------------------
+/* --------------------------------------------------------
    [30] applyFilters
 　　フィルタ起点時刻を　latest_update.json　の　lastUpdated　から
 　　integrated_data.json　の　generatedAt　に変更
@@ -2484,9 +2456,11 @@ function findCandidateInfoForLog(player) {
   return result;
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（分布再現対応版）  
-   ★ 修正：rank_modelに基づく分布生成＋ランク別選出  
-   ★ 既存構造完全維持（fallback／ログ／rankedAll保持）  
+   [47] buildMatchingCandidates（分布再現対応版・最終修正）
+   ★ 修正内容：
+   ★   ・cooldown判定を正しく実装（実際に機能する形へ）
+   ★   ・既存構造100%維持
+   ★   ・分布抽選ロジックそのまま
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
@@ -2499,10 +2473,12 @@ function buildMatchingCandidates() {
   const base = State.filtered;
 
   /* ===================================================== */
-  /* ① スコア計算（既存維持）                             */
+  /* ① スコア計算                                         */
   /* ===================================================== */
   const scoredAll = base.map(p => {
+
     const detail = calcMatchingScoreDetail(p);
+
     return {
       ...p,
       __rankKey: getPlayerRankKey(p),
@@ -2512,7 +2488,7 @@ function buildMatchingCandidates() {
   });
 
   /* ===================================================== */
-  /* ② UIフィルタ（既存維持）                             */
+  /* ② UIフィルタ                                         */
   /* ===================================================== */
   const filteredByUi = scoredAll.filter(p => {
 
@@ -2527,10 +2503,10 @@ function buildMatchingCandidates() {
   });
 
   /* ===================================================== */
-  /* ③ rankModelフィルタ（既存維持）                       */
+  /* ③ rankModelフィルタ                                   */
   /* ===================================================== */
   const filteredByRankModel = filteredByUi.filter(p =>
-    Number(p.__detail?.rankWeight ?? 0) > 0
+    Number(p.__detail?.rankingScore ?? 0) > 0
   );
 
   let analysisBase =
@@ -2539,14 +2515,30 @@ function buildMatchingCandidates() {
       : filteredByUi;
 
   /* ===================================================== */
-  /* ④ cooldown除外（既存準拠・前段化）                   */
+  /* ④ ★重要修正：cooldown完全除外（実動作版）             */
   /* ===================================================== */
-  const afterCooldown = analysisBase.filter(p =>
-    Number(p.__detail?.phaseWeight ?? 1) > 0
-  );
+  const latest = getLatestCopiedPlayer();
+
+  const afterCooldown = analysisBase.filter(p => {
+
+    // コピー履歴が無い場合は除外しない
+    if (!latest) return true;
+
+    const phase = getPhaseDistanceMin(
+      latest.copiedAt || latest.time,
+      5
+    );
+
+    // 初期クールダウン中は除外
+    if (phase.isInitialCooldown) {
+      return false;
+    }
+
+    return true;
+  });
 
   /* ===================================================== */
-  /* ⑤ rankedAll生成（既存維持）                           */
+  /* ⑤ rankedAll生成                                      */
   /* ===================================================== */
   const rankedAll = [...afterCooldown]
     .sort((a, b) => b.__score - a.__score);
@@ -2554,22 +2546,19 @@ function buildMatchingCandidates() {
   State.matchingRankedAll = rankedAll;
 
   /* ===================================================== */
-  /* ⑥ 分布再現（ここが核心：新規ロジック）               */
+  /* ⑥ 分布再現（核心）                                   */
   /* ===================================================== */
-
   const totalCount = Math.min(10, rankedAll.length);
 
   const myStar = String(State.myStar);
-
-  const dist =
-    State.rankModel?.models?.[myStar]?.vs;
+  const dist = State.rankModel?.models?.[myStar]?.vs;
 
   let selected = [];
 
   if (dist && totalCount > 0) {
 
     /* ------------------------------ */
-    /* ⑥-1 枠生成                     */
+    /* ⑥-1 quota生成                  */
     /* ------------------------------ */
     const quota = {};
     let sum = 0;
@@ -2577,7 +2566,9 @@ function buildMatchingCandidates() {
     const entries = Object.entries(dist);
 
     entries.forEach(([key, ratio]) => {
+
       const cnt = Math.floor(ratio * totalCount);
+
       quota[key] = cnt;
       sum += cnt;
     });
@@ -2590,9 +2581,13 @@ function buildMatchingCandidates() {
       .map(x => x[0]);
 
     let idx = 0;
+
     while (sum < totalCount && sortedKeys.length > 0) {
+
       const key = sortedKeys[idx % sortedKeys.length];
+
       quota[key] = (quota[key] || 0) + 1;
+
       sum++;
       idx++;
     }
@@ -2603,26 +2598,29 @@ function buildMatchingCandidates() {
     const poolByRank = {};
 
     rankedAll.forEach(p => {
+
       const key = p.__rankKey;
-      if (!poolByRank[key]) poolByRank[key] = [];
+
+      if (!poolByRank[key]) {
+        poolByRank[key] = [];
+      }
+
       poolByRank[key].push(p);
     });
 
     /* ------------------------------ */
-    /* ⑥-4 ランク別選出               */
+    /* ⑥-4 ランク別抽選               */
     /* ------------------------------ */
     for (const rankKey in quota) {
 
       const need = quota[rankKey] || 0;
-
       if (need <= 0) continue;
 
       const pool = poolByRank[rankKey] || [];
-
       if (pool.length === 0) continue;
 
       const picked = selectByWeight(
-        pool.sort((a,b)=>b.__score-a.__score),
+        pool.sort((a, b) => b.__score - a.__score),
         Math.min(need, pool.length)
       );
 
@@ -2649,6 +2647,7 @@ function buildMatchingCandidates() {
       const need = totalCount - selected.length;
 
       if (need > 0 && rest.length > 0) {
+
         selected.push(
           ...selectByWeight(rest, need)
         );
@@ -2657,19 +2656,17 @@ function buildMatchingCandidates() {
 
   } else {
 
-    /* ===================================================== */
-    /* fallback（元ロジック完全維持）                      */
-    /* ===================================================== */
+    /* fallback */
     selected = rankedAll.slice(0, totalCount);
   }
 
   /* ===================================================== */
-  /* ⑦ 最終ソート（既存維持）                             */
+  /* ⑦ 最終ソート                                         */
   /* ===================================================== */
   selected.sort((a, b) => b.__score - a.__score);
 
   /* ===================================================== */
-  /* ⑧ 表示順位（既存維持）                               */
+  /* ⑧ 表示順位付与                                       */
   /* ===================================================== */
   selected.forEach((p, i) => {
     p.displayRank = i + 1;
@@ -2678,7 +2675,7 @@ function buildMatchingCandidates() {
   State.matchingList = selected;
 
   /* ===================================================== */
-  /* ⑨ snapshot（既存維持）                                */
+  /* ⑨ snapshot保存                                       */
   /* ===================================================== */
   State.matchingSnapshot = selected.map(p => ({
     name: p.name,
@@ -2686,13 +2683,13 @@ function buildMatchingCandidates() {
   }));
 
   /* ===================================================== */
-  /* ⑩ ログ（既存維持＋強化）                              */
+  /* ⑩ ログ                                               */
   /* ===================================================== */
   log(`候補生成(DIST): Base=${base.length} / Selected=${selected.length}`);
 
   logEvent("matching_distribution", {
     total: totalCount,
-    quota: dist ? true : false,
+    quota: !!dist,
     selected: selected.map(p => ({
       n: p.name,
       r: p.__rankKey,
@@ -3097,79 +3094,90 @@ function startUpdateWatch() {
   log("更新監視を開始（30秒間隔）");
 }
 /* ---------------------------------------------------------
-   [59] saveCopyEventUnified（軽量ログ完成版・Export同期対応）
-   ★ 目的：予測精度チューニング用（トランケート防止＋Export一致）
-   ★ 方針：
-   ★   ・最小構成（6項目のみ）
-   ★   ・phase / realtime のみ保持
-   ★   ・localStorage + IndexedDB 両方に保存
-   ★   ・ViewerログとExportログを完全一致させる
+   [59] saveCopyEventUnified（修正）
+   ★ 判定精度向上（shopname追加）
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
   const player = findPlayerFromCopiedText(rawText);
 
-  // ✅ player未取得時（安全）
   if (!player) {
-    const record = {
-      t: Date.now(),
-      n: "",
-      s: 0,
-      p: 0,
-      r: 0,
-      c: -1
-    };
-
-    // 両方保存
+    const record = { t: Date.now(), n: "", s: 0, p: 0, r: 0, c: -1 };
     saveCopyEventToStorage(record);
     logEvent("copy", record);
-
-    log(`COPY: ${record.n} / c:${record.c} / s:${record.s}`);
-
     return record;
   }
 
-  // ✅ スコア計算
   const detail = calcMatchingScoreDetail(player);
 
-  // ✅ 順位取得
   const rankedAll = State.matchingRankedAll || [];
   let candidateRank = -1;
 
-  if (rankedAll.length > 0) {
-    const idx = rankedAll.findIndex(p =>
-      normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
-      String(p.updateDate ?? "") === String(player.updateDate ?? "")
-    );
-    if (idx >= 0) {
-      candidateRank = idx + 1;
-    }
-  }
+  const idx = rankedAll.findIndex(p =>
+    normalizePlayerName(p.name) === normalizePlayerName(player.name) &&
+    String(p.shopname ?? "") === String(player.shopname ?? "")
+  );
 
-  // ✅ 軽量ログ本体（最重要）
+  if (idx >= 0) candidateRank = idx + 1;
+
+  const phaseInfo = getPhaseAnalysis(player);
+
   const record = {
-    t: Date.now(),                                 // time
-    n: player.name || "",                          // name
-
-    s: Number(detail.score || 0),                  // score（数値のまま）
-    p: Number(detail.phaseWeight || 0),            // Cos波
-    r: Number(detail.realtimeBoost || 0),          // boost
-
-    c: candidateRank                               // rank
+    t: Date.now(),
+    n: player.name || "",
+    s: Number(detail.score || 0),
+    p: Number(detail.phaseWeight || 0),
+    r: Number(detail.realtimeBoost || 0),
+    c: candidateRank,
+    pm: phaseInfo.mode,
+    pc: phaseInfo.cycleSec,
+    pa: phaseInfo.adjust,
+    pf: phaseInfo.folded,
+    pr: phaseInfo.raw
   };
 
-  // ✅ localStorage保存（既存）
   saveCopyEventToStorage(record);
-
-  // ✅ ★重要：IndexedDB保存（Export用）
   logEvent("copy", record);
-
-  // ✅ Viewerログ
-  log(`COPY: ${record.n} / c:${record.c} / s:${record.s.toFixed(2)}`);
 
   return record;
 }
+/* ---------------------------------------------------------
+   [59-A] getPhaseAnalysis（修正）
+   ★ player単位raw取得
+--------------------------------------------------------- */
+function getPhaseAnalysis(player) {
 
+  const isPink = isCopiedPlayer(player);
+  const base = 300;
+
+  // ★修正：player単位取得
+  const click = State.recentClicks.find(r =>
+    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
+    String(r.shopname ?? "") === String(player.shopname ?? "")
+  );
+
+  const raw = click
+    ? (Date.now() - (click.copiedAt || click.time)) / 1000
+    : 0;
+
+  const folded = foldToCycle(raw, base);
+
+  const adjust =
+    isPink
+      ? State.phaseAdjust.pink
+      : State.phaseAdjust.yellow;
+
+  const cycle =
+    base + clamp(adjust, -45, 45);
+
+  return {
+    mode: isPink ? 1 : 0,
+    raw,
+    folded,
+    adjust,
+    cycleSec: cycle
+  };
+}
 /* =========================================================
  [60-01] LOG IndexedDBスキーマ定義（最小）
 ========================================================= */
