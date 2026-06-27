@@ -1119,11 +1119,10 @@ function getCurrentCycle(player) {
     : calcYellowCycle(player);
 }
 /* ---------------------------------------------------------
-   [24-F] calcYellowCycle（最終改善版）
+   [24-F] calcYellowCycle（継続性対応版）
    ★ 修正内容：
-   ★   ・click取得を find → filter に変更
-   ★   ・必ず「最新クリック」を使用する
-   ★   ・Yellow周期調整が継続的に動作するようにする
+   ★   ・clickが無い場合でも直前adjustを維持
+   ★   ・filter＋最新click使用（既存仕様維持）
 --------------------------------------------------------- */
 function calcYellowCycle(player) {
 
@@ -1131,20 +1130,23 @@ function calcYellowCycle(player) {
   const base = cfg.baseCycleSec || 300;
 
   /* ===================================== */
-  /* ★ 修正：click取得方法を変更 */
+  /* click取得（対象プレイヤー） */
   /* ===================================== */
 
   const clicks = State.recentClicks.filter(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name)
   );
 
-  if (clicks.length === 0) return base;
+  /* ★修正：履歴が無い場合でも前回adjustを維持 */
+  if (clicks.length === 0) {
+    return base + (State.phaseAdjust?.yellow ?? 0);
+  }
 
-  /* ★重要：必ず最新クリックを使用 */
+  /* 最新クリック使用 */
   const click = clicks[0];
 
   /* ===================================== */
-  /* 時刻差計算（現在時刻ベース） */
+  /* 時刻差（現在ベース） */
   /* ===================================== */
 
   const last = parseDateJST(player.updateDate)?.getTime();
@@ -1176,12 +1178,10 @@ function calcYellowCycle(player) {
   return base + clamped;
 }
 /* ---------------------------------------------------------
-   [24-G] calcPinkCycle（最終改善版：完全対称化）
+   [24-G] calcPinkCycle（継続性対応版）
    ★ 修正内容：
-   ★   ・click取得を filter に変更（安定化）
-   ★   ・複数履歴から最新2件を使用
-   ★   ・周期調整が継続的に動作するようにする
-   ★   ・Yellowと完全対称構造に統一
+   ★   ・履歴不足時でも直前adjustを維持
+   ★   ・filter＋最新2件使用（既存仕様維持）
 --------------------------------------------------------- */
 function calcPinkCycle(player) {
 
@@ -1189,24 +1189,23 @@ function calcPinkCycle(player) {
   const base = cfg.baseCycleSec || 300;
 
   /* ===================================== */
-  /* ★ 修正：該当プレイヤーの履歴を取得 */
+  /* 対象プレイヤーの履歴取得 */
   /* ===================================== */
 
   const clicks = State.recentClicks.filter(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name)
   );
 
-  /* 履歴不足の場合はbase */
-  if (clicks.length < 2) return base;
+  /* ★修正：履歴不足でも前回adjust維持 */
+  if (clicks.length < 2) {
+    return base + (State.phaseAdjust?.pink ?? 0);
+  }
 
-  /* ===================================== */
-  /* ★重要：最新2件を使用 */
-  /* ===================================== */
-
+  /* 最新2件使用 */
   const latest = clicks[0];
   const prevClick = clicks[1];
 
-  const interval = 
+  const interval =
     (latest.copiedAt - prevClick.copiedAt) / 1000;
 
   const folded = foldToCycle(interval, base);
