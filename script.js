@@ -1119,18 +1119,19 @@ function getCurrentCycle(player) {
     : calcYellowCycle(player);
 }
 /* ---------------------------------------------------------
-   [24-F] calcYellowCycle（修正）
-   ★ shopname追加＋EMA安定化
+   [24-F] calcYellowCycle（最小修正）
+   ★ 修正内容：
+   ★   ・click一致条件をnameのみに変更
+   ★   ・cycle adjustが確実に動作するようにする
 --------------------------------------------------------- */
 function calcYellowCycle(player) {
 
   const cfg = State.scoringConfig?.phase?.yellow || {};
   const base = cfg.baseCycleSec || 300;
 
-  // ★修正：name＋shopnameで識別
+  // ★修正：shopname条件を削除（最小変更）
   const click = State.recentClicks.find(r =>
-    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
-    String(r.shopname ?? "") === String(player.shopname ?? "")
+    normalizePlayerName(r.name) === normalizePlayerName(player.name)
   );
 
   if (!click) return base;
@@ -1149,7 +1150,6 @@ function calcYellowCycle(player) {
 
   const maxShift = cfg.maxShiftSec || 45;
 
-  // ★修正：clampして保存（暴走防止）
   const clamped = clamp(updated, -maxShift, maxShift);
 
   State.phaseAdjust.yellow = clamped;
