@@ -2062,8 +2062,9 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
 function renderDetailRows(list, isRubyBand) {
   renderPlayerRowsToBody("detailTableBody", list);
 }
-/* ---------------------------------------------------------  
-   [41-A] buildPlayerRowHTML  
+/* ---------------------------------------------------------
+   [41-A] buildPlayerRowHTML（修正）
+   ★ 文字列エスケープ対応（コピー不能バグ修正）
 --------------------------------------------------------- */
 function buildPlayerRowHTML(p) {
 
@@ -2080,9 +2081,20 @@ function buildPlayerRowHTML(p) {
   const fullShop = p.shopname ?? "";
   const shortShop = shortenStoreName(fullShop);
 
+  /* ★ 必須：安全エスケープ */
+  const safeName = String(p.name ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"');
+
+  const safeShop = String(fullShop ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/"/g, "&quot;");
+
   const copyValue = isRuby
-    ? `★${"★".repeat(p.starCnt - 1)}\t${p.name}`
-    : `${p.pridePoint}\t${p.name}`;
+    ? `★${"★".repeat(p.starCnt - 1)}\t${safeName}`
+    : `${p.pridePoint}\t${safeName}`;
 
   return `
     <tr data-updated="${p.updateDate}">
@@ -2090,16 +2102,24 @@ function buildPlayerRowHTML(p) {
           onclick="copyToClipboard('${copyValue}')">
         ${starOrLevel}
       </td>
-      <td class="left player-name clickable" onclick="copyToClipboard('${p.name}')">
+
+      <td class="left player-name clickable"
+          onclick="copyToClipboard('${safeName}')">
         ${p.name}
       </td>
+
       <td class="right">${fmt(p.point)}</td>
+
       <td class="left clickable"
-          data-fullname="${fullShop.replace(/"/g, "&quot;")}"
-          onclick="copyToClipboard('${fullShop.replace(/'/g, "\\'")}')">
+          data-fullname="${safeShop}"
+          onclick="copyToClipboard('${safeShop}')">
         <div class="store-name">${shortShop}</div>
       </td>
-      <td class="center">${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}</td>
+
+      <td class="center">
+        ${titleUrl ? `<img src="${titleUrl}" height="24">` : ""}
+      </td>
+
       <td class="left">${p.updateDate}</td>
     </tr>
   `;
@@ -2456,11 +2476,10 @@ function findCandidateInfoForLog(player) {
   return result;
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（分布再現対応版・最終修正）
+   [47] buildMatchingCandidates（修正版）
    ★ 修正内容：
-   ★   ・cooldown判定を正しく実装（実際に機能する形へ）
-   ★   ・既存構造100%維持
-   ★   ・分布抽選ロジックそのまま
+   ★   ・cooldownを「プレイヤー単位」に修正
+   ★   ・全除外バグ解消
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
@@ -2515,21 +2534,25 @@ function buildMatchingCandidates() {
       : filteredByUi;
 
   /* ===================================================== */
-  /* ④ ★重要修正：cooldown完全除外（実動作版）             */
+  /* ④ ★修正：プレイヤー単位cooldown                       */
   /* ===================================================== */
-  const latest = getLatestCopiedPlayer();
-
   const afterCooldown = analysisBase.filter(p => {
 
-    // コピー履歴が無い場合は除外しない
-    if (!latest) return true;
+    // このプレイヤーに対応するクリック履歴を探す
+    const click = State.recentClicks.find(r =>
+      normalizePlayerName(r.name) === normalizePlayerName(p.name) &&
+      String(r.shopname ?? "") === String(p.shopname ?? "")
+    );
+
+    // クリック履歴がない → 通す
+    if (!click) return true;
 
     const phase = getPhaseDistanceMin(
-      latest.copiedAt || latest.time,
+      click.copiedAt || click.time,
       5
     );
 
-    // 初期クールダウン中は除外
+    // そのプレイヤーのみcooldown除外
     if (phase.isInitialCooldown) {
       return false;
     }
@@ -2546,10 +2569,9 @@ function buildMatchingCandidates() {
   State.matchingRankedAll = rankedAll;
 
   /* ===================================================== */
-  /* ⑥ 分布再現（核心）                                   */
+  /* ⑥ 分布再現（既存そのまま）                           */
   /* ===================================================== */
   const totalCount = Math.min(10, rankedAll.length);
-
   const myStar = String(State.myStar);
   const dist = State.rankModel?.models?.[myStar]?.vs;
 
@@ -2557,25 +2579,17 @@ function buildMatchingCandidates() {
 
   if (dist && totalCount > 0) {
 
-    /* ------------------------------ */
-    /* ⑥-1 quota生成                  */
-    /* ------------------------------ */
     const quota = {};
     let sum = 0;
 
     const entries = Object.entries(dist);
 
     entries.forEach(([key, ratio]) => {
-
       const cnt = Math.floor(ratio * totalCount);
-
       quota[key] = cnt;
       sum += cnt;
     });
 
-    /* ------------------------------ */
-    /* ⑥-2 誤差補正                   */
-    /* ------------------------------ */
     const sortedKeys = entries
       .sort((a, b) => b[1] - a[1])
       .map(x => x[0]);
@@ -2583,34 +2597,22 @@ function buildMatchingCandidates() {
     let idx = 0;
 
     while (sum < totalCount && sortedKeys.length > 0) {
-
       const key = sortedKeys[idx % sortedKeys.length];
-
       quota[key] = (quota[key] || 0) + 1;
-
       sum++;
       idx++;
     }
 
-    /* ------------------------------ */
-    /* ⑥-3 ランク別プール生成         */
-    /* ------------------------------ */
     const poolByRank = {};
 
     rankedAll.forEach(p => {
-
       const key = p.__rankKey;
-
       if (!poolByRank[key]) {
         poolByRank[key] = [];
       }
-
       poolByRank[key].push(p);
     });
 
-    /* ------------------------------ */
-    /* ⑥-4 ランク別抽選               */
-    /* ------------------------------ */
     for (const rankKey in quota) {
 
       const need = quota[rankKey] || 0;
@@ -2627,9 +2629,6 @@ function buildMatchingCandidates() {
       selected.push(...picked);
     }
 
-    /* ------------------------------ */
-    /* ⑥-5 不足分補完                 */
-    /* ------------------------------ */
     if (selected.length < totalCount) {
 
       const existing = new Set(
@@ -2647,55 +2646,23 @@ function buildMatchingCandidates() {
       const need = totalCount - selected.length;
 
       if (need > 0 && rest.length > 0) {
-
-        selected.push(
-          ...selectByWeight(rest, need)
-        );
+        selected.push(...selectByWeight(rest, need));
       }
     }
 
   } else {
-
-    /* fallback */
     selected = rankedAll.slice(0, totalCount);
   }
 
-  /* ===================================================== */
-  /* ⑦ 最終ソート                                         */
-  /* ===================================================== */
   selected.sort((a, b) => b.__score - a.__score);
 
-  /* ===================================================== */
-  /* ⑧ 表示順位付与                                       */
-  /* ===================================================== */
   selected.forEach((p, i) => {
     p.displayRank = i + 1;
   });
 
   State.matchingList = selected;
 
-  /* ===================================================== */
-  /* ⑨ snapshot保存                                       */
-  /* ===================================================== */
-  State.matchingSnapshot = selected.map(p => ({
-    name: p.name,
-    score: p.__score
-  }));
-
-  /* ===================================================== */
-  /* ⑩ ログ                                               */
-  /* ===================================================== */
   log(`候補生成(DIST): Base=${base.length} / Selected=${selected.length}`);
-
-  logEvent("matching_distribution", {
-    total: totalCount,
-    quota: !!dist,
-    selected: selected.map(p => ({
-      n: p.name,
-      r: p.__rankKey,
-      s: p.__score
-    }))
-  });
 }
 /* ---------------------------------------------------------
    [48] renderMatchingHeader      
