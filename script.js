@@ -2288,22 +2288,67 @@ function exportAllCSV() {
   downloadCSV("all_records.csv", header, body);      
 }      
 /* ---------------------------------------------------------
-   [46] copyToClipboard（ログ統一版）
+   [46] copyToClipboard（修正版）
    ★ 修正内容：
-   ★   ・旧ログ（cR / dR）完全削除
-   ★   ・ログ出力は[59]に統一
-   ★   ・コピー成功時は保存処理のみ実行
+   ★   ・コピー後にUI更新を強制実行
+   ★   ・Viewerログ表示追加
+   ★   ・色変化（highlight）を即時反映
 --------------------------------------------------------- */
 function copyToClipboard(text) {
 
   const afterCopySuccess = () => {
 
-    // ✅ ログ生成・保存（[59]に一元化）
+    /* ===================================== */
+    /* ① データ更新                         */
+    /* ===================================== */
+
+    // ✅ コピーイベント保存
     saveCopyEventUnified(text);
 
-    // ✅ クリック履歴記録（既存維持）
+    // ✅ クリック履歴記録
     recordClickFromCopiedText(text);
+
+    /* ===================================== */
+    /* ② Viewerログ表示（画面）             */
+    /* ===================================== */
+
+    log(`コピー: ${text}`);
+
+    /* ===================================== */
+    /* ③ マッチング再計算                   */
+    /* ===================================== */
+
+    buildMatchingCandidates();
+
+    /* ===================================== */
+    /* ④ 画面再描画（最重要）               */
+    /* ===================================== */
+
+    if (isCurrentView(STATE.MATCHING)) {
+
+      // マッチング画面更新
+      renderMatchingHeader();
+      renderMatchingTable();
+
+    } else if (isCurrentView(STATE.DETAIL)) {
+
+      // 詳細画面更新（色反映含む）
+      renderDetailTable(
+        State.currentIsRubyBand,
+        State.currentDetailLabel,
+        State.currentDetailIcon
+      );
+
+    } else if (isCurrentView(STATE.SUMMARY)) {
+
+      // サマリ更新（任意だが安全）
+      renderSummary();
+    }
   };
+
+  /* ===================================== */
+  /* コピー実行                            */
+  /* ===================================== */
 
   navigator.clipboard.writeText(text)
     .then(afterCopySuccess)
