@@ -1119,17 +1119,16 @@ function getCurrentCycle(player) {
     : calcYellowCycle(player);
 }
 /* ---------------------------------------------------------
-   [24-F] calcYellowCycle（最小修正）
+   [24-F] calcYellowCycle（最終修正）
    ★ 修正内容：
-   ★   ・click一致条件をnameのみに変更
-   ★   ・cycle adjustが確実に動作するようにする
+   ★   ・EMAを常に適用（初回分岐削除）
+   ★   ・adjustが確実に蓄積されるようにする
 --------------------------------------------------------- */
 function calcYellowCycle(player) {
 
   const cfg = State.scoringConfig?.phase?.yellow || {};
   const base = cfg.baseCycleSec || 300;
 
-  // ★修正：shopname条件を削除（最小変更）
   const click = State.recentClicks.find(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name)
   );
@@ -1142,11 +1141,10 @@ function calcYellowCycle(player) {
   const diffSec = (click.copiedAt - last) / 1000;
   const folded = foldToCycle(diffSec, base);
 
-  const prev = State.phaseAdjust?.yellow || 0;
+  const prev = Number(State.phaseAdjust?.yellow ?? 0);
 
-  const updated = (prev === 0)
-    ? folded
-    : updateAdjust(prev, folded, cfg.alpha || 0.2);
+  /* ★修正：常にEMA適用（ここが核心） */
+  const updated = updateAdjust(prev, folded, cfg.alpha || 0.2);
 
   const maxShift = cfg.maxShiftSec || 45;
 
@@ -1157,18 +1155,18 @@ function calcYellowCycle(player) {
   return base + clamped;
 }
 /* ---------------------------------------------------------
-   [24-G] calcPinkCycle（改善）
-   ★ player単位履歴化
+   [24-G] calcPinkCycle（最終修正）
+   ★ 修正内容：
+   ★   ・EMAを常に適用（初回分岐削除）
+   ★   ・cycle調整が確実に蓄積されるようにする
 --------------------------------------------------------- */
 function calcPinkCycle(player) {
 
   const cfg = State.scoringConfig?.phase?.pink || {};
   const base = cfg.baseCycleSec || 300;
 
-  // ★修正：player単位に限定
   const clicks = State.recentClicks.filter(r =>
-    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
-    String(r.shopname ?? "") === String(player.shopname ?? "")
+    normalizePlayerName(r.name) === normalizePlayerName(player.name)
   );
 
   if (clicks.length < 2) return base;
@@ -1178,11 +1176,10 @@ function calcPinkCycle(player) {
 
   const folded = foldToCycle(interval, base);
 
-  const prev = State.phaseAdjust?.pink || 0;
+  const prev = Number(State.phaseAdjust?.pink ?? 0);
 
-  const updated = (prev === 0)
-    ? folded
-    : updateAdjust(prev, folded, cfg.alpha || 0.3);
+  /* ★最重要修正：常にEMA適用 */
+  const updated = updateAdjust(prev, folded, cfg.alpha || 0.3);
 
   const maxShift = cfg.maxShiftSec || 45;
 
