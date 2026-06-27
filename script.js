@@ -1119,32 +1119,53 @@ function getCurrentCycle(player) {
     : calcYellowCycle(player);
 }
 /* ---------------------------------------------------------
-   [24-F] calcYellowCycle（最終修正）
+   [24-F] calcYellowCycle（最終改善版）
    ★ 修正内容：
-   ★   ・EMAを常に適用（初回分岐削除）
-   ★   ・adjustが確実に蓄積されるようにする
+   ★   ・click取得を find → filter に変更
+   ★   ・必ず「最新クリック」を使用する
+   ★   ・Yellow周期調整が継続的に動作するようにする
 --------------------------------------------------------- */
 function calcYellowCycle(player) {
 
   const cfg = State.scoringConfig?.phase?.yellow || {};
   const base = cfg.baseCycleSec || 300;
 
-  const click = State.recentClicks.find(r =>
+  /* ===================================== */
+  /* ★ 修正：click取得方法を変更 */
+  /* ===================================== */
+
+  const clicks = State.recentClicks.filter(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name)
   );
 
-  if (!click) return base;
+  if (clicks.length === 0) return base;
+
+  /* ★重要：必ず最新クリックを使用 */
+  const click = clicks[0];
+
+  /* ===================================== */
+  /* 時刻差計算（現在時刻ベース） */
+  /* ===================================== */
 
   const last = parseDateJST(player.updateDate)?.getTime();
   if (!last) return base;
 
-  const diffSec = (click.copiedAt - last) / 1000;
+  const now = Date.now();
+  const diffSec = (now - last) / 1000;
+
   const folded = foldToCycle(diffSec, base);
+
+  /* ===================================== */
+  /* EMA更新 */
+  /* ===================================== */
 
   const prev = Number(State.phaseAdjust?.yellow ?? 0);
 
-  /* ★修正：常にEMA適用（ここが核心） */
-  const updated = updateAdjust(prev, folded, cfg.alpha || 0.2);
+  const updated = updateAdjust(
+    prev,
+    folded,
+    cfg.alpha || 0.2
+  );
 
   const maxShift = cfg.maxShiftSec || 45;
 
