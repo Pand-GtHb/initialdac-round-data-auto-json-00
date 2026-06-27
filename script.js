@@ -1215,14 +1215,16 @@ function updateAdjust(prev, value, alpha) {
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
-
 /* ---------------------------------------------------------
-   [24-K] isCopiedPlayer ★追加（必須）
+   [24-K] isCopiedPlayer（修正）
+   ★ 修正内容：
+   ★   ・shopname条件を削除
+   ★   ・Pink判定をnameのみで行う
+   ★   ・cycleAdjustを有効化
 --------------------------------------------------------- */
 function isCopiedPlayer(player) {
   return State.recentClicks.some(r =>
-    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
-    String(r.shopname ?? "") === String(player.shopname ?? "")
+    normalizePlayerName(r.name) === normalizePlayerName(player.name)
   );
 }
 /* ---------------------------------------------------------
