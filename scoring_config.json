@@ -1,18 +1,17 @@
 {
   "meta": {
-    "version": "scoring_config_v7_cos_threshold_display",
-    "updatedAt": "2026-06-24T00:00:00+09:00",
-    "description": "完全Cos波 + 閾値表示制御版（Yellow/Pink分離）",
+    "version": "scoring_config_v8_phase_cycle_stable",
+    "createdAt": "2026-06-26T23:00:00+09:00",
+    "description": "Cos波＋動的Cycle調整（Yellow/Pink分離・EMA安定版）",
     "notes": [
       "rank linear",
       "area scale 外部化",
       "time exp 外部化",
-      "phase Cos波（完全連続）",
-      "tolerance廃止",
-      "peakBoost廃止",
-      "表示はthreshold制御",
-      "Yellow/Pink閾値分離",
-      "cooldown維持"
+      "phase Cos波（連続波形）",
+      "cycle動的補正（EMA）",
+      "cooldown前提設計（コード側制御）",
+      "display閾値制御",
+      "tolerance/peakBoost廃止済"
     ]
   },
 
@@ -30,27 +29,23 @@
     "exp": 1.2
   },
 
-  "misc": {
-    "phase": 20,
-    "recency": 20,
-    "activity": 10,
-    "divisor": 10
-  },
-
   "phase": {
-
-    "cycleMin": 5,
 
     "amplitude": 0.8,
     "base": 1.0,
-    "floor": 0.2,
+    "floor": 0.1,
 
-    "cooldownCycles": 1,
+    "yellow": {
+      "baseCycleSec": 300,
+      "alpha": 0.2,
+      "maxShiftSec": 45
+    },
 
-    "toleranceSec": 0,
-    "peakBoost": 1.0,
-
-    "displayThreshold": 0.5,
+    "pink": {
+      "baseCycleSec": 300,
+      "alpha": 0.3,
+      "maxShiftSec": 45
+    },
 
     "display": {
       "yellowThreshold": 0.5,
