@@ -1178,10 +1178,10 @@ function calcYellowCycle(player) {
   return base + clamped;
 }
 /* ---------------------------------------------------------
-   [24-G] calcPinkCycle（継続性対応版）
+   [24-G] calcPinkCycle（初回EMA強制対応）
    ★ 修正内容：
-   ★   ・履歴不足時でも直前adjustを維持
-   ★   ・filter＋最新2件使用（既存仕様維持）
+   ★   ・2回目コピー（初回Pink発動時）はEMAを使わず即反映
+   ★   ・3回目以降は通常EMA
 --------------------------------------------------------- */
 function calcPinkCycle(player) {
 
@@ -1189,19 +1189,17 @@ function calcPinkCycle(player) {
   const base = cfg.baseCycleSec || 300;
 
   /* ===================================== */
-  /* 対象プレイヤーの履歴取得 */
+  /* 履歴取得                              */
   /* ===================================== */
 
   const clicks = State.recentClicks.filter(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name)
   );
 
-  /* ★修正：履歴不足でも前回adjust維持 */
   if (clicks.length < 2) {
     return base + (State.phaseAdjust?.pink ?? 0);
   }
 
-  /* 最新2件使用 */
   const latest = clicks[0];
   const prevClick = clicks[1];
 
@@ -1211,16 +1209,29 @@ function calcPinkCycle(player) {
   const folded = foldToCycle(interval, base);
 
   /* ===================================== */
-  /* EMA更新 */
+  /* ★ 初回特例（ここが追加）              */
   /* ===================================== */
 
   const prev = Number(State.phaseAdjust?.pink ?? 0);
 
-  const updated = updateAdjust(
-    prev,
-    folded,
-    cfg.alpha || 0.3
-  );
+  let updated;
+
+  /* ✅ 初回Pink（=履歴ちょうど2件） */
+  if (clicks.length === 2 && prev === 0) {
+
+    /* ★ EMAを使わず直接反映 */
+    updated = folded;
+
+  } else {
+
+    /* 通常EMA */
+    updated = updateAdjust(
+      prev,
+      folded,
+      cfg.alpha || 0.3
+    );
+
+  }
 
   const maxShift = cfg.maxShiftSec || 45;
 
