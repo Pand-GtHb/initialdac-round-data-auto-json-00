@@ -2328,11 +2328,9 @@ function exportAllCSV() {
   downloadCSV("all_records.csv", header, body);      
 }      
 /* ---------------------------------------------------------
-   [46] copyToClipboard（修正版）
+   [46] copyToClipboard（周期更新トリガー対応版）
    ★ 修正内容：
-   ★   ・コピー後にUI更新を強制実行
-   ★   ・Viewerログ表示追加
-   ★   ・色変化（highlight）を即時反映
+   ★   ・コピー回数に応じてYellow / Pinkを明示的に更新
 --------------------------------------------------------- */
 function copyToClipboard(text) {
 
@@ -2342,14 +2340,40 @@ function copyToClipboard(text) {
     /* ① データ更新                         */
     /* ===================================== */
 
-    // ✅ コピーイベント保存
     saveCopyEventUnified(text);
-
-    // ✅ クリック履歴記録
     recordClickFromCopiedText(text);
 
     /* ===================================== */
-    /* ② Viewerログ表示（画面）             */
+    /* ★ここが今回の核心（分岐）             */
+    /* ===================================== */
+
+    const player = findPlayerFromCopiedText(text);
+
+    if (player) {
+
+      const clicks = State.recentClicks.filter(r =>
+        normalizePlayerName(r.name) === normalizePlayerName(player.name)
+      );
+
+      /* ============================ */
+      /* ✅ 1回目コピー → Yellow更新 */
+      /* ============================ */
+
+      if (clicks.length === 1) {
+        calcYellowCycle(player);
+      }
+
+      /* ============================ */
+      /* ✅ 2回目コピー → Pink更新   */
+      /* ============================ */
+
+      if (clicks.length >= 2) {
+        calcPinkCycle(player);
+      }
+    }
+
+    /* ===================================== */
+    /* ② ログ表示                           */
     /* ===================================== */
 
     log(`コピー: ${text}`);
@@ -2361,34 +2385,22 @@ function copyToClipboard(text) {
     buildMatchingCandidates();
 
     /* ===================================== */
-    /* ④ 画面再描画（最重要）               */
+    /* ④ 再描画                             */
     /* ===================================== */
 
     if (isCurrentView(STATE.MATCHING)) {
-
-      // マッチング画面更新
       renderMatchingHeader();
       renderMatchingTable();
-
     } else if (isCurrentView(STATE.DETAIL)) {
-
-      // 詳細画面更新（色反映含む）
       renderDetailTable(
         State.currentIsRubyBand,
         State.currentDetailLabel,
         State.currentDetailIcon
       );
-
-    } else if (isCurrentView(STATE.SUMMARY)) {
-
-      // サマリ更新（任意だが安全）
+    } else {
       renderSummary();
     }
   };
-
-  /* ===================================== */
-  /* コピー実行                            */
-  /* ===================================== */
 
   navigator.clipboard.writeText(text)
     .then(afterCopySuccess)
