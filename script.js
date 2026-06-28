@@ -1178,10 +1178,10 @@ function calcYellowCycle(player) {
   return base + clamped;
 }
 /* ---------------------------------------------------------
-   [24-G] calcPinkCycle（初回EMA強制対応）
+   [24-G] calcPinkCycle（複数プレイヤー集約版）
    ★ 修正内容：
-   ★   ・2回目コピー（初回Pink発動時）はEMAを使わず即反映
-   ★   ・3回目以降は通常EMA
+   ★   ・複数プレイヤーのintervalを集約
+   ★   ・foldedの平均でPink周期を決定
 --------------------------------------------------------- */
 function calcPinkCycle(player) {
 
@@ -1189,49 +1189,73 @@ function calcPinkCycle(player) {
   const base = cfg.baseCycleSec || 300;
 
   /* ===================================== */
-  /* 履歴取得                              */
+  /* ★ 全プレイヤーの履歴を収集            */
   /* ===================================== */
 
-  const clicks = State.recentClicks.filter(r =>
-    normalizePlayerName(r.name) === normalizePlayerName(player.name)
-  );
+  const groups = {};
 
-  if (clicks.length < 2) {
+  for (const r of State.recentClicks) {
+
+    const key = normalizePlayerName(r.name);
+
+    if (!groups[key]) {
+      groups[key] = [];
+    }
+
+    groups[key].push(r);
+  }
+
+  /* ===================================== */
+  /* ★ 各プレイヤーのintervalを計算        */
+  /* ===================================== */
+
+  const foldedList = [];
+
+  for (const key in groups) {
+
+    const arr = groups[key];
+
+    if (arr.length < 2) continue;
+
+    const latest = arr[0];
+    const prev = arr[1];
+
+    const interval =
+      (latest.copiedAt - prev.copiedAt) / 1000;
+
+    const folded = foldToCycle(interval, base);
+
+    if (isFinite(folded)) {
+      foldedList.push(folded);
+    }
+  }
+
+  /* ===================================== */
+  /* ★ データなし → 維持                  */
+  /* ===================================== */
+
+  if (foldedList.length === 0) {
     return base + (State.phaseAdjust?.pink ?? 0);
   }
 
-  const latest = clicks[0];
-  const prevClick = clicks[1];
+  /* ===================================== */
+  /* ★ 平均化                             */
+  /* ===================================== */
 
-  const interval =
-    (latest.copiedAt - prevClick.copiedAt) / 1000;
-
-  const folded = foldToCycle(interval, base);
+  const sum = foldedList.reduce((a, b) => a + b, 0);
+  const avg = sum / foldedList.length;
 
   /* ===================================== */
-  /* ★ 初回特例（ここが追加）              */
+  /* ★ EMA                                */
   /* ===================================== */
 
   const prev = Number(State.phaseAdjust?.pink ?? 0);
 
-  let updated;
-
-  /* ✅ 初回Pink（=履歴ちょうど2件） */
-  if (clicks.length === 2 && prev === 0) {
-
-    /* ★ EMAを使わず直接反映 */
-    updated = folded;
-
-  } else {
-
-    /* 通常EMA */
-    updated = updateAdjust(
-      prev,
-      folded,
-      cfg.alpha || 0.3
-    );
-
-  }
+  const updated = updateAdjust(
+    prev,
+    avg,
+    cfg.alpha || 0.3
+  );
 
   const maxShift = cfg.maxShiftSec || 45;
 
