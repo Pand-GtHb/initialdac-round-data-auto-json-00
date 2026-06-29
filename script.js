@@ -2397,6 +2397,7 @@ function exportAllCSV() {
    ★   ・snapshotを先に保存
    ★   ・copyログを後に保存
    ★   ・snapshotとcopyのsid整合性確保
+   ★   ・✅追加：analysisログ（IndexedDB）連携
 --------------------------------------------------------- */
 function copyToClipboard(text) {
 
@@ -2408,9 +2409,14 @@ function copyToClipboard(text) {
     saveMatchingSnapshot();
 
     /* ===================================== */
-    /* ★ copyログ保存                       */
+    /* ★ copyログ保存（localStorage）        */
     /* ===================================== */
-    saveCopyEventUnified(text);
+    const copyRecord = saveCopyEventUnified(text);
+
+    /* ===================================== */
+    /* ★ ✅追加：analysisログ保存（必須）    */
+    /* ===================================== */
+    logEvent("copy", copyRecord);
 
     /* ===================================== */
     /* ★ クリック履歴更新                   */
@@ -2445,7 +2451,6 @@ function copyToClipboard(text) {
     /* ★ UI再描画                           */
     /* ===================================== */
     if (isCurrentView(STATE.MATCHING)) {
-
       renderMatchingHeader();
       renderMatchingTable();
 
@@ -3487,19 +3492,24 @@ function putLog(storeName, data) {
   store.put(data); // append（autoIncrement）
 }
 /* ---------------------------------------------------------
-   [60-04] logEvent（軽量化版）
-   ★ copy＋最小イベントのみ記録
-   ★ 無駄ストア削除
+   [60-04] logEvent（軽量化版／修正版）
+   ★ 修正：
+   ★   ・copyRecord丸ごと保存
+   ★   ・payload完全保持（分析精度向上）
 --------------------------------------------------------- */
 function logEvent(type, payload = {}) {
 
+  if (!logDB) return;
+
   const record = {
-    t: Date.now(), // timestamp
-    e: type,       // event type
-    ...payload
+    t: Date.now(),   // timestamp
+    e: type,         // event type
+
+    /* ✅ payloadを完全展開（重要） */
+    ...(payload || {})
   };
 
-  // ✅ copy系のみ保存（ログ肥大防止）
+  /* ✅ copyイベントのみ保存 */
   if (type === "copy" || type === "top") {
     putLog(LOG_STORE.copyEvents, record);
   }
@@ -3567,9 +3577,9 @@ function downloadJSON(data) {
   URL.revokeObjectURL(url);
 }
 /* ---------------------------------------------------------
-   [60-08] exportTodayLogsAsJSON（軽量版）
-   ★ copyEventsのみ出力
-   ★ 不要ログ完全排除
+   [60-08] exportTodayLogsAsJSON（修正版）
+   ★ 修正：
+   ★   ・IndexedDBが空の場合のfallback追加
 --------------------------------------------------------- */
 function exportTodayLogsAsJSON() {
 
@@ -3597,17 +3607,25 @@ function exportTodayLogsAsJSON() {
 
   const tx = logDB.transaction(LOG_STORE.copyEvents, "readonly");
   const store = tx.objectStore(LOG_STORE.copyEvents);
-
   const req = store.getAll();
 
   req.onsuccess = () => {
 
     const all = req.result || [];
 
-    // ✅ 今日分のみ抽出
     result.copyEvents = all.filter(x =>
       x.t >= startTs && x.t <= endTs
     );
+
+    /* ✅ fallback（万一空ならlocalStorageを補完） */
+    if (!result.copyEvents.length) {
+
+      const dk = buildDailyKey();
+      const fallback =
+        readStoredArraySafe(LOG_STORAGE_KEYS.copyEvents + dk);
+
+      result.copyEvents = fallback || [];
+    }
 
     downloadJSON(result);
   };
