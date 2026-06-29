@@ -137,27 +137,14 @@ function switchDisplayView(view) {
   }
 }
 /* ---------------------------------------------------------
-   [08] ログ基盤（appendLog / log / logWarn / logError）  
-   ★ 画面ログ + localStorage 永続保存  
-   ★ copy / matching / snapshot は localStorage に統一  
-   ※ IndexedDBは完全削除  
+   [08] ログ基盤キー（修正版）
+   ★ 日単位分割対応のため prefix化
 --------------------------------------------------------- */
-const MAX_LOG_LINES = 200;
-
-/* ★ 永続保存キー（localStorage） */
 const LOG_STORAGE_KEYS = {
   viewerLogs: "initialdac_viewer_logs",
-  copyEvents: "initialdac_copy_events",
-  matchingSnapshots: "initialdac_matching_snapshots"
+  copyEvents: "initialdac_copy_events_",
+  matchingSnapshots: "initialdac_matching_snapshots_"
 };
-
-/* ★ 保存上限（localStorage） */
-const LOG_STORAGE_LIMITS = {
-  viewerLogs: 500,
-  copyEvents: 200,
-  matchingSnapshots: 100
-};
-
 /* ---------------------------------------------------------  
    [08-1] 共通ユーティリティ（時間）  
 --------------------------------------------------------- */
@@ -186,35 +173,27 @@ function compactYMD(ymd) {
   return String(ymd || "").replace(/\//g, "");
 }
 
-/* ---------------------------------------------------------  
-   [08-2] localStorage  
+/* ---------------------------------------------------------
+   [08-2] pushStoredRecord（修正版）
+   ★ 日単位ログ分割対応
 --------------------------------------------------------- */
-function readStoredArraySafe(key) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return [];
-  }
-}
+function pushStoredRecord(key, record, limit = 200, daily = false) {
 
-function writeStoredArraySafe(key, list) {
-  try {
-    localStorage.setItem(key, JSON.stringify(list));
-  } catch (e) {
-    console.warn("localStorage write failed:", key, e);
-  }
-}
+  let finalKey = key;
 
-function pushStoredRecord(key, record, limit = 200) {
-  const arr = readStoredArraySafe(key);
+  if (daily) {
+    const dk = record.dk || buildDailyKey();
+    finalKey = key + dk;
+  }
+
+  const arr = readStoredArraySafe(finalKey);
+
   arr.unshift(record);
-  const trimmed = arr.slice(0, limit);
-  writeStoredArraySafe(key, trimmed);
-}
 
+  const trimmed = arr.slice(0, limit);
+
+  writeStoredArraySafe(finalKey, trimmed);
+}
 /* ---------------------------------------------------------  
    [08-3] viewerログ保存  
 --------------------------------------------------------- */
@@ -294,31 +273,49 @@ function formatMatchTopList(list, count = MATCHING_LOG_CONFIG.topListCount) {
     .map(p => `${p.name}(${Number(p.__score ?? 0).toFixed(2)})`)
     .join(" / ");
 }
-
-/* ---------------------------------------------------------  
-   [08-EXPORT] localStorage → 本日分JSON出力  
+/* ---------------------------------------------------------
+   [08-C] buildDailyKey（新規）
+   ★ 日単位ログ分割キー生成
+--------------------------------------------------------- */
+function buildDailyKey() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = ("0" + (d.getMonth() + 1)).slice(-2);
+  const day = ("0" + d.getDate()).slice(-2);
+  return `${y}${m}${day}`;
+}
+/* ---------------------------------------------------------
+   [08-D] LOG_STORAGE_LIMITS（追加）
+   ★ localStorage保存上限定義
+   ★ 日単位分割前提の適正サイズ
+--------------------------------------------------------- */
+const LOG_STORAGE_LIMITS = {
+  viewerLogs: 500,
+  copyEvents: 200,
+  matchingSnapshots: 100
+};
+/* ---------------------------------------------------------
+   [08-EXPORT] JSON出力（修正版）
+   ★ snapshot含めて出力
 --------------------------------------------------------- */
 function exportTodayViewerLogsAsJSON() {
+
   const today = getTodayYMDJa();
+  const key = compactYMD(today);
 
   const viewerLogs = readStoredArraySafe(LOG_STORAGE_KEYS.viewerLogs);
-  const copyEvents = readStoredArraySafe(LOG_STORAGE_KEYS.copyEvents);
-
-  const isToday = (savedAt) => {
-    return String(savedAt || "").startsWith(today);
-  };
-
-  const todayViewerLogs = viewerLogs.filter(x => isToday(x.savedAt));
-  const todayCopyEvents = copyEvents.filter(x => isToday(x.savedAt));
+  const copyEvents = readStoredArraySafe(LOG_STORAGE_KEYS.copyEvents + key);
+  const snapshots = readStoredArraySafe(LOG_STORAGE_KEYS.matchingSnapshots + key);
 
   const payload = {
     exportedAt: getNowLabelJa(),
     targetDate: today,
-    viewerLogs: todayViewerLogs,
-    copyEvents: todayCopyEvents
+    viewerLogs: viewerLogs,
+    copyEvents: copyEvents,
+    matchingSnapshots: snapshots
   };
 
-  const filename = `viewer_logs_${compactYMD(today)}.json`;
+  const filename = `viewer_logs_${key}.json`;
 
   const blob = new Blob(
     [JSON.stringify(payload, null, 2)],
@@ -334,7 +331,7 @@ function exportTodayViewerLogsAsJSON() {
 
   URL.revokeObjectURL(url);
 
-  log(`JSON出力完了: ${filename} / copy=${todayCopyEvents.length} / viewer=${todayViewerLogs.length}`);
+  log(`JSON出力完了: ${filename}`);
 }
 /* ---------------------------------------------------------
    [09] 進行中アニメーション      
@@ -2365,24 +2362,30 @@ function exportAllCSV() {
   downloadCSV("all_records.csv", header, body);      
 }      
 /* ---------------------------------------------------------
-   [46] copyToClipboard（周期更新トリガー対応版）
-   ★ 修正内容：
-   ★   ・コピー回数に応じてYellow / Pinkを明示的に更新
+   [46] copyToClipboard（修正版）
+   ★ 修正：
+   ★   ・snapshotを先に保存
+   ★   ・copyログを後に保存
+   ★   ・snapshotとcopyのsid整合性確保
 --------------------------------------------------------- */
 function copyToClipboard(text) {
 
   const afterCopySuccess = () => {
 
     /* ===================================== */
-    /* ① データ更新                         */
+    /* ★ snapshotを先に保存（重要）         */
     /* ===================================== */
+    saveMatchingSnapshot();
 
+    /* ===================================== */
+    /* ★ copyログ保存                       */
+    /* ===================================== */
     saveCopyEventUnified(text);
-    recordClickFromCopiedText(text);
 
     /* ===================================== */
-    /* ★ここが今回の核心（分岐）             */
+    /* ★ クリック履歴更新                   */
     /* ===================================== */
+    recordClickFromCopiedText(text);
 
     const player = findPlayerFromCopiedText(text);
 
@@ -2392,49 +2395,40 @@ function copyToClipboard(text) {
         normalizePlayerName(r.name) === normalizePlayerName(player.name)
       );
 
-      /* ============================ */
-      /* ✅ 1回目コピー → Yellow更新 */
-      /* ============================ */
-
       if (clicks.length === 1) {
         calcYellowCycle(player);
       }
-
-      /* ============================ */
-      /* ✅ 2回目コピー → Pink更新   */
-      /* ============================ */
 
       if (clicks.length >= 2) {
         calcPinkCycle(player);
       }
     }
 
-    /* ===================================== */
-    /* ② ログ表示                           */
-    /* ===================================== */
-
     log(`コピー: ${text}`);
 
     /* ===================================== */
-    /* ③ マッチング再計算                   */
+    /* ★ 候補再生成                         */
     /* ===================================== */
-
     buildMatchingCandidates();
 
     /* ===================================== */
-    /* ④ 再描画                             */
+    /* ★ UI再描画                           */
     /* ===================================== */
-
     if (isCurrentView(STATE.MATCHING)) {
+
       renderMatchingHeader();
       renderMatchingTable();
+
     } else if (isCurrentView(STATE.DETAIL)) {
+
       renderDetailTable(
         State.currentIsRubyBand,
         State.currentDetailLabel,
         State.currentDetailIcon
       );
+
     } else {
+
       renderSummary();
     }
   };
@@ -2610,18 +2604,14 @@ function findCandidateInfoForLog(player) {
   return result;
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（改良版 全文）
+   [47] buildMatchingCandidates（修正版）
    ★ 修正：
-   ★   ・上位一極集中抑制
-   ★   ・高スコア漏れ防止
-   ★   ・Top固定＋分布補完
-   ★   ・既存機能完全維持
+   ★   ・Top固定ロジック削除
+   ★   ・分布抽選のみで候補生成
+   ★   ・探索性を回復
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
-  /* ===================================================== */
-  /* ① UIフィルタ取得                                     */
-  /* ===================================================== */
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
@@ -2630,9 +2620,9 @@ function buildMatchingCandidates() {
 
   const base = State.filtered;
 
-  /* ===================================================== */
-  /* ② スコア計算                                         */
-  /* ===================================================== */
+  /* ===================================== */
+  /* スコア計算                           */
+  /* ===================================== */
   const scoredAll = base.map(p => {
     const detail = calcMatchingScoreDetail(p);
     return {
@@ -2643,26 +2633,24 @@ function buildMatchingCandidates() {
     };
   });
 
-  /* ===================================================== */
-  /* ③ UIフィルタ適用                                     */
-  /* ===================================================== */
+  /* ===================================== */
+  /* UIフィルタ                           */
+  /* ===================================== */
   const filteredByUi = scoredAll.filter(p => {
 
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
 
-    // RUBY
     if (p.__rankKey.startsWith("R")) {
       return selectedStars.includes(Number(p.starCnt));
     }
 
-    // PRIDE
     return selectedPrides.includes(p.__rankKey);
   });
 
-  /* ===================================================== */
-  /* ④ rankModelフィルタ                                   */
-  /* ===================================================== */
+  /* ===================================== */
+  /* rankModelフィルタ                    */
+  /* ===================================== */
   const filteredByRankModel = filteredByUi.filter(p =>
     Number(p.__detail?.rankingScore ?? 0) > 0
   );
@@ -2672,9 +2660,9 @@ function buildMatchingCandidates() {
       ? filteredByRankModel
       : filteredByUi;
 
-  /* ===================================================== */
-  /* ⑤ プレイヤー単位 cooldown（既存維持）               */
-  /* ===================================================== */
+  /* ===================================== */
+  /* cooldown                             */
+  /* ===================================== */
   const afterCooldown = analysisBase.filter(p => {
 
     const click = State.recentClicks.find(r =>
@@ -2682,7 +2670,6 @@ function buildMatchingCandidates() {
       String(r.shopname ?? "") === String(p.shopname ?? "")
     );
 
-    // 履歴なし → 通す
     if (!click) return true;
 
     const phase = getPhaseDistanceMin(
@@ -2690,7 +2677,6 @@ function buildMatchingCandidates() {
       5
     );
 
-    // 初期cooldown中 → 除外
     if (phase.isInitialCooldown) {
       return false;
     }
@@ -2698,17 +2684,17 @@ function buildMatchingCandidates() {
     return true;
   });
 
-  /* ===================================================== */
-  /* ⑥ 全体ランキング作成                                 */
-  /* ===================================================== */
+  /* ===================================== */
+  /* ランキング                           */
+  /* ===================================== */
   const rankedAll = [...afterCooldown]
     .sort((a, b) => b.__score - a.__score);
 
   State.matchingRankedAll = rankedAll;
 
-  /* ===================================================== */
-  /* ⑦ 分布抽選（従来ロジック維持）                       */
-  /* ===================================================== */
+  /* ===================================== */
+  /* 分布抽選                            */
+  /* ===================================== */
   const totalCount = Math.min(10, rankedAll.length);
 
   const myStar = String(State.myStar);
@@ -2723,14 +2709,12 @@ function buildMatchingCandidates() {
 
     const entries = Object.entries(dist);
 
-    // ---- 各帯の基本枠 ----
     entries.forEach(([key, ratio]) => {
       const cnt = Math.floor(ratio * totalCount);
       quota[key] = cnt;
       sum += cnt;
     });
 
-    // ---- 端数補正 ----
     const sortedKeys = entries
       .sort((a, b) => b[1] - a[1])
       .map(x => x[0]);
@@ -2744,7 +2728,6 @@ function buildMatchingCandidates() {
       idx++;
     }
 
-    // ---- プール構築 ----
     const poolByRank = {};
 
     rankedAll.forEach(p => {
@@ -2755,7 +2738,6 @@ function buildMatchingCandidates() {
       poolByRank[key].push(p);
     });
 
-    // ---- 抽選 ----
     for (const rankKey in quota) {
 
       const need = quota[rankKey] ?? 0;
@@ -2772,7 +2754,6 @@ function buildMatchingCandidates() {
       selected.push(...picked);
     }
 
-    // ---- 不足分補完 ----
     if (selected.length < totalCount) {
 
       const existingKeys = new Set(
@@ -2798,38 +2779,9 @@ function buildMatchingCandidates() {
     selected = rankedAll.slice(0, totalCount);
   }
 
-  /* ===================================================== */
-  /* ⑧ ★修正：Top固定＋補完（最終対策）                   */
-  /* ===================================================== */
-
-  const topFixedCount = Math.min(5, selected.length);
-
-  const sortedAll = [...rankedAll];
-
-  const forcedTop = sortedAll.slice(0, topFixedCount);
-
-  const forcedKeys = new Set(
-    forcedTop.map(p =>
-      normalizePlayerName(p.name) + "@@" + String(p.updateDate ?? "")
-    )
-  );
-
-  const currentKeys = new Set(
-    selected.map(p =>
-      normalizePlayerName(p.name) + "@@" + String(p.updateDate ?? "")
-    )
-  );
-
-  // Topを必ず含める
-  forcedTop.forEach(p => {
-    const key =
-      normalizePlayerName(p.name) + "@@" + String(p.updateDate ?? "");
-    if (!currentKeys.has(key)) {
-      selected[selected.length - 1] = p;
-    }
-  });
-
-  // ---- 重複排除 ----
+  /* ===================================== */
+  /* 重複排除                           */
+  /* ===================================== */
   const uniq = new Set();
 
   selected = selected.filter(p => {
@@ -2841,9 +2793,9 @@ function buildMatchingCandidates() {
     return true;
   });
 
-  /* ===================================================== */
-  /* ⑨ 最終ソート＆順位付け                               */
-  /* ===================================================== */
+  /* ===================================== */
+  /* ソート                              */
+  /* ===================================== */
   selected.sort((a, b) => b.__score - a.__score);
 
   selected.forEach((p, i) => {
@@ -2852,7 +2804,7 @@ function buildMatchingCandidates() {
 
   State.matchingList = selected;
 
-  log(`候補生成(調整済): Base=${base.length} / Selected=${selected.length}`);
+  log(`候補生成(修正版): Base=${base.length} / Selected=${selected.length}`);
 }
 /* ---------------------------------------------------------
    [48] renderMatchingHeader      
@@ -3253,40 +3205,38 @@ function startUpdateWatch() {
 /* ---------------------------------------------------------
    [59] saveCopyEventUnified（修正版）
    ★ 修正：
-   ★   ・getPhaseAnalysisの修正により
-   ★   ・prがYellow/Pinkで正しく記録される
+   ★   ・snapshotID紐付け
+   ★   ・日単位分割対応
+   ★   ・Yellow/Pinkログ維持
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
   const player = findPlayerFromCopiedText(rawText);
 
-  /* ===================================== */
-  /* ★ プレイヤーなし                     */
-  /* ===================================== */
   if (!player) {
-
     const record = {
       t: Date.now(),
+      dk: buildDailyKey(),
       n: "",
       s: 0,
       p: 0,
       r: 0,
-      c: -1
+      c: -1,
+      sid: State.lastSnapshotId ?? null
     };
 
-    saveCopyEventToStorage(record);
-    logEvent("copy", record);
+    pushStoredRecord(
+      LOG_STORAGE_KEYS.copyEvents,
+      record,
+      LOG_STORAGE_LIMITS.copyEvents,
+      true
+    );
+
     return record;
   }
 
-  /* ===================================== */
-  /* ★ スコア計算                         */
-  /* ===================================== */
   const detail = calcMatchingScoreDetail(player);
 
-  /* ===================================== */
-  /* ★ 順位取得                           */
-  /* ===================================== */
   const rankedAll = State.matchingRankedAll ?? [];
 
   let candidateRank = -1;
@@ -3298,86 +3248,80 @@ function saveCopyEventUnified(rawText) {
 
   if (idx >= 0) candidateRank = idx + 1;
 
-  /* ===================================== */
-  /* ★ 位相解析（ここが重要）              */
-  /* ===================================== */
   const phaseInfo = getPhaseAnalysis(player);
 
-  /* ===================================== */
-  /* ★ ログ生成                           */
-  /* ===================================== */
   const record = {
 
     t: Date.now(),
+    dk: buildDailyKey(),
 
     n: player.name ?? "",
 
-    /* スコア系 */
     s: Number(detail.score ?? 0),
     p: Number(detail.phaseWeight ?? 0),
     r: Number(detail.realtimeBoost ?? 0),
 
-    /* 順位 */
     c: candidateRank,
 
-    /* 位相系 */
-    pm: phaseInfo.mode,     // 0=Yellow / 1=Pink
-    pc: phaseInfo.cycleSec, // 周期
-    pa: phaseInfo.adjust,   // 補正
-    pf: phaseInfo.folded,   // 折り返し位相
-    pr: phaseInfo.raw       // ★ここが修正の成果
+    pm: phaseInfo.mode,
+    pc: phaseInfo.cycleSec,
+    pa: phaseInfo.adjust,
+    pf: phaseInfo.folded,
+    pr: phaseInfo.raw,
 
+    sid: State.lastSnapshotId ?? null
   };
 
-  /* ===================================== */
-  /* 保存                                 */
-  /* ===================================== */
-  saveCopyEventToStorage(record);
-  logEvent("copy", record);
+  pushStoredRecord(
+    LOG_STORAGE_KEYS.copyEvents,
+    record,
+    LOG_STORAGE_LIMITS.copyEvents,
+    true
+  );
 
   return record;
 }
 /* ---------------------------------------------------------
    [59-A] getPhaseAnalysis（修正版）
    ★ 修正：
-   ★   ・Yellow / Pink を「コピー回数」で判定
+   ★   ・Yellow / Pink をコピー回数で判定
    ★   ・Yellow → 初回（clicks.length === 1）
    ★   ・Pink   → 2回目以降（clicks.length >= 2）
-   ★   ・raw計算を分岐（設計意図に一致）
+   ★   ・raw計算を分岐（設計と一致）
 --------------------------------------------------------- */
 function getPhaseAnalysis(player) {
 
   /* ===================================== */
-  /* ★ 対象プレイヤーのコピー履歴取得       */
+  /* ★ コピー履歴取得                     */
   /* ===================================== */
   const clicks = State.recentClicks.filter(r =>
     normalizePlayerName(r.name) === normalizePlayerName(player.name)
   );
 
   /* ===================================== */
-  /* ★ モード判定（修正ポイント）           */
+  /* ★ モード判定（修正核心）             */
   /* ===================================== */
   const isPink = clicks.length >= 2;
 
   const base = 300;
 
   /* ===================================== */
-  /* ★ 最新クリック取得（Pink用）           */
+  /* ★ 最新クリック                       */
   /* ===================================== */
   const click = clicks.length > 0 ? clicks[0] : null;
 
   /* ===================================== */
-  /* ★ raw計算（周期ロジックの本体）        */
+  /* ★ raw計算                            */
   /* ===================================== */
   let raw = 0;
 
   if (isPink) {
-    // ✅ Pink周期（コピー間隔）
+    // Pink周期
     raw = click
       ? (Date.now() - (click.copiedAt ?? click.time)) / 1000
       : 0;
   } else {
-    // ✅ Yellow周期（LastUpdate差）
+    // Yellow周期
     const last = parseDateJST(player.updateDate)?.getTime();
     raw = last
       ? (Date.now() - last) / 1000
@@ -3385,12 +3329,12 @@ function getPhaseAnalysis(player) {
   }
 
   /* ===================================== */
-  /* fold計算（既存維持）                  */
+  /* fold                                 */
   /* ===================================== */
   const folded = foldToCycle(raw, base);
 
   /* ===================================== */
-  /* adjust取得（既存維持）                */
+  /* adjust                               */
   /* ===================================== */
   const adjust =
     isPink
@@ -3401,7 +3345,7 @@ function getPhaseAnalysis(player) {
     base + clamp(adjust, -45, 45);
 
   /* ===================================== */
-  /* return                                */
+  /* return                               */
   /* ===================================== */
   return {
     mode: isPink ? 1 : 0,
@@ -3410,6 +3354,37 @@ function getPhaseAnalysis(player) {
     adjust,
     cycleSec: cycle
   };
+}
+/* ---------------------------------------------------------
+   [59-B] saveMatchingSnapshot（修正版）
+   ★ 修正：
+   ★   ・snapshotID付与
+   ★   ・State保持
+   ★   ・日単位分割対応
+--------------------------------------------------------- */
+function saveMatchingSnapshot() {
+
+  const snapshotId = Date.now();
+  const dk = buildDailyKey();
+
+  State.lastSnapshotId = snapshotId;
+
+  const snapshot = {
+    id: snapshotId,
+    t: snapshotId,
+    dk: dk,
+    candidates: (State.matchingList || []).map(p => ({
+      name: p.name,
+      score: Number(p.__score ?? 0)
+    }))
+  };
+
+  pushStoredRecord(
+    LOG_STORAGE_KEYS.matchingSnapshots,
+    snapshot,
+    LOG_STORAGE_LIMITS.matchingSnapshots,
+    true
+  );
 }
 /* =========================================================
  [60-01] LOG IndexedDBスキーマ定義（最小）
