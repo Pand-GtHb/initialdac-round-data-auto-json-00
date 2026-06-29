@@ -1610,11 +1610,12 @@ function calcMatchingDiagnostics(list) {
   };
 }
 /* ---------------------------------------------------------
-   [28-B] calcMatchingScoreDetail（微修正）
-   ★ realtime暴走抑制
+   [28-B] calcMatchingScoreDetail（修正版）
+   ★ 修正：
+   ★   ・realtimeBoostの影響を抑制
+   ★   ・phaseWeightとの乗算を弱めて暴走防止
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
-
   if (!player || !player.updateDate) {
     return { score: 0 };
   }
@@ -1630,24 +1631,25 @@ function calcMatchingScoreDetail(player) {
     rankScore * prideWeight * areaFactor * timeWeight;
 
   const cycleSec = getCurrentCycle(player);
-
   const anchor = parseDateJST(player.updateDate)?.getTime();
   const diffSec = (Date.now() - anchor) / 1000;
 
   const theta =
     (2 * Math.PI * (diffSec % cycleSec)) / cycleSec;
 
+  // ★ 修正：phaseWeightを過剰にしない
   const phaseWeight =
-    Math.max(0.1, 1.0 + 0.8 * Math.cos(theta));
+    Math.max(0.2, 1.0 + 0.6 * Math.cos(theta));
 
+  // ★ 修正：boost上限維持
   const realtimeBoost =
     Math.min(getRealtimeBoost(player), 2.5);
 
-  // ★修正：増幅弱化
+  // ★ 修正：影響を弱める（乗算→緩和）
   const selectionWeight =
     rankingScore *
-    phaseWeight *
-    (1 + (realtimeBoost - 1) * 0.5 * (phaseWeight - 1));
+    (1 + (phaseWeight - 1) * 0.7) *
+    (1 + (realtimeBoost - 1) * 0.4);
 
   return {
     score: Math.max(0.0001, selectionWeight),
@@ -2608,13 +2610,18 @@ function findCandidateInfoForLog(player) {
   return result;
 }
 /* ---------------------------------------------------------
-   [47] buildMatchingCandidates（修正版）
-   ★ 修正内容：
-   ★   ・cooldownを「プレイヤー単位」に修正
-   ★   ・全除外バグ解消
+   [47] buildMatchingCandidates（改良版 全文）
+   ★ 修正：
+   ★   ・上位一極集中抑制
+   ★   ・高スコア漏れ防止
+   ★   ・Top固定＋分布補完
+   ★   ・既存機能完全維持
 --------------------------------------------------------- */
 function buildMatchingCandidates() {
 
+  /* ===================================================== */
+  /* ① UIフィルタ取得                                     */
+  /* ===================================================== */
   const selectedStars = [...document.querySelectorAll(".ruby-filter:checked")]
     .map(x => Number(x.value));
 
@@ -2624,12 +2631,10 @@ function buildMatchingCandidates() {
   const base = State.filtered;
 
   /* ===================================================== */
-  /* ① スコア計算                                         */
+  /* ② スコア計算                                         */
   /* ===================================================== */
   const scoredAll = base.map(p => {
-
     const detail = calcMatchingScoreDetail(p);
-
     return {
       ...p,
       __rankKey: getPlayerRankKey(p),
@@ -2639,22 +2644,24 @@ function buildMatchingCandidates() {
   });
 
   /* ===================================================== */
-  /* ② UIフィルタ                                         */
+  /* ③ UIフィルタ適用                                     */
   /* ===================================================== */
   const filteredByUi = scoredAll.filter(p => {
 
     if (!p.updateDate) return false;
     if (!p.__rankKey) return false;
 
+    // RUBY
     if (p.__rankKey.startsWith("R")) {
       return selectedStars.includes(Number(p.starCnt));
-    } else {
-      return selectedPrides.includes(p.__rankKey);
     }
+
+    // PRIDE
+    return selectedPrides.includes(p.__rankKey);
   });
 
   /* ===================================================== */
-  /* ③ rankModelフィルタ                                   */
+  /* ④ rankModelフィルタ                                   */
   /* ===================================================== */
   const filteredByRankModel = filteredByUi.filter(p =>
     Number(p.__detail?.rankingScore ?? 0) > 0
@@ -2666,25 +2673,24 @@ function buildMatchingCandidates() {
       : filteredByUi;
 
   /* ===================================================== */
-  /* ④ ★修正：プレイヤー単位cooldown                       */
+  /* ⑤ プレイヤー単位 cooldown（既存維持）               */
   /* ===================================================== */
   const afterCooldown = analysisBase.filter(p => {
 
-    // このプレイヤーに対応するクリック履歴を探す
     const click = State.recentClicks.find(r =>
       normalizePlayerName(r.name) === normalizePlayerName(p.name) &&
       String(r.shopname ?? "") === String(p.shopname ?? "")
     );
 
-    // クリック履歴がない → 通す
+    // 履歴なし → 通す
     if (!click) return true;
 
     const phase = getPhaseDistanceMin(
-      click.copiedAt || click.time,
+      click.copiedAt ?? click.time,
       5
     );
 
-    // そのプレイヤーのみcooldown除外
+    // 初期cooldown中 → 除外
     if (phase.isInitialCooldown) {
       return false;
     }
@@ -2693,7 +2699,7 @@ function buildMatchingCandidates() {
   });
 
   /* ===================================================== */
-  /* ⑤ rankedAll生成                                      */
+  /* ⑥ 全体ランキング作成                                 */
   /* ===================================================== */
   const rankedAll = [...afterCooldown]
     .sort((a, b) => b.__score - a.__score);
@@ -2701,9 +2707,10 @@ function buildMatchingCandidates() {
   State.matchingRankedAll = rankedAll;
 
   /* ===================================================== */
-  /* ⑥ 分布再現（既存そのまま）                           */
+  /* ⑦ 分布抽選（従来ロジック維持）                       */
   /* ===================================================== */
   const totalCount = Math.min(10, rankedAll.length);
+
   const myStar = String(State.myStar);
   const dist = State.rankModel?.models?.[myStar]?.vs;
 
@@ -2716,12 +2723,14 @@ function buildMatchingCandidates() {
 
     const entries = Object.entries(dist);
 
+    // ---- 各帯の基本枠 ----
     entries.forEach(([key, ratio]) => {
       const cnt = Math.floor(ratio * totalCount);
       quota[key] = cnt;
       sum += cnt;
     });
 
+    // ---- 端数補正 ----
     const sortedKeys = entries
       .sort((a, b) => b[1] - a[1])
       .map(x => x[0]);
@@ -2735,6 +2744,7 @@ function buildMatchingCandidates() {
       idx++;
     }
 
+    // ---- プール構築 ----
     const poolByRank = {};
 
     rankedAll.forEach(p => {
@@ -2745,12 +2755,13 @@ function buildMatchingCandidates() {
       poolByRank[key].push(p);
     });
 
+    // ---- 抽選 ----
     for (const rankKey in quota) {
 
-      const need = quota[rankKey] || 0;
+      const need = quota[rankKey] ?? 0;
       if (need <= 0) continue;
 
-      const pool = poolByRank[rankKey] || [];
+      const pool = poolByRank[rankKey] ?? [];
       if (pool.length === 0) continue;
 
       const picked = selectByWeight(
@@ -2761,17 +2772,18 @@ function buildMatchingCandidates() {
       selected.push(...picked);
     }
 
+    // ---- 不足分補完 ----
     if (selected.length < totalCount) {
 
-      const existing = new Set(
+      const existingKeys = new Set(
         selected.map(p =>
-          `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
+          normalizePlayerName(p.name) + "@@" + String(p.updateDate ?? "")
         )
       );
 
       const rest = rankedAll.filter(p =>
-        !existing.has(
-          `${normalizePlayerName(p.name)}@@${String(p.updateDate ?? "")}`
+        !existingKeys.has(
+          normalizePlayerName(p.name) + "@@" + String(p.updateDate ?? "")
         )
       );
 
@@ -2786,6 +2798,52 @@ function buildMatchingCandidates() {
     selected = rankedAll.slice(0, totalCount);
   }
 
+  /* ===================================================== */
+  /* ⑧ ★修正：Top固定＋補完（最終対策）                   */
+  /* ===================================================== */
+
+  const topFixedCount = Math.min(5, selected.length);
+
+  const sortedAll = [...rankedAll];
+
+  const forcedTop = sortedAll.slice(0, topFixedCount);
+
+  const forcedKeys = new Set(
+    forcedTop.map(p =>
+      normalizePlayerName(p.name) + "@@" + String(p.updateDate ?? "")
+    )
+  );
+
+  const currentKeys = new Set(
+    selected.map(p =>
+      normalizePlayerName(p.name) + "@@" + String(p.updateDate ?? "")
+    )
+  );
+
+  // Topを必ず含める
+  forcedTop.forEach(p => {
+    const key =
+      normalizePlayerName(p.name) + "@@" + String(p.updateDate ?? "");
+    if (!currentKeys.has(key)) {
+      selected[selected.length - 1] = p;
+    }
+  });
+
+  // ---- 重複排除 ----
+  const uniq = new Set();
+
+  selected = selected.filter(p => {
+    const key =
+      normalizePlayerName(p.name) + "@@" + String(p.updateDate ?? "");
+
+    if (uniq.has(key)) return false;
+    uniq.add(key);
+    return true;
+  });
+
+  /* ===================================================== */
+  /* ⑨ 最終ソート＆順位付け                               */
+  /* ===================================================== */
   selected.sort((a, b) => b.__score - a.__score);
 
   selected.forEach((p, i) => {
@@ -2794,7 +2852,7 @@ function buildMatchingCandidates() {
 
   State.matchingList = selected;
 
-  log(`候補生成(DIST): Base=${base.length} / Selected=${selected.length}`);
+  log(`候補生成(調整済): Base=${base.length} / Selected=${selected.length}`);
 }
 /* ---------------------------------------------------------
    [48] renderMatchingHeader      
@@ -3193,23 +3251,44 @@ function startUpdateWatch() {
   log("更新監視を開始（30秒間隔）");
 }
 /* ---------------------------------------------------------
-   [59] saveCopyEventUnified（修正）
-   ★ 判定精度向上（shopname追加）
+   [59] saveCopyEventUnified（修正版）
+   ★ 修正：
+   ★   ・getPhaseAnalysisの修正により
+   ★   ・prがYellow/Pinkで正しく記録される
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
   const player = findPlayerFromCopiedText(rawText);
 
+  /* ===================================== */
+  /* ★ プレイヤーなし                     */
+  /* ===================================== */
   if (!player) {
-    const record = { t: Date.now(), n: "", s: 0, p: 0, r: 0, c: -1 };
+
+    const record = {
+      t: Date.now(),
+      n: "",
+      s: 0,
+      p: 0,
+      r: 0,
+      c: -1
+    };
+
     saveCopyEventToStorage(record);
     logEvent("copy", record);
     return record;
   }
 
+  /* ===================================== */
+  /* ★ スコア計算                         */
+  /* ===================================== */
   const detail = calcMatchingScoreDetail(player);
 
-  const rankedAll = State.matchingRankedAll || [];
+  /* ===================================== */
+  /* ★ 順位取得                           */
+  /* ===================================== */
+  const rankedAll = State.matchingRankedAll ?? [];
+
   let candidateRank = -1;
 
   const idx = rankedAll.findIndex(p =>
@@ -3219,48 +3298,100 @@ function saveCopyEventUnified(rawText) {
 
   if (idx >= 0) candidateRank = idx + 1;
 
+  /* ===================================== */
+  /* ★ 位相解析（ここが重要）              */
+  /* ===================================== */
   const phaseInfo = getPhaseAnalysis(player);
 
+  /* ===================================== */
+  /* ★ ログ生成                           */
+  /* ===================================== */
   const record = {
+
     t: Date.now(),
-    n: player.name || "",
-    s: Number(detail.score || 0),
-    p: Number(detail.phaseWeight || 0),
-    r: Number(detail.realtimeBoost || 0),
+
+    n: player.name ?? "",
+
+    /* スコア系 */
+    s: Number(detail.score ?? 0),
+    p: Number(detail.phaseWeight ?? 0),
+    r: Number(detail.realtimeBoost ?? 0),
+
+    /* 順位 */
     c: candidateRank,
-    pm: phaseInfo.mode,
-    pc: phaseInfo.cycleSec,
-    pa: phaseInfo.adjust,
-    pf: phaseInfo.folded,
-    pr: phaseInfo.raw
+
+    /* 位相系 */
+    pm: phaseInfo.mode,     // 0=Yellow / 1=Pink
+    pc: phaseInfo.cycleSec, // 周期
+    pa: phaseInfo.adjust,   // 補正
+    pf: phaseInfo.folded,   // 折り返し位相
+    pr: phaseInfo.raw       // ★ここが修正の成果
+
   };
 
+  /* ===================================== */
+  /* 保存                                 */
+  /* ===================================== */
   saveCopyEventToStorage(record);
   logEvent("copy", record);
 
   return record;
 }
 /* ---------------------------------------------------------
-   [59-A] getPhaseAnalysis（修正）
-   ★ player単位raw取得
+   [59-A] getPhaseAnalysis（修正版）
+   ★ 修正：
+   ★   ・Yellow / Pink を「コピー回数」で判定
+   ★   ・Yellow → 初回（clicks.length === 1）
+   ★   ・Pink   → 2回目以降（clicks.length >= 2）
+   ★   ・raw計算を分岐（設計意図に一致）
 --------------------------------------------------------- */
 function getPhaseAnalysis(player) {
 
-  const isPink = isCopiedPlayer(player);
-  const base = 300;
-
-  // ★修正：player単位取得
-  const click = State.recentClicks.find(r =>
-    normalizePlayerName(r.name) === normalizePlayerName(player.name) &&
-    String(r.shopname ?? "") === String(player.shopname ?? "")
+  /* ===================================== */
+  /* ★ 対象プレイヤーのコピー履歴取得       */
+  /* ===================================== */
+  const clicks = State.recentClicks.filter(r =>
+    normalizePlayerName(r.name) === normalizePlayerName(player.name)
   );
 
-  const raw = click
-    ? (Date.now() - (click.copiedAt || click.time)) / 1000
-    : 0;
+  /* ===================================== */
+  /* ★ モード判定（修正ポイント）           */
+  /* ===================================== */
+  const isPink = clicks.length >= 2;
 
+  const base = 300;
+
+  /* ===================================== */
+  /* ★ 最新クリック取得（Pink用）           */
+  /* ===================================== */
+  const click = clicks.length > 0 ? clicks[0] : null;
+
+  /* ===================================== */
+  /* ★ raw計算（周期ロジックの本体）        */
+  /* ===================================== */
+  let raw = 0;
+
+  if (isPink) {
+    // ✅ Pink周期（コピー間隔）
+    raw = click
+      ? (Date.now() - (click.copiedAt ?? click.time)) / 1000
+      : 0;
+  } else {
+    // ✅ Yellow周期（LastUpdate差）
+    const last = parseDateJST(player.updateDate)?.getTime();
+    raw = last
+      ? (Date.now() - last) / 1000
+      : 0;
+  }
+
+  /* ===================================== */
+  /* fold計算（既存維持）                  */
+  /* ===================================== */
   const folded = foldToCycle(raw, base);
 
+  /* ===================================== */
+  /* adjust取得（既存維持）                */
+  /* ===================================== */
   const adjust =
     isPink
       ? State.phaseAdjust.pink
@@ -3269,6 +3400,9 @@ function getPhaseAnalysis(player) {
   const cycle =
     base + clamp(adjust, -45, 45);
 
+  /* ===================================== */
+  /* return                                */
+  /* ===================================== */
   return {
     mode: isPink ? 1 : 0,
     raw,
