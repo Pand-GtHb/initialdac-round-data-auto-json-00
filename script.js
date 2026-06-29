@@ -295,6 +295,36 @@ const LOG_STORAGE_LIMITS = {
   matchingSnapshots: 100
 };
 /* ---------------------------------------------------------
+   [08-E] read/write StoredArray（新規）
+   ★ localStorage安全ラッパー
+   ★ 未定義クラッシュ対策（必須）
+--------------------------------------------------------- */
+function readStoredArraySafe(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.warn("readStoredArraySafe error:", key, e);
+    return [];
+  }
+}
+
+function writeStoredArraySafe(key, arr) {
+  try {
+    localStorage.setItem(key, JSON.stringify(arr));
+  } catch (e) {
+    console.error("writeStoredArraySafe error:", key, e);
+  }
+}
+/* ---------------------------------------------------------
+   [08-F] MAX_LOG_LINES（新規）
+   ★ ログ表示上限
+--------------------------------------------------------- */
+const MAX_LOG_LINES = 100;
+
+/* ---------------------------------------------------------
    [08-EXPORT] JSON出力（修正版）
    ★ snapshot含めて出力
 --------------------------------------------------------- */
