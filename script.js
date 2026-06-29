@@ -205,10 +205,19 @@ function saveViewerLogToStorage(payload) {
   );
 }
 
-/* ---------------------------------------------------------  
-   [08-4] appendLog  
+/* ---------------------------------------------------------
+   [08-4] appendLog
+   ★ 修正：
+   ★   ・ログフィルタ allowLog を追加
+   ★   ・不要ログの保存を抑制
 --------------------------------------------------------- */
 function appendLog(msg, type = "info") {
+
+  /* ===================================== */
+  /* ★ ログフィルタ（追加）               */
+  /* ===================================== */
+  if (!allowLog(msg, type)) return;
+
   const box = document.getElementById("logBox");
   const t = getNowLabelJa();
 
@@ -241,6 +250,70 @@ function appendLog(msg, type = "info") {
     latestRound: State.latestRound || "",
     latestUpdateAt: State.latestUpdateAt || ""
   });
+}
+
+/* ---------------------------------------------------------
+   [08-4-A] allowLog（新規追加）
+   ★ Viewerログフィルタ
+   ★ 目的：
+   ★   ・不要ログを完全排除
+   ★   ・Viewerログ軽量化
+   ★ 修正：
+   ★   ・最後を return true に変更し、必要ログを保持
+--------------------------------------------------------- */
+function allowLog(message, type) {
+
+  /* ============================= */
+  /* ★ エラーは必ず通す           */
+  /* ============================= */
+  if (type === "error") return true;
+
+  /* ============================= */
+  /* ★ copyログ                   */
+  /* ============================= */
+  if (message.startsWith("コピー:")) return true;
+
+  /* ============================= */
+  /* ★ ランク変更                 */
+  /* ============================= */
+  if (message.startsWith("自分ランク変更")) return true;
+
+  /* ============================= */
+  /* ★ 初期化（1回のみ）         */
+  /* ============================= */
+  if (message.includes("初期化中")) {
+    if (State._initLogged) return false;
+    State._initLogged = true;
+    return true;
+  }
+
+  /* ============================= */
+  /* ★ 候補生成（重複防止）      */
+  /* ============================= */
+  if (message.includes("候補生成")) {
+    if (State._lastCandidateLog === message) return false;
+    State._lastCandidateLog = message;
+    return true;
+  }
+
+  /* ============================= */
+  /* ★ 完全除外ログ               */
+  /* ============================= */
+  if (
+    message.includes("先読み") ||
+    message.includes("新データ") ||
+    message.includes("更新監視") ||
+    message.includes("フィルタ") ||
+    message.includes("読み込み完了") ||
+    message.includes("取得準備中")
+  ) {
+    return false;
+  }
+
+  /* ============================= */
+  /* ★ その他の情報ログは許可     */
+  /* ============================= */
+  return true;
 }
 
 /* ★ ラッパー */
@@ -288,9 +361,11 @@ function buildDailyKey() {
    [08-D] LOG_STORAGE_LIMITS（追加）
    ★ localStorage保存上限定義
    ★ 日単位分割前提の適正サイズ
+   ★ 修正：
+   ★   ・viewerLogs 上限を 500 → 300 に縮小
 --------------------------------------------------------- */
 const LOG_STORAGE_LIMITS = {
-  viewerLogs: 500,
+  viewerLogs: 300,
   copyEvents: 200,
   matchingSnapshots: 100
 };
