@@ -1,17 +1,18 @@
 {
   "meta": {
-    "version": "scoring_config_v8_phase_cycle_stable",
-    "createdAt": "2026-06-26T23:00:00+09:00",
-    "description": "Cos波＋動的Cycle調整（Yellow/Pink分離・EMA安定版）",
+    "version": "scoring_config_v9_phase_display_only",
+    "createdAt": "2026-06-30T23:00:00+09:00",
+    "description": "Phaseは候補表示専用（スコア完全分離版）",
     "notes": [
       "rank linear",
       "area scale 外部化",
       "time exp 外部化",
-      "phase Cos波（連続波形）",
+      "phase Cos波（表示専用・スコア未使用）",
       "cycle動的補正（EMA）",
       "cooldown前提設計（コード側制御）",
       "display閾値制御",
-      "tolerance/peakBoost廃止済"
+      "tolerance/peakBoost廃止済",
+      "【重要】phaseはスコア計算では使用しない"
     ]
   },
 
@@ -31,9 +32,9 @@
 
   "phase": {
 
-    "amplitude": 0.8,
+    "amplitude": 0.0,
     "base": 1.0,
-    "floor": 0.1,
+    "floor": 1.0,
 
     "yellow": {
       "baseCycleSec": 300,
