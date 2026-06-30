@@ -1097,8 +1097,8 @@ function getRealtimeBoost(player) {
   return detail.total;
 }
 /* ---------------------------------------------------------
-   [23-A] getRealtimeBoostDetail
-   ★ 修正：加算 → 最大一致レベル方式
+   [23-A] getRealtimeBoostDetail  
+   ★ 修正：加算 → 最大一致レベル方式  
 --------------------------------------------------------- */
 function getRealtimeBoostDetail(player) {
 
@@ -1137,9 +1137,14 @@ function getRealtimeBoostDetail(player) {
     else if (sameRank && sameArea) level = 2;
     else if (sameRank || sameArea) level = 1;
 
+    /* ===================================== */
+    /* ★ 修正：強いdecayを保持              */
+    /* ===================================== */
     if (level > bestLevel) {
       bestLevel = level;
       bestDecay = decay;
+    } else if (level === bestLevel) {
+      bestDecay = Math.max(bestDecay, decay);
     }
   }
 
@@ -1406,10 +1411,8 @@ function isCopiedPlayer(player) {
   );
 }
 /* ---------------------------------------------------------
-   [24-B] isMatchingCandidateByPhase    
-   ★ 修正：name＋shopnameで識別    
-   ★ 完全Cos波＋閾値制御    
-   ★ 表示制御をthresholdへ完全移行    
+   [24-B] isMatchingCandidateByPhase      
+   ★ 修正：name＋shopnameで識別      
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(player) {
 
@@ -1419,7 +1422,12 @@ function isMatchingCandidateByPhase(player) {
   const threshold =
     Number(phaseCfg.display?.yellowThreshold ?? 0);
 
-  const cycleSec = getCurrentCycle(player); // ★修正
+  const cycleSec = getCurrentCycle(player);
+
+  /* ===================================== */
+  /* ★ 修正：NaNガード                    */
+  /* ===================================== */
+  if (!cycleSec || !isFinite(cycleSec)) return false;
 
   const anchor = parseDateJST(player.updateDate)?.getTime();
   if (!anchor) return false;
@@ -1712,12 +1720,10 @@ function calcMatchingDiagnostics(list) {
   };
 }
 /* ---------------------------------------------------------
-   [28-B] calcMatchingScoreDetail（修正版）
-   ★ 修正：
-   ★   ・realtimeBoostの影響を抑制
-   ★   ・phaseWeightとの乗算を弱めて暴走防止
+   [28-B] calcMatchingScoreDetail（修正版）  
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
+
   if (!player || !player.updateDate) {
     return { score: 0 };
   }
@@ -1733,21 +1739,27 @@ function calcMatchingScoreDetail(player) {
     rankScore * prideWeight * areaFactor * timeWeight;
 
   const cycleSec = getCurrentCycle(player);
+
   const anchor = parseDateJST(player.updateDate)?.getTime();
+
+  /* ===================================== */
+  /* ★ 修正：anchorガード                */
+  /* ===================================== */
+  if (!anchor || !isFinite(anchor)) {
+    return { score: 0 };
+  }
+
   const diffSec = (Date.now() - anchor) / 1000;
 
   const theta =
     (2 * Math.PI * (diffSec % cycleSec)) / cycleSec;
 
-  // ★ 修正：phaseWeightを過剰にしない
   const phaseWeight =
     Math.max(0.2, 1.0 + 0.6 * Math.cos(theta));
 
-  // ★ 修正：boost上限維持
   const realtimeBoost =
     Math.min(getRealtimeBoost(player), 2.5);
 
-  // ★ 修正：影響を弱める（乗算→緩和）
   const selectionWeight =
     rankingScore *
     (1 + (phaseWeight - 1) * 0.7) *
@@ -1795,21 +1807,23 @@ function selectByWeight(players, count) {
   return result;
 }
 /* --------------------------------------------------------
-   [30] applyFilters
-　　フィルタ起点時刻を　latest_update.json　の　lastUpdated　から
-　　integrated_data.json　の　generatedAt　に変更
-   ★ generatedAt優先 + latestUpdateAt fallback
+   [30] applyFilters  
 ---------------------------------------------------------*/
 function applyFilters() {
 
   const minutes = Number(document.getElementById("rangeSelect").value);
 
-  // ✅ generatedAt優先
+  /* ===================================== */
+  /* ★ 修正：ガード                       */
+  /* ===================================== */
+  if (!isFinite(minutes) || minutes <= 0) {
+    logWarn("rangeSelect 不正値");
+    return;
+  }
+
   let baseDate = parseDateJST(State.generatedAt);
 
-  // ✅ fallback（復旧）
   if (!baseDate || isNaN(baseDate.getTime())) {
-
     baseDate = parseDateJST(State.latestUpdateAt);
 
     if (!baseDate || isNaN(baseDate.getTime())) {
@@ -1818,13 +1832,11 @@ function applyFilters() {
     } else {
       log("フィルタ基準(latestUpdateAt fallback): " + formatYMDHM(baseDate));
     }
-
   } else {
     log("フィルタ基準(generatedAt): " + formatYMDHM(baseDate));
   }
 
   const filterBaseMs = baseDate.getTime();
-
   const filterStartMs = filterBaseMs - (minutes * 60 * 1000);
 
   const startDate = new Date(filterStartMs);
@@ -1851,7 +1863,6 @@ function applyFilters() {
     }
 
     validCount++;
-
     return date.getTime() >= filterStartMs;
   });
 
@@ -2197,15 +2208,17 @@ function showDetail(key, push = true) {
   renderDetailTable(isRubyBand, bandLabel, bandIcon);
   switchDisplayView(STATE.DETAIL);
 }
-
-/* ---------------------------------------------------------      
-   [40] renderDetailTable      
---------------------------------------------------------- */      
+/* ---------------------------------------------------------
+   [40] renderDetailTable        
+--------------------------------------------------------- */
 function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
 
   const area = document.getElementById("detailArea");
 
-  const list = applyPlayerFilter(State.searchText, isRubyBand, true);
+  /* ===================================== */
+  /* ★ 修正：引数整理                     */
+  /* ===================================== */
+  const list = applyPlayerFilter(State.searchText, true);
 
   area.innerHTML = `
     <h3>
@@ -2228,6 +2241,7 @@ function renderDetailTable(isRubyBand, bandLabel, bandIcon) {
             <th>Last Update</th>
           </tr>
         </thead>
+
         <tbody id="detailTableBody"></tbody>
       </table>
     </div>
@@ -2369,8 +2383,8 @@ function renderPlayerRowsToBody(tbodyId, list) {
 
   highlightMatchingRows(tbody);
 }
-/* ---------------------------------------------------------  
-   [42] applyPlayerFilter      
+/* ---------------------------------------------------------
+   [42] applyPlayerFilter        
 --------------------------------------------------------- */
 function applyPlayerFilter(keyword, keepOriginalOrder = false) {
 
@@ -2378,18 +2392,25 @@ function applyPlayerFilter(keyword, keepOriginalOrder = false) {
 
   let base = State.detailOriginal.slice();
 
+  /* ===================================== */
+  /* ★ 修正：ソート制御を専用化          */
+  /* ===================================== */
   if (!keepOriginalOrder) {
     base = base.sort((a, b) =>
       parseDateJST(b.updateDate) - parseDateJST(a.updateDate)
     );
   }
 
+  /* ===================================== */
+  /* 検索フィルタ                         */
+  /* ===================================== */
   if (!normKey) return base;
 
   return base.filter(p =>
     (p.normalizedName || "").includes(normKey)
   );
 }
+1
 /* ---------------------------------------------------------
    [43] downloadCSV    
 --------------------------------------------------------- */      
