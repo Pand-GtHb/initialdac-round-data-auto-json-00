@@ -1672,21 +1672,22 @@ function getTimeWeight(player) {
 
   return weight;
 }
-/* ---------------------------------------------------------  
-   [27] MATCHING_SCORE_CONFIG  
+/* ---------------------------------------------------------
+   [27] MATCHING_SCORE_CONFIG（Phase削除版）  
 --------------------------------------------------------- */
 const MATCHING_SCORE_CONFIG = {
+
   recencyTau: 12,
+
   weight: {
-    strength: 0.40,
-    phase:    0.25,
-    recency:  0.25,
+    strength: 0.60,
+    recency:  0.30,
     activity: 0.10
   },
+
   threshold: 0.30,
   minCandidates: 10
 };
-
 /* ---------------------------------------------------------  
    [28] getPhaseDistanceMin  
 --------------------------------------------------------- */
@@ -1720,7 +1721,12 @@ function calcMatchingDiagnostics(list) {
   };
 }
 /* ---------------------------------------------------------
-   [28-B] calcMatchingScoreDetail（修正版）  
+   [28-B] calcMatchingScoreDetail（Phase完全分離版）  
+   ★ 修正内容：
+   ★   ・phaseWeightを完全削除
+   ★   ・Cos波θ計算削除
+   ★   ・スコアをrankingScore + realtimeBoostのみで構成
+   ★   ・その他構造は完全維持
 --------------------------------------------------------- */
 function calcMatchingScoreDetail(player) {
 
@@ -1735,40 +1741,43 @@ function calcMatchingScoreDetail(player) {
   const areaFactor = Number(getAreaScore(player) || 1);
   const timeWeight = Number(getTimeWeight(player) || 0);
 
+  /* ===================================== */
+  /* ■ 基本スコア                          */
+  /* ===================================== */
   const rankingScore =
     rankScore * prideWeight * areaFactor * timeWeight;
 
-  const cycleSec = getCurrentCycle(player);
+  /* ===================================== */
+  /* ■ Phase完全削除                       */
+  /* ===================================== */
 
-  const anchor = parseDateJST(player.updateDate)?.getTime();
+  /* 旧処理（削除）：
+     const cycleSec = getCurrentCycle(player);
+     const anchor = parseDateJST(player.updateDate)?.getTime();
+     const diffSec = (Date.now() - anchor) / 1000;
+     const theta = (2 * Math.PI * (diffSec % cycleSec)) / cycleSec;
+     const phaseWeight = Math.max(0.2, 1.0 + 0.6 * Math.cos(theta));
+  */
 
   /* ===================================== */
-  /* ★ 修正：anchorガード                */
+  /* ■ リアルタイム補正（保持）            */
   /* ===================================== */
-  if (!anchor || !isFinite(anchor)) {
-    return { score: 0 };
-  }
-
-  const diffSec = (Date.now() - anchor) / 1000;
-
-  const theta =
-    (2 * Math.PI * (diffSec % cycleSec)) / cycleSec;
-
-  const phaseWeight =
-    Math.max(0.2, 1.0 + 0.6 * Math.cos(theta));
-
   const realtimeBoost =
     Math.min(getRealtimeBoost(player), 2.5);
 
+  /* ===================================== */
+  /* ■ 最終スコア                          */
+  /* ===================================== */
   const selectionWeight =
     rankingScore *
-    (1 + (phaseWeight - 1) * 0.7) *
     (1 + (realtimeBoost - 1) * 0.4);
 
   return {
     score: Math.max(0.0001, selectionWeight),
+
+    /* ▼ 構造維持（重要） */
     rankingScore,
-    phaseWeight,
+    phaseWeight: 1.0,   // ← 常時1固定（互換維持）
     realtimeBoost,
     selectionWeight
   };
