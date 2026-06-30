@@ -1411,21 +1411,24 @@ function isCopiedPlayer(player) {
   );
 }
 /* ---------------------------------------------------------
-   [24-B] isMatchingCandidateByPhase      
-   ★ 修正：name＋shopnameで識別      
+   [24-B] isMatchingCandidateByPhase        
+   ★ 修正：name＋shopnameで識別        
+   ★ 修正追加：
+   ★   ・cosValueを明示化（再利用可能構造）
 --------------------------------------------------------- */
 function isMatchingCandidateByPhase(player) {
 
   if (!player || !player.updateDate) return false;
 
   const phaseCfg = State.scoringConfig?.phase ?? {};
+
   const threshold =
     Number(phaseCfg.display?.yellowThreshold ?? 0);
 
   const cycleSec = getCurrentCycle(player);
 
   /* ===================================== */
-  /* ★ 修正：NaNガード                    */
+  /* ★ NaNガード                          */
   /* ===================================== */
   if (!cycleSec || !isFinite(cycleSec)) return false;
 
@@ -1435,9 +1438,18 @@ function isMatchingCandidateByPhase(player) {
   const diffSec = (Date.now() - anchor) / 1000;
 
   const rSec = diffSec % cycleSec;
+
   const theta = (2 * Math.PI * rSec) / cycleSec;
 
-  return Math.cos(theta) > threshold;
+  /* ===================================== */
+  /* ★ NEW：cos値取得（ログ再利用対応）    */
+  /* ===================================== */
+  const cosValue = Math.cos(theta);
+
+  /* ===================================== */
+  /* 判定                                */
+  /* ===================================== */
+  return cosValue > threshold;
 }
 /* ---------------------------------------------------------  
    [24-C] getLatestCopiedPlayer  
@@ -3343,17 +3355,20 @@ function startUpdateWatch() {
   log("更新監視を開始（30秒間隔）");
 }
 /* ---------------------------------------------------------
-   [59] saveCopyEventUnified（修正版）
-   ★ 修正：
-   ★   ・snapshotID紐付け
-   ★   ・日単位分割対応
-   ★   ・Yellow/Pinkログ維持
+   [59] saveCopyEventUnified（修正版）  
+   ★ 修正：  
+   ★   ・snapshotID紐付け  
+   ★   ・日単位分割対応  
+   ★   ・Yellow/Pinkログ維持  
+   ★ 修正追加：
+   ★   ・phaseScore（cosθ）追加（最適化対応）
 --------------------------------------------------------- */
 function saveCopyEventUnified(rawText) {
 
   const player = findPlayerFromCopiedText(rawText);
 
   if (!player) {
+
     const record = {
       t: Date.now(),
       dk: buildDailyKey(),
@@ -3390,18 +3405,42 @@ function saveCopyEventUnified(rawText) {
 
   const phaseInfo = getPhaseAnalysis(player);
 
-  const record = {
+  /* ===================================== */
+  /* ★ NEW：phaseScore算出                 */
+  /* ===================================== */
 
+  let phaseScore = 0;
+
+  try {
+
+    const cycleSec = phaseInfo.cycleSec || 300;
+
+    const rawSec = phaseInfo.raw || 0;
+
+    const theta =
+      (2 * Math.PI * (rawSec % cycleSec)) / cycleSec;
+
+    phaseScore = Math.cos(theta);
+
+  } catch (e) {
+    phaseScore = 0;
+  }
+
+  /* ===================================== */
+  /* ★ record構築                          */
+  /* ===================================== */
+
+  const record = {
     t: Date.now(),
     dk: buildDailyKey(),
-
     n: player.name ?? "",
-
     s: Number(detail.score ?? 0),
     p: Number(detail.phaseWeight ?? 0),
     r: Number(detail.realtimeBoost ?? 0),
-
     c: candidateRank,
+
+    /* ★ 追加（最重要） */
+    ph: Number(phaseScore.toFixed(4)),
 
     pm: phaseInfo.mode,
     pc: phaseInfo.cycleSec,
