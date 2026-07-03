@@ -890,48 +890,76 @@ function applyRoundDataJson(json, options = {}) {
   }
 }
 /* ---------------------------------------------------------
-   [18-B] 先読み済みデータ優先で最新データ適用  
+   [18-B] Reload時は必ず最新integrated_data.json取得
+   ★ 修正内容：
+   ★   ・prefetchデータを表示に使用しない
+   ★   ・Reload押下時は必ず最新JSONを取得
+   ★   ・GitHub Pages CDN遅延対策
+   ★   ・古い先読みキャッシュ適用問題を解消
 --------------------------------------------------------- */
 async function reloadLatestDataPreferPrefetch() {
+
   startProgress();
+
   try {
-    if (State.prefetchedRoundData) {
-      log("先読み済みデータを適用します");
-      applyRoundDataJson(State.prefetchedRoundData, { resetReloadButton: true });
-      // ★ 適用後クリア
-      State.prefetchedRoundData = null;
-      State.prefetchedForUpdateAt = "";
-    } else {
-      log("先読みデータなしのため通常取得します");
-      await loadRoundData();
-    }
+
+    log("Reload要求：最新integrated_data.json再取得開始");
+
+    /* ===================================== */
+    /* ★ 必ず最新取得                         */
+    /* ===================================== */
+
+    await loadRoundData();
+
+    /* ===================================== */
+    /* ★ 古い先読みキャッシュ破棄             */
+    /* ===================================== */
+
+    State.prefetchedRoundData = null;
+    State.prefetchedForUpdateAt = "";
+
     applyFilters();
     buildSummary();
     renderSummary();
-  } finally {
-    stopProgress();
-  }
-}
 
-/* ---------------------------------------------------------  
-   [19-A] 最新データ先読み  
+    log(
+      "Reload完了：generatedAt="
+      + (State.generatedAt || "none")
+    );
+
+  } finally {
+
+    stopProgress();
+
+  }
+
+}
+/* ---------------------------------------------------------
+   [19-A] 最新データ先読み
+   ★ 修正内容：
+   ★   ・通知用先読みとして維持
+   ★   ・画面反映には使用しない
+   ★   ・generatedAt確認ログ追加
 --------------------------------------------------------- */
 async function prefetchLatestRoundData(lastUpdatedValue) {
 
   if (!lastUpdatedValue) return;
 
-  // ★ 既に対象更新版を先読み済みなら何もしない
-  if (State.prefetchedForUpdateAt === lastUpdatedValue && State.prefetchedRoundData) {
+  if (
+    State.prefetchedForUpdateAt === lastUpdatedValue &&
+    State.prefetchedRoundData
+  ) {
     return;
   }
 
-  // ★ 同一更新に対する多重起動防止
   if (State.prefetchInFlight) {
     return State.prefetchInFlight;
   }
 
   State.prefetchInFlight = (async () => {
+
     try {
+
       log("新データ先読み開始");
 
       const json = await fetchRoundDataJson();
@@ -939,19 +967,32 @@ async function prefetchLatestRoundData(lastUpdatedValue) {
       State.prefetchedRoundData = json;
       State.prefetchedForUpdateAt = lastUpdatedValue;
 
-      log("新データ先読み完了");
+      const generatedAt =
+        String(json?.generatedAt ?? "");
+
+      log(
+        "先読み完了 generatedAt="
+        + generatedAt
+      );
 
     } catch (e) {
-      logWarn("新データ先読みに失敗：" + e.message);
+
+      logWarn(
+        "新データ先読みに失敗："
+        + e.message
+      );
 
     } finally {
+
       State.prefetchInFlight = null;
+
     }
+
   })();
 
   return State.prefetchInFlight;
-}
 
+}
 /* ---------------------------------------------------------  
    [19-B] checkUpdate（共通apply利用版）  
 --------------------------------------------------------- */
