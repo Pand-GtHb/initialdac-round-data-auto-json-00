@@ -1551,15 +1551,15 @@ function getLatestCopiedPlayer() {
  * 戻り値:
  *   0.0 ～ 1.0
  * ===================================== */
-function getPinkPhaseScore(playe*) {
+function getPinkPhaseScore(player) {
 
   if (!player) {
-    return 0*
+    return 0;
   }
 
-  const click = State.recent*licks.find(r =>
-    normalizePlaye*Name(r.name) ===
-      normalizePl*yerName(player.name) &&
+  const click = State.recentClicks.find(r =>
+    normalizePlayerName(r.name) ===
+      normalizePlayerName(player.name) &&
     String(r.shopname ?? "") ===
       String(player.shopname ?? "")
   );
@@ -1583,7 +1583,7 @@ function getPinkPhaseScore(playe*) {
    * 初回サイクル内
    * ===================================== */
   if (diffSec < cycleSec) {
-    *eturn 1;
+    return 1;
   }
 
   const theta =
@@ -1600,14 +1600,15 @@ function getPinkPhaseScore(playe*) {
 /* =====================================
  * Pink判定
  * ===================================== */
-function isMatchingCandidateByCo*yPhase(player) {
+function isMatchingCandidateByCopyPhase(player) {
 
-  if (!player) {*    return false;
+  if (!player) {
+    return false;
   }
 
-  const cli*k = State.recentClicks.find(r =>
- *  normalizePlayerName(r.name) ===
-*     normalizePlayerName(player.na*e) &&
+  const click = State.recentClicks.find(r =>
+    normalizePlayerName(r.name) ===
+      normalizePlayerName(player.name) &&
     String(r.shopname ?? "") ===
       String(player.shopname ?? "")
   );
@@ -1631,18 +1632,18 @@ function isMatchingCandidateByCo*yPhase(player) {
    * 初回サイクル内
    * ===================================== */
   if (diffSec < cycleSec) {
-    *eturn true;
+    return true;
   }
 
   const theta =
- *  (2 * Math.PI *
-      (diffSec % *ycleSec)) /
+    (2 * Math.PI *
+      (diffSec % cycleSec)) /
     cycleSec;
 
-  const*cosValue =
+  const cosValue =
     Math.cos(theta);
 
- *return cosValue > 0;
+  return cosValue > 0;
 }
 /*--------------------------------------------------------
    [25] scoring_config 取得/適用 分離  
