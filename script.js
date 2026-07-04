@@ -43,6 +43,7 @@ const State = {
   areaModel: {},
   scoringConfig: null,
   updateWatchTimer: null,
+  updateCheckRunning: false,
   prefetchedRoundData: null,
   prefetchedForUpdateAt: "",
   prefetchInFlight: null,
@@ -251,14 +252,17 @@ function appendLog(msg, type = "info") {
     latestUpdateAt: State.latestUpdateAt || ""
   });
 }
-
 /* ---------------------------------------------------------
    [08-4-A] allowLog（Viewerログ整理版）
-
    ★方針
    ・Viewer動作確認専用
    ・分析用途ログは出力しない
    ・必要ログのみ許可
+
+   ★追加
+   ・先読み状態ログ
+   ・通信状態ログ
+   ・監視開始ログ
 --------------------------------------------------------- */
 function allowLog(message, type) {
 
@@ -289,10 +293,13 @@ function allowLog(message, type) {
    * ★ 候補生成
    * ============================= */
   if (message.includes("候補生成")) {
+
     if (State._lastCandidateLog === message) {
       return false;
     }
+
     State._lastCandidateLog = message;
+
     return true;
   }
 
@@ -318,11 +325,42 @@ function allowLog(message, type) {
   }
 
   /* =============================
+   * ★ Priority-B追加
+   * ============================= */
+
+  if (message.includes("更新監視開始")) {
+    return true;
+  }
+
+  if (message.includes("先読み開始")) {
+    return true;
+  }
+
+  if (message.includes("先読み成功")) {
+    return true;
+  }
+
+  if (message.includes("先読み失敗")) {
+    return true;
+  }
+
+  if (message.includes("利用元:")) {
+    return true;
+  }
+
+  if (message.includes("通信時間")) {
+    return true;
+  }
+
+  if (message.includes("Timeout")) {
+    return true;
+  }
+
+  /* =============================
    * ★ その他は出力しない
    * ============================= */
   return false;
 }
-
 /* ★ ラッパー */
 const log = msg => appendLog(msg, "info");
 const logWarn = msg => appendLog(msg, "warn");
@@ -632,20 +670,115 @@ function renderStars(starCount) {
     : stars;      
 }
 /* ---------------------------------------------------------
-   [14] fetchJSON（共通取得）  
+   [14] fetchJSON（共通取得）
+
+   ★修正
+   ・Timeout追加
+   ・通信時間計測
+   ・Retry対応
+
+   ★追加改善
+   ・latest_update.json 通信ログ抑制
+   ・1秒超のみViewerログ出力
 --------------------------------------------------------- */
 async function fetchJSON(path, options = {}) {
+
   const { cache = "no-store" } = options;
 
-  const res = await fetch(`${BASE_URL}/${path}?t=${Date.now()}`, {
-    cache
-  });
+  const MAX_RETRY = 3;
 
-  if (!res.ok) throw new Error("HTTP " + res.status);
+  let lastError = null;
 
-  return res.json();
+  for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
+
+    const controller =
+      new AbortController();
+
+    const timeoutTimer =
+      setTimeout(() => {
+        controller.abort();
+      }, 10000);
+
+    const startedAt =
+      performance.now();
+
+    try {
+
+      const res = await fetch(
+        `${BASE_URL}/${path}?t=${Date.now()}`,
+        {
+          cache,
+          signal: controller.signal
+        }
+      );
+
+      clearTimeout(timeoutTimer);
+
+      if (!res.ok) {
+        throw new Error(
+          "HTTP " + res.status
+        );
+      }
+
+      const json =
+        await res.json();
+
+      const elapsed =
+        Math.round(
+          performance.now() - startedAt
+        );
+
+      /* ===================================== */
+      /* ★ 通信時間ログ                       */
+      /* ===================================== */
+
+      if (
+        path !== "latest_update.json" ||
+        elapsed >= 1000
+      ) {
+
+        log(
+          `${path} 通信時間:${elapsed}ms`
+        );
+
+      }
+
+      return json;
+
+    } catch (e) {
+
+      clearTimeout(timeoutTimer);
+
+      lastError = e;
+
+      if (
+        e.name === "AbortError"
+      ) {
+
+        logWarn(
+          `${path} Timeout`
+        );
+
+      }
+
+      if (attempt < MAX_RETRY) {
+
+        await new Promise(resolve =>
+          setTimeout(
+            resolve,
+            attempt * 1000
+          )
+        );
+
+      }
+
+    }
+
+  }
+
+  throw lastError;
+
 }
-
 /* ---------------------------------------------------------  
    [15] loadAreaList★ areaList.json 読み込み（辞書化）  
 --------------------------------------------------------- */
@@ -898,13 +1031,13 @@ function applyRoundDataJson(json, options = {}) {
 }
 /* ---------------------------------------------------------
    [18-B] Reload時は先読みデータを優先利用
-
    ★修正内容
    ★   ・Data先読みを復活
    ★   ・先読み済みデータがあれば即適用
    ★   ・先読みデータが無い場合は最新取得
    ★   ・Reload完了ログは維持
    ★   ・Viewerログは軽量化
+   ★   ・利用元を明示表示
 --------------------------------------------------------- */
 async function reloadLatestDataPreferPrefetch() {
 
@@ -915,7 +1048,12 @@ async function reloadLatestDataPreferPrefetch() {
     /* ===================================== */
     /* ★ 先読みデータ適用                   */
     /* ===================================== */
+
     if (State.prefetchedRoundData) {
+
+      log(
+        "Reload 利用元:Prefetch"
+      );
 
       applyRoundDataJson(
         State.prefetchedRoundData,
@@ -932,6 +1070,11 @@ async function reloadLatestDataPreferPrefetch() {
       /* ===================================== */
       /* ★ fallback：最新取得                 */
       /* ===================================== */
+
+      log(
+        "Reload 利用元:Fallback"
+      );
+
       await loadRoundData();
 
     }
@@ -939,6 +1082,7 @@ async function reloadLatestDataPreferPrefetch() {
     /* ===================================== */
     /* ★ 再集計                             */
     /* ===================================== */
+
     applyFilters();
 
     buildSummary();
@@ -948,6 +1092,7 @@ async function reloadLatestDataPreferPrefetch() {
     /* ===================================== */
     /* ★ Reload完了ログ                     */
     /* ===================================== */
+
     log(
       "Reload完了：generatedAt="
       + (State.generatedAt || "none")
@@ -961,7 +1106,13 @@ async function reloadLatestDataPreferPrefetch() {
 }
 /* ---------------------------------------------------------
    [19-A] 最新データ先読み
-   ★ Viewerログ非出力版
+   ★ Viewerログ出力対応版
+   ★ 修正内容
+   ★   ・先読み開始ログ
+   ★   ・先読み成功ログ
+   ★   ・先読み失敗ログ
+   ★   ・通信時間表示
+   ★   ・件数表示
 --------------------------------------------------------- */
 async function prefetchLatestRoundData(lastUpdatedValue) {
 
@@ -980,15 +1131,39 @@ async function prefetchLatestRoundData(lastUpdatedValue) {
 
   State.prefetchInFlight = (async () => {
 
+    const startedAt =
+      performance.now();
+
     try {
 
-      const json = await fetchRoundDataJson();
+      log("先読み開始");
 
-      State.prefetchedRoundData = json;
+      const json =
+        await fetchRoundDataJson();
 
-      State.prefetchedForUpdateAt = lastUpdatedValue;
+      State.prefetchedRoundData =
+        json;
+
+      State.prefetchedForUpdateAt =
+        lastUpdatedValue;
+
+      const elapsed =
+        Math.round(
+          performance.now() - startedAt
+        );
+
+      const count =
+        json?.records?.length ?? 0;
+
+      log(
+        `先読み成功:${count}件 通信時間:${elapsed}ms`
+      );
 
     } catch (e) {
+
+      logWarn(
+        "先読み失敗:" + e.message
+      );
 
       console.warn(
         "prefetch failed:",
@@ -998,54 +1173,130 @@ async function prefetchLatestRoundData(lastUpdatedValue) {
     } finally {
 
       State.prefetchInFlight = null;
+
     }
 
   })();
 
   return State.prefetchInFlight;
 }
-/* ---------------------------------------------------------  
-   [19-B] checkUpdate（共通apply利用版）  
+/* ---------------------------------------------------------
+   [19-B] checkUpdate（共通apply利用版）
+
+   ★修正内容
+   ★   ・多重実行防止
+   ★   ・重複fetch検出
+   ★   ・更新検知維持
+   ★   ・先読み起動維持
+
+   ★追加改善
+   ★   ・多重実行抑止をViewerログへ出力
+   ★   ・原因分析しやすくする
 --------------------------------------------------------- */
 async function checkUpdate() {
 
+  /* ===================================== */
+  /* ★ 多重実行防止                       */
+  /* ===================================== */
+
+  if (State.updateCheckRunning) {
+
+    logWarn(
+      "checkUpdate重複実行を抑止"
+    );
+
+    console.warn(
+      "[checkUpdate] skipped (already running)"
+    );
+
+    return;
+
+  }
+
+  State.updateCheckRunning = true;
+
   try {
-    const prev = State.latestUpdateAt || "";
 
-    const json = await fetchLatestUpdateJson();
+    const prev =
+      State.latestUpdateAt || "";
 
-    let latest = json?.lastUpdated ?? json?.latestUpdateAt ?? "";
+    const json =
+      await fetchLatestUpdateJson();
+
+    let latest =
+      json?.lastUpdated ??
+      json?.latestUpdateAt ??
+      "";
 
     if (typeof latest !== "string") {
-      latest = String(latest || "");
+
+      latest =
+        String(latest || "");
+
     }
 
-    if (!latest) return;
+    if (!latest) {
 
-    const changed = prev && prev !== latest;
+      return;
 
-    // ★ 安全代入
+    }
+
+    const changed =
+      prev &&
+      prev !== latest;
+
     State.latestUpdateAt = latest;
 
+    /* ===================================== */
+    /* ★ 更新検知                           */
+    /* ===================================== */
+
     if (changed) {
-      const btn = document.getElementById("reloadBtn");
+
+      const btn =
+        document.getElementById(
+          "reloadBtn"
+        );
 
       if (btn) {
-        btn.classList.add("update-alert");
-        btn.style.cssText = "background:#ff4081;color:#fff;font-weight:bold;";
+
+        btn.classList.add(
+          "update-alert"
+        );
+
+        btn.style.cssText =
+          "background:#ff4081;color:#fff;font-weight:bold;";
+
       }
 
-      logWarn("新しいデータが公開されています。");
+      logWarn(
+        "新しいデータが公開されています。"
+      );
 
-      // ★ 先読み（既存維持）
-      prefetchLatestRoundData(latest);
+      /* ===================================== */
+      /* ★ 先読み開始                         */
+      /* ===================================== */
+
+      prefetchLatestRoundData(
+        latest
+      );
+
     }
 
   } catch (e) {
-    logError("latest_update.json の取得に失敗：" + e.message);
-  }
-}
 
+    logError(
+      "latest_update.json の取得に失敗："
+      + e.message
+    );
+
+  } finally {
+
+    State.updateCheckRunning = false;
+
+  }
+
+}
 /* ---------------------------------------------------------      
    [20] buildAreaDistribution（分布計算）  
 --------------------------------------------------------- */
@@ -3749,18 +4000,34 @@ window.addEventListener('popstate', (e) => {
 });
 /* ---------------------------------------------------------
    [58] startUpdateWatch（更新監視開始）
+
+   ★修正内容
+   ★   ・監視開始ログ追加
+   ★   ・既存の単一タイマー構造維持
+   ★   ・既存の30秒監視維持
 --------------------------------------------------------- */
 function startUpdateWatch() {
 
   if (State.updateWatchTimer) {
-    clearInterval(State.updateWatchTimer);
+
+    clearInterval(
+      State.updateWatchTimer
+    );
+
   }
+
+  log(
+    "更新監視開始(30秒間隔)"
+  );
 
   checkUpdate();
 
-  State.updateWatchTimer = setInterval(() => {
-    checkUpdate();
-  }, 30000);
+  State.updateWatchTimer =
+    setInterval(() => {
+
+      checkUpdate();
+
+    }, 30000);
 }
 /* ---------------------------------------------------------
    [59] saveCopyEventUnified（修正版）  
