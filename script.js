@@ -2322,7 +2322,6 @@ function buildSummary() {
 /* =========================================================
  [540] Summary Renderer
 ========================================================= */
-
 function filterSummaryBySearch() {
 
   const norm =
@@ -2357,7 +2356,9 @@ function filterSummaryBySearch() {
 
   return filtered;
 }
-
+/* =========================================================
+ [545] renderSummary
+========================================================= */
 function renderSummary() {
 
   const area =
@@ -2524,7 +2525,9 @@ function renderSummary() {
     });
 
   State.currentDetailKey = "";
+
   State.currentDetailLabel = "";
+
   State.currentDetailIcon = "";
 
   setCurrentView(
@@ -3057,6 +3060,115 @@ function buildPlayerRowHTML(
 
     </tr>
   `;
+}
+/* ---------------------------------------------------------
+   [665] copyToClipboard
+   ★ 安定版復元
+--------------------------------------------------------- */
+function copyToClipboard(text) {
+
+  const afterCopySuccess = () => {
+
+    /* ===================================== */
+    /* ★ snapshotを先に保存（重要）         */
+    /* ===================================== */
+    saveMatchingSnapshot();
+
+    /* ===================================== */
+    /* ★ copyログ保存（localStorage）        */
+    /* ===================================== */
+    const copyRecord =
+      saveCopyEventUnified(text);
+
+    /* ===================================== */
+    /* ★ analysisログ保存                    */
+    /* ===================================== */
+    logEvent(
+      "copy",
+      copyRecord
+    );
+
+    /* ===================================== */
+    /* ★ クリック履歴更新                    */
+    /* ===================================== */
+    recordClickFromCopiedText(text);
+
+    const player =
+      findPlayerFromCopiedText(
+        text
+      );
+
+    if (player) {
+
+      const clicks =
+        State.recentClicks.filter(
+          r =>
+            normalizePlayerName(
+              r.name
+            ) ===
+            normalizePlayerName(
+              player.name
+            )
+        );
+
+      if (clicks.length === 1) {
+        calcYellowCycle(player);
+      }
+
+      if (clicks.length >= 2) {
+        calcPinkCycle(player);
+      }
+
+    }
+
+    log(`コピー: ${text}`);
+
+    /* ===================================== */
+    /* ★ 候補再生成                          */
+    /* ===================================== */
+    buildMatchingCandidates();
+
+    /* ===================================== */
+    /* ★ UI再描画                            */
+    /* ===================================== */
+    if (
+      isCurrentView(
+        STATE.MATCHING
+      )
+    ) {
+
+      renderMatchingHeader();
+      renderMatchingTable();
+
+    } else if (
+      isCurrentView(
+        STATE.DETAIL
+      )
+    ) {
+
+      renderDetailTable(
+        State.currentIsRubyBand,
+        State.currentDetailLabel,
+        State.currentDetailIcon
+      );
+
+    } else {
+
+      renderSummary();
+
+    }
+
+  };
+
+  navigator.clipboard
+    .writeText(text)
+    .then(afterCopySuccess)
+    .catch(() =>
+      logError(
+        "コピー失敗"
+      )
+    );
+
 }
 /* =========================================================
  [670] Detail Filter
@@ -5085,9 +5197,8 @@ function buildMatchingCandidates() {
   );
 }
 /* =========================================================
- [780] Matching Renderer
+ [780] Matching Header
 ========================================================= */
-
 function renderMatchingHeader() {
 
   const headerEl =
@@ -5139,7 +5250,6 @@ function renderMatchingHeader() {
               white-space:nowrap;
             "
           >
-
             ${r.icon}
 
             ${r.label}：${fmt(cnt)}人
