@@ -902,7 +902,50 @@ function applyRankModelJson(
   );
 }
 /* =========================================================
- [450] Round Data Loader
+ [450] Scoring Config Loader
+========================================================= */
+
+async function loadScoringConfig() {
+
+  try {
+
+    const json =
+      await fetchJSON(
+        "scoring_config.json"
+      );
+
+    applyScoringConfigJson(
+      json
+    );
+
+  } catch (e) {
+
+    logWarn(
+      "scoring_config.json 未取得：" +
+      e.message
+    );
+  }
+}
+
+async function fetchScoringConfigJson() {
+
+  return fetchJSON(
+    "scoring_config.json"
+  );
+}
+
+function applyScoringConfigJson(
+  json
+) {
+
+  State.scoringConfig = json;
+
+  log(
+    "scoring_config.json 読み込み完了"
+  );
+}
+/* =========================================================
+ [460] Round Data Loader
 ========================================================= */
 
 async function fetchRoundDataJson() {
@@ -994,7 +1037,7 @@ function applyRoundDataJson(
   }
 }
 /* =========================================================
- [460] Reload & Prefetch
+ [470] Reload & Prefetch
 ========================================================= */
 
 async function reloadLatestDataPreferPrefetch() {
@@ -1151,7 +1194,7 @@ async function prefetchLatestRoundData(
   return State.prefetchInFlight;
 }
 /* =========================================================
- [470] Update Watch Core
+ [480] Update Watch Core
 ========================================================= */
 
 async function checkUpdate() {
