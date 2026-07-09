@@ -81,28 +81,47 @@ const PRIDE_LEVELS = [
 ];
 
 const RANKS = [
+
   ...Array.from({ length: 8 }, (_, i) => ({
+
     key: `R${i + 1}`,
+
     type: "ruby",
+
     star: i + 1,
+
     label: `★${i + 1}`,
+
     badgeId: RUBY_ID,
+
     icon:
       `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
+
     order: i
+
   })),
 
   ...PRIDE_LEVELS.map((p, idx) => ({
+
     key: p.key,
+
     type: "pride",
+
     min: p.min,
+
     max: p.max,
+
     label: p.level,
+
     badgeId: p.icon,
+
     icon:
       `https://initiald.sega.jp/inidac/ranking-images/pride/${p.icon}.png`,
+
     order: 8 + idx
+
   }))
+
 ];
 /* =========================================================
  [140] Rank Utility
@@ -2402,6 +2421,7 @@ function renderSummary() {
 
     <div style="overflow-x:auto;">
       <table>
+
         <tr>
           <th>ランク</th>
           <th>★・Lv</th>
@@ -2421,17 +2441,17 @@ function renderSummary() {
             avg,
             min,
             max
-          } =
-            calcStats(
-              r.list,
-              total
-            );
+          } = calcStats(
+            r.list,
+            total
+          );
 
           return `
             <tr
               class="clickable"
               data-key="${r.key}"
             >
+
               <td class="center">
                 ${r.icon}
               </td>
@@ -2452,8 +2472,8 @@ function renderSummary() {
                 <div class="bar-wrap">
                   <div
                     class="bar"
-                    style="width:${percent}%;">
-                  </div>
+                    style="width:${percent}%;"
+                  ></div>
                 </div>
               </td>
 
@@ -2468,10 +2488,12 @@ function renderSummary() {
               <td class="right">
                 ${fmt(max)}
               </td>
+
             </tr>
           `;
 
         }).join("")}
+
       </table>
     </div>
   `;
@@ -2501,14 +2523,9 @@ function renderSummary() {
       );
     });
 
-  State.currentDetailKey =
-    "";
-
-  State.currentDetailLabel =
-    "";
-
-  State.currentDetailIcon =
-    "";
+  State.currentDetailKey = "";
+  State.currentDetailLabel = "";
+  State.currentDetailIcon = "";
 
   setCurrentView(
     STATE.SUMMARY
@@ -2600,12 +2617,10 @@ function setupRankNavigation(
 /* =========================================================
  [610] Detail Renderer
 ========================================================= */
-
 function showDetail(
   key,
   push = true
 ) {
-
   const row =
     State.summary.find(
       r => r.key === key
@@ -2737,6 +2752,9 @@ function showDetail(
     STATE.DETAIL
   );
 }
+/* =========================================================
+ [620] Player Row Renderer
+========================================================= */
 
 function renderDetailTable(
   isRubyBand,
@@ -2757,6 +2775,7 @@ function renderDetailTable(
 
   area.innerHTML = `
     <h3>
+
       <span style="margin-right:8px;">
         ${
           bandIcon
@@ -2765,16 +2784,22 @@ function renderDetailTable(
         }
       </span>
 
-      <span>${bandLabel}</span>
+      <span>
+        ${bandLabel}
+      </span>
 
       <span style="margin-left:16px;">
         （${fmt(list.length)}人）
       </span>
+
     </h3>
 
     <div style="overflow-x:auto;">
+
       <table>
+
         <thead>
+
           <tr>
             <th>★・PRIDE</th>
             <th>プレイヤー名</th>
@@ -2783,10 +2808,13 @@ function renderDetailTable(
             <th>称号</th>
             <th>Last Update</th>
           </tr>
+
         </thead>
 
         <tbody id="detailTableBody"></tbody>
+
       </table>
+
     </div>
   `;
 
@@ -2796,10 +2824,12 @@ function renderDetailTable(
   );
 }
 /* =========================================================
- [620] Player Row Renderer
+ [630] Clipboard Action
 ========================================================= */
 
-function buildPlayerRowHTML(p) {
+function buildPlayerRowHTML(
+  p
+) {
 
   const titleUrl =
     p.mytitleId
@@ -2812,41 +2842,74 @@ function buildPlayerRowHTML(p) {
 
   const starOrLevel =
     isRuby
-      ? renderStars(p.starCnt)
+      ? renderStars(
+          p.starCnt
+        )
       : p.pridePoint;
 
   const fullShop =
     p.shopname ?? "";
 
   const shortShop =
-    shortenStoreName(fullShop);
+    shortenStoreName(
+      fullShop
+    );
 
   const safeName =
-    String(p.name ?? "")
-      .replace(/\\/g, "\\\\")
-      .replace(/'/g, "\\'")
-      .replace(/"/g, '\\"');
+    String(
+      p.name ?? ""
+    )
+      .replace(
+        /\\/g,
+        "\\\\"
+      )
+      .replace(
+        /'/g,
+        "\\'"
+      )
+      .replace(
+        /"/g,
+        '\\"'
+      );
 
   const safeShop =
-    String(fullShop ?? "")
-      .replace(/\\/g, "\\\\")
-      .replace(/'/g, "\\'")
-      .replace(/"/g, "&quot;");
+    String(
+      fullShop ?? ""
+    )
+      .replace(
+        /\\/g,
+        "\\\\"
+      )
+      .replace(
+        /'/g,
+        "\\'"
+      )
+      .replace(
+        /"/g,
+        "&quot;"
+      );
 
   const copyValue =
     isRuby
-      ? `★${"★".repeat(p.starCnt - 1)}\t${safeName}`
+      ? `★${"★".repeat(
+          p.starCnt - 1
+        )}\t${safeName}`
       : `${p.pridePoint}\t${safeName}`;
 
   return `
     <tr data-updated="${p.updateDate}">
-      <td class="center clickable"
-          onclick="copyToClipboard('${copyValue}')">
+
+      <td
+        class="center clickable"
+        onclick="copyToClipboard('${copyValue}')"
+      >
         ${starOrLevel}
       </td>
 
-      <td class="left player-name clickable"
-          onclick="copyToClipboard('${safeName}')">
+      <td
+        class="left player-name clickable"
+        onclick="copyToClipboard('${safeName}')"
+      >
         ${p.name}
       </td>
 
@@ -2854,14 +2917,14 @@ function buildPlayerRowHTML(p) {
         ${fmt(p.point)}
       </td>
 
-      <td class="left clickable"
-          data-fullname="${safeShop}"
-          onclick="copyToClipboard('${safeShop}')">
-
+      <td
+        class="left clickable"
+        data-fullname="${safeShop}"
+        onclick="copyToClipboard('${safeShop}')"
+      >
         <div class="store-name">
           ${shortShop}
         </div>
-
       </td>
 
       <td class="center">
@@ -2879,189 +2942,6 @@ function buildPlayerRowHTML(p) {
     </tr>
   `;
 }
-
-function highlightMatchingRows(tbody) {
-
-  if (!tbody) return;
-
-  tbody.querySelectorAll("tr")
-    .forEach(tr => {
-
-      const updated =
-        tr.dataset.updated || "";
-
-      const nameCell =
-        tr.querySelector(
-          ".player-name"
-        );
-
-      const rowName =
-        nameCell
-          ? String(
-              nameCell.textContent
-            ).trim()
-          : "";
-
-      const shopCell =
-        tr.querySelector(
-          ".store-name"
-        );
-
-      const rowShop =
-        shopCell
-          ? String(
-              shopCell.textContent
-            ).trim()
-          : "";
-
-      const rowPlayer = {
-        name: rowName,
-        shopname: rowShop,
-        updateDate: updated
-      };
-
-      const isYellow =
-        isMatchingCandidateByPhase(
-          rowPlayer
-        );
-
-      const isPink =
-        isMatchingCandidateByCopyPhase(
-          rowPlayer
-        );
-
-      tr.classList.remove(
-        "match-row-yellow"
-      );
-
-      tr.classList.remove(
-        "match-row-pink"
-      );
-
-      if (isPink) {
-
-        tr.classList.add(
-          "match-row-pink"
-        );
-
-      } else if (isYellow) {
-
-        tr.classList.add(
-          "match-row-yellow"
-        );
-      }
-    });
-}
-
-function renderPlayerRowsToBody(
-  tbodyId,
-  list
-) {
-
-  const tbody =
-    document.getElementById(
-      tbodyId
-    );
-
-  if (!tbody) return;
-
-  const rows =
-    list
-      .map(
-        p =>
-          buildPlayerRowHTML(p)
-      )
-      .join("");
-
-  tbody.innerHTML =
-    rows;
-
-  highlightMatchingRows(
-    tbody
-  );
-}
-
-function renderDetailRows(
-  list,
-  isRubyBand
-) {
-
-  renderPlayerRowsToBody(
-    "detailTableBody",
-    list
-  );
-}
-/* =========================================================
- [630] Clipboard Action
-========================================================= */
-function copyToClipboard(text) {
-  const afterCopySuccess = () => {
-
-    saveMatchingSnapshot();
-
-    const copyRecord =
-      saveCopyEventUnified(text);
-
-    logEvent(
-      "copy",
-      copyRecord
-    );
-
-    recordClickFromCopiedText(text);
-
-    const player =
-      findPlayerFromCopiedText(text);
-
-    if (player) {
-
-      const clicks =
-        State.recentClicks.filter(
-          r =>
-            normalizePlayerName(r.name) ===
-            normalizePlayerName(player.name)
-        );
-
-      if (clicks.length === 1) {
-        calcYellowCycle(player);
-      }
-
-      if (clicks.length >= 2) {
-        calcPinkCycle(player);
-      }
-    }
-
-    log(`コピー: ${text}`);
-
-    buildMatchingCandidates();
-
-    if (isCurrentView(STATE.MATCHING)) {
-
-      renderMatchingHeader();
-      renderMatchingTable();
-
-    } else if (isCurrentView(STATE.DETAIL)) {
-
-      renderDetailTable(
-        State.currentIsRubyBand,
-        State.currentDetailLabel,
-        State.currentDetailIcon
-      );
-
-    } else {
-
-      renderSummary();
-
-    }
-  };
-
-  navigator.clipboard
-    .writeText(text)
-    .then(afterCopySuccess)
-    .catch(() =>
-      logError("コピー失敗")
-    );
-}
-
 /* =========================================================
  [640] Detail Filter
 ========================================================= */
@@ -4543,7 +4423,101 @@ function calcMatchingScore(
   ).score;
 }
 /* =========================================================
- [750] Weighted Selection
+ [750] getPhaseSelectionMultiplier
+========================================================= */
+function getPhaseSelectionMultiplier(player) {
+
+  /* =====================================
+   * 安全取得
+   * ===================================== */
+  const candidateCfg =
+    State.scoringConfig?.candidate ?? {};
+
+  const yellowBoost =
+    Number(candidateCfg.yellowBoost ?? 2.0);
+
+  const pinkBoost =
+    Number(candidateCfg.pinkBoost ?? 2.5);
+
+  const phasePower =
+    Number(candidateCfg.phasePower ?? 2.0);
+
+  /* =====================================
+   * Pink判定
+   * ===================================== */
+  const isPink =
+    isMatchingCandidateByCopyPhase(player);
+
+  /* =====================================
+   * Yellow判定
+   * ===================================== */
+  const isYellow =
+    !isPink &&
+    isMatchingCandidateByPhase(player);
+
+  /* =====================================
+   * Pink補正
+   * ===================================== */
+  if (isPink) {
+
+    const score =
+      Math.max(
+        0,
+        getPinkPhaseScore(player)
+      );
+
+    const multiplier =
+      1 +
+      (
+        (pinkBoost - 1)
+        *
+        Math.pow(
+          score,
+          phasePower
+        )
+      );
+
+    return Math.max(
+      1,
+      multiplier
+    );
+  }
+
+  /* =====================================
+   * Yellow補正
+   * ===================================== */
+  if (isYellow) {
+
+    const score =
+      Math.max(
+        0,
+        getYellowPhaseScore(player)
+      );
+
+    const multiplier =
+      1 +
+      (
+        (yellowBoost - 1)
+        *
+        Math.pow(
+          score,
+          phasePower
+        )
+      );
+
+    return Math.max(
+      1,
+      multiplier
+    );
+  }
+
+  /* =====================================
+   * White
+   * ===================================== */
+  return 1.0;
+}
+/* =========================================================
+ [760] Weighted Selection
 ========================================================= */
 
 function selectByWeight(
@@ -4618,7 +4592,7 @@ function selectByWeight(
   return result;
 }
 /* =========================================================
- [760] Candidate Builder
+ [770] Candidate Builder
 ========================================================= */
 
 function buildMatchingCandidates() {
@@ -4995,7 +4969,7 @@ function buildMatchingCandidates() {
   );
 }
 /* =========================================================
- [770] Matching Renderer
+ [780] Matching Renderer
 ========================================================= */
 
 function renderMatchingHeader() {
@@ -5035,138 +5009,34 @@ function renderMatchingHeader() {
   const parts =
     RANKS
       .filter(
-        r =>
-          counts[r.key]
+        r => counts[r.key]
       )
-      .map(
-        r => {
+      .map(r => {
 
-          const cnt =
-            counts[r.key];
+        const cnt =
+          counts[r.key];
 
-          return `
-            <span
-              style="
-                margin-right:12px;
-                white-space:nowrap;
-              "
-            >
-              ${r.icon}
-              ${r.label}：${fmt(cnt)}人
-            </span>
-          `;
-        }
-      );
+        return `
+          <span
+            style="
+              margin-right:12px;
+              white-space:nowrap;
+            "
+          >
+
+            ${r.icon}
+
+            ${r.label}：${fmt(cnt)}人
+
+          </span>
+        `;
+      });
 
   headerEl.innerHTML =
     parts.join("");
 }
-
-function renderMatchingTable() {
-
-  const area =
-    document.getElementById(
-      "matchingArea"
-    );
-
-  if (!area) {
-    return;
-  }
-
-  const total =
-    State.matchingList.length;
-
-  area.innerHTML = `
-    <h3>
-      マッチング候補：
-      <span id="matchingCount">
-        ${fmt(total)}
-      </span>
-      人
-    </h3>
-
-    <div style="overflow-x:auto;">
-
-      <table>
-
-        <thead>
-          <tr>
-            <th>★・PRIDE</th>
-            <th>プレイヤー名</th>
-            <th>RP</th>
-            <th>店舗名</th>
-            <th>称号</th>
-            <th>Last Update</th>
-          </tr>
-        </thead>
-
-        <tbody id="matchingTableBody">
-        </tbody>
-
-      </table>
-
-    </div>
-  `;
-
-  renderMatchingRows(
-    State.matchingList
-  );
-}
-
-function renderMatchingRows(
-  list
-) {
-
-  /* ===============================
-   * cooldown除外は候補生成側
-   * =============================== */
-
-  renderPlayerRowsToBody(
-    "matchingTableBody",
-    list
-  );
-}
-
-function applyMatchingFilter(
-  keyword
-) {
-
-  const base =
-    State.matchingList || [];
-
-  const normKey =
-    normalize(keyword);
-
-  const list =
-    normKey
-      ? base.filter(
-          p =>
-            (
-              p.normalizedName ||
-              ""
-            ).includes(normKey)
-        )
-      : base;
-
-  const countEl =
-    document.getElementById(
-      "matchingCount"
-    );
-
-  if (countEl) {
-
-    countEl.textContent =
-      fmt(
-        list.length
-      );
-  }
-
-  renderMatchingRows(
-    list
-  );
-}
 /* =========================================================
- [780] Matching Navigation
+ [790] Matching Navigation
 ========================================================= */
 
 function showMatchingCandidates(
@@ -6455,4 +6325,65 @@ function exportTodayLogsAsJSON() {
         result
       );
     };
+}
+
+/* =========================================================
+ [1080] JSON Export
+========================================================= */
+function exportTodayViewerLogsAsJSON() {
+
+  const today = getTodayYMDJa();
+
+  const key = compactYMD(today);
+
+  const viewerLogs =
+    readStoredArraySafe(
+      LOG_STORAGE_KEYS.viewerLogs
+    );
+
+  const copyEvents =
+    readStoredArraySafe(
+      LOG_STORAGE_KEYS.copyEvents + key
+    );
+
+  const snapshots =
+    readStoredArraySafe(
+      LOG_STORAGE_KEYS.matchingSnapshots + key
+    );
+
+  const payload = {
+    exportedAt: getNowLabelJa(),
+    targetDate: today,
+    viewerLogs: viewerLogs,
+    copyEvents: copyEvents,
+    matchingSnapshots: snapshots
+  };
+
+  const filename =
+    `viewer_logs_${key}.json`;
+
+  const blob = new Blob(
+    [JSON.stringify(payload, null, 2)],
+    {
+      type: "application/json;charset=utf-8"
+    }
+  );
+
+  const url =
+    URL.createObjectURL(blob);
+
+  const a =
+    document.createElement("a");
+
+  a.href = url;
+
+  a.download = filename;
+
+  a.click();
+
+  URL.revokeObjectURL(url);
+
+  log(
+    `JSON出力完了: ${filename}`
+  );
 }
