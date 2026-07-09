@@ -5230,6 +5230,7 @@ function renderMatchingHeader() {
 
       counts[key] =
         (counts[key] || 0) + 1;
+
     }
   );
 
