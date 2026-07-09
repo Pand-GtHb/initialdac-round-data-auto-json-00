@@ -2824,7 +2824,123 @@ function renderDetailTable(
   );
 }
 /* =========================================================
- [630] Clipboard Action
+ [630] Detail Row Renderer
+========================================================= */
+function renderDetailRows(
+  list,
+  isRubyBand
+) {
+  renderPlayerRowsToBody(
+    "detailTableBody",
+    list
+  );
+}
+/* =========================================================
+ [640] Matching Highlight Renderer
+========================================================= */
+function highlightMatchingRows(
+  tbody
+) {
+
+  if (!tbody) return;
+
+  tbody.querySelectorAll("tr").forEach(tr => {
+
+    const updated =
+      tr.dataset.updated || "";
+
+    const nameCell =
+      tr.querySelector(
+        ".player-name"
+      );
+
+    const rowName =
+      nameCell
+        ? String(
+            nameCell.textContent
+          ).trim()
+        : "";
+
+    const shopCell =
+      tr.querySelector(
+        ".store-name"
+      );
+
+    const rowShop =
+      shopCell
+        ? String(
+            shopCell.textContent
+          ).trim()
+        : "";
+
+    const rowPlayer = {
+      name: rowName,
+      shopname: rowShop,
+      updateDate: updated
+    };
+
+    const isYellow =
+      isMatchingCandidateByPhase(
+        rowPlayer
+      );
+
+    const isPink =
+      isMatchingCandidateByCopyPhase(
+        rowPlayer
+      );
+
+    tr.classList.remove(
+      "match-row-yellow"
+    );
+
+    tr.classList.remove(
+      "match-row-pink"
+    );
+
+    if (isPink) {
+
+      tr.classList.add(
+        "match-row-pink"
+      );
+
+    } else if (isYellow) {
+
+      tr.classList.add(
+        "match-row-yellow"
+      );
+
+    }
+
+  });
+
+}
+/* =========================================================
+ [650] Player Row Renderer Core
+========================================================= */
+function renderPlayerRowsToBody(
+  tbodyId,
+  list
+) {
+  const tbody =
+    document.getElementById(
+      tbodyId
+    );
+
+  if (!tbody) return;
+
+  const rows =
+    list
+      .map(p => buildPlayerRowHTML(p))
+      .join("");
+
+  tbody.innerHTML = rows;
+
+  highlightMatchingRows(
+    tbody
+  );
+}
+/* =========================================================
+ [660] Clipboard Action
 ========================================================= */
 
 function buildPlayerRowHTML(
@@ -2943,7 +3059,7 @@ function buildPlayerRowHTML(
   `;
 }
 /* =========================================================
- [640] Detail Filter
+ [670] Detail Filter
 ========================================================= */
 function applyPlayerFilter(
   keyword,
@@ -2989,7 +3105,7 @@ function applyPlayerFilter(
   );
 }
 /* =========================================================
- [650] Area Engine
+ [680] Area Engine
 ========================================================= */
 
 function buildAreaDistribution(
@@ -3063,7 +3179,7 @@ function getAreaScore(
   );
 }
 /* =========================================================
- [660] Candidate Score Engine
+ [690] Candidate Score Engine
 ========================================================= */
 
 function buildCandidateScore(
@@ -5034,6 +5150,71 @@ function renderMatchingHeader() {
 
   headerEl.innerHTML =
     parts.join("");
+}
+/* =========================================================
+ [785] Matching Table Renderer
+========================================================= */
+function renderMatchingTable() {
+
+  const area =
+    document.getElementById(
+      "matchingArea"
+    );
+
+  if (!area) return;
+
+  const total =
+    State.matchingList.length;
+
+  area.innerHTML = `
+    <h3>
+      マッチング候補：
+      <span id="matchingCount">
+        ${fmt(total)}
+      </span>人
+    </h3>
+
+    <div style="overflow-x:auto;">
+
+      <table>
+
+        <thead>
+          <tr>
+            <th>★・PRIDE</th>
+            <th>プレイヤー名</th>
+            <th>RP</th>
+            <th>店舗名</th>
+            <th>称号</th>
+            <th>Last Update</th>
+          </tr>
+        </thead>
+
+        <tbody id="matchingTableBody"></tbody>
+
+      </table>
+
+    </div>
+  `;
+
+  renderMatchingRows(
+    State.matchingList
+  );
+}
+/* =========================================================
+ [787] Matching Row Renderer
+========================================================= */
+function renderMatchingRows(
+  list
+) {
+
+  // ✅ 修正：ここでは除外しない
+  // すでに候補生成段階で処理済
+
+  renderPlayerRowsToBody(
+    "matchingTableBody",
+    list
+  );
+
 }
 /* =========================================================
  [790] Matching Navigation
