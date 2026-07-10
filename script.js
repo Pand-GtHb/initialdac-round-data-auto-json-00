@@ -3049,7 +3049,7 @@ function buildPlayerRowHTML(
       <td class="center">
         ${
           titleUrl
-            ? `${titleUrl}`
+            ? `<img src="${titleUrl}" height="24">`
             : ""
         }
       </td>
