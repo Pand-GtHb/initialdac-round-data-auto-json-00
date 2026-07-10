@@ -2454,7 +2454,7 @@ function renderSummary() {
             >
 
               <td class="center">
-                ${r.icon}
+                <img src="${r.icon}" width="32">
               </td>
 
               <td class="left">
@@ -2782,7 +2782,7 @@ function renderDetailTable(
       <span style="margin-right:8px;">
         ${
           bandIcon
-            ? `${bandIcon}`
+            ? `<img src="${bandIcon}" width="32">`
             : ""
         }
       </span>
@@ -5251,7 +5251,7 @@ function renderMatchingHeader() {
               white-space:nowrap;
             "
           >
-            ${r.icon}
+            <img src="${r.icon}" width="24" style="vertical-align:middle; margin-right:4px;">
 
             ${r.label}：${fmt(cnt)}人
 
