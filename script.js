@@ -18,18 +18,12 @@ const State = {
   all: [],
   filtered: [],
   summary: [],
-
   detailOriginal: [],
-
   generatedAt: "",
-
   latestRound: null,
   latestUpdateAt: "",
-
   searchText: "",
-
   currentView: STATE.SUMMARY,
-
   currentIsRubyBand: true,
   currentDetailKey: "",
   currentDetailLabel: "",
@@ -40,6 +34,7 @@ const State = {
   matchingDiagnostics: null,
 
   rankModel: null,
+
   myStar: 6,
 
   recentClicks: [],
@@ -58,7 +53,9 @@ const State = {
   phaseAdjust: {
     yellow: 0,
     pink: 0
-  }
+  },
+
+  lastCandidateEventId: null
 };
 /* =========================================================
  [0030] Rank Master
@@ -3068,19 +3065,16 @@ function copyToClipboard(text) {
   const afterCopySuccess = () => {
 
     /* ===================================== */
-    /* ★ snapshotを先に保存（重要）         */
-    /* ===================================== */
-    saveMatchingSnapshot();
-
-    /* ===================================== */
     /* ★ copyログ保存（localStorage）        */
     /* ===================================== */
+
     const copyRecord =
       saveCopyEventUnified(text);
 
     /* ===================================== */
     /* ★ analysisログ保存                    */
     /* ===================================== */
+
     logEvent(
       "copy",
       copyRecord
@@ -3089,6 +3083,7 @@ function copyToClipboard(text) {
     /* ===================================== */
     /* ★ クリック履歴更新                    */
     /* ===================================== */
+
     recordClickFromCopiedText(text);
 
     const player =
@@ -3110,25 +3105,37 @@ function copyToClipboard(text) {
         );
 
       if (clicks.length === 1) {
-        calcYellowCycle(player);
+
+        calcYellowCycle(
+          player
+        );
+
       }
 
       if (clicks.length >= 2) {
-        calcPinkCycle(player);
+
+        calcPinkCycle(
+          player
+        );
+
       }
 
     }
 
-    log(`コピー: ${text}`);
+    log(
+      `コピー: ${text}`
+    );
 
     /* ===================================== */
     /* ★ 候補再生成                          */
     /* ===================================== */
+
     buildMatchingCandidates();
 
     /* ===================================== */
     /* ★ UI再描画                            */
     /* ===================================== */
+
     if (
       isCurrentView(
         STATE.MATCHING
@@ -3136,12 +3143,15 @@ function copyToClipboard(text) {
     ) {
 
       renderMatchingHeader();
+
       renderMatchingTable();
 
     } else if (
+
       isCurrentView(
         STATE.DETAIL
       )
+
     ) {
 
       renderDetailTable(
@@ -3161,10 +3171,11 @@ function copyToClipboard(text) {
   navigator.clipboard
     .writeText(text)
     .then(afterCopySuccess)
-    .catch(() =>
-      logError(
-        "コピー失敗"
-      )
+    .catch(
+      () =>
+        logError(
+          "コピー失敗"
+        )
     );
 
 }
@@ -5973,16 +5984,31 @@ function saveCopyEventUnified(
   if (!player) {
 
     const record = {
-      t: Date.now(),
-      dk: buildDailyKey(),
-      n: "",
-      s: 0,
-      p: 0,
-      r: 0,
-      c: -1,
-      sid:
-        State.lastSnapshotId ??
-        null
+
+      t:
+        Date.now(),
+
+      dk:
+        buildDailyKey(),
+
+      n:
+        "",
+
+      s:
+        0,
+
+      p:
+        0,
+
+      r:
+        0,
+
+      c:
+        -1,
+
+      candidateEventId:
+        State.lastCandidateEventId ?? null
+
     };
 
     pushStoredRecord(
@@ -5993,6 +6019,7 @@ function saveCopyEventUnified(
     );
 
     return record;
+
   }
 
   const detail =
@@ -6024,8 +6051,10 @@ function saveCopyEventUnified(
     );
 
   if (idx >= 0) {
+
     candidateRank =
       idx + 1;
+
   }
 
   const phaseInfo =
@@ -6033,23 +6062,19 @@ function saveCopyEventUnified(
       player
     );
 
-  /* =====================================
-   * phaseScore算出
-   * ===================================== */
-
-  let phaseScore = 0;
+  let phaseScore =
+    0;
 
   try {
 
     const cycleSec =
-      phaseInfo.cycleSec ||
-      300;
+      phaseInfo.cycleSec || 300;
 
     const rawSec =
-      phaseInfo.raw ||
-      0;
+      phaseInfo.raw || 0;
 
     const theta =
+
       (
         2 *
         Math.PI *
@@ -6057,7 +6082,8 @@ function saveCopyEventUnified(
           rawSec %
           cycleSec
         )
-      ) / cycleSec;
+      ) /
+      cycleSec;
 
     phaseScore =
       Math.cos(theta);
@@ -6065,13 +6091,16 @@ function saveCopyEventUnified(
   } catch (e) {
 
     phaseScore = 0;
+
   }
 
   const record = {
 
-    t: Date.now(),
+    t:
+      Date.now(),
 
-    dk: buildDailyKey(),
+    dk:
+      buildDailyKey(),
 
     n:
       player.name ?? "",
@@ -6116,9 +6145,9 @@ function saveCopyEventUnified(
     pr:
       phaseInfo.raw,
 
-    sid:
-      State.lastSnapshotId ??
-      null
+    candidateEventId:
+      State.lastCandidateEventId ?? null
+
   };
 
   pushStoredRecord(
@@ -6129,6 +6158,7 @@ function saveCopyEventUnified(
   );
 
   return record;
+
 }
 /* =========================================================
  [9300] Phase Analysis
@@ -6286,88 +6316,12 @@ function getPhaseAnalysis(
   };
 }
 /* =========================================================
- [9400] Snapshot Log
-========================================================= */
-function saveMatchingSnapshot() {
-
-  const snapshotId =
-    Date.now();
-
-  const dk =
-    buildDailyKey();
-
-  State.lastSnapshotId =
-    snapshotId;
-
-  const snapshot = {
-
-    id:
-      snapshotId,
-
-    t:
-      snapshotId,
-
-    eventAt:
-      getNowLabelJa(),
-
-    dk:
-      dk,
-
-    candidates:
-      (
-        State.matchingList || []
-      ).map(
-        p => ({
-
-          name:
-            p.name,
-
-          score:
-            Number(
-              p.__score ?? 0
-            ),
-
-          effectiveWeight:
-            Number(
-              p.__effectiveWeight ?? 0
-            ),
-
-          phaseMultiplier:
-            Number(
-              p.__phaseMultiplier ?? 0
-            ),
-
-          rankKey:
-            p.__rankKey ?? "",
-
-          shopname:
-            p.shopname ?? "",
-
-          updateDate:
-            p.updateDate ?? "",
-
-          displayRank:
-            Number(
-              p.displayRank ?? 0
-            )
-
-        })
-      )
-
-  };
-
-  logEvent(
-    "snapshot",
-    snapshot
-  );
-
-}
-/* =========================================================
  [9500] Candidate Event Log
 ========================================================= */
 function saveCandidateEvent() {
 
-  const now = Date.now();
+  const now =
+    Date.now();
 
   const yellowCycle =
     300 +
@@ -6387,9 +6341,11 @@ function saveCandidateEvent() {
 
   const record = {
 
-    id: now,
+    id:
+      now,
 
-    t: now,
+    t:
+      now,
 
     eventAt:
       getNowLabelJa(),
@@ -6400,7 +6356,8 @@ function saveCandidateEvent() {
     yellowAdjust:
       Number(
         (
-          State.phaseAdjust?.yellow ?? 0
+          State.phaseAdjust?.yellow ??
+          0
         ).toFixed(2)
       ),
 
@@ -6412,7 +6369,8 @@ function saveCandidateEvent() {
     pinkAdjust:
       Number(
         (
-          State.phaseAdjust?.pink ?? 0
+          State.phaseAdjust?.pink ??
+          0
         ).toFixed(2)
       ),
 
@@ -6425,56 +6383,41 @@ function saveCandidateEvent() {
       State.matchingList.length,
 
     candidates:
-      (State.matchingList || [])
-        .map(
-          p => ({
+      (
+        State.matchingList || []
+      ).map(
+        p => ({
 
-            rank:
-              Number(
-                p.displayRank ?? 0
-              ),
+          name:
+            p.name ?? "",
 
-            name:
-              p.name ?? "",
+          score:
+            Number(
+              (
+                p.__score ?? 0
+              ).toFixed(6)
+            ),
 
-            score:
-              Number(
-                (
-                  p.__score ?? 0
-                ).toFixed(6)
-              ),
+          phaseMultiplier:
+            Number(
+              (
+                p.__phaseMultiplier ?? 0
+              ).toFixed(4)
+            )
 
-            effectiveWeight:
-              Number(
-                (
-                  p.__effectiveWeight ?? 0
-                ).toFixed(6)
-              ),
+        })
+      )
 
-            phaseMultiplier:
-              Number(
-                (
-                  p.__phaseMultiplier ?? 0
-                ).toFixed(4)
-              ),
-
-            rankKey:
-              p.__rankKey ?? "",
-
-            updateDate:
-              p.updateDate ?? "",
-
-            shopname:
-              p.shopname ?? ""
-
-          })
-        )
   };
+
+  State.lastCandidateEventId =
+    now;
 
   logEvent(
     "candidate",
     record
   );
+
 }
 /* =========================================================
  [9600] IndexedDB Schema
@@ -6486,11 +6429,19 @@ const LOG_DB_VERSION =
   2;
 
 const LOG_STORE = {
-  events: "events",
-  copyEvents: "copyEvents",
-  cycleEvents: "cycleEvents",
-  matchingSnapshots: "matchingSnapshots",
-  candidateEvents: "candidateEvents"
+
+  events:
+    "events",
+
+  copyEvents:
+    "copyEvents",
+
+  cycleEvents:
+    "cycleEvents",
+
+  candidateEvents:
+    "candidateEvents"
+
 };
 
 let logDB = null;
@@ -6498,6 +6449,7 @@ let logDB = null;
  [9700] IndexedDB Core:initLogDB
 ========================================================= */
 function initLogDB() {
+
   return new Promise(
     (resolve, reject) => {
 
@@ -6518,6 +6470,7 @@ function initLogDB() {
               LOG_STORE.events
             )
           ) {
+
             db.createObjectStore(
               LOG_STORE.events,
               {
@@ -6525,6 +6478,7 @@ function initLogDB() {
                 autoIncrement: true
               }
             );
+
           }
 
           if (
@@ -6532,6 +6486,7 @@ function initLogDB() {
               LOG_STORE.copyEvents
             )
           ) {
+
             db.createObjectStore(
               LOG_STORE.copyEvents,
               {
@@ -6539,6 +6494,7 @@ function initLogDB() {
                 autoIncrement: true
               }
             );
+
           }
 
           if (
@@ -6546,6 +6502,7 @@ function initLogDB() {
               LOG_STORE.cycleEvents
             )
           ) {
+
             db.createObjectStore(
               LOG_STORE.cycleEvents,
               {
@@ -6553,19 +6510,7 @@ function initLogDB() {
                 autoIncrement: true
               }
             );
-          }
 
-          if (
-            !db.objectStoreNames.contains(
-              LOG_STORE.matchingSnapshots
-            )
-          ) {
-            db.createObjectStore(
-              LOG_STORE.matchingSnapshots,
-              {
-                keyPath: "id"
-              }
-            );
           }
 
           if (
@@ -6573,12 +6518,14 @@ function initLogDB() {
               LOG_STORE.candidateEvents
             )
           ) {
+
             db.createObjectStore(
               LOG_STORE.candidateEvents,
               {
                 keyPath: "id"
               }
             );
+
           }
 
         };
@@ -6594,6 +6541,7 @@ function initLogDB() {
           );
 
           resolve();
+
         };
 
       req.onerror =
@@ -6605,10 +6553,12 @@ function initLogDB() {
           );
 
           reject(e);
+
         };
 
     }
   );
+
 }
 /* =========================================================
  [9710] IndexedDB Core:putLog
@@ -6648,46 +6598,49 @@ function logEvent(
   }
 
   const record = {
-    t: Date.now(),
-    e: type,
+
+    t:
+      Date.now(),
+
+    e:
+      type,
+
     ...(payload || {})
+
   };
 
   if (
     type === "copy" ||
     type === "top"
   ) {
+
     putLog(
       LOG_STORE.copyEvents,
       record
     );
-    return;
-  }
 
-  if (
-    type === "snapshot"
-  ) {
-    putLog(
-      LOG_STORE.matchingSnapshots,
-      record
-    );
     return;
+
   }
 
   if (
     type === "candidate"
   ) {
+
     putLog(
       LOG_STORE.candidateEvents,
       record
     );
+
     return;
+
   }
 
   putLog(
     LOG_STORE.events,
     record
   );
+
 }
 /* =========================================================
  [9800] IndexedDB Export:downloadJSON
@@ -6744,6 +6697,7 @@ function exportTodayLogsAsJSON() {
     );
 
     return;
+
   }
 
   const todayStart =
@@ -6778,13 +6732,16 @@ function exportTodayLogsAsJSON() {
       Date.now(),
 
     range: {
-      start: startTs,
-      end: endTs
+
+      start:
+        startTs,
+
+      end:
+        endTs
+
     },
 
     copyEvents: [],
-
-    matchingSnapshots: [],
 
     candidateEvents: []
 
@@ -6794,7 +6751,6 @@ function exportTodayLogsAsJSON() {
     logDB.transaction(
       [
         LOG_STORE.copyEvents,
-        LOG_STORE.matchingSnapshots,
         LOG_STORE.candidateEvents
       ],
       "readonly"
@@ -6805,11 +6761,6 @@ function exportTodayLogsAsJSON() {
       LOG_STORE.copyEvents
     );
 
-  const snapshotStore =
-    tx.objectStore(
-      LOG_STORE.matchingSnapshots
-    );
-
   const candidateStore =
     tx.objectStore(
       LOG_STORE.candidateEvents
@@ -6817,9 +6768,6 @@ function exportTodayLogsAsJSON() {
 
   const copyReq =
     copyStore.getAll();
-
-  const snapshotReq =
-    snapshotStore.getAll();
 
   const candidateReq =
     candidateStore.getAll();
@@ -6830,21 +6778,11 @@ function exportTodayLogsAsJSON() {
       const copyAll =
         copyReq.result || [];
 
-      const snapshotAll =
-        snapshotReq.result || [];
-
       const candidateAll =
         candidateReq.result || [];
 
       result.copyEvents =
         copyAll.filter(
-          x =>
-            x.t >= startTs &&
-            x.t <= endTs
-        );
-
-      result.matchingSnapshots =
-        snapshotAll.filter(
           x =>
             x.t >= startTs &&
             x.t <= endTs
@@ -6860,6 +6798,7 @@ function exportTodayLogsAsJSON() {
       downloadJSON(
         result
       );
+
     };
 
   tx.onerror =
@@ -6872,7 +6811,9 @@ function exportTodayLogsAsJSON() {
       downloadJSON(
         result
       );
+
     };
+
 }
 /* =========================================================
  [9900] JSON Export
@@ -6908,8 +6849,6 @@ async function exportTodayViewerLogsAsJSON() {
 
     copyEvents:
       copyEvents,
-
-    matchingSnapshots: [],
 
     candidateEvents: []
 
@@ -6954,38 +6893,14 @@ async function exportTodayViewerLogsAsJSON() {
       const tx =
         logDB.transaction(
           [
-            LOG_STORE.matchingSnapshots,
             LOG_STORE.candidateEvents
           ],
           "readonly"
         );
 
-      const snapshotStore =
-        tx.objectStore(
-          LOG_STORE.matchingSnapshots
-        );
-
       const candidateStore =
         tx.objectStore(
           LOG_STORE.candidateEvents
-        );
-
-      const snapshots =
-        await new Promise(
-          (resolve, reject) => {
-
-            const req =
-              snapshotStore.getAll();
-
-            req.onsuccess =
-              () => resolve(
-                req.result || []
-              );
-
-            req.onerror =
-              reject;
-
-          }
         );
 
       const candidates =
@@ -7006,13 +6921,6 @@ async function exportTodayViewerLogsAsJSON() {
           }
         );
 
-      payload.matchingSnapshots =
-        snapshots.filter(
-          x =>
-            x.t >= startTs &&
-            x.t <= endTs
-        );
-
       payload.candidateEvents =
         candidates.filter(
           x =>
@@ -7027,7 +6935,9 @@ async function exportTodayViewerLogsAsJSON() {
       );
 
       console.error(e);
+
     }
+
   }
 
   const filename =
@@ -7058,7 +6968,8 @@ async function exportTodayViewerLogsAsJSON() {
       "a"
     );
 
-  a.href = url;
+  a.href =
+    url;
 
   a.download =
     filename;
@@ -7072,4 +6983,5 @@ async function exportTodayViewerLogsAsJSON() {
   log(
     `JSON出力完了: ${filename}`
   );
+
 }
