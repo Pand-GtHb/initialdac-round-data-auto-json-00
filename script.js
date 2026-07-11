@@ -183,14 +183,12 @@ function switchDisplayView(view) {
 ========================================================= */
 const LOG_STORAGE_KEYS = {
   viewerLogs: "initialdac_viewer_logs",
-  copyEvents: "initialdac_copy_events_",
-  matchingSnapshots: "initialdac_matching_snapshots_"
+  copyEvents: "initialdac_copy_events_"
 };
 
 const LOG_STORAGE_LIMITS = {
   viewerLogs: 300,
-  copyEvents: 200,
-  matchingSnapshots: 100
+  copyEvents: 200
 };
 
 const MAX_LOG_LINES = 100;
@@ -5231,6 +5229,8 @@ function buildMatchingCandidates() {
   log(
     `候補生成(修正版): Base=${base.length} / Selected=${selected.length}`
   );
+
+  saveCandidateEvent();
 }
 /* =========================================================
  [7800] Matching Header
@@ -6307,6 +6307,9 @@ function saveMatchingSnapshot() {
     t:
       snapshotId,
 
+    eventAt:
+      getNowLabelJa(),
+
     dk:
       dk,
 
@@ -6315,47 +6318,186 @@ function saveMatchingSnapshot() {
         State.matchingList || []
       ).map(
         p => ({
+
           name:
             p.name,
 
           score:
             Number(
               p.__score ?? 0
+            ),
+
+          effectiveWeight:
+            Number(
+              p.__effectiveWeight ?? 0
+            ),
+
+          phaseMultiplier:
+            Number(
+              p.__phaseMultiplier ?? 0
+            ),
+
+          rankKey:
+            p.__rankKey ?? "",
+
+          shopname:
+            p.shopname ?? "",
+
+          updateDate:
+            p.updateDate ?? "",
+
+          displayRank:
+            Number(
+              p.displayRank ?? 0
             )
+
         })
       )
+
   };
 
-  pushStoredRecord(
-    LOG_STORAGE_KEYS
-      .matchingSnapshots,
-    snapshot,
-    LOG_STORAGE_LIMITS
-      .matchingSnapshots,
-    true
+  logEvent(
+    "snapshot",
+    snapshot
+  );
+
+}
+/* =========================================================
+ [9500] Candidate Event Log
+========================================================= */
+function saveCandidateEvent() {
+
+  const now = Date.now();
+
+  const yellowCycle =
+    300 +
+    clamp(
+      State.phaseAdjust?.yellow ?? 0,
+      -45,
+      45
+    );
+
+  const pinkCycle =
+    300 +
+    clamp(
+      State.phaseAdjust?.pink ?? 0,
+      -45,
+      45
+    );
+
+  const record = {
+
+    id: now,
+
+    t: now,
+
+    eventAt:
+      getNowLabelJa(),
+
+    dk:
+      buildDailyKey(),
+
+    yellowAdjust:
+      Number(
+        (
+          State.phaseAdjust?.yellow ?? 0
+        ).toFixed(2)
+      ),
+
+    yellowCycle:
+      Number(
+        yellowCycle.toFixed(2)
+      ),
+
+    pinkAdjust:
+      Number(
+        (
+          State.phaseAdjust?.pink ?? 0
+        ).toFixed(2)
+      ),
+
+    pinkCycle:
+      Number(
+        pinkCycle.toFixed(2)
+      ),
+
+    candidateCount:
+      State.matchingList.length,
+
+    candidates:
+      (State.matchingList || [])
+        .map(
+          p => ({
+
+            rank:
+              Number(
+                p.displayRank ?? 0
+              ),
+
+            name:
+              p.name ?? "",
+
+            score:
+              Number(
+                (
+                  p.__score ?? 0
+                ).toFixed(6)
+              ),
+
+            effectiveWeight:
+              Number(
+                (
+                  p.__effectiveWeight ?? 0
+                ).toFixed(6)
+              ),
+
+            phaseMultiplier:
+              Number(
+                (
+                  p.__phaseMultiplier ?? 0
+                ).toFixed(4)
+              ),
+
+            rankKey:
+              p.__rankKey ?? "",
+
+            updateDate:
+              p.updateDate ?? "",
+
+            shopname:
+              p.shopname ?? ""
+
+          })
+        )
+  };
+
+  logEvent(
+    "candidate",
+    record
   );
 }
 /* =========================================================
- [9500] IndexedDB Schema
+ [9600] IndexedDB Schema
 ========================================================= */
 const LOG_DB_NAME =
   "viewer_logs_db";
 
 const LOG_DB_VERSION =
-  1;
+  2;
 
 const LOG_STORE = {
   events: "events",
   copyEvents: "copyEvents",
-  cycleEvents: "cycleEvents"
+  cycleEvents: "cycleEvents",
+  matchingSnapshots: "matchingSnapshots",
+  candidateEvents: "candidateEvents"
 };
 
 let logDB = null;
 /* =========================================================
- [9600] IndexedDB Core:initLogDB
+ [9700] IndexedDB Core:initLogDB
 ========================================================= */
 function initLogDB() {
-
   return new Promise(
     (resolve, reject) => {
 
@@ -6376,7 +6518,6 @@ function initLogDB() {
               LOG_STORE.events
             )
           ) {
-
             db.createObjectStore(
               LOG_STORE.events,
               {
@@ -6391,7 +6532,6 @@ function initLogDB() {
               LOG_STORE.copyEvents
             )
           ) {
-
             db.createObjectStore(
               LOG_STORE.copyEvents,
               {
@@ -6406,7 +6546,6 @@ function initLogDB() {
               LOG_STORE.cycleEvents
             )
           ) {
-
             db.createObjectStore(
               LOG_STORE.cycleEvents,
               {
@@ -6415,6 +6554,33 @@ function initLogDB() {
               }
             );
           }
+
+          if (
+            !db.objectStoreNames.contains(
+              LOG_STORE.matchingSnapshots
+            )
+          ) {
+            db.createObjectStore(
+              LOG_STORE.matchingSnapshots,
+              {
+                keyPath: "id"
+              }
+            );
+          }
+
+          if (
+            !db.objectStoreNames.contains(
+              LOG_STORE.candidateEvents
+            )
+          ) {
+            db.createObjectStore(
+              LOG_STORE.candidateEvents,
+              {
+                keyPath: "id"
+              }
+            );
+          }
+
         };
 
       req.onsuccess =
@@ -6440,11 +6606,12 @@ function initLogDB() {
 
           reject(e);
         };
+
     }
   );
 }
 /* =========================================================
- [9610] IndexedDB Core:putLog
+ [9710] IndexedDB Core:putLog
 ========================================================= */
 function putLog(
   storeName,
@@ -6469,7 +6636,7 @@ function putLog(
   store.put(data);
 }
 /* =========================================================
- [9620] IndexedDB Core:logEvent
+ [9720] IndexedDB Core:logEvent
 ========================================================= */
 function logEvent(
   type,
@@ -6481,11 +6648,8 @@ function logEvent(
   }
 
   const record = {
-
     t: Date.now(),
-
     e: type,
-
     ...(payload || {})
   };
 
@@ -6493,15 +6657,40 @@ function logEvent(
     type === "copy" ||
     type === "top"
   ) {
-
     putLog(
       LOG_STORE.copyEvents,
       record
     );
+    return;
   }
+
+  if (
+    type === "snapshot"
+  ) {
+    putLog(
+      LOG_STORE.matchingSnapshots,
+      record
+    );
+    return;
+  }
+
+  if (
+    type === "candidate"
+  ) {
+    putLog(
+      LOG_STORE.candidateEvents,
+      record
+    );
+    return;
+  }
+
+  putLog(
+    LOG_STORE.events,
+    record
+  );
 }
 /* =========================================================
- [9700] IndexedDB Export:downloadJSON
+ [9800] IndexedDB Export:downloadJSON
 ========================================================= */
 function downloadJSON(
   data
@@ -6544,7 +6733,7 @@ function downloadJSON(
   );
 }
 /* =========================================================
- [9710] IndexedDB Export:exportTodayLogsAsJSON
+ [9810] IndexedDB Export:exportTodayLogsAsJSON
 ========================================================= */
 function exportTodayLogsAsJSON() {
 
@@ -6593,65 +6782,91 @@ function exportTodayLogsAsJSON() {
       end: endTs
     },
 
-    copyEvents: []
+    copyEvents: [],
+
+    matchingSnapshots: [],
+
+    candidateEvents: []
+
   };
 
   const tx =
     logDB.transaction(
-      LOG_STORE.copyEvents,
+      [
+        LOG_STORE.copyEvents,
+        LOG_STORE.matchingSnapshots,
+        LOG_STORE.candidateEvents
+      ],
       "readonly"
     );
 
-  const store =
+  const copyStore =
     tx.objectStore(
       LOG_STORE.copyEvents
     );
 
-  const req =
-    store.getAll();
+  const snapshotStore =
+    tx.objectStore(
+      LOG_STORE.matchingSnapshots
+    );
 
-  req.onsuccess =
+  const candidateStore =
+    tx.objectStore(
+      LOG_STORE.candidateEvents
+    );
+
+  const copyReq =
+    copyStore.getAll();
+
+  const snapshotReq =
+    snapshotStore.getAll();
+
+  const candidateReq =
+    candidateStore.getAll();
+
+  tx.oncomplete =
     () => {
 
-      const all =
-        req.result || [];
+      const copyAll =
+        copyReq.result || [];
+
+      const snapshotAll =
+        snapshotReq.result || [];
+
+      const candidateAll =
+        candidateReq.result || [];
 
       result.copyEvents =
-        all.filter(
+        copyAll.filter(
           x =>
             x.t >= startTs &&
             x.t <= endTs
         );
 
-      /* fallback */
-      if (
-        !result.copyEvents.length
-      ) {
+      result.matchingSnapshots =
+        snapshotAll.filter(
+          x =>
+            x.t >= startTs &&
+            x.t <= endTs
+        );
 
-        const dk =
-          buildDailyKey();
-
-        const fallback =
-          readStoredArraySafe(
-            LOG_STORAGE_KEYS
-              .copyEvents +
-            dk
-          );
-
-        result.copyEvents =
-          fallback || [];
-      }
+      result.candidateEvents =
+        candidateAll.filter(
+          x =>
+            x.t >= startTs &&
+            x.t <= endTs
+        );
 
       downloadJSON(
         result
       );
     };
 
-  req.onerror =
+  tx.onerror =
     () => {
 
       console.error(
-        "read error: copyEvents"
+        "read error"
       );
 
       downloadJSON(
@@ -6660,13 +6875,15 @@ function exportTodayLogsAsJSON() {
     };
 }
 /* =========================================================
- [9800] JSON Export
+ [9900] JSON Export
 ========================================================= */
-function exportTodayViewerLogsAsJSON() {
+async function exportTodayViewerLogsAsJSON() {
 
-  const today = getTodayYMDJa();
+  const today =
+    getTodayYMDJa();
 
-  const key = compactYMD(today);
+  const key =
+    compactYMD(today);
 
   const viewerLogs =
     readStoredArraySafe(
@@ -6678,42 +6895,179 @@ function exportTodayViewerLogsAsJSON() {
       LOG_STORAGE_KEYS.copyEvents + key
     );
 
-  const snapshots =
-    readStoredArraySafe(
-      LOG_STORAGE_KEYS.matchingSnapshots + key
+  const payload = {
+
+    exportedAt:
+      getNowLabelJa(),
+
+    targetDate:
+      today,
+
+    viewerLogs:
+      viewerLogs,
+
+    copyEvents:
+      copyEvents,
+
+    matchingSnapshots: [],
+
+    candidateEvents: []
+
+  };
+
+  if (!logDB) {
+
+    logWarn(
+      "IndexedDB未初期化のため localStorage のみ出力"
     );
 
-  const payload = {
-    exportedAt: getNowLabelJa(),
-    targetDate: today,
-    viewerLogs: viewerLogs,
-    copyEvents: copyEvents,
-    matchingSnapshots: snapshots
-  };
+  } else {
+
+    const start =
+      new Date();
+
+    start.setHours(
+      0,
+      0,
+      0,
+      0
+    );
+
+    const end =
+      new Date();
+
+    end.setHours(
+      23,
+      59,
+      59,
+      999
+    );
+
+    const startTs =
+      start.getTime();
+
+    const endTs =
+      end.getTime();
+
+    try {
+
+      const tx =
+        logDB.transaction(
+          [
+            LOG_STORE.matchingSnapshots,
+            LOG_STORE.candidateEvents
+          ],
+          "readonly"
+        );
+
+      const snapshotStore =
+        tx.objectStore(
+          LOG_STORE.matchingSnapshots
+        );
+
+      const candidateStore =
+        tx.objectStore(
+          LOG_STORE.candidateEvents
+        );
+
+      const snapshots =
+        await new Promise(
+          (resolve, reject) => {
+
+            const req =
+              snapshotStore.getAll();
+
+            req.onsuccess =
+              () => resolve(
+                req.result || []
+              );
+
+            req.onerror =
+              reject;
+
+          }
+        );
+
+      const candidates =
+        await new Promise(
+          (resolve, reject) => {
+
+            const req =
+              candidateStore.getAll();
+
+            req.onsuccess =
+              () => resolve(
+                req.result || []
+              );
+
+            req.onerror =
+              reject;
+
+          }
+        );
+
+      payload.matchingSnapshots =
+        snapshots.filter(
+          x =>
+            x.t >= startTs &&
+            x.t <= endTs
+        );
+
+      payload.candidateEvents =
+        candidates.filter(
+          x =>
+            x.t >= startTs &&
+            x.t <= endTs
+        );
+
+    } catch (e) {
+
+      logError(
+        "IndexedDB読込失敗"
+      );
+
+      console.error(e);
+    }
+  }
 
   const filename =
     `viewer_logs_${key}.json`;
 
-  const blob = new Blob(
-    [JSON.stringify(payload, null, 2)],
-    {
-      type: "application/json;charset=utf-8"
-    }
-  );
+  const blob =
+    new Blob(
+      [
+        JSON.stringify(
+          payload,
+          null,
+          2
+        )
+      ],
+      {
+        type:
+          "application/json;charset=utf-8"
+      }
+    );
 
   const url =
-    URL.createObjectURL(blob);
+    URL.createObjectURL(
+      blob
+    );
 
   const a =
-    document.createElement("a");
+    document.createElement(
+      "a"
+    );
 
   a.href = url;
 
-  a.download = filename;
+  a.download =
+    filename;
 
   a.click();
 
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(
+    url
+  );
 
   log(
     `JSON出力完了: ${filename}`
