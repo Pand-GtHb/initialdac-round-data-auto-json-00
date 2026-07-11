@@ -1,22 +1,19 @@
 /* =========================================================
- [100] Core Config
+ [0000] Core Config
 ========================================================= */
-
 const BASE_URL =
   "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
 /* =========================================================
- [110] View State Enum
+ [0010] View State Enum
 ========================================================= */
-
 const STATE = {
   SUMMARY: "summary",
   DETAIL: "detail",
   MATCHING: "matching"
 };
 /* =========================================================
- [120] Application State
+ [0020] Application State
 ========================================================= */
-
 const State = {
   all: [],
   filtered: [],
@@ -64,9 +61,8 @@ const State = {
   }
 };
 /* =========================================================
- [130] Rank Master
+ [0030] Rank Master
 ========================================================= */
-
 const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
 
@@ -124,28 +120,32 @@ const RANKS = [
 
 ];
 /* =========================================================
- [140] Rank Utility
+ [0100] Rank Utility:getRankIndex(key)
 ========================================================= */
-
 function getRankIndex(key) {
   return RANKS.findIndex(r => r.key === key);
 }
-
+/* =========================================================
+ [0110] Rank Utility:getRankInfo
+========================================================= */
 function getRankInfo(key) {
   return RANKS.find(r => r.key === key) || null;
 }
 /* =========================================================
- [150] View Utility
+ [0200] View Utility:isCurrentView
 ========================================================= */
-
 function isCurrentView(view) {
   return State.currentView === view;
 }
-
+/* =========================================================
+ [0210] View Utility:setCurrentView
+========================================================= */
 function setCurrentView(view) {
   State.currentView = view;
 }
-
+/* =========================================================
+ [0220] View Utility:switchDisplayView
+========================================================= */
 function switchDisplayView(view) {
 
   const summaryView =
@@ -178,11 +178,9 @@ function switchDisplayView(view) {
         : "none";
   }
 }
-
 /* =========================================================
- [200] Logging Core
+ [1000] Logging Core
 ========================================================= */
-
 const LOG_STORAGE_KEYS = {
   viewerLogs: "initialdac_viewer_logs",
   copyEvents: "initialdac_copy_events_",
@@ -196,11 +194,9 @@ const LOG_STORAGE_LIMITS = {
 };
 
 const MAX_LOG_LINES = 100;
-
 /* =========================================================
- [300] Date Utility
+ [2000] Date Utility:getNowLabelJa
 ========================================================= */
-
 function getNowLabelJa() {
 
   const now = new Date();
@@ -218,7 +214,9 @@ function getNowLabelJa() {
     }
   );
 }
-
+/* =========================================================
+ [2010] Date Utility:getTodayYMDJa
+========================================================= */
 function getTodayYMDJa() {
 
   const now = new Date();
@@ -229,12 +227,16 @@ function getTodayYMDJa() {
 
   return `${y}/${m}/${d}`;
 }
-
+/* =========================================================
+ [2020] Date Utility:compactYMD
+========================================================= */
 function compactYMD(ymd) {
   return String(ymd || "")
     .replace(/\//g, "");
 }
-
+/* =========================================================
+ [2030] Date Utility:buildDailyKey
+========================================================= */
 function buildDailyKey() {
 
   const d = new Date();
@@ -274,7 +276,9 @@ const parseDateJST = str => {
     ? null
     : d;
 };
-
+/* =========================================================
+ [2040] Date Utility:formatYMDHM
+========================================================= */
 function formatYMDHM(date) {
 
   if (
@@ -292,11 +296,9 @@ function formatYMDHM(date) {
 
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
-
 /* =========================================================
- [310] String Utility
+ [2100] String Utility:normalize
 ========================================================= */
-
 function normalize(s) {
 
   if (!s) {
@@ -327,29 +329,29 @@ function normalize(s) {
 
   return s;
 }
-
+/* =========================================================
+ [2110] String Utility:normalizePlayerName
+========================================================= */
 function normalizePlayerName(str) {
 
   return String(str ?? "")
     .normalize("NFKC");
 }
-
 /* =========================================================
- [320] Number Utility
+ [2200] Number Utility
 ========================================================= */
-
 const fmt =
   n => Number(n)
     .toLocaleString();
-
 /* =========================================================
- [330] Progress Utility
+ [2300] Progress Utility
 ========================================================= */
-
 let progressTimer = null;
 let progressPos = 0;
 let progressLine = null;
-
+/* =========================================================
+ [2310] Progress Utility:startProgress
+========================================================= */
 function startProgress() {
 
   const box =
@@ -381,7 +383,9 @@ function startProgress() {
 
     }, 120);
 }
-
+/* =========================================================
+ [2320] Progress Utility:updateProgressBar
+========================================================= */
 function updateProgressBar() {
 
   const total = 20;
@@ -397,7 +401,9 @@ function updateProgressBar() {
   progressLine.textContent =
     `進行中：${filled}${empty}`;
 }
-
+/* =========================================================
+ [2330] Progress Utility:stopProgress
+========================================================= */
 function stopProgress() {
 
   if (progressTimer) {
@@ -415,11 +421,9 @@ function stopProgress() {
 
   log("Viewer フィルタ完了");
 }
-
 /* =========================================================
- [340] Shop Utility
+ [2400] Shop Utility:getZenkakuLength
 ========================================================= */
-
 function getZenkakuLength(str) {
 
   if (!str) {
@@ -434,7 +438,9 @@ function getZenkakuLength(str) {
 
   return len / 2;
 }
-
+/* =========================================================
+ [2410] Shop Utility:isMostlyAscii
+========================================================= */
 function isMostlyAscii(str) {
 
   if (!str) {
@@ -449,7 +455,9 @@ function isMostlyAscii(str) {
     asciiCount / str.length >= 0.7
   );
 }
-
+/* =========================================================
+ [2420] Shop Utility:getTextWidth
+========================================================= */
 function getTextWidth(text, font) {
 
   const canvas =
@@ -469,7 +477,9 @@ function getTextWidth(text, font) {
   return ctx.measureText(text)
     .width;
 }
-
+/* =========================================================
+ [2430] Shop Utility:shortenStoreName
+========================================================= */
 function shortenStoreName(full) {
 
   if (!full) {
@@ -548,11 +558,9 @@ function shortenStoreName(full) {
     full.slice(-1)
   );
 }
-
 /* =========================================================
- [350] Render Utility
+ [2500] Render Utility
 ========================================================= */
-
 function renderStars(starCount) {
 
   if (
@@ -574,9 +582,8 @@ function renderStars(starCount) {
     : stars;
 }
 /* =========================================================
- [400] Fetch Core
+ [3000] Fetch Core
 ========================================================= */
-
 async function fetchJSON(
   path,
   options = {}
@@ -678,11 +685,9 @@ async function fetchJSON(
 }
 
 /* =========================================================
- [410] Area Data Loader
+ [3100] Area Data Loader:loadAreaList
 ========================================================= */
-
 let AreaList = {};
-
 async function loadAreaList() {
 
   try {
@@ -702,13 +707,17 @@ async function loadAreaList() {
     AreaList = {};
   }
 }
-
+/* =========================================================
+ [3110] Area Data Loader:fetchAreaListJson
+========================================================= */
 async function fetchAreaListJson() {
   return fetchJSON(
     "areaList.json"
   );
 }
-
+/* =========================================================
+ [3120] Area Data Loader:applyAreaListJson
+========================================================= */
 function applyAreaListJson(json) {
 
   AreaList = {};
@@ -732,9 +741,8 @@ function applyAreaListJson(json) {
   );
 }
 /* =========================================================
- [420] Latest Round Loader
+ [3200] Latest Round Loader:loadLatestRound
 ========================================================= */
-
 async function loadLatestRound() {
 
   log(
@@ -758,14 +766,18 @@ async function loadLatestRound() {
     );
   }
 }
-
+/* =========================================================
+ [3210] Latest Round Loader:fetchLatestRoundJson
+========================================================= */
 async function fetchLatestRoundJson() {
 
   return fetchJSON(
     "latest_round.json"
   );
 }
-
+/* =========================================================
+ [3220] Latest Round Loader:applyLatestRoundJson
+========================================================= */
 function applyLatestRoundJson(
   json
 ) {
@@ -797,11 +809,9 @@ function applyLatestRoundJson(
     "latest_round.json 読み込み完了"
   );
 }
-
 /* =========================================================
- [430] Latest Update Loader
+ [3300] Latest Update Loader:loadLatestUpdate
 ========================================================= */
-
 async function loadLatestUpdate() {
 
   try {
@@ -821,14 +831,18 @@ async function loadLatestUpdate() {
     );
   }
 }
-
+/* =========================================================
+ [3310] Latest Update Loader:fetchLatestUpdateJson
+========================================================= */
 async function fetchLatestUpdateJson() {
 
   return fetchJSON(
     "latest_update.json"
   );
 }
-
+/* =========================================================
+ [3320] Latest Update Loader:applyLatestUpdateJson
+========================================================= */
 function applyLatestUpdateJson(
   json
 ) {
@@ -873,9 +887,8 @@ function applyLatestUpdateJson(
   );
 }
 /* =========================================================
- [440] Rank Model Loader
+ [3400] Rank Model Loader:loadRankModel
 ========================================================= */
-
 async function loadRankModel() {
 
   log(
@@ -901,14 +914,18 @@ async function loadRankModel() {
     );
   }
 }
-
+/* =========================================================
+ [3410] Rank Model Loader:fetchRankModelJson
+========================================================= */
 async function fetchRankModelJson() {
 
   return fetchJSON(
     "rank_model.json"
   );
 }
-
+/* =========================================================
+ [3420] Rank Model Loader:applyRankModelJson
+========================================================= */
 function applyRankModelJson(
   json
 ) {
@@ -921,9 +938,8 @@ function applyRankModelJson(
   );
 }
 /* =========================================================
- [450] Scoring Config Loader
+ [3500] Scoring Config Loader:loadScoringConfig
 ========================================================= */
-
 async function loadScoringConfig() {
 
   try {
@@ -945,14 +961,18 @@ async function loadScoringConfig() {
     );
   }
 }
-
+/* =========================================================
+ [3510] Scoring Config Loader:fetchScoringConfigJson
+========================================================= */
 async function fetchScoringConfigJson() {
 
   return fetchJSON(
     "scoring_config.json"
   );
 }
-
+/* =========================================================
+ [3520] Scoring Config Loader:applyScoringConfigJson
+========================================================= */
 function applyScoringConfigJson(
   json
 ) {
@@ -964,16 +984,17 @@ function applyScoringConfigJson(
   );
 }
 /* =========================================================
- [460] Round Data Loader
+ [3600] Round Data Loader:fetchRoundDataJson
 ========================================================= */
-
 async function fetchRoundDataJson() {
 
   return fetchJSON(
     "integrated_data.json"
   );
 }
-
+/* =========================================================
+ [3610] Round Data Loader:applyRoundDataJson
+========================================================= */
 function applyRoundDataJson(
   json,
   options = {}
@@ -1056,9 +1077,8 @@ function applyRoundDataJson(
   }
 }
 /* =========================================================
- [470] Reload & Prefetch
+ [3700] Reload & Prefetch:reloadLatestDataPreferPrefetch
 ========================================================= */
-
 async function reloadLatestDataPreferPrefetch() {
 
   startProgress();
@@ -1130,7 +1150,9 @@ async function reloadLatestDataPreferPrefetch() {
     stopProgress();
   }
 }
-
+/* =========================================================
+ [3710] Reload & Prefetch:prefetchLatestRoundData
+========================================================= */
 async function prefetchLatestRoundData(
   lastUpdatedValue
 ) {
@@ -1213,9 +1235,8 @@ async function prefetchLatestRoundData(
   return State.prefetchInFlight;
 }
 /* =========================================================
- [480] Update Watch Core
+ [3800] Update Watch Core
 ========================================================= */
-
 async function checkUpdate() {
 
   /* =====================================
@@ -1318,9 +1339,8 @@ async function checkUpdate() {
   }
 }
 /* =========================================================
- [900] Application Init
+ [4000] Application Init
 ========================================================= */
-
 async function init() {
 
   log("Viewer 初期化中");
@@ -1415,9 +1435,8 @@ async function init() {
   startUpdateWatch();
 }
 /* =========================================================
- [910] DOMContentLoaded
+ [4100] DOMContentLoaded
 ========================================================= */
-
 document.addEventListener(
   "DOMContentLoaded",
   () => {
@@ -1738,9 +1757,8 @@ document.addEventListener(
   }
 );
 /* =========================================================
- [920] History Navigation
+ [4200] History Navigation
 ========================================================= */
-
 window.addEventListener(
   "popstate",
   (e) => {
@@ -1861,9 +1879,8 @@ window.addEventListener(
   }
 );
 /* =========================================================
- [930] Lifecycle Watch
+ [4300] Lifecycle Watch
 ========================================================= */
-
 function startUpdateWatch() {
 
   if (
@@ -1892,9 +1909,8 @@ function startUpdateWatch() {
     );
 }
 /* =========================================================
- [500] Filter Engine
+ [5000] Filter Engine
 ========================================================= */
-
 function applyFilters() {
 
   const minutes =
@@ -2065,9 +2081,8 @@ function applyFilters() {
   );
 }
 /* =========================================================
- [510] Summary Statistics
+ [5100] Summary Statistics
 ========================================================= */
-
 function calcStats(
   list,
   total
@@ -2123,9 +2138,8 @@ function calcStats(
   };
 }
 /* =========================================================
- [520] Filter UI Builder
+ [5200] Filter UI Builder:buildFilterGroupHTML
 ========================================================= */
-
 function buildFilterGroupHTML(
   items,
   options
@@ -2164,7 +2178,9 @@ function buildFilterGroupHTML(
     </div>
   `;
 }
-
+/* =========================================================
+ [5210] Filter UI Builder:buildRubyFilters
+========================================================= */
 function buildRubyFilters() {
 
   const area =
@@ -2199,7 +2215,9 @@ function buildRubyFilters() {
       }
     );
 }
-
+/* =========================================================
+ [5220] Filter UI Builder:buildPrideFilters
+========================================================= */
 function buildPrideFilters() {
 
   const area =
@@ -2233,9 +2251,8 @@ function buildPrideFilters() {
     );
 }
 /* =========================================================
- [530] Summary Builder
+ [5300] Summary Builder
 ========================================================= */
-
 function buildSummary() {
 
   State.summary = [];
@@ -2320,7 +2337,7 @@ function buildSummary() {
       });
 }
 /* =========================================================
- [540] Summary Renderer
+ [5400] Summary Renderer:filterSummaryBySearch
 ========================================================= */
 function filterSummaryBySearch() {
 
@@ -2357,7 +2374,7 @@ function filterSummaryBySearch() {
   return filtered;
 }
 /* =========================================================
- [545] renderSummary
+ [5410] Summary Renderer:renderSummary
 ========================================================= */
 function renderSummary() {
 
@@ -2539,9 +2556,8 @@ function renderSummary() {
   );
 }
 /* =========================================================
- [550] Summary Navigation
+ [5500] Summary Navigation
 ========================================================= */
-
 function showSummaryUI(
   push = true
 ) {
@@ -2568,9 +2584,8 @@ function showSummaryUI(
   }
 }
 /* =========================================================
- [600] Detail Navigation
+ [6000] Detail Navigation
 ========================================================= */
-
 function setupRankNavigation(
   currentKey
 ) {
@@ -2618,7 +2633,7 @@ function setupRankNavigation(
       showDetail(next);
 }
 /* =========================================================
- [610] Detail Renderer
+ [6100] Detail Renderer
 ========================================================= */
 function showDetail(
   key,
@@ -2756,9 +2771,8 @@ function showDetail(
   );
 }
 /* =========================================================
- [620] Player Row Renderer
+ [6200] Player Row Renderer
 ========================================================= */
-
 function renderDetailTable(
   isRubyBand,
   bandLabel,
@@ -2827,7 +2841,7 @@ function renderDetailTable(
   );
 }
 /* =========================================================
- [630] Detail Row Renderer
+ [6300] Detail Row Renderer
 ========================================================= */
 function renderDetailRows(
   list,
@@ -2839,7 +2853,7 @@ function renderDetailRows(
   );
 }
 /* =========================================================
- [640] Matching Highlight Renderer
+ [6400] Matching Highlight Renderer
 ========================================================= */
 function highlightMatchingRows(
   tbody
@@ -2918,7 +2932,7 @@ function highlightMatchingRows(
 
 }
 /* =========================================================
- [650] Player Row Renderer Core
+ [6500] Player Row Renderer Core
 ========================================================= */
 function renderPlayerRowsToBody(
   tbodyId,
@@ -2943,9 +2957,8 @@ function renderPlayerRowsToBody(
   );
 }
 /* =========================================================
- [660] Clipboard Action
+ [6600] Clipboard Action
 ========================================================= */
-
 function buildPlayerRowHTML(
   p
 ) {
@@ -3062,8 +3075,7 @@ function buildPlayerRowHTML(
   `;
 }
 /* ---------------------------------------------------------
-   [665] copyToClipboard
-   ★ 安定版復元
+ [6610] copyToClipboard
 --------------------------------------------------------- */
 function copyToClipboard(text) {
 
@@ -3171,7 +3183,7 @@ function copyToClipboard(text) {
 
 }
 /* =========================================================
- [670] Detail Filter
+ [6700] Detail Filter
 ========================================================= */
 function applyPlayerFilter(
   keyword,
@@ -3217,9 +3229,8 @@ function applyPlayerFilter(
   );
 }
 /* =========================================================
- [680] Area Engine
+ [6800] Area Engine
 ========================================================= */
-
 function buildAreaDistribution(
   list
 ) {
@@ -3291,9 +3302,8 @@ function getAreaScore(
   );
 }
 /* =========================================================
- [690] Candidate Score Engine
+ [6900] Candidate Score Engine
 ========================================================= */
-
 function buildCandidateScore(
   player
 ) {
@@ -3350,9 +3360,8 @@ function buildCandidateScore(
   };
 }
 /* =========================================================
- [700] Rank Weight Engine
+ [7000] Rank Weight Engine:getPrideBandKey
 ========================================================= */
-
 function getPrideBandKey(pridePoint) {
 
   const pt =
@@ -3373,7 +3382,9 @@ function getPrideBandKey(pridePoint) {
     ? band.key
     : null;
 }
-
+/* =========================================================
+ [7010] Rank Weight Engine:getPlayerRankKey
+========================================================= */
 function getPlayerRankKey(player) {
 
   if (
@@ -3395,7 +3406,9 @@ function getPlayerRankKey(player) {
 
   return null;
 }
-
+/* =========================================================
+ [7020] Rank Weight Engine:syncMyRankSelection
+========================================================= */
 function syncMyRankSelection(
   rankValue
 ) {
@@ -3423,7 +3436,9 @@ function syncMyRankSelection(
 
   return selectedMyRank;
 }
-
+/* =========================================================
+ [7030] Rank Weight Engine:getVirtualStar
+========================================================= */
 function getVirtualStar(player) {
 
   if (
@@ -3444,7 +3459,9 @@ function getVirtualStar(player) {
 
   return null;
 }
-
+/* =========================================================
+ [7040] Rank Weight Engine:getRankWeight
+========================================================= */
 function getRankWeight(player) {
 
   const model =
@@ -3475,7 +3492,9 @@ function getRankWeight(player) {
     table[opp] ?? 0
   );
 }
-
+/* =========================================================
+ [7050] Rank Weight Engine:getPrideWeight
+========================================================= */
 function getPrideWeight(player) {
 
   if (!State.rankModel) {
@@ -3542,7 +3561,9 @@ function getPrideWeight(player) {
 
   return 1.0;
 }
-
+/* =========================================================
+ [7060] Rank Weight Engine:getTimeWeight
+========================================================= */
 function getTimeWeight(player) {
 
   if (
@@ -3641,9 +3662,8 @@ function getTimeWeight(player) {
   return weight;
 }
 /* =========================================================
- [710] Realtime Boost Engine
+ [7100] Realtime Boost Engine:recordClickFromCopiedText
 ========================================================= */
-
 function recordClickFromCopiedText(text) {
 
   if (!text) return;
@@ -3694,7 +3714,9 @@ function recordClickFromCopiedText(text) {
       20
     );
 }
-
+/* =========================================================
+ [7110] Realtime Boost Engine:findPlayerFromCopiedText
+========================================================= */
 function findPlayerFromCopiedText(text) {
 
   if (!text) {
@@ -3735,7 +3757,9 @@ function findPlayerFromCopiedText(text) {
     ) || null
   );
 }
-
+/* =========================================================
+ [7120] Realtime Boost Engine:getRealtimeBoost
+========================================================= */
 function getRealtimeBoost(
   player
 ) {
@@ -3747,7 +3771,9 @@ function getRealtimeBoost(
 
   return detail.total;
 }
-
+/* =========================================================
+ [7130] Realtime Boost Engine:getRealtimeBoostDetail
+========================================================= */
 function getRealtimeBoostDetail(
   player
 ) {
@@ -3887,9 +3913,8 @@ function getRealtimeBoostDetail(
   };
 }
 /* =========================================================
- [720] Phase Engine
+ [7200] Phase Engine:getRoundedDiffMinAndPhaseDistance
 ========================================================= */
-
 function getRoundedDiffMinAndPhaseDistance(
   copiedAtMs,
   cycleMin = 5
@@ -3989,7 +4014,9 @@ function getRoundedDiffMinAndPhaseDistance(
     cooldownRemainingSec: 0
   };
 }
-
+/* =========================================================
+ [7210] Phase Engine:getCurrentCycle
+========================================================= */
 function getCurrentCycle(
   player
 ) {
@@ -3998,7 +4025,9 @@ function getCurrentCycle(
     ? calcPinkCycle(player)
     : calcYellowCycle(player);
 }
-
+/* =========================================================
+ [7220] Phase Engine:calcYellowCycle
+========================================================= */
 function calcYellowCycle(
   player
 ) {
@@ -4084,7 +4113,9 @@ function calcYellowCycle(
 
   return base + clamped;
 }
-
+/* =========================================================
+ [7230] Phase Engine:calcPinkCycle
+========================================================= */
 function calcPinkCycle(
   player
 ) {
@@ -4204,7 +4235,9 @@ function calcPinkCycle(
 
   return base + clamped;
 }
-
+/* =========================================================
+ [7240] Phase Engine:foldToCycle
+========================================================= */
 function foldToCycle(
   diff,
   cycle
@@ -4222,7 +4255,9 @@ function foldToCycle(
     ? mod
     : mod - cycle;
 }
-
+/* =========================================================
+ [7250] Phase Engine:updateAdjust
+========================================================= */
 function updateAdjust(
   prev,
   value,
@@ -4234,7 +4269,9 @@ function updateAdjust(
     alpha * value
   );
 }
-
+/* =========================================================
+ [7260] Phase Engine:clamp
+========================================================= */
 function clamp(
   v,
   min,
@@ -4246,7 +4283,9 @@ function clamp(
     Math.min(max, v)
   );
 }
-
+/* =========================================================
+ [7270] Phase Engine:isCopiedPlayer
+========================================================= */
 function isCopiedPlayer(
   player
 ) {
@@ -4261,7 +4300,9 @@ function isCopiedPlayer(
       )
   );
 }
-
+/* =========================================================
+ [7280] Phase Engine:getPhaseDistanceMin
+========================================================= */
 function getPhaseDistanceMin(
   copiedAtMs,
   cycleMin = 5
@@ -4273,9 +4314,8 @@ function getPhaseDistanceMin(
   );
 }
 /* =========================================================
- [730] Phase Candidate Judge
+ [7300] Phase Candidate Judge:getYellowPhaseScore
 ========================================================= */
-
 /* =====================================
  * Yellow強度評価
  * 戻り値: 0.0 ～ 1.0
@@ -4326,7 +4366,9 @@ function getYellowPhaseScore(player) {
     cosValue
   );
 }
-
+/* =========================================================
+ [7310] Phase Candidate Judge:isMatchingCandidateByPhase
+========================================================= */
 /* =====================================
  * Yellow判定
  * ===================================== */
@@ -4357,7 +4399,9 @@ function isMatchingCandidateByPhase(
 
   return score > threshold;
 }
-
+/* =========================================================
+ [7320] Phase Candidate Judge:getLatestCopiedPlayer
+========================================================= */
 function getLatestCopiedPlayer() {
 
   return (
@@ -4365,7 +4409,9 @@ function getLatestCopiedPlayer() {
     null
   );
 }
-
+/* =========================================================
+ [7330] Phase Candidate Judge:getPinkPhaseScore
+========================================================= */
 /* =====================================
  * Pink強度評価
  * 戻り値: 0.0 ～ 1.0
@@ -4437,7 +4483,9 @@ function getPinkPhaseScore(
     cosValue
   );
 }
-
+/* =========================================================
+ [7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase
+========================================================= */
 /* =====================================
  * Pink判定
  * ===================================== */
@@ -4506,9 +4554,8 @@ function isMatchingCandidateByCopyPhase(
   return cosValue > 0;
 }
 /* =========================================================
- [740] Matching Score Engine
+ [7400] Matching Score Engine:calcMatchingDiagnostics
 ========================================================= */
-
 function calcMatchingDiagnostics(
   list
 ) {
@@ -4561,7 +4608,9 @@ function calcMatchingDiagnostics(
       ranked.length
   };
 }
-
+/* =========================================================
+ [7410] Matching Score Engine:calcMatchingScoreDetail
+========================================================= */
 function calcMatchingScoreDetail(
   player
 ) {
@@ -4641,7 +4690,9 @@ function calcMatchingScoreDetail(
     selectionWeight
   };
 }
-
+/* =========================================================
+ [7420] Matching Score Engine:calcMatchingScore
+========================================================= */
 function calcMatchingScore(
   player
 ) {
@@ -4651,10 +4702,9 @@ function calcMatchingScore(
   ).score;
 }
 /* =========================================================
- [750] getPhaseSelectionMultiplier
+ [7500] PhaseSelectionMultiplier
 ========================================================= */
 function getPhaseSelectionMultiplier(player) {
-
   /* =====================================
    * 安全取得
    * ===================================== */
@@ -4745,9 +4795,8 @@ function getPhaseSelectionMultiplier(player) {
   return 1.0;
 }
 /* =========================================================
- [760] Weighted Selection
+ [7600] Weighted Selection
 ========================================================= */
-
 function selectByWeight(
   players,
   count
@@ -4820,9 +4869,8 @@ function selectByWeight(
   return result;
 }
 /* =========================================================
- [770] Candidate Builder
+ [7700] Candidate Builder
 ========================================================= */
-
 function buildMatchingCandidates() {
 
   const selectedStars =
@@ -5197,7 +5245,7 @@ function buildMatchingCandidates() {
   );
 }
 /* =========================================================
- [780] Matching Header
+ [7800] Matching Header
 ========================================================= */
 function renderMatchingHeader() {
 
@@ -5263,7 +5311,7 @@ function renderMatchingHeader() {
     parts.join("");
 }
 /* =========================================================
- [785] Matching Table Renderer
+ [7810] Matching Table Renderer
 ========================================================= */
 function renderMatchingTable() {
 
@@ -5312,7 +5360,7 @@ function renderMatchingTable() {
   );
 }
 /* =========================================================
- [787] Matching Row Renderer
+ [7820] Matching Row Renderer
 ========================================================= */
 function renderMatchingRows(
   list
@@ -5328,9 +5376,8 @@ function renderMatchingRows(
 
 }
 /* =========================================================
- [790] Matching Navigation
+ [7900] Matching Navigation:showMatchingCandidates
 ========================================================= */
-
 function showMatchingCandidates(
   push = true
 ) {
@@ -5360,7 +5407,9 @@ function showMatchingCandidates(
     );
   }
 }
-
+/* =========================================================
+ [7910] Matching Navigation:backToSummaryFromMatching
+========================================================= */
 function backToSummaryFromMatching(
   push = true
 ) {
@@ -5386,7 +5435,9 @@ function backToSummaryFromMatching(
     );
   }
 }
-
+/* =========================================================
+ [7920] Matching Navigation:clearSearch
+========================================================= */
 function clearSearch() {
 
   const input =
@@ -5401,9 +5452,8 @@ function clearSearch() {
   State.searchText = "";
 }
 /* =========================================================
- [800] Export Core
+ [8000] Export Core
 ========================================================= */
-
 function downloadCSV(
   filename,
   header,
@@ -5450,9 +5500,8 @@ function downloadCSV(
   );
 }
 /* =========================================================
- [810] Summary Export
+ [8100] Summary Export
 ========================================================= */
-
 function exportSummaryCSV() {
 
   const header =
@@ -5498,9 +5547,8 @@ function exportSummaryCSV() {
   );
 }
 /* =========================================================
- [820] Record Export
+ [8200] Record Export
 ========================================================= */
-
 function exportAllCSV() {
 
   const header = [
@@ -5558,9 +5606,8 @@ function exportAllCSV() {
   );
 }
 /* =========================================================
- [1000] Viewer Log Core
+ [9000] Viewer Log Core:appendLog
 ========================================================= */
-
 function appendLog(
   msg,
   type = "info"
@@ -5647,7 +5694,9 @@ function appendLog(
       State.latestUpdateAt || ""
   });
 }
-
+/* =========================================================
+ [9010] Viewer Log Core:allowLog
+========================================================= */
 function allowLog(
   message,
   type
@@ -5804,9 +5853,8 @@ const logError =
       "error"
     );
 /* =========================================================
- [1010] Viewer Log Storage
+ [9100] Viewer Log Storage:pushStoredRecord
 ========================================================= */
-
 function pushStoredRecord(
   key,
   record,
@@ -5847,7 +5895,9 @@ function pushStoredRecord(
     trimmed
   );
 }
-
+/* =========================================================
+ [9110] Viewer Log Storage:saveViewerLogToStorage
+========================================================= */
 function saveViewerLogToStorage(
   payload
 ) {
@@ -5858,7 +5908,9 @@ function saveViewerLogToStorage(
     LOG_STORAGE_LIMITS.viewerLogs
   );
 }
-
+/* =========================================================
+ [9120] Viewer Log Storage:readStoredArraySafe
+========================================================= */
 function readStoredArraySafe(
   key
 ) {
@@ -5894,7 +5946,9 @@ function readStoredArraySafe(
     return [];
   }
 }
-
+/* =========================================================
+ [9130] Viewer Log Storage:writeStoredArraySafe
+========================================================= */
 function writeStoredArraySafe(
   key,
   arr
@@ -5917,9 +5971,8 @@ function writeStoredArraySafe(
   }
 }
 /* =========================================================
- [1020] Copy Log
+ [9200] Copy Log
 ========================================================= */
-
 function saveCopyEventUnified(
   rawText
 ) {
@@ -6090,9 +6143,8 @@ function saveCopyEventUnified(
   return record;
 }
 /* =========================================================
- [1030] Phase Analysis
+ [9300] Phase Analysis
 ========================================================= */
-
 function getPhaseAnalysis(
   player
 ) {
@@ -6246,9 +6298,8 @@ function getPhaseAnalysis(
   };
 }
 /* =========================================================
- [1040] Snapshot Log
+ [9400] Snapshot Log
 ========================================================= */
-
 function saveMatchingSnapshot() {
 
   const snapshotId =
@@ -6297,7 +6348,7 @@ function saveMatchingSnapshot() {
   );
 }
 /* =========================================================
- [1050] IndexedDB Schema
+ [9500] IndexedDB Schema
 ========================================================= */
 const LOG_DB_NAME =
   "viewer_logs_db";
@@ -6312,12 +6363,9 @@ const LOG_STORE = {
 };
 
 let logDB = null;
-
-
 /* =========================================================
- [1060] IndexedDB Core
+ [9600] IndexedDB Core:initLogDB
 ========================================================= */
-
 function initLogDB() {
 
   return new Promise(
@@ -6407,7 +6455,9 @@ function initLogDB() {
     }
   );
 }
-
+/* =========================================================
+ [9610] IndexedDB Core:putLog
+========================================================= */
 function putLog(
   storeName,
   data
@@ -6430,7 +6480,9 @@ function putLog(
 
   store.put(data);
 }
-
+/* =========================================================
+ [9620] IndexedDB Core:logEvent
+========================================================= */
 function logEvent(
   type,
   payload = {}
@@ -6461,9 +6513,8 @@ function logEvent(
   }
 }
 /* =========================================================
- [1070] IndexedDB Export
+ [9700] IndexedDB Export:downloadJSON
 ========================================================= */
-
 function downloadJSON(
   data
 ) {
@@ -6504,7 +6555,9 @@ function downloadJSON(
     url
   );
 }
-
+/* =========================================================
+ [9710] IndexedDB Export:exportTodayLogsAsJSON
+========================================================= */
 function exportTodayLogsAsJSON() {
 
   if (!logDB) {
@@ -6618,9 +6671,8 @@ function exportTodayLogsAsJSON() {
       );
     };
 }
-
 /* =========================================================
- [1080] JSON Export
+ [9800] JSON Export
 ========================================================= */
 function exportTodayViewerLogsAsJSON() {
 
