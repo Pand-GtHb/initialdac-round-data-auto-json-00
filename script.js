@@ -250,31 +250,30 @@ function buildDailyKey() {
 
 const parseDateJST = str => {
 
-  if (!str || typeof str !== "string") {
+  if (str == null) {
     return null;
   }
 
-  let s = str.trim();
+  let s = String(str).trim();
 
   s = s.replace(/\//g, "-");
 
-  if (s.includes(" ")) {
-    s = s.replace(" ", "T");
-  }
+  // 複数空白や改行を T に置換
+  s = s.replace(/\s+/, "T");
 
-  if (
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)
-  ) {
+  // 秒が無ければ補完
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) {
     s += ":00";
   }
 
-  s += "+09:00";
+  // 既にタイムゾーン表記があれば追加しない（Z または +HH or +HH:MM など）
+  if (!/(?:Z|z|[+\-]\d{2}(?::\d{2})?)$/.test(s)) {
+    s += "+09:00";
+  }
 
   const d = new Date(s);
 
-  return isNaN(d.getTime())
-    ? null
-    : d;
+  return isNaN(d.getTime()) ? null : d;
 };
 /* =========================================================
  [2040] Date Utility:formatYMDHM
@@ -300,32 +299,31 @@ function formatYMDHM(date) {
  [2100] String Utility:normalize
 ========================================================= */
 function normalize(s) {
-
-  if (!s) {
+  if (s == null) {
     return "";
   }
 
+  s = String(s).trim();
+
+  // 全角スペースを半角に
   s = s.replace(/\u3000/g, " ");
 
-  s = s.replace(
-    /[A-Za-z0-9]/g,
-    ch =>
-      String.fromCharCode(
-        ch.charCodeAt(0) + 0xFEE0
-      )
-  );
-
+  // 先に小文字化してから英数字を全角化する（toLowerCase が無効化されるのを防止）
   s = s.toLowerCase();
 
   s = s.replace(
-    /[\u3041-\u3096]/g,
-    ch =>
-      String.fromCharCode(
-        ch.charCodeAt(0) + 0x60
-      )
+    /[A-Za-z0-9]/g,
+    ch => String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
   );
 
-  s = s.replace(/ /g, "");
+  // ひらがなをカタカナ相当に変換（既存ロジック維持）
+  s = s.replace(
+    /[\u3041-\u3096]/g,
+    ch => String.fromCharCode(ch.charCodeAt(0) + 0x60)
+  );
+
+  // 空白を除去
+  s = s.replace(/\s+/g, "");
 
   return s;
 }
@@ -353,53 +351,43 @@ let progressLine = null;
  [2310] Progress Utility:startProgress
 ========================================================= */
 function startProgress() {
+  const box = document.getElementById("logBox");
 
-  const box =
-    document.getElementById("logBox");
+  // logBox が存在しない環境では何もしない
+  if (!box) return;
 
-  if (progressLine) {
+  if (progressLine && progressLine.parentNode) {
     progressLine.remove();
   }
 
   progressPos = 0;
 
-  progressLine =
-    document.createElement("div");
+  progressLine = document.createElement("div");
 
-  progressLine.style.color =
-    "#ffeb3b";
+  progressLine.style.color = "#ffeb3b";
 
   box.prepend(progressLine);
 
   updateProgressBar();
 
-  progressTimer =
-    setInterval(() => {
-
-      progressPos =
-        (progressPos + 1) % 20;
-
-      updateProgressBar();
-
-    }, 120);
+  progressTimer = setInterval(() => {
+    progressPos = (progressPos + 1) % 20;
+    updateProgressBar();
+  }, 120);
 }
 /* =========================================================
  [2320] Progress Utility:updateProgressBar
 ========================================================= */
 function updateProgressBar() {
+  if (!progressLine) return;
 
   const total = 20;
 
-  const filled =
-    "■".repeat(progressPos);
+  const filled = "■".repeat(Math.max(0, Math.min(total, progressPos)));
 
-  const empty =
-    "□".repeat(
-      total - progressPos
-    );
+  const empty = "□".repeat(Math.max(0, total - progressPos));
 
-  progressLine.textContent =
-    `進行中：${filled}${empty}`;
+  progressLine.textContent = `進行中：${filled}${empty}`;
 }
 /* =========================================================
  [2330] Progress Utility:stopProgress
