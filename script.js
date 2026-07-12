@@ -4486,10 +4486,8 @@ function getPinkPhaseScore(
 /* =====================================
  * Pink判定
  * ===================================== */
-function isMatchingCandidateByCopyPhase(
-  player
-) {
-
+function isMatchingCandidateByCopyPhase(player)
+{
   if (!player) {
     return false;
   }
@@ -4525,6 +4523,14 @@ function isMatchingCandidateByCopyPhase(
     return false;
   }
 
+  const threshold =
+    Number(
+      State.scoringConfig
+        ?.phase
+        ?.display
+        ?.pinkThreshold ?? 0
+    );
+
   const diffSec =
     (
       Date.now() -
@@ -4548,7 +4554,7 @@ function isMatchingCandidateByCopyPhase(
   const cosValue =
     Math.cos(theta);
 
-  return cosValue > 0;
+  return cosValue > threshold;
 }
 /* =========================================================
  [7400] Matching Score Engine:calcMatchingDiagnostics
