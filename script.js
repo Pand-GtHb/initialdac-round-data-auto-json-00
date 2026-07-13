@@ -58,11 +58,15 @@ const State = {
   lastCandidateEventId: null,
 
   /* --- 新仕様追加（Fact） --- */
-  pinkTargets: {},          // Copy済プレイヤー専用管理
-  encounterHistory: {}      // 再遭遇回数管理
+  pinkTargets: {},
+  encounterHistory: {}
 };
 /* =========================================================
- [0030] Rank Master
+ [0030] Persistence Key
+========================================================= */
+const PERSIST_STATE_KEY = "initialdac_viewer_pink_state_v1";
+/* =========================================================
+ [0040] Rank Master
 ========================================================= */
 const RUBY_ID =
   "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
@@ -1107,7 +1111,14 @@ async function reloadLatestDataPreferPrefetch() {
         "Reload 利用元:Fallback"
       );
 
-      await loadRoundData();
+      try {
+          const roundDataJson = await fetchRoundDataJson();
+          applyRoundDataJson(roundDataJson, { resetReloadButton: true });
+          } catch (err) {
+          logError("integrated_data.json の取得に失敗：" + err.message);
+          State.all = [];
+          State.filtered = [];
+          }
     }
 
     /* =====================================
@@ -1334,6 +1345,8 @@ async function init() {
 
   await initLogDB();
 
+  restorePinkStateFromStorage();
+
   startProgress();
 
   buildRubyFilters();
@@ -1404,8 +1417,14 @@ async function init() {
 
     await loadScoringConfig();
 
-    await loadRoundData();
-
+    try {
+        const roundDataJson = await fetchRoundDataJson();
+        applyRoundDataJson(roundDataJson, { resetReloadButton: true });
+        } catch (err) {
+          logError("integrated_data.json の取得に失敗：" + err.message);
+        State.all = [];
+          State.filtered = [];
+        }
     log(
       "初期データ取得完了"
     );
@@ -3401,7 +3420,7 @@ function getVirtualStar(player) {
     return String(
       Number(player.starCnt ?? 0)
     );
- 
+  }
 
   if (
     Number(
@@ -3614,6 +3633,137 @@ function getTimeWeight(player) {
   }
 
   return weight;
+}
+/* =========================================================
+ [7095] Pink State Helpers
+========================================================= */
+function buildPlayerIdentityKey(player) {
+  const name = normalizePlayerName(player?.name ?? "");
+  const shop = normalizePlayerName(player?.shopname ?? "");
+  const updateDate = String(player?.updateDate ?? "");
+  return `${name}@@${shop}@@${updateDate}`;
+}
+
+function savePinkStateToStorage() {
+  try {
+    const payload = {
+      pinkTargets: State.pinkTargets || {},
+      encounterHistory: State.encounterHistory || {},
+      phaseAdjust: State.phaseAdjust || { yellow: 0, pink: 0 },
+      savedAt: Date.now()
+    };
+    localStorage.setItem(PERSIST_STATE_KEY, JSON.stringify(payload));
+  } catch (e) {
+    console.warn("[persist] save failed", e);
+  }
+}
+
+function restorePinkStateFromStorage() {
+  try {
+    const raw = localStorage.getItem(PERSIST_STATE_KEY);
+    if (!raw) return;
+
+    const parsed = JSON.parse(raw);
+
+    if (parsed?.pinkTargets && typeof parsed.pinkTargets === "object") {
+      State.pinkTargets = parsed.pinkTargets;
+    }
+
+    if (parsed?.encounterHistory && typeof parsed.encounterHistory === "object") {
+      State.encounterHistory = parsed.encounterHistory;
+    }
+
+    if (parsed?.phaseAdjust && typeof parsed.phaseAdjust === "object") {
+      State.phaseAdjust = {
+        yellow: Number(parsed.phaseAdjust.yellow ?? State.phaseAdjust.yellow ?? 0),
+        pink: Number(parsed.phaseAdjust.pink ?? State.phaseAdjust.pink ?? 0)
+      };
+    }
+  } catch (e) {
+    console.warn("[persist] restore failed", e);
+  }
+}
+
+function getPinkTarget(player) {
+  if (!player) return null;
+  const key = buildPlayerIdentityKey(player);
+  return State.pinkTargets?.[key] || null;
+}
+
+function registerPinkTarget(player, copiedAt = Date.now()) {
+  if (!player) return null;
+
+  const key = buildPlayerIdentityKey(player);
+  const now = Number(copiedAt) || Date.now();
+
+  const existing = State.pinkTargets?.[key] || null;
+
+  const entry = existing || {
+    key,
+    name: player.name ?? "",
+    shopname: player.shopname ?? "",
+    area: player.area ?? "",
+    rankKey: getPlayerRankKey(player),
+    copyCount: 0,
+    firstCopiedAt: now,
+    lastCopiedAt: now,
+    history: []
+  };
+
+  entry.copyCount = (entry.copyCount || 0) + 1;
+  entry.lastCopiedAt = now;
+  entry.history = [...(entry.history || []), now].slice(-5);
+  entry.area = player.area ?? entry.area;
+  entry.rankKey = getPlayerRankKey(player) || entry.rankKey;
+  entry.name = player.name ?? entry.name;
+  entry.shopname = player.shopname ?? entry.shopname;
+
+  State.pinkTargets[key] = entry;
+  savePinkStateToStorage();
+  return entry;
+}
+
+function updateEncounterHistory(player, copiedAt = Date.now()) {
+  if (!player) return null;
+
+  const key = buildPlayerIdentityKey(player);
+  const now = Number(copiedAt) || Date.now();
+
+  const existing = State.encounterHistory?.[key] || null;
+
+  const entry = existing || {
+    key,
+    name: player.name ?? "",
+    shopname: player.shopname ?? "",
+    count: 0,
+    firstSeenAt: now,
+    lastSeenAt: now,
+    lastUpdateDate: player.updateDate ?? ""
+  };
+
+  entry.count = (entry.count || 0) + 1;
+  entry.lastSeenAt = now;
+  entry.lastUpdateDate = player.updateDate ?? entry.lastUpdateDate;
+
+  State.encounterHistory[key] = entry;
+  savePinkStateToStorage();
+  return entry;
+}
+
+function getEncounterHistory(player) {
+  if (!player) return null;
+  const key = buildPlayerIdentityKey(player);
+  return State.encounterHistory?.[key] || null;
+}
+
+function getEncounterBonus(player) {
+  const history = getEncounterHistory(player);
+  const count = Number(history?.count || 0);
+
+  if (!Number.isFinite(count) || count <= 1) return 1.0;
+  if (count === 2) return 1.3;
+  if (count === 3) return 1.6;
+  return 2.0;
 }
 /* =========================================================
  [7100] Realtime Boost Engine:recordClickFromCopiedText
@@ -4045,9 +4195,6 @@ function calcYellowCycle(player) {
       )
     );
   }
-
-  const click =
-    clicks[0];
 
   const last =
     parseDateJST(
@@ -4561,80 +4708,50 @@ function calcMatchingScoreDetail(player) {
     !player ||
     !player.updateDate
   ) {
-    return {
-      score: 0
-    };
+    return { score: 0 };
   }
 
-  const rankScore =
-    Number(
-      getRankWeight(player) || 0
-    );
+  const rankScore = Number(getRankWeight(player) || 0);
 
-  if (
-    rankScore <= 0
-  ) {
-    return {
-      score: 0
-    };
+  if (!Number.isFinite(rankScore) || rankScore <= 0) {
+    return { score: 0 };
   }
 
-  const prideWeight =
-    Number(
-      getPrideWeight(player) || 1
-    );
+  const prideWeight = Number(getPrideWeight(player) || 1);
+  const areaFactor = Number(getAreaScore(player) || 1);
+  const timeWeight = Number(getTimeWeight(player) || 0);
 
-  const areaFactor =
-    Number(
-      getAreaScore(player) || 1
-    );
-
-  const timeWeight =
-    Number(
-      getTimeWeight(player) || 0
-    );
+  const safePrideWeight = Number.isFinite(prideWeight) ? prideWeight : 1.0;
+  const safeAreaFactor = Number.isFinite(areaFactor) ? areaFactor : 1.0;
+  const safeTimeWeight = Number.isFinite(timeWeight) ? timeWeight : 0;
 
   const rankingScore =
-    rankScore *
-    prideWeight *
-    areaFactor *
-    timeWeight;
+    rankScore * safePrideWeight * safeAreaFactor * safeTimeWeight;
 
-  const realtimeBoost =
-    Math.min(
-      getRealtimeBoost(player),
-      2.5
-    );
+  const realtimeBoostValue = Number(getRealtimeBoost(player));
+  const realtimeBoost = Math.min(
+    Number.isFinite(realtimeBoostValue) ? realtimeBoostValue : 1.0,
+    2.5
+  );
 
-  const encounterBonus =
-    getEncounterBonus(player);
+  const encounterBonus = Number(getEncounterBonus(player) || 1.0);
 
   const selectionWeight =
     rankingScore *
-    (
-      1 +
-      (
-        realtimeBoost - 1
-      ) * 0.4
-    ) *
+    (1 + (realtimeBoost - 1) * 0.4) *
     encounterBonus;
 
+  const safeScore =
+    Number.isFinite(selectionWeight) && selectionWeight > 0
+      ? selectionWeight
+      : 0.0001;
+
   return {
-
-    score:
-      Math.max(
-        0.0001,
-        selectionWeight
-      ),
-
+    score: safeScore,
     rankingScore,
-
     phaseWeight: 1.0,
-
     realtimeBoost,
-
     selectionWeight,
-
     encounterBonus
   };
 }
