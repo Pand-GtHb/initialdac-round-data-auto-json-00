@@ -1,7 +1,7 @@
 {
   "meta": {
     "version": "scoring_config_v9_phase_display_only",
-    "createdAt": "2026-06-30T23:00:00+09:00",
+    "createdAt": "2026-07-13T23:00:00+09:00",
     "description": "Phaseは候補表示専用（スコア完全分離版）",
     "notes": [
       "rank linear",
@@ -31,7 +31,6 @@
   },
 
   "phase": {
-
     "amplitude": 0.0,
     "base": 1.0,
     "floor": 1.0,
@@ -52,5 +51,21 @@
       "yellowThreshold": 0.4,
       "pinkThreshold": 0.3
     }
+  },
+
+  "candidate": {
+
+    "yellowBoost": 2.0,
+
+    "pinkBoost": 2.5,
+
+    "phasePower": 2.0,
+
+    "poolPriority": {
+      "pink": 3,
+      "yellow": 2,
+      "other": 1
+    }
+
   }
 }
