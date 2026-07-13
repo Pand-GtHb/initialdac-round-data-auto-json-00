@@ -49,8 +49,8 @@
     },
 
     "display": {
-      "yellowThreshold": 0.5,
-      "pinkThreshold": 0.6
+      "yellowThreshold": 0.1,
+      "pinkThreshold": 0.3
     }
   }
 }
