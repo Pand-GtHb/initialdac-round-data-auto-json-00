@@ -3097,15 +3097,6 @@ function copyToClipboard(text) {
 
     recordClickFromCopiedText(text);
 
-    const player =
-      findPlayerFromCopiedText(text);
-
-    if (player) {
-      const copiedAt = Date.now();
-      registerPinkTarget(player, copiedAt);
-      updateEncounterHistory(player, copiedAt);
-    }
-
     log(
       `コピー: ${text}`
     );
@@ -3640,8 +3631,15 @@ function getTimeWeight(player) {
 function buildPlayerIdentityKey(player) {
   const name = normalizePlayerName(player?.name ?? "");
   const shop = normalizePlayerName(player?.shopname ?? "");
-  const updateDate = String(player?.updateDate ?? "");
-  return `${name}@@${shop}@@${updateDate}`;
+  const area = normalizePlayerName(player?.area ?? "");
+
+  const parts = [name, shop, area].filter(Boolean);
+
+  if (parts.length > 0) {
+    return parts.join("@@");
+  }
+
+  return `__empty__${String(player?.updateDate ?? "")}`;
 }
 
 function savePinkStateToStorage() {
@@ -3686,17 +3684,57 @@ function restorePinkStateFromStorage() {
 
 function getPinkTarget(player) {
   if (!player) return null;
-  const key = buildPlayerIdentityKey(player);
-  return State.pinkTargets?.[key] || null;
+
+  const directKey = buildPlayerIdentityKey(player);
+  const directTarget = State.pinkTargets?.[directKey];
+
+  if (directTarget) {
+    return directTarget;
+  }
+
+  const normalizedName = normalizePlayerName(player?.name ?? "");
+  const normalizedShop = normalizePlayerName(player?.shopname ?? "");
+  const normalizedArea = normalizePlayerName(player?.area ?? "");
+
+  const fallbackEntry = Object.entries(State.pinkTargets || {}).find(([, entry]) => {
+    if (!entry) return false;
+
+    const entryName = normalizePlayerName(entry?.name ?? "");
+    const entryShop = normalizePlayerName(entry?.shopname ?? "");
+    const entryArea = normalizePlayerName(entry?.area ?? "");
+
+    const nameMatch = entryName && entryName === normalizedName;
+    const shopMatch = entryShop && entryShop === normalizedShop;
+    const areaMatch =
+      !normalizedArea ||
+      !entryArea ||
+      entryArea === normalizedArea;
+
+    return nameMatch && shopMatch && areaMatch;
+  });
+
+  if (fallbackEntry) {
+    const [legacyKey, resolvedEntry] = fallbackEntry;
+
+    if (legacyKey !== directKey) {
+      State.pinkTargets[directKey] = resolvedEntry;
+      delete State.pinkTargets[legacyKey];
+      savePinkStateToStorage();
+    }
+
+    return resolvedEntry;
+  }
+
+  return null;
 }
 
 function registerPinkTarget(player, copiedAt = Date.now()) {
   if (!player) return null;
 
-  const key = buildPlayerIdentityKey(player);
   const now = Number(copiedAt) || Date.now();
+  const key = buildPlayerIdentityKey(player);
 
-  const existing = State.pinkTargets?.[key] || null;
+  const existing = getPinkTarget(player);
 
   const entry = existing || {
     key,
@@ -3717,6 +3755,7 @@ function registerPinkTarget(player, copiedAt = Date.now()) {
   entry.rankKey = getPlayerRankKey(player) || entry.rankKey;
   entry.name = player.name ?? entry.name;
   entry.shopname = player.shopname ?? entry.shopname;
+  entry.key = key;
 
   State.pinkTargets[key] = entry;
   savePinkStateToStorage();
@@ -3726,10 +3765,10 @@ function registerPinkTarget(player, copiedAt = Date.now()) {
 function updateEncounterHistory(player, copiedAt = Date.now()) {
   if (!player) return null;
 
-  const key = buildPlayerIdentityKey(player);
   const now = Number(copiedAt) || Date.now();
+  const key = buildPlayerIdentityKey(player);
 
-  const existing = State.encounterHistory?.[key] || null;
+  const existing = getEncounterHistory(player);
 
   const entry = existing || {
     key,
@@ -3744,6 +3783,7 @@ function updateEncounterHistory(player, copiedAt = Date.now()) {
   entry.count = (entry.count || 0) + 1;
   entry.lastSeenAt = now;
   entry.lastUpdateDate = player.updateDate ?? entry.lastUpdateDate;
+  entry.key = key;
 
   State.encounterHistory[key] = entry;
   savePinkStateToStorage();
@@ -3752,8 +3792,48 @@ function updateEncounterHistory(player, copiedAt = Date.now()) {
 
 function getEncounterHistory(player) {
   if (!player) return null;
-  const key = buildPlayerIdentityKey(player);
-  return State.encounterHistory?.[key] || null;
+
+  const directKey = buildPlayerIdentityKey(player);
+  const directEntry = State.encounterHistory?.[directKey];
+
+  if (directEntry) {
+    return directEntry;
+  }
+
+  const normalizedName = normalizePlayerName(player?.name ?? "");
+  const normalizedShop = normalizePlayerName(player?.shopname ?? "");
+  const normalizedArea = normalizePlayerName(player?.area ?? "");
+
+  const fallbackEntry = Object.entries(State.encounterHistory || {}).find(([, entry]) => {
+    if (!entry) return false;
+
+    const entryName = normalizePlayerName(entry?.name ?? "");
+    const entryShop = normalizePlayerName(entry?.shopname ?? "");
+    const entryArea = normalizePlayerName(entry?.area ?? "");
+
+    const nameMatch = entryName && entryName === normalizedName;
+    const shopMatch = entryShop && entryShop === normalizedShop;
+    const areaMatch =
+      !normalizedArea ||
+      !entryArea ||
+      entryArea === normalizedArea;
+
+    return nameMatch && shopMatch && areaMatch;
+  });
+
+  if (fallbackEntry) {
+    const [legacyKey, resolvedEntry] = fallbackEntry;
+
+    if (legacyKey !== directKey) {
+      State.encounterHistory[directKey] = resolvedEntry;
+      delete State.encounterHistory[legacyKey];
+      savePinkStateToStorage();
+    }
+
+    return resolvedEntry;
+  }
+
+  return null;
 }
 
 function getEncounterBonus(player) {
@@ -4483,11 +4563,17 @@ function getYellowPhaseScore(player) {
 function isMatchingCandidateByPhase(
   player
 ) {
-
   if (
     !player ||
     !player.updateDate
   ) {
+    return false;
+  }
+
+  /* =====================================
+   * Pink管理対象はYellow対象外
+   * ===================================== */
+  if (isCopiedPlayer(player)) {
     return false;
   }
 
@@ -4587,7 +4673,8 @@ function getPinkPhaseScore(
   );
 }
 /* =========================================================
- [7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase
+ [7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase3
+  Pink管理対象に対するPink周期アクティブ判定4 （PinkPool所属判定ではない）
 ========================================================= */
 function isMatchingCandidateByCopyPhase(player) {
 
@@ -4770,6 +4857,7 @@ function calcMatchingScore(
  [7500] PhaseSelectionMultiplier
 ========================================================= */
 function getPhaseSelectionMultiplier(player) {
+
   /* =====================================
    * 安全取得
    * ===================================== */
@@ -4786,16 +4874,44 @@ function getPhaseSelectionMultiplier(player) {
     Number(candidateCfg.phasePower ?? 2.0);
 
   /* =====================================
-   * Pink判定
+   * Pool優先度
    * ===================================== */
-  const isPink =
-    isMatchingCandidateByCopyPhase(player);
+  const poolPriority =
+    candidateCfg.poolPriority ?? {};
+
+  const pinkPriority =
+    Number(poolPriority.pink ?? 3);
+
+  const yellowPriority =
+    Number(poolPriority.yellow ?? 2);
+
+  const otherPriority =
+    Number(poolPriority.other ?? 1);
 
   /* =====================================
-   * Yellow判定
+   * Pink周期判定
+   * （Pink管理対象かつ閾値超過）
+   * ===================================== */
+  const pinkPhaseScore =
+    getPinkPhaseScore(player);
+
+  const pinkThreshold =
+    Number(
+      State.scoringConfig
+        ?.phase
+        ?.display
+        ?.pinkThreshold ?? 0
+    );
+
+  const isPink =
+    isCopiedPlayer(player) &&
+    pinkPhaseScore > pinkThreshold;
+
+  /* =====================================
+   * Yellow周期判定
    * ===================================== */
   const isYellow =
-    !isPink &&
+    !isCopiedPlayer(player) &&
     isMatchingCandidateByPhase(player);
 
   /* =====================================
@@ -4806,7 +4922,7 @@ function getPhaseSelectionMultiplier(player) {
     const score =
       Math.max(
         0,
-        getPinkPhaseScore(player)
+        pinkPhaseScore
       );
 
     const multiplier =
@@ -4822,7 +4938,7 @@ function getPhaseSelectionMultiplier(player) {
 
     return Math.max(
       1,
-      multiplier
+      multiplier * pinkPriority
     );
   }
 
@@ -4850,14 +4966,14 @@ function getPhaseSelectionMultiplier(player) {
 
     return Math.max(
       1,
-      multiplier
+      multiplier * yellowPriority
     );
   }
 
   /* =====================================
-   * White
+   * Other
    * ===================================== */
-  return 1.0;
+  return otherPriority;
 }
 /* =========================================================
  [7600] Weighted Selection
@@ -5047,7 +5163,8 @@ function buildMatchingCandidates() {
         );
 
       if (
-        phase.isInitialCooldown
+        phase.isInitialCooldown &&
+        !pinkTarget
       ) {
         return false;
       }
@@ -5059,18 +5176,28 @@ function buildMatchingCandidates() {
    * Pink / Yellow Pool 分離
    * ===================================== */
 
+  /*
+   * Pink管理対象は全員PinkPool
+   */
   const pinkPool =
     afterCooldown.filter(
-      p => isMatchingCandidateByCopyPhase(p)
+      p => isCopiedPlayer(p)
     );
 
+  /*
+   * Yellow管理対象
+   * （Pink管理対象は除外）
+   */
   const yellowPool =
     afterCooldown.filter(
       p =>
-        !isMatchingCandidateByCopyPhase(p) &&
+        !isCopiedPlayer(p) &&
         isMatchingCandidateByPhase(p)
     );
 
+  /*
+   * その他
+   */
   const otherPool =
     afterCooldown.filter(
       p =>
@@ -5078,17 +5205,22 @@ function buildMatchingCandidates() {
         !yellowPool.includes(p)
     );
 
+  /* =====================================
+   * 優先順位付き統合
+   * ===================================== */
   const rankedAll = [
     ...pinkPool.sort(
       (a, b) =>
         b.__effectiveWeight -
         a.__effectiveWeight
     ),
+
     ...yellowPool.sort(
       (a, b) =>
         b.__effectiveWeight -
         a.__effectiveWeight
     ),
+
     ...otherPool.sort(
       (a, b) =>
         b.__effectiveWeight -
