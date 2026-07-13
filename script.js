@@ -55,7 +55,11 @@ const State = {
     pink: 0
   },
 
-  lastCandidateEventId: null
+  lastCandidateEventId: null,
+
+  /* --- 新仕様追加（Fact） --- */
+  pinkTargets: {},          // Copy済プレイヤー専用管理
+  encounterHistory: {}      // 再遭遇回数管理
 };
 /* =========================================================
  [0030] Rank Master
@@ -3064,77 +3068,30 @@ function copyToClipboard(text) {
 
   const afterCopySuccess = () => {
 
-    /* ===================================== */
-    /* ★ copyログ保存（localStorage）        */
-    /* ===================================== */
-
     const copyRecord =
       saveCopyEventUnified(text);
-
-    /* ===================================== */
-    /* ★ analysisログ保存                    */
-    /* ===================================== */
 
     logEvent(
       "copy",
       copyRecord
     );
 
-    /* ===================================== */
-    /* ★ クリック履歴更新                    */
-    /* ===================================== */
-
     recordClickFromCopiedText(text);
 
     const player =
-      findPlayerFromCopiedText(
-        text
-      );
+      findPlayerFromCopiedText(text);
 
     if (player) {
-
-      const clicks =
-        State.recentClicks.filter(
-          r =>
-            normalizePlayerName(
-              r.name
-            ) ===
-            normalizePlayerName(
-              player.name
-            )
-        );
-
-      if (clicks.length === 1) {
-
-        calcYellowCycle(
-          player
-        );
-
-      }
-
-      if (clicks.length >= 2) {
-
-        calcPinkCycle(
-          player
-        );
-
-      }
-
+      const copiedAt = Date.now();
+      registerPinkTarget(player, copiedAt);
+      updateEncounterHistory(player, copiedAt);
     }
 
     log(
       `コピー: ${text}`
     );
 
-    /* ===================================== */
-    /* ★ 候補再生成                          */
-    /* ===================================== */
-
     buildMatchingCandidates();
-
-    /* ===================================== */
-    /* ★ UI再描画                            */
-    /* ===================================== */
 
     if (
       isCurrentView(
@@ -3444,7 +3401,7 @@ function getVirtualStar(player) {
     return String(
       Number(player.starCnt ?? 0)
     );
-  }
+ 
 
   if (
     Number(
@@ -3670,8 +3627,7 @@ function recordClickFromCopiedText(text) {
 
   if (!player) return;
 
-  const copiedAt =
-    Date.now();
+  const copiedAt = Date.now();
 
   const areaName =
     AreaList[
@@ -3710,6 +3666,34 @@ function recordClickFromCopiedText(text) {
       0,
       20
     );
+
+  registerPinkTarget(player, copiedAt);
+  updateEncounterHistory(player, copiedAt);
+
+  const pinkTarget = getPinkTarget(player);
+
+  if (pinkTarget) {
+    logEvent("pink-trigger", {
+      player: {
+        name: player.name ?? "",
+        shopname: player.shopname ?? "",
+        area: player.area ?? "",
+        rankKey
+      },
+      pinkCycle: Number(
+        (getCurrentCycle(player) || 0).toFixed(2)
+      ),
+      encounterCount: Number(
+        getEncounterHistory(player)?.count ||
+        pinkTarget.copyCount ||
+        0
+      ),
+      score: Number(
+        (calcMatchingScoreDetail(player).score || 0).toFixed(6)
+      ),
+      timestamp: copiedAt
+    });
+  }
 }
 /* =========================================================
  [7110] Realtime Boost Engine:findPlayerFromCopiedText
@@ -4025,9 +4009,7 @@ function getCurrentCycle(
 /* =========================================================
  [7220] Phase Engine:calcYellowCycle
 ========================================================= */
-function calcYellowCycle(
-  player
-) {
+function calcYellowCycle(player) {
 
   const cfg =
     State.scoringConfig
@@ -4035,6 +4017,12 @@ function calcYellowCycle(
 
   const base =
     cfg.baseCycleSec || 300;
+
+  if (getPinkTarget(player)) {
+    return base + (
+      State.phaseAdjust?.yellow ?? 0
+    );
+  }
 
   const clicks =
     State.recentClicks.filter(
@@ -4124,47 +4112,34 @@ function calcPinkCycle(
   const base =
     cfg.baseCycleSec || 300;
 
-  const groups = {};
-
-  for (
-    const r of
-    State.recentClicks
-  ) {
-
-    const key =
-      normalizePlayerName(
-        r.name
-      );
-
-    if (!groups[key]) {
-      groups[key] = [];
-    }
-
-    groups[key].push(r);
-  }
-
   const foldedList = [];
 
-  for (const key in groups) {
+  const targets =
+    Object.values(
+      State.pinkTargets || {}
+    );
 
-    const arr =
-      groups[key];
+  for (const entry of targets) {
 
-    if (arr.length < 2) {
+    const history =
+      entry.history || [];
+
+    if (history.length < 2) {
       continue;
     }
 
     const latest =
-      arr[0];
+      Number(history[history.length - 1] || 0);
 
     const prev =
-      arr[1];
+      Number(history[history.length - 2] || 0);
+
+    if (!latest || !prev) {
+      continue;
+    }
 
     const interval =
-      (
-        latest.copiedAt -
-        prev.copiedAt
-      ) / 1000;
+      (latest - prev) / 1000;
 
     const folded =
       foldToCycle(
@@ -4172,12 +4147,8 @@ function calcPinkCycle(
         base
       );
 
-    if (
-      isFinite(folded)
-    ) {
-      foldedList.push(
-        folded
-      );
+    if (isFinite(folded)) {
+      foldedList.push(folded);
     }
   }
 
@@ -4201,8 +4172,7 @@ function calcPinkCycle(
     );
 
   const avg =
-    sum /
-    foldedList.length;
+    sum / foldedList.length;
 
   const prev =
     Number(
@@ -4287,14 +4257,8 @@ function isCopiedPlayer(
   player
 ) {
 
-  return State.recentClicks.some(
-    r =>
-      normalizePlayerName(
-        r.name
-      ) ===
-      normalizePlayerName(
-        player.name
-      )
+  return Boolean(
+    getPinkTarget(player)
   );
 }
 /* =========================================================
@@ -4421,24 +4385,10 @@ function getPinkPhaseScore(
     return 0;
   }
 
-  const click =
-    State.recentClicks.find(
-      r =>
-        normalizePlayerName(
-          r.name
-        ) ===
-          normalizePlayerName(
-            player.name
-          ) &&
-        String(
-          r.shopname ?? ""
-        ) ===
-          String(
-            player.shopname ?? ""
-          )
-    );
+  const target =
+    getPinkTarget(player);
 
-  if (!click) {
+  if (!target) {
     return 0;
   }
 
@@ -4456,8 +4406,7 @@ function getPinkPhaseScore(
     (
       Date.now() -
       (
-        click.copiedAt ??
-        click.time
+        target.lastCopiedAt || 0
       )
     ) / 1000;
 
@@ -4475,41 +4424,34 @@ function getPinkPhaseScore(
   const cosValue =
     Math.cos(theta);
 
+  const encounterBonus =
+    getEncounterBonus(player);
+
   return Math.max(
     0,
-    cosValue
+    Math.min(
+      1,
+      Math.max(
+        0,
+        cosValue
+      ) *
+      encounterBonus
+    )
   );
 }
 /* =========================================================
  [7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase
 ========================================================= */
-/* =====================================
- * Pink判定
- * ===================================== */
-function isMatchingCandidateByCopyPhase(player)
-{
+function isMatchingCandidateByCopyPhase(player) {
+
   if (!player) {
     return false;
   }
 
-  const click =
-    State.recentClicks.find(
-      r =>
-        normalizePlayerName(
-          r.name
-        ) ===
-          normalizePlayerName(
-            player.name
-          ) &&
-        String(
-          r.shopname ?? ""
-        ) ===
-          String(
-            player.shopname ?? ""
-          )
-    );
+  const target =
+    getPinkTarget(player);
 
-  if (!click) {
+  if (!target) {
     return false;
   }
 
@@ -4535,8 +4477,7 @@ function isMatchingCandidateByCopyPhase(player)
     (
       Date.now() -
       (
-        click.copiedAt ??
-        click.time
+        target.lastCopiedAt || 0
       )
     ) / 1000;
 
@@ -4614,9 +4555,7 @@ function calcMatchingDiagnostics(
 /* =========================================================
  [7410] Matching Score Engine:calcMatchingScoreDetail
 ========================================================= */
-function calcMatchingScoreDetail(
-  player
-) {
+function calcMatchingScoreDetail(player) {
 
   if (
     !player ||
@@ -4667,6 +4606,9 @@ function calcMatchingScoreDetail(
       2.5
     );
 
+  const encounterBonus =
+    getEncounterBonus(player);
+
   const selectionWeight =
     rankingScore *
     (
@@ -4674,7 +4616,8 @@ function calcMatchingScoreDetail(
       (
         realtimeBoost - 1
       ) * 0.4
-    );
+    ) *
+    encounterBonus;
 
   return {
 
@@ -4690,7 +4633,9 @@ function calcMatchingScoreDetail(
 
     realtimeBoost,
 
-    selectionWeight
+    selectionWeight,
+
+    encounterBonus
   };
 }
 /* =========================================================
@@ -4949,6 +4894,9 @@ function buildMatchingCandidates() {
   const afterCooldown =
     analysisBase.filter(p => {
 
+      const pinkTarget =
+        getPinkTarget(p);
+
       const click =
         State.recentClicks.find(
           r =>
@@ -4965,14 +4913,19 @@ function buildMatchingCandidates() {
             )
         );
 
-      if (!click) {
+      const copiedAt =
+        pinkTarget?.lastCopiedAt ||
+        click?.copiedAt ||
+        click?.time ||
+        null;
+
+      if (!copiedAt) {
         return true;
       }
 
       const phase =
         getPhaseDistanceMin(
-          click.copiedAt ??
-          click.time,
+          copiedAt,
           5
         );
 
@@ -4986,16 +4939,45 @@ function buildMatchingCandidates() {
     });
 
   /* =====================================
-   * ランキング
+   * Pink / Yellow Pool 分離
    * ===================================== */
 
-  const rankedAll =
-    [...afterCooldown]
-      .sort(
-        (a, b) =>
-          b.__effectiveWeight -
-          a.__effectiveWeight
-      );
+  const pinkPool =
+    afterCooldown.filter(
+      p => isMatchingCandidateByCopyPhase(p)
+    );
+
+  const yellowPool =
+    afterCooldown.filter(
+      p =>
+        !isMatchingCandidateByCopyPhase(p) &&
+        isMatchingCandidateByPhase(p)
+    );
+
+  const otherPool =
+    afterCooldown.filter(
+      p =>
+        !pinkPool.includes(p) &&
+        !yellowPool.includes(p)
+    );
+
+  const rankedAll = [
+    ...pinkPool.sort(
+      (a, b) =>
+        b.__effectiveWeight -
+        a.__effectiveWeight
+    ),
+    ...yellowPool.sort(
+      (a, b) =>
+        b.__effectiveWeight -
+        a.__effectiveWeight
+    ),
+    ...otherPool.sort(
+      (a, b) =>
+        b.__effectiveWeight -
+        a.__effectiveWeight
+    )
+  ];
 
   State.matchingRankedAll =
     rankedAll;
@@ -6409,6 +6391,18 @@ function saveCandidateEvent() {
               (
                 p.__phaseMultiplier ?? 0
               ).toFixed(4)
+            ),
+
+          pinkTarget:
+            Boolean(
+              getPinkTarget(p)
+            ),
+
+          encounterCount:
+            Number(
+              getEncounterHistory(p)?.count ||
+              getPinkTarget(p)?.copyCount ||
+              0
             )
 
         })
@@ -6614,6 +6608,19 @@ function logEvent(
     ...(payload || {})
 
   };
+
+  if (
+    type === "pink-trigger"
+  ) {
+
+    putLog(
+      LOG_STORE.events,
+      record
+    );
+
+    return;
+
+  }
 
   if (
     type === "copy" ||
