@@ -49,7 +49,7 @@
     },
 
     "display": {
-      "yellowThreshold": 0.1,
+      "yellowThreshold": 0.4,
       "pinkThreshold": 0.3
     }
   }
