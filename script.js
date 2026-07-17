@@ -3039,14 +3039,22 @@ function buildPlayerRowHTML(
 
       <td
         class="center clickable"
-        onclick="copyToClipboard('${copyValue}')"
+        onclick="copyToClipboard(
+          '${copyValue}',
+          '${safeName}',
+          '${safeShop}'
+        )"
       >
         ${starOrLevel}
       </td>
 
       <td
         class="left player-name clickable"
-        onclick="copyToClipboard('${safeName}')"
+        onclick="copyToClipboard(
+          '${safeName}',
+          '${safeName}',
+          '${safeShop}'
+        )"
       >
         ${p.name}
       </td>
@@ -3058,7 +3066,11 @@ function buildPlayerRowHTML(
       <td
         class="left clickable"
         data-fullname="${safeShop}"
-        onclick="copyToClipboard('${safeShop}')"
+        onclick="copyToClipboard(
+          '${safeShop}',
+          '${safeName}',
+          '${safeShop}'
+        )"
       >
         <div class="store-name">
           ${shortShop}
@@ -3068,7 +3080,7 @@ function buildPlayerRowHTML(
       <td class="center">
         ${
           titleUrl
-            ? `<img src="${titleUrl}" height="24">`
+          ? `<img src="${titleUrl}" height="24">`
             : ""
         }
       </td>
@@ -3083,19 +3095,34 @@ function buildPlayerRowHTML(
 /* ---------------------------------------------------------
  [6610] copyToClipboard
 --------------------------------------------------------- */
-function copyToClipboard(text) {
+function copyToClipboard(
+  text,
+  playerName = "",
+  shopName = ""
+) {
 
   const afterCopySuccess = () => {
 
     const copyRecord =
-      saveCopyEventUnified(text);
+      saveCopyEventUnified(
+        text,
+        playerName,
+        shopName
+      );
 
     logEvent(
       "copy",
       copyRecord
     );
 
-    recordClickFromCopiedText(text);
+    /*
+     * Pink管理用
+     * 名前＋店舗名を直接渡す
+     */
+    recordClickFromCopiedInfo(
+      playerName,
+      shopName
+    );
 
     log(
       `コピー: ${text}`
@@ -3114,11 +3141,9 @@ function copyToClipboard(text) {
       renderMatchingTable();
 
     } else if (
-
       isCurrentView(
         STATE.DETAIL
       )
-
     ) {
 
       renderDetailTable(
@@ -3132,7 +3157,6 @@ function copyToClipboard(text) {
       renderSummary();
 
     }
-
   };
 
   navigator.clipboard
@@ -3144,7 +3168,6 @@ function copyToClipboard(text) {
           "コピー失敗"
         )
     );
-
 }
 /* =========================================================
  [6700] Detail Filter
@@ -3628,236 +3651,541 @@ function getTimeWeight(player) {
 /* =========================================================
  [7095] Pink State Helpers
 ========================================================= */
-function buildPlayerIdentityKey(player) {
-  const name = normalizePlayerName(player?.name ?? "");
-  const shop = normalizePlayerName(player?.shopname ?? "");
-  const area = normalizePlayerName(player?.area ?? "");
 
-  const parts = [name, shop, area].filter(Boolean);
+function buildPlayerIdentityKey(player) {
+  const name =
+    normalizePlayerName(
+      player?.name ?? ""
+    );
+
+  const shop =
+    normalizePlayerName(
+      player?.shopname ?? ""
+    );
+
+  const parts = [
+    name,
+    shop
+  ].filter(Boolean);
 
   if (parts.length > 0) {
     return parts.join("@@");
   }
 
-  return `__empty__${String(player?.updateDate ?? "")}`;
+  return "__empty__";
 }
 
 function savePinkStateToStorage() {
+
   try {
+
     const payload = {
-      pinkTargets: State.pinkTargets || {},
-      encounterHistory: State.encounterHistory || {},
-      phaseAdjust: State.phaseAdjust || { yellow: 0, pink: 0 },
-      savedAt: Date.now()
+
+      /*
+       * Pink対象は当日管理のみ
+       * 永続保存しない
+       */
+
+      encounterHistory:
+        State.encounterHistory || {},
+
+      phaseAdjust:
+        State.phaseAdjust || {
+          yellow: 0,
+          pink: 0
+        },
+
+      savedAt:
+        Date.now()
+
     };
-    localStorage.setItem(PERSIST_STATE_KEY, JSON.stringify(payload));
+
+    localStorage.setItem(
+      PERSIST_STATE_KEY,
+      JSON.stringify(payload)
+    );
+
   } catch (e) {
-    console.warn("[persist] save failed", e);
+
+    console.warn(
+      "[persist] save failed",
+      e
+    );
+
   }
+
 }
 
 function restorePinkStateFromStorage() {
+
   try {
-    const raw = localStorage.getItem(PERSIST_STATE_KEY);
-    if (!raw) return;
 
-    const parsed = JSON.parse(raw);
+    const raw =
+      localStorage.getItem(
+        PERSIST_STATE_KEY
+      );
 
-    if (parsed?.pinkTargets && typeof parsed.pinkTargets === "object") {
-      State.pinkTargets = parsed.pinkTargets;
+    if (!raw) {
+      return;
     }
 
-    if (parsed?.encounterHistory && typeof parsed.encounterHistory === "object") {
-      State.encounterHistory = parsed.encounterHistory;
+    const parsed =
+      JSON.parse(raw);
+
+    /*
+     * Pink対象復元なし
+     */
+
+    State.pinkTargets = {};
+
+    if (
+      parsed?.encounterHistory &&
+      typeof parsed.encounterHistory ===
+        "object"
+    ) {
+
+      State.encounterHistory =
+        parsed.encounterHistory;
+
     }
 
-    if (parsed?.phaseAdjust && typeof parsed.phaseAdjust === "object") {
+    if (
+      parsed?.phaseAdjust &&
+      typeof parsed.phaseAdjust ===
+        "object"
+    ) {
+
       State.phaseAdjust = {
-        yellow: Number(parsed.phaseAdjust.yellow ?? State.phaseAdjust.yellow ?? 0),
-        pink: Number(parsed.phaseAdjust.pink ?? State.phaseAdjust.pink ?? 0)
+
+        yellow:
+          Number(
+            parsed.phaseAdjust.yellow ??
+            State.phaseAdjust.yellow ??
+            0
+          ),
+
+        pink:
+          Number(
+            parsed.phaseAdjust.pink ??
+            State.phaseAdjust.pink ??
+            0
+          )
+
       };
+
     }
+
   } catch (e) {
-    console.warn("[persist] restore failed", e);
+
+    console.warn(
+      "[persist] restore failed",
+      e
+    );
+
   }
+
 }
 
 function getPinkTarget(player) {
-  if (!player) return null;
 
-  const directKey = buildPlayerIdentityKey(player);
-  const directTarget = State.pinkTargets?.[directKey];
+  if (!player) {
+    return null;
+  }
+
+  const directKey =
+    buildPlayerIdentityKey(player);
+
+  const directTarget =
+    State.pinkTargets?.[
+      directKey
+    ];
 
   if (directTarget) {
     return directTarget;
   }
 
-  const normalizedName = normalizePlayerName(player?.name ?? "");
-  const normalizedShop = normalizePlayerName(player?.shopname ?? "");
-  const normalizedArea = normalizePlayerName(player?.area ?? "");
+  const normalizedName =
+    normalizePlayerName(
+      player?.name ?? ""
+    );
 
-  const fallbackEntry = Object.entries(State.pinkTargets || {}).find(([, entry]) => {
-    if (!entry) return false;
+  const normalizedShop =
+    normalizePlayerName(
+      player?.shopname ?? ""
+    );
 
-    const entryName = normalizePlayerName(entry?.name ?? "");
-    const entryShop = normalizePlayerName(entry?.shopname ?? "");
-    const entryArea = normalizePlayerName(entry?.area ?? "");
+  const fallbackEntry =
+    Object.entries(
+      State.pinkTargets || {}
+    ).find(
+      ([, entry]) => {
 
-    const nameMatch = entryName && entryName === normalizedName;
-    const shopMatch = entryShop && entryShop === normalizedShop;
-    const areaMatch =
-      !normalizedArea ||
-      !entryArea ||
-      entryArea === normalizedArea;
+        if (!entry) {
+          return false;
+        }
 
-    return nameMatch && shopMatch && areaMatch;
-  });
+        const entryName =
+          normalizePlayerName(
+            entry?.name ?? ""
+          );
+
+        const entryShop =
+          normalizePlayerName(
+            entry?.shopname ?? ""
+          );
+
+        return (
+          entryName ===
+            normalizedName &&
+          entryShop ===
+            normalizedShop
+        );
+
+      }
+    );
 
   if (fallbackEntry) {
-    const [legacyKey, resolvedEntry] = fallbackEntry;
 
-    if (legacyKey !== directKey) {
-      State.pinkTargets[directKey] = resolvedEntry;
-      delete State.pinkTargets[legacyKey];
-      savePinkStateToStorage();
+    const [
+      legacyKey,
+      resolvedEntry
+    ] = fallbackEntry;
+
+    if (
+      legacyKey !== directKey
+    ) {
+
+      State.pinkTargets[
+        directKey
+      ] = resolvedEntry;
+
+      delete State.pinkTargets[
+        legacyKey
+      ];
+
     }
 
     return resolvedEntry;
+
   }
 
   return null;
+
 }
 
-function registerPinkTarget(player, copiedAt = Date.now()) {
-  if (!player) return null;
+function registerPinkTarget(
+  player,
+  copiedAt = Date.now()
+) {
 
-  const now = Number(copiedAt) || Date.now();
-  const key = buildPlayerIdentityKey(player);
+  if (!player) {
+    return null;
+  }
 
-  const existing = getPinkTarget(player);
+  const now =
+    Number(copiedAt) ||
+    Date.now();
 
-  const entry = existing || {
-    key,
-    name: player.name ?? "",
-    shopname: player.shopname ?? "",
-    area: player.area ?? "",
-    rankKey: getPlayerRankKey(player),
-    copyCount: 0,
-    firstCopiedAt: now,
-    lastCopiedAt: now,
-    history: []
-  };
+  const key =
+    buildPlayerIdentityKey(
+      player
+    );
 
-  entry.copyCount = (entry.copyCount || 0) + 1;
-  entry.lastCopiedAt = now;
-  entry.history = [...(entry.history || []), now].slice(-5);
-  entry.area = player.area ?? entry.area;
-  entry.rankKey = getPlayerRankKey(player) || entry.rankKey;
-  entry.name = player.name ?? entry.name;
-  entry.shopname = player.shopname ?? entry.shopname;
+  const existing =
+    getPinkTarget(player);
+
+  const entry =
+    existing || {
+
+      key,
+
+      name:
+        player.name ?? "",
+
+      shopname:
+        player.shopname ?? "",
+
+      rankKey:
+        getPlayerRankKey(
+          player
+        ),
+
+      copyCount: 0,
+
+      firstCopiedAt:
+        now,
+
+      lastCopiedAt:
+        now,
+
+      history: []
+
+    };
+
+  entry.copyCount =
+    (entry.copyCount || 0) + 1;
+
+  entry.lastCopiedAt =
+    now;
+
+  entry.history = [
+    ...(entry.history || []),
+    now
+  ].slice(-5);
+
+  entry.rankKey =
+    getPlayerRankKey(player)
+    || entry.rankKey;
+
+  entry.name =
+    player.name ??
+    entry.name;
+
+  entry.shopname =
+    player.shopname ??
+    entry.shopname;
+
+  entry.key =
+    key;
+
+  State.pinkTargets[key] =
+    entry;
+
+  savePinkStateToStorage();
+
+  return entry;
+
+}
+
+function updateEncounterHistory(
+  player,
+  copiedAt = Date.now()
+) {
+
+  if (!player) {
+    return null;
+  }
+
+  const now =
+    Number(copiedAt) ||
+    Date.now();
+
+  const key =
+    buildPlayerIdentityKey(
+      player
+    );
+
+  const existing =
+    getEncounterHistory(
+      player
+    );
+
+  const entry =
+    existing || {
+
+      key,
+
+      name:
+        player.name ?? "",
+
+      shopname:
+        player.shopname ?? "",
+
+      count: 0,
+
+      firstSeenAt:
+        now,
+
+      lastSeenAt:
+        now,
+
+      lastUpdateDate:
+        player.updateDate ?? ""
+
+    };
+
+  entry.count =
+    (entry.count || 0) + 1;
+
+  entry.lastSeenAt =
+    now;
+
+  entry.lastUpdateDate =
+    player.updateDate ??
+    entry.lastUpdateDate;
+
   entry.key = key;
 
-  State.pinkTargets[key] = entry;
+  State.encounterHistory[key] =
+    entry;
+
   savePinkStateToStorage();
+
   return entry;
+
 }
 
-function updateEncounterHistory(player, copiedAt = Date.now()) {
-  if (!player) return null;
+function getEncounterHistory(
+  player
+) {
 
-  const now = Number(copiedAt) || Date.now();
-  const key = buildPlayerIdentityKey(player);
+  if (!player) {
+    return null;
+  }
 
-  const existing = getEncounterHistory(player);
+  const directKey =
+    buildPlayerIdentityKey(
+      player
+    );
 
-  const entry = existing || {
-    key,
-    name: player.name ?? "",
-    shopname: player.shopname ?? "",
-    count: 0,
-    firstSeenAt: now,
-    lastSeenAt: now,
-    lastUpdateDate: player.updateDate ?? ""
-  };
-
-  entry.count = (entry.count || 0) + 1;
-  entry.lastSeenAt = now;
-  entry.lastUpdateDate = player.updateDate ?? entry.lastUpdateDate;
-  entry.key = key;
-
-  State.encounterHistory[key] = entry;
-  savePinkStateToStorage();
-  return entry;
-}
-
-function getEncounterHistory(player) {
-  if (!player) return null;
-
-  const directKey = buildPlayerIdentityKey(player);
-  const directEntry = State.encounterHistory?.[directKey];
+  const directEntry =
+    State.encounterHistory?.[
+      directKey
+    ];
 
   if (directEntry) {
     return directEntry;
   }
 
-  const normalizedName = normalizePlayerName(player?.name ?? "");
-  const normalizedShop = normalizePlayerName(player?.shopname ?? "");
-  const normalizedArea = normalizePlayerName(player?.area ?? "");
+  const normalizedName =
+    normalizePlayerName(
+      player?.name ?? ""
+    );
 
-  const fallbackEntry = Object.entries(State.encounterHistory || {}).find(([, entry]) => {
-    if (!entry) return false;
+  const normalizedShop =
+    normalizePlayerName(
+      player?.shopname ?? ""
+    );
 
-    const entryName = normalizePlayerName(entry?.name ?? "");
-    const entryShop = normalizePlayerName(entry?.shopname ?? "");
-    const entryArea = normalizePlayerName(entry?.area ?? "");
+  const fallbackEntry =
+    Object.entries(
+      State.encounterHistory || {}
+    ).find(
+      ([, entry]) => {
 
-    const nameMatch = entryName && entryName === normalizedName;
-    const shopMatch = entryShop && entryShop === normalizedShop;
-    const areaMatch =
-      !normalizedArea ||
-      !entryArea ||
-      entryArea === normalizedArea;
+        if (!entry) {
+          return false;
+        }
 
-    return nameMatch && shopMatch && areaMatch;
-  });
+        const entryName =
+          normalizePlayerName(
+            entry?.name ?? ""
+          );
+
+        const entryShop =
+          normalizePlayerName(
+            entry?.shopname ?? ""
+          );
+
+        return (
+          entryName ===
+            normalizedName &&
+          entryShop ===
+            normalizedShop
+        );
+
+      }
+    );
 
   if (fallbackEntry) {
-    const [legacyKey, resolvedEntry] = fallbackEntry;
 
-    if (legacyKey !== directKey) {
-      State.encounterHistory[directKey] = resolvedEntry;
-      delete State.encounterHistory[legacyKey];
+    const [
+      legacyKey,
+      resolvedEntry
+    ] = fallbackEntry;
+
+    if (
+      legacyKey !== directKey
+    ) {
+
+      State.encounterHistory[
+        directKey
+      ] = resolvedEntry;
+
+      delete State.encounterHistory[
+        legacyKey
+      ];
+
       savePinkStateToStorage();
+
     }
 
     return resolvedEntry;
+
   }
 
   return null;
+
 }
 
-function getEncounterBonus(player) {
-  const history = getEncounterHistory(player);
-  const count = Number(history?.count || 0);
+function getEncounterBonus(
+  player
+) {
 
-  if (!Number.isFinite(count) || count <= 1) return 1.0;
-  if (count === 2) return 1.3;
-  if (count === 3) return 1.6;
+  const history =
+    getEncounterHistory(
+      player
+    );
+
+  const count =
+    Number(
+      history?.count || 0
+    );
+
+  if (
+    !Number.isFinite(count) ||
+    count <= 1
+  ) {
+    return 1.0;
+  }
+
+  if (count === 2) {
+    return 1.3;
+  }
+
+  if (count === 3) {
+    return 1.6;
+  }
+
   return 2.0;
+
 }
 /* =========================================================
- [7100] Realtime Boost Engine:recordClickFromCopiedText
+ [7100] Realtime Boost Engine:recordClickFromCopiedInfo
 ========================================================= */
-function recordClickFromCopiedText(text) {
+function recordClickFromCopiedInfo(
+  playerName,
+  shopName
+) {
 
-  if (!text) return;
+  if (!playerName) return;
+
+  const normalizedName =
+    normalizePlayerName(
+      playerName
+    );
+
+  const normalizedShop =
+    normalizePlayerName(
+      shopName ?? ""
+    );
 
   const player =
-    findPlayerFromCopiedText(text);
+    State.all.find(
+      p =>
+        normalizePlayerName(
+          p.name
+        ) === normalizedName
+        &&
+        normalizePlayerName(
+          p.shopname ?? ""
+        ) === normalizedShop
+    );
 
   if (!player) return;
 
-  const copiedAt = Date.now();
+  const copiedAt =
+    Date.now();
 
   const areaName =
     AreaList[
@@ -3867,28 +4195,42 @@ function recordClickFromCopiedText(text) {
     "";
 
   const rankKey =
-    getPlayerRankKey(player);
+    getPlayerRankKey(
+      player
+    );
 
   State.recentClicks.unshift({
-    name: player.name,
 
-    area: player.area,
+    name:
+      player.name,
 
-    areaName: areaName,
+    area:
+      player.area,
 
-    shopname: player.shopname,
+    areaName:
+      areaName,
 
-    starCnt: player.starCnt,
+    shopname:
+      player.shopname,
 
-    pridePoint: player.pridePoint,
+    starCnt:
+      player.starCnt,
 
-    rankKey: rankKey,
+    pridePoint:
+      player.pridePoint,
 
-    updateDate: player.updateDate,
+    rankKey:
+      rankKey,
 
-    time: copiedAt,
+    updateDate:
+      player.updateDate,
 
-    copiedAt: copiedAt
+    time:
+      copiedAt,
+
+    copiedAt:
+      copiedAt
+
   });
 
   State.recentClicks =
@@ -3897,77 +4239,80 @@ function recordClickFromCopiedText(text) {
       20
     );
 
-  registerPinkTarget(player, copiedAt);
-  updateEncounterHistory(player, copiedAt);
+  registerPinkTarget(
+    player,
+    copiedAt
+  );
 
-  const pinkTarget = getPinkTarget(player);
+  updateEncounterHistory(
+    player,
+    copiedAt
+  );
 
-  if (pinkTarget) {
-    logEvent("pink-trigger", {
-      player: {
-        name: player.name ?? "",
-        shopname: player.shopname ?? "",
-        area: player.area ?? "",
-        rankKey
-      },
-      pinkCycle: Number(
-        (getCurrentCycle(player) || 0).toFixed(2)
-      ),
-      encounterCount: Number(
-        getEncounterHistory(player)?.count ||
-        pinkTarget.copyCount ||
-        0
-      ),
-      score: Number(
-        (calcMatchingScoreDetail(player).score || 0).toFixed(6)
-      ),
-      timestamp: copiedAt
-    });
-  }
-}
-/* =========================================================
- [7110] Realtime Boost Engine:findPlayerFromCopiedText
-========================================================= */
-function findPlayerFromCopiedText(text) {
-
-  if (!text) {
-    return null;
-  }
-
-  let name =
-    String(text);
-
-  if (
-    name.includes("\t")
-  ) {
-
-    const parts =
-      name.split("\t");
-
-    name =
-      parts[
-        parts.length - 1
-      ];
-  }
-
-  const targetName =
-    normalizePlayerName(
-      name
+  const pinkTarget =
+    getPinkTarget(
+      player
     );
 
-  if (!targetName) {
-    return null;
+  if (pinkTarget) {
+
+    logEvent(
+      "pink-trigger",
+      {
+
+        player: {
+
+          name:
+            player.name ?? "",
+
+          shopname:
+            player.shopname ?? "",
+
+          area:
+            player.area ?? "",
+
+          rankKey:
+            rankKey
+
+        },
+
+        pinkCycle:
+          Number(
+            (
+              getCurrentCycle(
+                player
+              ) || 0
+            ).toFixed(2)
+          ),
+
+        encounterCount:
+          Number(
+            getEncounterHistory(
+              player
+            )?.count ||
+            pinkTarget.copyCount ||
+            0
+          ),
+
+        score:
+          Number(
+            (
+              calcMatchingScoreDetail(
+                player
+              ).score || 0
+            ).toFixed(6)
+          ),
+
+        timestamp:
+          copiedAt
+
+      }
+    );
+
   }
 
-  return (
-    State.all.find(
-      p =>
-        normalizePlayerName(
-          p.name
-        ) === targetName
-    ) || null
-  );
 }
+
 /* =========================================================
  [7120] Realtime Boost Engine:getRealtimeBoost
 ========================================================= */
@@ -6210,12 +6555,31 @@ function writeStoredArraySafe(
  [9200] Copy Log
 ========================================================= */
 function saveCopyEventUnified(
-  rawText
+  rawText,
+  playerName = "",
+  shopName = ""
 ) {
 
+  const normalizedName =
+    normalizePlayerName(
+      playerName
+    );
+
+  const normalizedShop =
+    normalizePlayerName(
+      shopName ?? ""
+    );
+
   const player =
-    findPlayerFromCopiedText(
-      rawText
+    State.all.find(
+      p =>
+        normalizePlayerName(
+          p.name
+        ) === normalizedName
+        &&
+        normalizePlayerName(
+          p.shopname ?? ""
+        ) === normalizedShop
     );
 
   if (!player) {
@@ -6267,8 +6631,7 @@ function saveCopyEventUnified(
   const rankedAll =
     State.matchingRankedAll ?? [];
 
-  let candidateRank =
-    -1;
+  let candidateRank = -1;
 
   const idx =
     rankedAll.findIndex(
@@ -6278,7 +6641,8 @@ function saveCopyEventUnified(
         ) ===
           normalizePlayerName(
             player.name
-          ) &&
+          )
+        &&
         String(
           p.shopname ?? ""
         ) ===
@@ -6299,8 +6663,7 @@ function saveCopyEventUnified(
       player
     );
 
-  let phaseScore =
-    0;
+  let phaseScore = 0;
 
   try {
 
@@ -6311,7 +6674,6 @@ function saveCopyEventUnified(
       phaseInfo.raw || 0;
 
     const theta =
-
       (
         2 *
         Math.PI *
