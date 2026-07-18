@@ -3649,9 +3649,8 @@ function getTimeWeight(player) {
   return weight;
 }
 /* =========================================================
- [7095] Pink State Helpers
+ [7070] Pink State Helpers:buildPlayerIdentityKey
 ========================================================= */
-
 function buildPlayerIdentityKey(player) {
   const name =
     normalizePlayerName(
@@ -3674,7 +3673,9 @@ function buildPlayerIdentityKey(player) {
 
   return "__empty__";
 }
-
+/* =========================================================
+ [7071] Pink State Helpers:savePinkStateToStorage
+========================================================= */
 function savePinkStateToStorage() {
 
   try {
@@ -3715,7 +3716,9 @@ function savePinkStateToStorage() {
   }
 
 }
-
+/* =========================================================
+ [7072] Pink State Helpers:restorePinkStateFromStorage
+========================================================= */
 function restorePinkStateFromStorage() {
 
   try {
@@ -3785,7 +3788,9 @@ function restorePinkStateFromStorage() {
   }
 
 }
-
+/* =========================================================
+ [7073] Pink State Helpers:getPinkTarget
+========================================================= */
 function getPinkTarget(player) {
 
   if (!player) {
@@ -3872,7 +3877,9 @@ function getPinkTarget(player) {
   return null;
 
 }
-
+/* =========================================================
+ [7074] Pink State Helpers:registerPinkTarget
+========================================================= */
 function registerPinkTarget(
   player,
   copiedAt = Date.now()
@@ -3956,7 +3963,9 @@ function registerPinkTarget(
   return entry;
 
 }
-
+/* =========================================================
+ [7075] Pink State Helpers:updateEncounterHistory
+========================================================= */
 function updateEncounterHistory(
   player,
   copiedAt = Date.now()
@@ -4024,7 +4033,9 @@ function updateEncounterHistory(
   return entry;
 
 }
-
+/* =========================================================
+ [7076] Pink State Helpers:getEncounterHistory
+========================================================= */
 function getEncounterHistory(
   player
 ) {
@@ -4117,7 +4128,9 @@ function getEncounterHistory(
   return null;
 
 }
-
+/* =========================================================
+ [7077] Pink State Helpers:getEncounterBonus
+========================================================= */
 function getEncounterBonus(
   player
 ) {
@@ -4314,7 +4327,7 @@ function recordClickFromCopiedInfo(
 }
 
 /* =========================================================
- [7120] Realtime Boost Engine:getRealtimeBoost
+ [7110] Realtime Boost Engine:getRealtimeBoost
 ========================================================= */
 function getRealtimeBoost(
   player
@@ -4328,7 +4341,7 @@ function getRealtimeBoost(
   return detail.total;
 }
 /* =========================================================
- [7130] Realtime Boost Engine:getRealtimeBoostDetail
+ [7120] Realtime Boost Engine:getRealtimeBoostDetail
 ========================================================= */
 function getRealtimeBoostDetail(
   player
@@ -5465,58 +5478,60 @@ function buildMatchingCandidates() {
       ? filteredByRankModel
       : filteredByUi;
 
-  /* =====================================
-   * cooldown
-   * ===================================== */
+/* =====================================
+ * cooldown
+ * ===================================== */
+const afterCooldown =
+  analysisBase.filter(p => {
 
-  const afterCooldown =
-    analysisBase.filter(p => {
+    const pinkTarget =
+      getPinkTarget(p);
 
-      const pinkTarget =
-        getPinkTarget(p);
+    const click =
+      State.recentClicks.find(
+        r =>
+          normalizePlayerName(r.name)
+          ===
+          normalizePlayerName(p.name)
+          &&
+          String(
+            r.shopname ?? ""
+          )
+          ===
+          String(
+            p.shopname ?? ""
+          )
+      );
 
-      const click =
-        State.recentClicks.find(
-          r =>
-            normalizePlayerName(r.name)
-            ===
-            normalizePlayerName(p.name)
-            &&
-            String(
-              r.shopname ?? ""
-            )
-            ===
-            String(
-              p.shopname ?? ""
-            )
-        );
+    const copiedAt =
+      pinkTarget?.lastCopiedAt ||
+      click?.copiedAt ||
+      click?.time ||
+      null;
 
-      const copiedAt =
-        pinkTarget?.lastCopiedAt ||
-        click?.copiedAt ||
-        click?.time ||
-        null;
-
-      if (!copiedAt) {
-        return true;
-      }
-
-      const phase =
-        getPhaseDistanceMin(
-          copiedAt,
-          5
-        );
-
-      if (
-        phase.isInitialCooldown &&
-        !pinkTarget
-      ) {
-        return false;
-      }
-
+    if (!copiedAt) {
       return true;
-    });
+    }
 
+    const phase =
+      getPhaseDistanceMin(
+        copiedAt,
+        5
+      );
+
+    /*
+     * Pink / Yellow 共通で
+     * 初回1サイクルは除外
+     */
+    if (
+      phase.isInitialCooldown
+    ) {
+      return false;
+    }
+
+    return true;
+
+  });
   /* =====================================
    * Pink / Yellow Pool 分離
    * ===================================== */
