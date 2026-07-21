@@ -2992,6 +2992,9 @@ function buildPlayerRowHTML(
     shortenStoreName(
       fullShop
     );
+  
+  const isPinkManaged =
+  isCopiedPlayer(p);
 
   const safeName =
     String(
@@ -3049,7 +3052,11 @@ function buildPlayerRowHTML(
       </td>
 
       <td
-        class="left player-name clickable"
+        class="left player-name clickable ${
+          isPinkManaged
+            ? "pink-managed"
+            : ""
+        }"
         onclick="copyToClipboard(
           '${safeName}',
           '${safeName}',
