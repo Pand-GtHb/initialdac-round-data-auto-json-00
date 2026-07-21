@@ -3294,7 +3294,6 @@ function getAreaScore(
 function buildCandidateScore(
   player
 ) {
-
   const detail =
     calcMatchingScoreDetail(
       player
@@ -3340,6 +3339,29 @@ function buildCandidateScore(
         effectiveWeight.toFixed(
           6
         )
+      ),
+
+    /* =====================================
+     * ログ分析用
+     * ===================================== */
+    __rankComponent:
+      Number(
+        detail?.rankComponent ?? 0
+      ),
+
+    __areaComponent:
+      Number(
+        detail?.areaComponent ?? 0
+      ),
+
+    __rankRatio:
+      Number(
+        detail?.rankRatio ?? 0
+      ),
+
+    __areaRatio:
+      Number(
+        detail?.areaRatio ?? 0
       ),
 
     __detail:
@@ -5148,7 +5170,6 @@ function calcMatchingDiagnostics(
  [7410] Matching Score Engine:calcMatchingScoreDetail
 ========================================================= */
 function calcMatchingScoreDetail(player) {
-
   if (
     !player ||
     !player.updateDate
@@ -5156,48 +5177,183 @@ function calcMatchingScoreDetail(player) {
     return { score: 0 };
   }
 
-  const rankScore = Number(getRankWeight(player) || 0);
+  const rankScore =
+    Number(getRankWeight(player) || 0);
 
-  if (!Number.isFinite(rankScore) || rankScore <= 0) {
+  if (
+    !Number.isFinite(rankScore) ||
+    rankScore <= 0
+  ) {
     return { score: 0 };
   }
 
-  const prideWeight = Number(getPrideWeight(player) || 1);
-  const areaFactor = Number(getAreaScore(player) || 1);
-  const timeWeight = Number(getTimeWeight(player) || 0);
+  const prideWeight =
+    Number(getPrideWeight(player) || 1);
 
-  const safePrideWeight = Number.isFinite(prideWeight) ? prideWeight : 1.0;
-  const safeAreaFactor = Number.isFinite(areaFactor) ? areaFactor : 1.0;
-  const safeTimeWeight = Number.isFinite(timeWeight) ? timeWeight : 0;
+  const areaFactor =
+    Number(getAreaScore(player) || 1);
+
+  const timeWeight =
+    Number(getTimeWeight(player) || 0);
+
+  const safePrideWeight =
+    Number.isFinite(prideWeight)
+      ? prideWeight
+      : 1.0;
+
+  const safeAreaFactor =
+    Number.isFinite(areaFactor)
+      ? areaFactor
+      : 1.0;
+
+  const safeTimeWeight =
+    Number.isFinite(timeWeight)
+      ? timeWeight
+      : 0;
+
+  /* =====================================
+   * Rank Component
+   * ===================================== */
+  const rankComponent =
+    rankScore *
+    safePrideWeight;
+
+  /* =====================================
+   * Area Component
+   * areaFactor は
+   * 1 ～ (1+scale)程度なので
+   * 0～1へ正規化
+   * ===================================== */
+  const areaScale =
+    Number(
+      State.scoringConfig
+        ?.area
+        ?.scale ?? 200
+    );
+
+  const normalizedArea =
+    Math.max(
+      0,
+      Math.min(
+        1,
+        (safeAreaFactor - 1) /
+        Math.max(1, areaScale)
+      )
+    );
+
+  /* =====================================
+   * Rank 正規化
+   * 現在モデル内最大値を基準
+   * ===================================== */
+  const model =
+    State.rankModel;
+
+  const myStar =
+    String(State.myStar);
+
+  const rankTable =
+    model?.models?.[myStar]?.vs ?? {};
+
+  const maxRankWeight =
+    Math.max(
+      0.0001,
+      ...Object.values(rankTable)
+        .map(Number)
+        .filter(Number.isFinite)
+    );
+
+  const normalizedRank =
+    Math.max(
+      0,
+      Math.min(
+        1,
+        rankComponent /
+        maxRankWeight
+      )
+    );
+
+  /* =====================================
+   * Rank 50%
+   * Area 50%
+   * ===================================== */
+  const baseScore =
+    (
+      normalizedRank * 0.5 +
+      normalizedArea * 0.5
+    );
 
   const rankingScore =
-    rankScore * safePrideWeight * safeAreaFactor * safeTimeWeight;
+    baseScore *
+    safeTimeWeight;
 
-  const realtimeBoostValue = Number(getRealtimeBoost(player));
-  const realtimeBoost = Math.min(
-    Number.isFinite(realtimeBoostValue) ? realtimeBoostValue : 1.0,
-    2.5
-  );
+  const realtimeBoostValue =
+    Number(
+      getRealtimeBoost(player)
+    );
 
-  const encounterBonus = Number(getEncounterBonus(player) || 1.0);
+  const realtimeBoost =
+    Math.min(
+      Number.isFinite(
+        realtimeBoostValue
+      )
+        ? realtimeBoostValue
+        : 1.0,
+      2.5
+    );
+
+  const encounterBonus =
+    Number(
+      getEncounterBonus(player) || 1.0
+    );
 
   const selectionWeight =
     rankingScore *
-    (1 + (realtimeBoost - 1) * 0.4) *
+    (
+      1 +
+      (realtimeBoost - 1) * 0.4
+    ) *
     encounterBonus;
 
   const safeScore =
-    Number.isFinite(selectionWeight) && selectionWeight > 0
+    Number.isFinite(selectionWeight)
+      && selectionWeight > 0
       ? selectionWeight
       : 0.0001;
 
+  const rankRatio =
+    Math.round(
+      normalizedRank /
+      Math.max(
+        0.0001,
+        normalizedRank +
+        normalizedArea
+      ) * 100
+    );
+
+  const areaRatio =
+    100 - rankRatio;
+
   return {
     score: safeScore,
+
     rankingScore,
+
     phaseWeight: 1.0,
+
     realtimeBoost,
+
     selectionWeight,
-    encounterBonus
+
+    encounterBonus,
+
+    rankComponent,
+    areaComponent: normalizedArea,
+
+    normalizedRank,
+    normalizedArea,
+
+    rankRatio,
+    areaRatio
   };
 }
 /* =========================================================
@@ -5565,31 +5721,68 @@ const afterCooldown =
         !yellowPool.includes(p)
     );
 
-  /* =====================================
-   * 優先順位付き統合
-   * ===================================== */
-  const rankedAll = [
-    ...pinkPool.sort(
-      (a, b) =>
-        b.__effectiveWeight -
-        a.__effectiveWeight
-    ),
+/* =====================================
+ * 抽選母集団
+ * Pink / Yellow 優先
+ * ===================================== */
+const primaryPool = [
+  ...pinkPool.sort(
+    (a, b) =>
+      b.__effectiveWeight -
+      a.__effectiveWeight
+  ),
 
-    ...yellowPool.sort(
-      (a, b) =>
-        b.__effectiveWeight -
-        a.__effectiveWeight
-    ),
+  ...yellowPool.sort(
+    (a, b) =>
+      b.__effectiveWeight -
+      a.__effectiveWeight
+  )
+];
 
-    ...otherPool.sort(
-      (a, b) =>
-        b.__effectiveWeight -
-        a.__effectiveWeight
+const fallbackPool =
+  otherPool.sort(
+    (a, b) =>
+      b.__effectiveWeight -
+      a.__effectiveWeight
+  );
+
+let rankedAll = [];
+
+const primaryCount =
+  primaryPool.length;
+
+const targetCount =
+  Math.min(
+    10,
+    afterCooldown.length
+  );
+
+if (
+  primaryCount >=
+  targetCount
+) {
+
+  rankedAll =
+    primaryPool;
+
+} else {
+
+  const shortage =
+    targetCount -
+    primaryCount;
+
+  rankedAll = [
+    ...primaryPool,
+
+    ...fallbackPool.slice(
+      0,
+      shortage
     )
   ];
+}
 
-  State.matchingRankedAll =
-    rankedAll;
+State.matchingRankedAll =
+  rankedAll;
 
   /* =====================================
    * 分布抽選
@@ -6954,7 +7147,6 @@ function saveCandidateEvent() {
     );
 
   const record = {
-
     id:
       now,
 
@@ -7019,6 +7211,30 @@ function saveCandidateEvent() {
               ).toFixed(4)
             ),
 
+          rankComponent:
+            Number(
+              (
+                p.__rankComponent ?? 0
+              ).toFixed(6)
+            ),
+
+          areaComponent:
+            Number(
+              (
+                p.__areaComponent ?? 0
+              ).toFixed(6)
+            ),
+
+          rankRatio:
+            Number(
+              p.__rankRatio ?? 0
+            ),
+
+          areaRatio:
+            Number(
+              p.__areaRatio ?? 0
+            ),
+
           pinkTarget:
             Boolean(
               getPinkTarget(p)
@@ -7033,7 +7249,6 @@ function saveCandidateEvent() {
 
         })
       )
-
   };
 
   State.lastCandidateEventId =
@@ -7043,7 +7258,6 @@ function saveCandidateEvent() {
     "candidate",
     record
   );
-
 }
 /* =========================================================
  [9600] IndexedDB Schema
