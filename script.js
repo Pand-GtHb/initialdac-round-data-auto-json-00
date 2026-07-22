@@ -2872,29 +2872,11 @@ function highlightMatchingRows(
     const updated =
       tr.dataset.updated || "";
 
-    const nameCell =
-      tr.querySelector(
-        ".player-name"
-      );
-
     const rowName =
-      nameCell
-        ? String(
-            nameCell.textContent
-          ).trim()
-        : "";
-
-    const shopCell =
-      tr.querySelector(
-        ".store-name"
-      );
+      tr.dataset.name || "";
 
     const rowShop =
-      shopCell
-        ? String(
-            shopCell.textContent
-          ).trim()
-        : "";
+      tr.dataset.shopname || "";
 
     const rowPlayer = {
       name: rowName,
@@ -2968,7 +2950,6 @@ function renderPlayerRowsToBody(
 function buildPlayerRowHTML(
   p
 ) {
-
   const titleUrl =
     p.mytitleId
       ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
@@ -2992,9 +2973,19 @@ function buildPlayerRowHTML(
     shortenStoreName(
       fullShop
     );
-  
+
   const isPinkManaged =
-  isCopiedPlayer(p);
+    isCopiedPlayer(p);
+
+  const isPinkPhase =
+    isMatchingCandidateByCopyPhase(p);
+
+  const playerNameClass =
+    isPinkPhase
+      ? "pink-phase"
+      : isPinkManaged
+          ? "pink-managed"
+          : "";
 
   const safeName =
     String(
@@ -3037,9 +3028,20 @@ function buildPlayerRowHTML(
         )}\t${safeName}`
       : `${p.pridePoint}\t${safeName}`;
 
-  return `
-    <tr data-updated="${p.updateDate}">
+  const rowStateClass =
+    isPinkPhase
+      ? "pink-phase"
+      : isPinkManaged
+          ? "pink-managed"
+          : "";
 
+  return `
+    <tr
+      class="${rowStateClass}"
+      data-updated="${p.updateDate}"
+      data-name="${safeName}"
+      data-shopname="${safeShop}"
+    >
       <td
         class="center clickable"
         onclick="copyToClipboard(
@@ -3052,11 +3054,7 @@ function buildPlayerRowHTML(
       </td>
 
       <td
-        class="left player-name clickable ${
-          isPinkManaged
-            ? "pink-managed"
-            : ""
-        }"
+        class="left player-name clickable ${playerNameClass}"
         onclick="copyToClipboard(
           '${safeName}',
           '${safeName}',
@@ -3087,7 +3085,7 @@ function buildPlayerRowHTML(
       <td class="center">
         ${
           titleUrl
-          ? `<img src="${titleUrl}" height="24">`
+            ? `${titleUrl}`
             : ""
         }
       </td>
@@ -3095,7 +3093,6 @@ function buildPlayerRowHTML(
       <td class="left">
         ${p.updateDate}
       </td>
-
     </tr>
   `;
 }
@@ -5679,7 +5676,10 @@ const afterCooldown =
     const phase =
       getPhaseDistanceMin(
         copiedAt,
-        5
+        Math.max(
+          1,
+          getCurrentCycle(p) / 60
+        )
       );
 
     /*
