@@ -35,7 +35,7 @@ const State = {
 
   rankModel: null,
 
-  myStar: 6,
+  myStar: 7,
 
   recentClicks: [],
 
@@ -3427,7 +3427,7 @@ function syncMyRankSelection(
 ) {
 
   const selectedMyRank =
-    rankValue || "R6";
+    rankValue || "R7";
 
   const num =
     Number(
