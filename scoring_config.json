@@ -1,7 +1,7 @@
 {
   "meta": {
     "version": "scoring_config_v10_pink_priority",
-    "createdAt": "2026-07-18T00:00:00+09:00",
+    "createdAt": "2026-07-25T00:00:00+09:00",
     "description": "Pink候補優先強化版",
     "notes": [
       "rank linear",
@@ -26,7 +26,7 @@
 
   "time": {
     "mode": "multiply",
-    "exp": 1.2
+    "exp": 0.8
   },
 
   "phase": {
