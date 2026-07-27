@@ -7856,11 +7856,106 @@ function exportTodayLogsAsJSON() {
 ========================================================= */
 async function exportTodayViewerLogsAsJSON() {
 
-  const today =
-    getTodayYMDJa();
+  const input =
+    document.getElementById(
+      "logExportDate"
+    );
 
-  const key =
-    compactYMD(today);
+  let dateKey;
+
+  /*
+   * 日付未指定
+   * → 当日
+   */
+  if (
+    !input ||
+    !input.value
+  ) {
+
+    dateKey =
+      compactYMD(
+        getTodayYMDJa()
+      );
+
+  } else {
+
+    /*
+     * 日付指定
+     */
+    dateKey =
+      String(
+        input.value
+      ).replaceAll(
+        "-",
+        ""
+      );
+
+  }
+
+  const year =
+    Number(
+      dateKey.slice(
+        0,
+        4
+      )
+    );
+
+  const month =
+    Number(
+      dateKey.slice(
+        4,
+        6
+      )
+    ) - 1;
+
+  const day =
+    Number(
+      dateKey.slice(
+        6,
+        8
+      )
+    );
+
+  const targetDate =
+    `${year}/${String(
+      month + 1
+    ).padStart(
+      2,
+      "0"
+    )}/${String(
+      day
+    ).padStart(
+      2,
+      "0"
+    )}`;
+
+  const startDate =
+    new Date(
+      year,
+      month,
+      day,
+      0,
+      0,
+      0,
+      0
+    );
+
+  const endDate =
+    new Date(
+      year,
+      month,
+      day,
+      23,
+      59,
+      59,
+      999
+    );
+
+  const startTs =
+    startDate.getTime();
+
+  const endTs =
+    endDate.getTime();
 
   const viewerLogs =
     readStoredArraySafe(
@@ -7869,7 +7964,8 @@ async function exportTodayViewerLogsAsJSON() {
 
   const copyEvents =
     readStoredArraySafe(
-      LOG_STORAGE_KEYS.copyEvents + key
+      LOG_STORAGE_KEYS.copyEvents +
+      dateKey
     );
 
   const payload = {
@@ -7877,14 +7973,11 @@ async function exportTodayViewerLogsAsJSON() {
     exportedAt:
       getNowLabelJa(),
 
-    targetDate:
-      today,
+    targetDate,
 
-    viewerLogs:
-      viewerLogs,
+    viewerLogs,
 
-    copyEvents:
-      copyEvents,
+    copyEvents,
 
     candidateEvents: []
 
@@ -7897,32 +7990,6 @@ async function exportTodayViewerLogsAsJSON() {
     );
 
   } else {
-
-    const start =
-      new Date();
-
-    start.setHours(
-      0,
-      0,
-      0,
-      0
-    );
-
-    const end =
-      new Date();
-
-    end.setHours(
-      23,
-      59,
-      59,
-      999
-    );
-
-    const startTs =
-      start.getTime();
-
-    const endTs =
-      end.getTime();
 
     try {
 
@@ -7941,15 +8008,19 @@ async function exportTodayViewerLogsAsJSON() {
 
       const candidates =
         await new Promise(
-          (resolve, reject) => {
+          (
+            resolve,
+            reject
+          ) => {
 
             const req =
               candidateStore.getAll();
 
             req.onsuccess =
-              () => resolve(
-                req.result || []
-              );
+              () =>
+                resolve(
+                  req.result || []
+                );
 
             req.onerror =
               reject;
@@ -7959,9 +8030,19 @@ async function exportTodayViewerLogsAsJSON() {
 
       payload.candidateEvents =
         candidates.filter(
-          x =>
-            x.t >= startTs &&
-            x.t <= endTs
+          x => {
+
+            const ts =
+              Number(
+                x?.t ?? 0
+              );
+
+            return (
+              ts >= startTs &&
+              ts <= endTs
+            );
+
+          }
         );
 
     } catch (e) {
@@ -7970,14 +8051,16 @@ async function exportTodayViewerLogsAsJSON() {
         "IndexedDB読込失敗"
       );
 
-      console.error(e);
+      console.error(
+        e
+      );
 
     }
 
   }
 
   const filename =
-    `viewer_logs_${key}.json`;
+    `viewer_logs_${dateKey}.json`;
 
   const blob =
     new Blob(
