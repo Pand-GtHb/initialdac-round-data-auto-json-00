@@ -1534,7 +1534,9 @@ document.addEventListener(
 
         exportJsonBtn.disabled =
           true;
+
       }
+
     }
 
     /* =====================================
@@ -1543,8 +1545,21 @@ document.addEventListener(
 
     if (analysisLogBtn) {
 
-      analysisLogBtn.onclick =
-        exportTodayLogsAsJSON;
+      if (
+        typeof exportTodayViewerLogsAsJSON ===
+        "function"
+      ) {
+
+        analysisLogBtn.onclick =
+          exportTodayViewerLogsAsJSON;
+
+      } else {
+
+        analysisLogBtn.disabled =
+          true;
+
+      }
+
     }
 
     /* =====================================
@@ -1566,6 +1581,7 @@ document.addEventListener(
           await reloadLatestDataPreferPrefetch();
 
         };
+
     }
 
     /* =====================================
@@ -1586,7 +1602,9 @@ document.addEventListener(
           renderSummary();
 
           stopProgress();
+
         };
+
     }
 
     /* =====================================
@@ -1597,12 +1615,14 @@ document.addEventListener(
 
       summaryCsvBtn.onclick =
         exportSummaryCSV;
+
     }
 
     if (allCsvBtn) {
 
       allCsvBtn.onclick =
         exportAllCSV;
+
     }
 
     /* =====================================
@@ -1652,9 +1672,12 @@ document.addEventListener(
             applyMatchingFilter(
               State.searchText
             );
+
           }
+
         }
       );
+
     }
 
     /* =====================================
@@ -1676,7 +1699,9 @@ document.addEventListener(
           showSummaryUI(
             true
           );
+
         };
+
     }
 
     /* =====================================
@@ -1698,7 +1723,9 @@ document.addEventListener(
           showMatchingCandidates(
             true
           );
+
         };
+
     }
 
     /* =====================================
@@ -1720,7 +1747,9 @@ document.addEventListener(
           backToSummaryFromMatching(
             true
           );
+
         };
+
     }
 
     /* =====================================
@@ -1750,8 +1779,10 @@ document.addEventListener(
           log(
             `自分ランク変更：${selectedMyRank}`
           );
+
         }
       );
+
     }
 
     /* =====================================
@@ -1759,6 +1790,7 @@ document.addEventListener(
      * ===================================== */
 
     init();
+
   }
 );
 /* =========================================================
@@ -7721,136 +7753,7 @@ function downloadJSON(
     url
   );
 }
-/* =========================================================
- [9810] IndexedDB Export:exportTodayLogsAsJSON
-========================================================= */
-function exportTodayLogsAsJSON() {
 
-  if (!logDB) {
-
-    console.warn(
-      "DB未初期化"
-    );
-
-    return;
-
-  }
-
-  const todayStart =
-    new Date();
-
-  todayStart.setHours(
-    0,
-    0,
-    0,
-    0
-  );
-
-  const startTs =
-    todayStart.getTime();
-
-  const todayEnd =
-    new Date();
-
-  todayEnd.setHours(
-    23,
-    59,
-    59,
-    999
-  );
-
-  const endTs =
-    todayEnd.getTime();
-
-  const result = {
-
-    exportedAt:
-      Date.now(),
-
-    range: {
-
-      start:
-        startTs,
-
-      end:
-        endTs
-
-    },
-
-    copyEvents: [],
-
-    candidateEvents: []
-
-  };
-
-  const tx =
-    logDB.transaction(
-      [
-        LOG_STORE.copyEvents,
-        LOG_STORE.candidateEvents
-      ],
-      "readonly"
-    );
-
-  const copyStore =
-    tx.objectStore(
-      LOG_STORE.copyEvents
-    );
-
-  const candidateStore =
-    tx.objectStore(
-      LOG_STORE.candidateEvents
-    );
-
-  const copyReq =
-    copyStore.getAll();
-
-  const candidateReq =
-    candidateStore.getAll();
-
-  tx.oncomplete =
-    () => {
-
-      const copyAll =
-        copyReq.result || [];
-
-      const candidateAll =
-        candidateReq.result || [];
-
-      result.copyEvents =
-        copyAll.filter(
-          x =>
-            x.t >= startTs &&
-            x.t <= endTs
-        );
-
-      result.candidateEvents =
-        candidateAll.filter(
-          x =>
-            x.t >= startTs &&
-            x.t <= endTs
-        );
-
-      downloadJSON(
-        result
-      );
-
-    };
-
-  tx.onerror =
-    () => {
-
-      console.error(
-        "read error"
-      );
-
-      downloadJSON(
-        result
-      );
-
-    };
-
-}
 /* =========================================================
  [9900] JSON Export
 ========================================================= */
