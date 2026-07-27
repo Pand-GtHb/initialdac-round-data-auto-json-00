@@ -7861,16 +7861,18 @@ async function exportTodayViewerLogsAsJSON() {
       "logExportDate"
     );
 
+  const rawDate =
+    String(
+      input?.value ?? ""
+    ).trim();
+
   let dateKey;
 
   /*
    * 日付未指定
    * → 当日
    */
-  if (
-    !input ||
-    !input.value
-  ) {
+  if (!rawDate) {
 
     dateKey =
       compactYMD(
@@ -7883,14 +7885,16 @@ async function exportTodayViewerLogsAsJSON() {
      * 日付指定
      */
     dateKey =
-      String(
-        input.value
-      ).replaceAll(
+      rawDate.replaceAll(
         "-",
         ""
       );
 
   }
+
+  log(
+    `[analysis] rawDate=${rawDate} dateKey=${dateKey}`
+  );
 
   const year =
     Number(
@@ -7971,9 +7975,18 @@ async function exportTodayViewerLogsAsJSON() {
   const payload = {
 
     exportedAt:
-      getNowLabelJa(),
+      Date.now(),
+
+    rawDate,
+
+    dateKey,
 
     targetDate,
+
+    range: {
+      start: startTs,
+      end: endTs
+    },
 
     viewerLogs,
 
