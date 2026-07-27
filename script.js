@@ -28,24 +28,16 @@ const State = {
   currentDetailKey: "",
   currentDetailLabel: "",
   currentDetailIcon: "",
-
   matchingList: [],
   matchingRankedAll: [],
   matchingDiagnostics: null,
-
   rankModel: null,
-
   myStar: 7,
-
   recentClicks: [],
-
   areaModel: {},
-
   scoringConfig: null,
-
   updateWatchTimer: null,
   updateCheckRunning: false,
-
   prefetchedRoundData: null,
   prefetchedForUpdateAt: "",
   prefetchInFlight: null,
@@ -59,7 +51,14 @@ const State = {
 
   /* --- 新仕様追加（Fact） --- */
   pinkTargets: {},
-  encounterHistory: {}
+  encounterHistory: {},
+
+  /*
+   * Yellow周期学習用
+   * copiedAt - updateDate
+   * の実績サンプルを保存
+   */
+  yellowSamples: []
 };
 /* =========================================================
  [0030] Persistence Key
@@ -3703,16 +3702,12 @@ function buildPlayerIdentityKey(player) {
  [7071] Pink State Helpers:savePinkStateToStorage
 ========================================================= */
 function savePinkStateToStorage() {
-
   try {
-
     const payload = {
-
       /*
        * Pink対象は当日管理のみ
        * 永続保存しない
        */
-
       encounterHistory:
         State.encounterHistory || {},
 
@@ -3722,9 +3717,14 @@ function savePinkStateToStorage() {
           pink: 0
         },
 
+      /*
+       * Yellow周期学習用サンプル
+       */
+      yellowSamples:
+        State.yellowSamples || [],
+
       savedAt:
         Date.now()
-
     };
 
     localStorage.setItem(
@@ -3740,13 +3740,11 @@ function savePinkStateToStorage() {
     );
 
   }
-
 }
 /* =========================================================
  [7072] Pink State Helpers:restorePinkStateFromStorage
 ========================================================= */
 function restorePinkStateFromStorage() {
-
   try {
 
     const raw =
@@ -3764,7 +3762,6 @@ function restorePinkStateFromStorage() {
     /*
      * Pink対象復元なし
      */
-
     State.pinkTargets = {};
 
     if (
@@ -3785,7 +3782,6 @@ function restorePinkStateFromStorage() {
     ) {
 
       State.phaseAdjust = {
-
         yellow:
           Number(
             parsed.phaseAdjust.yellow ??
@@ -3799,8 +3795,21 @@ function restorePinkStateFromStorage() {
             State.phaseAdjust.pink ??
             0
           )
-
       };
+
+    }
+
+    /*
+     * Yellow周期学習サンプル復元
+     */
+    if (
+      Array.isArray(
+        parsed?.yellowSamples
+      )
+    ) {
+
+      State.yellowSamples =
+        parsed.yellowSamples;
 
     }
 
@@ -3812,7 +3821,6 @@ function restorePinkStateFromStorage() {
     );
 
   }
-
 }
 /* =========================================================
  [7073] Pink State Helpers:getPinkTarget
@@ -4190,6 +4198,81 @@ function getEncounterBonus(
 
 }
 /* =========================================================
+ [7078] Yellow State Helpers:registerYellowSample
+========================================================= */
+function registerYellowSample(
+  player,
+  copiedAt = Date.now()
+) {
+
+  if (
+    !player ||
+    !player.updateDate
+  ) {
+    return null;
+  }
+
+  const updateMs =
+    parseDateJST(
+      player.updateDate
+    )?.getTime();
+
+  if (
+    !updateMs ||
+    !isFinite(updateMs)
+  ) {
+    return null;
+  }
+
+  const diffSec =
+    (
+      copiedAt -
+      updateMs
+    ) / 1000;
+
+  if (
+    !isFinite(diffSec) ||
+    diffSec < 0
+  ) {
+    return null;
+  }
+
+  const sample = {
+
+    player:
+      player.name ?? "",
+
+    shopname:
+      player.shopname ?? "",
+
+    updateDate:
+      player.updateDate ?? "",
+
+    copiedAt,
+
+    diffSec:
+      Number(
+        diffSec.toFixed(2)
+      )
+
+  };
+
+  State.yellowSamples = [
+
+    sample,
+
+    ...(
+      State.yellowSamples || []
+    )
+
+  ].slice(0, 50);
+
+  savePinkStateToStorage();
+
+  return sample;
+}
+
+/* =========================================================
  [7100] Realtime Boost Engine:recordClickFromCopiedInfo
 ========================================================= */
 function recordClickFromCopiedInfo(
@@ -4288,6 +4371,14 @@ function recordClickFromCopiedInfo(
     copiedAt
   );
 
+  /*
+   * Yellow周期学習用サンプル登録
+   */
+  registerYellowSample(
+    player,
+    copiedAt
+  );
+
   const pinkTarget =
     getPinkTarget(
       player
@@ -4351,7 +4442,6 @@ function recordClickFromCopiedInfo(
   }
 
 }
-
 /* =========================================================
  [7110] Realtime Boost Engine:getRealtimeBoost
 ========================================================= */
@@ -4632,54 +4722,77 @@ function calcYellowCycle(player) {
   const base =
     cfg.baseCycleSec || 300;
 
-  if (getPinkTarget(player)) {
-    return base + (
-      State.phaseAdjust?.yellow ?? 0
-    );
-  }
+  const samples =
+    State.yellowSamples || [];
 
-  const clicks =
-    State.recentClicks.filter(
-      r =>
-        normalizePlayerName(
-          r.name
-        ) ===
-        normalizePlayerName(
-          player.name
-        )
-    );
-
-  if (clicks.length === 0) {
+  if (
+    samples.length === 0
+  ) {
 
     return (
       base +
       (
-        State.phaseAdjust
-          ?.yellow ?? 0
+        State.phaseAdjust?.yellow ?? 0
       )
     );
+
   }
 
-  const last =
-    parseDateJST(
-      player.updateDate
-    )?.getTime();
+  const values =
+    samples
+      .map(
+        s =>
+          Number(
+            s.diffSec ?? 0
+          )
+      )
+      .filter(
+        v =>
+          isFinite(v) &&
+          v > 0
+      )
+      .sort(
+        (a, b) => a - b
+      );
 
-  if (!last) {
-    return base;
-  }
+  if (
+    values.length === 0
+  ) {
 
-  const now =
-    Date.now();
-
-  const diffSec =
-    (now - last) / 1000;
-
-  const folded =
-    foldToCycle(
-      diffSec,
-      base
+    return (
+      base +
+      (
+        State.phaseAdjust?.yellow ?? 0
+      )
     );
+
+  }
+
+  /*
+   * 中央値算出
+   */
+  const mid =
+    Math.floor(
+      values.length / 2
+    );
+
+  const median =
+    (
+      values.length % 2
+    )
+      ? values[mid]
+      : (
+          values[mid - 1]
+          +
+          values[mid]
+        ) / 2;
+
+  /*
+   * 現行構造維持
+   * folded 相当値として利用
+   */
+  const folded =
+    median - base;
 
   const prev =
     Number(
@@ -4707,7 +4820,11 @@ function calcYellowCycle(player) {
   State.phaseAdjust.yellow =
     clamped;
 
-  return base + clamped;
+  return (
+    base +
+    clamped
+  );
+
 }
 /* =========================================================
  [7230] Phase Engine:calcPinkCycle
@@ -7153,7 +7270,55 @@ function saveCandidateEvent() {
       45
     );
 
+  /*
+   * Yellow学習状況
+   */
+  const yellowSamples =
+    State.yellowSamples || [];
+
+  const yellowValues =
+    yellowSamples
+      .map(
+        s =>
+          Number(
+            s.diffSec ?? 0
+          )
+      )
+      .filter(
+        v =>
+          isFinite(v) &&
+          v > 0
+      )
+      .sort(
+        (a,b)=>a-b
+      );
+
+  let yellowMedian = 0;
+
+  if (
+    yellowValues.length > 0
+  ) {
+
+    const mid =
+      Math.floor(
+        yellowValues.length / 2
+      );
+
+    yellowMedian =
+      (
+        yellowValues.length % 2
+      )
+        ? yellowValues[mid]
+        : (
+            yellowValues[mid - 1]
+            +
+            yellowValues[mid]
+          ) / 2;
+
+  }
+
   const record = {
+
     id:
       now,
 
@@ -7177,6 +7342,17 @@ function saveCandidateEvent() {
     yellowCycle:
       Number(
         yellowCycle.toFixed(2)
+      ),
+
+    /*
+     * Yellow学習状況
+     */
+    yellowSampleCount:
+      yellowSamples.length,
+
+    yellowMedianCycle:
+      Number(
+        yellowMedian.toFixed(2)
       ),
 
     pinkAdjust:
