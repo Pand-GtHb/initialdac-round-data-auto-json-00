@@ -4269,41 +4269,75 @@ function registerYellowSample(
     return null;
   }
 
+  /*
+   * Yellow基準周期
+   *
+   * 現在の学習処理は
+   * 300±45秒を前提としているため
+   * 保存時も300秒基準で折り畳み
+   */
+  const baseCycleSec = 300;
+
+  /*
+   * 周期ズレ
+   *
+   * 302 → 2
+   * 598 → -2
+   * 905 → 5
+   * 1198 → -2
+   */
+  const foldedSec =
+    foldToCycle(
+      diffSec,
+      baseCycleSec
+    );
+
+  /*
+   * 経過周期数
+   *
+   * 302 → 1
+   * 598 → 1
+   * 905 → 3
+   * 1198 → 3
+   */
+  const cycleCount =
+    Math.max(
+      1,
+      Math.round(
+        diffSec /
+        baseCycleSec
+      )
+    );
+
   const sample = {
-
-    player:
-      player.name ?? "",
-
-    shopname:
-      player.shopname ?? "",
-
-    updateDate:
-      player.updateDate ?? "",
 
     copiedAt,
 
-    diffSec:
-      Number(
-        diffSec.toFixed(2)
-      )
+    updateMs,
+
+    diffSec,
+
+    /*
+     * 周期ズレ
+     */
+    foldedSec,
+
+    /*
+     * おおよその経過周期数
+     */
+    cycleCount
 
   };
 
   State.yellowSamples = [
-
     sample,
-
-    ...(
-      State.yellowSamples || []
-    )
-
+    ...State.yellowSamples
   ].slice(0, 50);
 
   savePinkStateToStorage();
 
   return sample;
 }
-
 /* =========================================================
  [7100] Realtime Boost Engine:recordClickFromCopiedInfo
 ========================================================= */
@@ -4748,56 +4782,70 @@ function getCurrentCycle(
 function calcYellowCycle(player) {
 
   const cfg =
-    State.scoringConfig
-      ?.phase?.yellow || {};
+    State.scoringConfig?.phase?.yellow ?? {};
 
   const base =
-    cfg.baseCycleSec || 300;
+    cfg.baseCycleSec ?? 300;
 
   const samples =
-    State.yellowSamples || [];
+    State.yellowSamples ?? [];
 
-  if (
-    samples.length === 0
-  ) {
-
+  if (samples.length === 0) {
     return (
       base +
-      (
-        State.phaseAdjust?.yellow ?? 0
+      clamp(
+        State.phaseAdjust?.yellow ?? 0,
+        -(cfg.maxShiftSec ?? 45),
+        (cfg.maxShiftSec ?? 45)
       )
     );
-
   }
 
   const values =
     samples
-      .map(
-        s =>
-          Number(
-            s.diffSec ?? 0
-          )
-      )
+      .map(s => {
+        const diffSec =
+          Number(s.diffSec ?? 0);
+
+        if (
+          !isFinite(diffSec) ||
+          diffSec <= 0
+        ) {
+          return null;
+        }
+
+        /*
+         * 複数周期分を折り畳む
+         *
+         * 例
+         * 302 → 2
+         * 598 → -2
+         * 902 → 2
+         * 1198 → -2
+         */
+        return foldToCycle(
+          diffSec,
+          base
+        );
+      })
       .filter(
         v =>
-          isFinite(v) &&
-          v > 0
+          v !== null &&
+          isFinite(v)
       )
       .sort(
         (a, b) => a - b
       );
 
-  if (
-    values.length === 0
-  ) {
-
+  if (values.length === 0) {
     return (
       base +
-      (
-        State.phaseAdjust?.yellow ?? 0
+      clamp(
+        State.phaseAdjust?.yellow ?? 0,
+        -(cfg.maxShiftSec ?? 45),
+        (cfg.maxShiftSec ?? 45)
       )
     );
-
   }
 
   /*
@@ -4809,38 +4857,36 @@ function calcYellowCycle(player) {
     );
 
   const median =
-    (
-      values.length % 2
-    )
+    (values.length % 2)
       ? values[mid]
       : (
-          values[mid - 1]
-          +
+          values[mid - 1] +
           values[mid]
         ) / 2;
 
   /*
-   * 現行構造維持
-   * folded 相当値として利用
+   * median は
+   * 「周期からのズレ秒数」
+   *
+   * +10 → 周期を延ばした方がよい
+   * -10 → 周期を短くした方がよい
    */
-  const folded =
-    median - base;
+  const folded = median;
 
   const prev =
     Number(
-      State.phaseAdjust
-        ?.yellow ?? 0
+      State.phaseAdjust?.yellow ?? 0
     );
 
   const updated =
     updateAdjust(
       prev,
       folded,
-      cfg.alpha || 0.2
+      cfg.alpha ?? 0.2
     );
 
   const maxShift =
-    cfg.maxShiftSec || 45;
+    cfg.maxShiftSec ?? 45;
 
   const clamped =
     clamp(
@@ -4856,7 +4902,6 @@ function calcYellowCycle(player) {
     base +
     clamped
   );
-
 }
 /* =========================================================
  [7230] Phase Engine:calcPinkCycle
@@ -7306,26 +7351,48 @@ function saveCandidateEvent() {
    * Yellow学習状況
    */
   const yellowSamples =
-    State.yellowSamples || [];
+    State.yellowSamples ?? [];
+
+  const baseCycleSec = 300;
 
   const yellowValues =
     yellowSamples
-      .map(
-        s =>
-          Number(
-            s.diffSec ?? 0
-          )
-      )
+      .map(s => {
+
+        const diffSec =
+          Number(s.diffSec ?? 0);
+
+        if (
+          !isFinite(diffSec) ||
+          diffSec <= 0
+        ) {
+          return null;
+        }
+
+        /*
+         * 複数周期除去
+         *
+         * 305 → 5
+         * 598 → -2
+         * 905 → 5
+         * 1198 → -2
+         */
+        return foldToCycle(
+          diffSec,
+          baseCycleSec
+        );
+
+      })
       .filter(
         v =>
-          isFinite(v) &&
-          v > 0
+          v !== null &&
+          isFinite(v)
       )
       .sort(
-        (a,b)=>a-b
+        (a, b) => a - b
       );
 
-  let yellowMedian = 0;
+  let yellowMedianOffset = 0;
 
   if (
     yellowValues.length > 0
@@ -7336,26 +7403,22 @@ function saveCandidateEvent() {
         yellowValues.length / 2
       );
 
-    yellowMedian =
-      (
-        yellowValues.length % 2
-      )
+    yellowMedianOffset =
+      (yellowValues.length % 2)
         ? yellowValues[mid]
         : (
-            yellowValues[mid - 1]
-            +
+            yellowValues[mid - 1] +
             yellowValues[mid]
           ) / 2;
-
   }
 
   const record = {
 
-    id:
-      now,
+    t: now,
 
-    t:
-      now,
+    e: "candidate",
+
+    id: now,
 
     eventAt:
       getNowLabelJa(),
@@ -7364,106 +7427,80 @@ function saveCandidateEvent() {
       buildDailyKey(),
 
     yellowAdjust:
-      Number(
-        (
-          State.phaseAdjust?.yellow ??
-          0
-        ).toFixed(2)
+      Math.round(
+        State.phaseAdjust?.yellow ?? 0
       ),
 
-    yellowCycle:
-      Number(
-        yellowCycle.toFixed(2)
-      ),
+    yellowCycle,
+
+    yellowSampleCount:
+      yellowValues.length,
 
     /*
-     * Yellow学習状況
+     * 周期中央値ではなく
+     * 周期ズレ中央値
      */
-    yellowSampleCount:
-      yellowSamples.length,
-
-    yellowMedianCycle:
+    yellowMedianOffset:
       Number(
-        yellowMedian.toFixed(2)
+        yellowMedianOffset.toFixed(2)
       ),
 
     pinkAdjust:
-      Number(
-        (
-          State.phaseAdjust?.pink ??
-          0
-        ).toFixed(2)
+      Math.round(
+        State.phaseAdjust?.pink ?? 0
       ),
 
-    pinkCycle:
-      Number(
-        pinkCycle.toFixed(2)
-      ),
+    pinkCycle,
 
     candidateCount:
       State.matchingList.length,
 
     candidates:
-      (
-        State.matchingList || []
-      ).map(
-        p => ({
+      State.matchingList.map(p => ({
 
-          name:
-            p.name ?? "",
+        name:
+          p.name,
 
-          score:
-            Number(
-              (
-                p.__score ?? 0
-              ).toFixed(6)
-            ),
+        score:
+          Number(
+            (p.__score ?? 0)
+              .toFixed(6)
+          ),
 
-          phaseMultiplier:
-            Number(
-              (
-                p.__phaseMultiplier ?? 0
-              ).toFixed(4)
-            ),
+        phaseMultiplier:
+          Number(
+            (
+              p.__phaseMultiplier ?? 0
+            ).toFixed(4)
+          ),
 
-          rankComponent:
-            Number(
-              (
-                p.__rankComponent ?? 0
-              ).toFixed(6)
-            ),
+        rankComponent:
+          Number(
+            (
+              p.__detail?.rankComponent ?? 0
+            ).toFixed(6)
+          ),
 
-          areaComponent:
-            Number(
-              (
-                p.__areaComponent ?? 0
-              ).toFixed(6)
-            ),
+        areaComponent:
+          Number(
+            (
+              p.__detail?.normalizedArea ?? 0
+            ).toFixed(6)
+          ),
 
-          rankRatio:
-            Number(
-              p.__rankRatio ?? 0
-            ),
+        rankRatio:
+          p.__detail?.rankRatio ?? 0,
 
-          areaRatio:
-            Number(
-              p.__areaRatio ?? 0
-            ),
+        areaRatio:
+          p.__detail?.areaRatio ?? 0,
 
-          pinkTarget:
-            Boolean(
-              getPinkTarget(p)
-            ),
+        pinkTarget:
+          isCopiedPlayer(p),
 
-          encounterCount:
-            Number(
-              getEncounterHistory(p)?.count ||
-              getPinkTarget(p)?.copyCount ||
-              0
-            )
+        encounterCount:
+          getEncounterHistory(p)?.count ?? 0
 
-        })
-      )
+      }))
   };
 
   State.lastCandidateEventId =
