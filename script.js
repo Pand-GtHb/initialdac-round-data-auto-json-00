@@ -1523,12 +1523,12 @@ document.addEventListener(
     if (exportJsonBtn) {
 
       if (
-        typeof exportTodayViewerLogsAsJSON ===
+        typeof exportViewerLogsAsJSON ===
         "function"
       ) {
 
         exportJsonBtn.onclick =
-          exportTodayViewerLogsAsJSON;
+          exportViewerLogsAsJSON;
 
       } else {
 
@@ -7901,11 +7901,6 @@ async function exportTodayViewerLogsAsJSON() {
   const endTs =
     endDate.getTime();
 
-  const viewerLogs =
-    readStoredArraySafe(
-      LOG_STORAGE_KEYS.viewerLogs
-    );
-
   const copyEvents =
     readStoredArraySafe(
       LOG_STORAGE_KEYS.copyEvents +
@@ -7927,8 +7922,6 @@ async function exportTodayViewerLogsAsJSON() {
       start: startTs,
       end: endTs
     },
-
-    viewerLogs,
 
     copyEvents,
 
@@ -8013,7 +8006,7 @@ async function exportTodayViewerLogsAsJSON() {
   }
 
   const filename =
-    `viewer_logs_${dateKey}.json`;
+    `viewer_analysis_${dateKey}.json`;
 
   const blob =
     new Blob(
@@ -8053,7 +8046,154 @@ async function exportTodayViewerLogsAsJSON() {
   );
 
   log(
-    `JSON出力完了: ${filename}`
+    `分析JSON出力完了: ${filename}`
+  );
+
+}
+/* =========================================================
+ [9910] Viewer Log Export
+========================================================= */
+async function exportViewerLogsAsJSON() {
+
+  const input =
+    document.getElementById(
+      "logExportDate"
+    );
+
+  const rawDate =
+    String(
+      input?.value ?? ""
+    ).trim();
+
+  let dateKey;
+
+  /*
+   * 日付未指定
+   * → 当日
+   */
+  if (!rawDate) {
+
+    dateKey =
+      compactYMD(
+        getTodayYMDJa()
+      );
+
+  } else {
+
+    /*
+     * 日付指定
+     */
+    dateKey =
+      rawDate.replaceAll(
+        "-",
+        ""
+      );
+
+  }
+
+  log(
+    `[viewer-log] rawDate=${rawDate} dateKey=${dateKey}`
+  );
+
+  const year =
+    Number(
+      dateKey.slice(
+        0,
+        4
+      )
+    );
+
+  const month =
+    Number(
+      dateKey.slice(
+        4,
+        6
+      )
+    ) - 1;
+
+  const day =
+    Number(
+      dateKey.slice(
+        6,
+        8
+      )
+    );
+
+  const targetDate =
+    `${year}/${String(
+      month + 1
+    ).padStart(
+      2,
+      "0"
+    )}/${String(
+      day
+    ).padStart(
+      2,
+      "0"
+    )}`;
+
+  const viewerLogs =
+    readStoredArraySafe(
+      LOG_STORAGE_KEYS.viewerLogs
+    );
+
+  const payload = {
+
+    exportedAt:
+      Date.now(),
+
+    rawDate,
+
+    dateKey,
+
+    targetDate,
+
+    viewerLogs
+
+  };
+
+  const filename =
+    `viewer_runtime_${dateKey}.json`;
+
+  const blob =
+    new Blob(
+      [
+        JSON.stringify(
+          payload,
+          null,
+          2
+        )
+      ],
+      {
+        type:
+          "application/json;charset=utf-8"
+      }
+    );
+
+  const url =
+    URL.createObjectURL(
+      blob
+    );
+
+  const a =
+    document.createElement(
+      "a"
+    );
+
+  a.href =
+    url;
+
+  a.download =
+    filename;
+
+  a.click();
+
+  URL.revokeObjectURL(
+    url
+  );
+
+  log(
+    `ViewerLog出力完了: ${filename}`
   );
 
 }
