@@ -1,18 +1,23 @@
 {
   "meta": {
-    "version": "scoring_config_v10_pink_priority",
+    "version": "scoring_config_v11_rank_area_weight",
     "createdAt": "2026-07-25T00:00:00+09:00",
-    "description": "Pink候補優先強化版",
+    "updatedAt": "2026-07-31T13:24:32+09:00",
+    "description": "Rank/Area Weight対応版",
     "notes": [
-      "rank linear",
       "area scale 外部化",
       "time exp 外部化",
-      "phase Cos波（表示専用・スコア未使用）",
       "cycle動的補正（EMA）",
       "cooldown前提設計（コード側制御）",
       "display閾値制御",
-      "Pink候補優先度強化"
+      "Pink候補優先度強化",
+      "Rank/Area比率をConfig化"
     ]
+  },
+
+  "scoreWeights": {
+    "rank": 0.7,
+    "area": 0.3
   },
 
   "rank": {
