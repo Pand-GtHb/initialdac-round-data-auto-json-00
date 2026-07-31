@@ -8132,9 +8132,66 @@ async function exportViewerLogsAsJSON() {
       "0"
     )}`;
 
+  const startDate =
+    new Date(
+      year,
+      month,
+      day,
+      0,
+      0,
+      0,
+      0
+    );
+
+  const endDate =
+    new Date(
+      year,
+      month,
+      day,
+      23,
+      59,
+      59,
+      999
+    );
+
+  const startTs =
+    startDate.getTime();
+
+  const endTs =
+    endDate.getTime();
+
   const viewerLogs =
     readStoredArraySafe(
       LOG_STORAGE_KEYS.viewerLogs
+    );
+
+  const filteredViewerLogs =
+    viewerLogs.filter(
+      log => {
+
+        if (
+          !log?.savedAt
+        ) {
+          return false;
+        }
+
+        const ts =
+          Date.parse(
+            log.savedAt.replace(
+              /\//g,
+              "-"
+            )
+          );
+
+        return (
+          !Number.isNaN(
+            ts
+          ) &&
+          ts >= startTs &&
+          ts <= endTs
+        );
+
+      }
     );
 
   const payload = {
@@ -8148,7 +8205,13 @@ async function exportViewerLogsAsJSON() {
 
     targetDate,
 
-    viewerLogs
+    range: {
+      start: startTs,
+      end: endTs
+    },
+
+    viewerLogs:
+      filteredViewerLogs
 
   };
 
