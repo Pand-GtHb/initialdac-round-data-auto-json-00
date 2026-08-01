@@ -1,23 +1,14 @@
 {
   "meta": {
-    "version": "scoring_config_v11_rank_area_weight",
-    "createdAt": "2026-07-25T00:00:00+09:00",
-    "updatedAt": "2026-07-31T13:24:32+09:00",
-    "description": "Rank/Area Weight対応版",
-    "notes": [
-      "area scale 外部化",
-      "time exp 外部化",
-      "cycle動的補正（EMA）",
-      "cooldown前提設計（コード側制御）",
-      "display閾値制御",
-      "Pink候補優先度強化",
-      "Rank/Area比率をConfig化"
-    ]
+    "version": "scoring_config_v11_rank_area_weight_tuning_20260731",
+    "createdAt": "2026-08-01T00:00:00+09:00",
+    "basedOnLog": "viewer_analysis_20260731",
+    "description": "2026/07/31ログ分析反映版 (Rank/Areaチューニング)"
   },
 
   "scoreWeights": {
-    "rank": 0.7,
-    "area": 0.3
+    "rank": 0.6,
+    "area": 0.4
   },
 
   "rank": {
@@ -26,7 +17,7 @@
   },
 
   "area": {
-    "scale": 20
+    "scale": 15
   },
 
   "time": {
