@@ -2859,8 +2859,8 @@ function renderDetailTable(
             <th>プレイヤー名</th>
             <th>RP</th>
             <th>店舗名</th>
-            <th>称号</th>
             <th>Last Update</th>
+            <th>称号</th>
           </tr>
 
         </thead>
@@ -3112,6 +3112,10 @@ function buildPlayerRowHTML(
           ${shortShop}
         </div>
       </td>
+      
+      <td class="left">
+        ${p.updateDate}
+      </td>
 
       <td class="center">
         ${
@@ -3119,10 +3123,6 @@ function buildPlayerRowHTML(
             ? `<img src="${titleUrl}" height="24">`
             : ""
         }
-      </td>
-
-      <td class="left">
-        ${p.updateDate}
       </td>
     </tr>
   `;
@@ -6380,8 +6380,8 @@ function renderMatchingTable() {
             <th>プレイヤー名</th>
             <th>RP</th>
             <th>店舗名</th>
-            <th>称号</th>
             <th>Last Update</th>
+            <th>称号</th>
           </tr>
         </thead>
 
