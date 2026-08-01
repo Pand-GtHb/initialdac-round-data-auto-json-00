@@ -29,7 +29,7 @@ body::before {
     background-position: center top;
     background-repeat: no-repeat;
 
-    opacity: 0.25;
+    opacity: 0.5;
 
     pointer-events: none;
     z-index: -1;
@@ -37,7 +37,7 @@ body::before {
 #logBox {
     background: #222;
     padding: 10px;
-    font-size: 12px;
+    font-size: 16px;
     white-space: pre-wrap;
     height: 120px;
     overflow-y: auto;
@@ -341,10 +341,6 @@ td.center { text-align:center; }
 <div class="mt10">
   <button id="reloadBtn">Reload</button>
   <button id="filterBtn">Filter</button>
-  <button id="summaryCsvBtn">Data:Summary</button>
-  <button id="allCsvBtn">Data:All</button>
-  <button id="exportJsonBtn">ViewerLog</button>
-
   <input
     type="date"
     id="logExportDate"
@@ -356,6 +352,10 @@ td.center { text-align:center; }
 
   <button id="analysisLogBtn">AnalysisLog</button>
 
+  <button id="exportJsonBtn">ViewerLog</button>
+
+  <button id="summaryCsvBtn">Data:Summary</button>
+  <button id="allCsvBtn">Data:All</button>
 </div>
 
 <div id="logBox"></div>
