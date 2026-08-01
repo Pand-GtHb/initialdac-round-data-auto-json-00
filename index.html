@@ -29,7 +29,7 @@ body::before {
     background-position: center top;
     background-repeat: no-repeat;
 
-    opacity: 0.5;
+    opacity: 0.4;
 
     pointer-events: none;
     z-index: -1;
@@ -37,7 +37,7 @@ body::before {
 #logBox {
     background: #222;
     padding: 10px;
-    font-size: 16px;
+    font-size: 14px;
     white-space: pre-wrap;
     height: 120px;
     overflow-y: auto;
@@ -292,7 +292,7 @@ td.center { text-align:center; }
 
 <body>
 
-<h2>InitialD Round Data Viewer（auto-json-00 対応）</h2>
+<h2>Initial D THE ARCADE Data Viewer</h2>
 
 <div>
   <b>最新ラウンド：</b>
@@ -304,7 +304,9 @@ td.center { text-align:center; }
   <select id="rangeSelect">
       <option value="15">15分</option>
       <option value="30">30分</option>
+
       <option value="60" selected>1時間</option>
+      
       <option value="120">2時間</option>
       <option value="180">3時間</option>
   </select>
@@ -339,8 +341,8 @@ td.center { text-align:center; }
 </div>
 
 <div class="mt10">
-  <button id="reloadBtn">Reload</button>
-  <button id="filterBtn">Filter</button>
+  <button id="reloadBtn">【Reload】</button>
+  <button id="filterBtn">【Filter】</button>
   <input
     type="date"
     id="logExportDate"
@@ -350,12 +352,12 @@ td.center { text-align:center; }
       margin-right:4px;
     ">
 
-  <button id="analysisLogBtn">AnalysisLog</button>
+  <button id="analysisLogBtn">【LOG:Analysis】</button>
 
-  <button id="exportJsonBtn">ViewerLog</button>
+  <button id="exportJsonBtn">【LOG：Viewer】/button>
 
-  <button id="summaryCsvBtn">Data:Summary</button>
-  <button id="allCsvBtn">Data:All</button>
+  <button id="summaryCsvBtn">【Data：Summary】</button>
+  <button id="allCsvBtn">【Data：All】</button>
 </div>
 
 <div id="logBox"></div>
@@ -368,7 +370,9 @@ td.center { text-align:center; }
         <option value="R3">★3</option>
         <option value="R4">★4</option>
         <option value="R5">★5</option>
+
         <option value="R6" selected>★6</option>
+        
         <option value="R7">★7</option>
         <option value="R8">★8</option>
         <option value="P_A">PRIDE A</option>
@@ -380,7 +384,7 @@ td.center { text-align:center; }
         <option value="P_G">PRIDE G</option>
     </select>
 
-    <button id="matchingBtn">MatchingCcandidates</button>
+    <button id="matchingBtn">☆Matching☆</button>
     <input id="searchInput" type="text" placeholder="Filter by player name" />
 </div>
 
