@@ -1,9 +1,9 @@
 {
   "meta": {
-    "version": "scoring_config_v11_rank_area_weight_tuning_20260731",
-    "createdAt": "2026-08-01T00:00:00+09:00",
+    "version": "scoring_config_v11_yellow_maxshift60_20260801",
+    "createdAt": "2026-08-01T10:00:00+09:00",
     "basedOnLog": "viewer_analysis_20260731",
-    "description": "2026/07/31ログ分析反映版 (Rank/Areaチューニング)"
+    "description": "Yellow周期の上限張り付き検証版"
   },
 
   "scoreWeights": {
@@ -33,7 +33,7 @@
     "yellow": {
       "baseCycleSec": 300,
       "alpha": 0.2,
-      "maxShiftSec": 45
+      "maxShiftSec": 60
     },
 
     "pink": {
