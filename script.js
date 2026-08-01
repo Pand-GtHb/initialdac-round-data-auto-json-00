@@ -3112,6 +3112,10 @@ function buildPlayerRowHTML(
           ${shortShop}
         </div>
       </td>
+      
+      <td class="left">
+        ${p.updateDate}
+      </td>
 
       <td class="center">
         ${
@@ -3119,10 +3123,6 @@ function buildPlayerRowHTML(
             ? `<img src="${titleUrl}" height="24">`
             : ""
         }
-      </td>
-
-      <td class="left">
-        ${p.updateDate}
       </td>
     </tr>
   `;
