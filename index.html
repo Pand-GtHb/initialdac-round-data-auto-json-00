@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>InitialD Round Data Viewer（auto-json-00）</title>
+<title>Initial D THE ARCADE Data Viewer</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <!-- ★ スマホでのキャッシュ完全禁止（最重要） -->
@@ -15,9 +15,25 @@ body {
     font-family: sans-serif;
     margin: 0;
     padding: 10px;
-    background: #f5f5f5;
-}
 
+    min-height: 100vh;
+    position: relative;
+}
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+
+    background-image: url("./images/bg_sp.jpg.webp");
+    background-size: cover;
+    background-position: center top;
+    background-repeat: no-repeat;
+
+    opacity: 0.25;
+
+    pointer-events: none;
+    z-index: -1;
+}
 #logBox {
     background: #222;
     padding: 10px;
@@ -323,22 +339,22 @@ td.center { text-align:center; }
 </div>
 
 <div class="mt10">
-  <button id="reloadBtn">データReload</button>
-  <button id="filterBtn">フィルタ適用</button>
-  <button id="summaryCsvBtn">サマリCSV</button>
-  <button id="allCsvBtn">全CSV</button>
-  <button id="exportJsonBtn">本日分Log</button>
+  <button id="reloadBtn">Reload</button>
+  <button id="filterBtn">Filter</button>
+  <button id="summaryCsvBtn">Data:Summary</button>
+  <button id="allCsvBtn">Data:All</button>
+  <button id="exportJsonBtn">ViewerLog</button>
 
   <input
     type="date"
     id="logExportDate"
-    title="未指定なら当日ログ"
+    title="未指定なら当日"
     style="
       margin-left:8px;
       margin-right:4px;
     ">
 
-  <button id="analysisLogBtn">分析Log</button>
+  <button id="analysisLogBtn">AnalysisLog</button>
 
 </div>
 
@@ -364,8 +380,8 @@ td.center { text-align:center; }
         <option value="P_G">PRIDE G</option>
     </select>
 
-    <button id="matchingBtn">マッチング候補</button>
-    <input id="searchInput" type="text" placeholder="プレイヤー名で絞り込み（ランク横断）" />
+    <button id="matchingBtn">MatchingCcandidates</button>
+    <input id="searchInput" type="text" placeholder="Filter by player name" />
 </div>
 
 <div id="summaryView">
@@ -376,18 +392,18 @@ td.center { text-align:center; }
 </div>
 
 <div id="detailView">
-  <button id="backBtn">← サマリに戻る</button>
+  <button id="backBtn">← Summary</button>
 
   <div class="rank-nav-box">
-      <button id="prevRankBtn" class="rank-nav-btn">← 前のランク</button>
-      <button id="nextRankBtn" class="rank-nav-btn">次のランク →</button>
+      <button id="prevRankBtn" class="rank-nav-btn">← Previous</button>
+      <button id="nextRankBtn" class="rank-nav-btn">Next →</button>
   </div>
 
   <div id="detailArea" class="mt10"></div>
 </div>
 
 <div id="matchingView">
-  <button id="matchingBackBtn">← サマリに戻る</button>
+  <button id="matchingBackBtn">← Summary</button>
   <div id="matchingHeader" class="mt10"></div>
   <div id="matchingArea" class="mt10"></div>
 </div>
