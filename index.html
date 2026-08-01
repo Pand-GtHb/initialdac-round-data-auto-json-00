@@ -270,7 +270,7 @@ td.center { text-align:center; }
     display: grid;
     grid-template-columns: 6em 1em auto;
     align-items: center;
-    margin-top: 6px;
+    margin-top: 2px;
 }
 
 .row3 .label {
@@ -294,22 +294,28 @@ td.center { text-align:center; }
 
 <h2>Initial D THE ARCADE Data Viewer</h2>
 
-<div>
-  <b>ROUND：</b>
-  <span id="latestRound">読み込み中…</span>
+<!-- ★ ラウンド -->
+<div class="row3">
+  <div class="label">ROUND</div>
+  <div class="colon">：</div>
+  <div class="value">
+    <span id="latestRound">読み込み中…</span>
 </div>
 
-<div class="mt10">
-  <b>FILTER：</b>
-  <select id="rangeSelect">
-      <option value="15">15 min</option>
-      <option value="30">30 min</option>
+<!-- ★ 時間フィルタ -->
+<div class="row3">
+  <div class="label">FILTER</div>
+  <div class="colon">：</div>
+  <div class="value">
+     <select id="rangeSelect">
+        <option value="15">15 min</option>
+        <option value="30">30 min</option>
 
-      <option value="60" selected>1 hour</option>
+        <option value="60" selected>1 hour</option>
       
-      <option value="120">2 hour</option>
-      <option value="180">3 hour</option>
-  </select>
+        <option value="120">2 hour</option>
+        <option value="180">3 hour</option>
+    </select>
 </div>
 
 <!-- ★ 表示開始 -->
@@ -342,8 +348,8 @@ td.center { text-align:center; }
 
 <!-- 各種ボタン -->
 <div class="mt10">
-  <button id="reloadBtn">　RELOAD　</button>
-  <button id="filterBtn">　FILTER　</button>
+  <button id="reloadBtn">RELOAD　</button>
+  <button id="filterBtn">FILTER　</button>
   <input
     type="date"
     id="logExportDate"
@@ -352,11 +358,11 @@ td.center { text-align:center; }
       margin-left:8px;
       margin-right:4px;
     ">
-  <button id="analysisLogBtn">　LOG:Analysis　</button>
-  <button id="exportJsonBtn">　LOG：Viewer　</button>
+  <button id="analysisLogBtn">LOG:Analysis　</button>
+  <button id="exportJsonBtn">LOG：Viewer　</button>
 
-  <button id="summaryCsvBtn">　DATA：Summary　</button>
-  <button id="allCsvBtn">　DATA：All　</button>
+  <button id="summaryCsvBtn">DATA：Summary　</button>
+  <button id="allCsvBtn">DATA：All　</button>
 </div>
 
 <div id="logBox"></div>
@@ -383,7 +389,7 @@ td.center { text-align:center; }
         <option value="P_G">PRIDE G</option>
     </select>
 
-    <button id="matchingBtn">　MATCHING　</button>
+    <button id="matchingBtn">MATCHING　</button>
     <input id="searchInput" type="text" placeholder="Filter by player name" />
 </div>
 
@@ -395,18 +401,18 @@ td.center { text-align:center; }
 </div>
 
 <div id="detailView">
-  <button id="backBtn">　←←← SUMMARY</button>
+  <button id="backBtn">◀◀◀SUMMARY</button>
 
   <div class="rank-nav-box">
-      <button id="prevRankBtn" class="rank-nav-btn">　←←←　</button>
-      <button id="nextRankBtn" class="rank-nav-btn">　→→→　</button>
+      <button id="prevRankBtn" class="rank-nav-btn">　◀◀◀　</button>
+      <button id="nextRankBtn" class="rank-nav-btn">　▶▶▶　</button>
   </div>
 
   <div id="detailArea" class="mt10"></div>
 </div>
 
 <div id="matchingView">
-  <button id="matchingBackBtn">← Summary</button>
+  <button id="matchingBackBtn">◀◀◀SUMMARY</button>
   <div id="matchingHeader" class="mt10"></div>
   <div id="matchingArea" class="mt10"></div>
 </div>
