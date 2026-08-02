@@ -4886,13 +4886,26 @@ function calcYellowCycle(player) {
       maxShift
     );
 
+  const prevCycle =
+    base + prev;
+
+  const newCycle =
+    base + clamped;
+
+  const currentPinkCycle =
+    (State.scoringConfig?.phase?.pink?.baseCycleSec || 300) +
+    Number(State.phaseAdjust?.pink ?? 0);
+
+  if (newCycle !== prevCycle) {
+    log(
+      `Yellow周期=${Math.round(newCycle)}秒  Pink周期=${Math.round(currentPinkCycle)}秒`
+    );
+  }
+
   State.phaseAdjust.yellow =
     clamped;
 
-  return (
-    base +
-    clamped
-  );
+  return newCycle;
 }
 /* =========================================================
  [7230] Phase Engine:calcPinkCycle
@@ -4993,10 +5006,26 @@ function calcPinkCycle(
       maxShift
     );
 
+  const prevCycle =
+    base + prev;
+
+  const newCycle =
+    base + clamped;
+
+  const currentYellowCycle =
+    (State.scoringConfig?.phase?.yellow?.baseCycleSec ?? 300) +
+    Number(State.phaseAdjust?.yellow ?? 0);
+
+  if (newCycle !== prevCycle) {
+    log(
+      `Yellow周期=${Math.round(currentYellowCycle)}秒  Pink周期=${Math.round(newCycle)}秒`
+    );
+  }
+
   State.phaseAdjust.pink =
     clamped;
 
-  return base + clamped;
+  return newCycle;
 }
 /* =========================================================
  [7240] Phase Engine:foldToCycle
@@ -6840,6 +6869,17 @@ function allowLog(
   if (
     message.includes(
       "先読み失敗"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "Yellow周期="
+    ) ||
+    message.includes(
+      "Pink周期="
     )
   ) {
     return true;
