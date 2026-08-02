@@ -4886,26 +4886,10 @@ function calcYellowCycle(player) {
       maxShift
     );
 
-  const prevCycle =
-    base + prev;
-
-  const newCycle =
-    base + clamped;
-
-  const currentPinkCycle =
-    (State.scoringConfig?.phase?.pink?.baseCycleSec || 300) +
-    Number(State.phaseAdjust?.pink ?? 0);
-
-  if (newCycle !== prevCycle) {
-    log(
-      `Yellow周期=${Math.round(newCycle)}秒  Pink周期=${Math.round(currentPinkCycle)}秒`
-    );
-  }
-
   State.phaseAdjust.yellow =
     clamped;
 
-  return newCycle;
+  return base + clamped;
 }
 /* =========================================================
  [7230] Phase Engine:calcPinkCycle
@@ -5006,26 +4990,10 @@ function calcPinkCycle(
       maxShift
     );
 
-  const prevCycle =
-    base + prev;
-
-  const newCycle =
-    base + clamped;
-
-  const currentYellowCycle =
-    (State.scoringConfig?.phase?.yellow?.baseCycleSec ?? 300) +
-    Number(State.phaseAdjust?.yellow ?? 0);
-
-  if (newCycle !== prevCycle) {
-    log(
-      `Yellow周期=${Math.round(currentYellowCycle)}秒  Pink周期=${Math.round(newCycle)}秒`
-    );
-  }
-
   State.phaseAdjust.pink =
     clamped;
 
-  return newCycle;
+  return base + clamped;
 }
 /* =========================================================
  [7240] Phase Engine:foldToCycle
@@ -6308,6 +6276,10 @@ State.matchingRankedAll =
     `候補生成: Base=${base.length} / Selected=${selected.length}`
   );
 
+  log(
+    `Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
+  );
+
   saveCandidateEvent();
 }
 /* =========================================================
@@ -6870,18 +6842,6 @@ function allowLog(
   ) {
     return true;
   }
-
-  if (
-    message.includes(
-      "Yellow周期="
-    ) ||
-    message.includes(
-      "Pink周期="
-    )
-  ) {
-    return true;
-  }
-
   if (
     message.includes(
       "利用元:"
