@@ -4667,103 +4667,94 @@ function getRealtimeBoostDetail(
  [7200] Phase Engine:getRoundedDiffMinAndPhaseDistance
 ========================================================= */
 function getRoundedDiffMinAndPhaseDistance(
-  copiedAtMs,
-  cycleMin = 5
+    copiedAtMs,
+    cycleMin = 5
 ) {
+    const emptyResult = {
+        diffMin: Infinity,
+        d: Infinity,
+        rSec: Infinity,
+        inYellowWindow: false,
+        isInitialCooldown: false,
+        cooldownRemainingSec: 0
+    };
 
-  const emptyResult = {
-    diffMin: Infinity,
-    d: Infinity,
-    rSec: Infinity,
-    inYellowWindow: false,
-    isInitialCooldown: false,
-    cooldownRemainingSec: 0
-  };
+    const anchor =
+        Number(copiedAtMs);
 
-  const anchor =
-    Number(copiedAtMs);
+    if (
+        !anchor ||
+        !isFinite(anchor)
+    ) {
+        return emptyResult;
+    }
 
-  if (
-    !anchor ||
-    !isFinite(anchor)
-  ) {
+    const now =
+        Date.now();
+
+    const diffSec =
+        (now - anchor) / 1000;
+
+    if (
+        !isFinite(diffSec) ||
+        diffSec < 0
+    ) {
+        return emptyResult;
+    }
+
+    const cycleSec =
+        Number(cycleMin) * 60;
+
+    const toleranceSec =
+        45;
+
+    /*
+     * 修正
+     * コピー後は
+     * 1YellowCycleだけ完全除外
+     */
+    const initialCooldownSec =
+        cycleSec;
+
+    const rSec =
+        diffSec % cycleSec;
+
+    if (
+        diffSec <
+        initialCooldownSec
+    ) {
+        return {
+            diffMin:
+                diffSec / 60,
+            d: Infinity,
+            rSec,
+            inYellowWindow: false,
+            isInitialCooldown: true,
+            cooldownRemainingSec:
+                initialCooldownSec - diffSec
+        };
+    }
+
+    const distToNearest =
+        Math.min(
+            rSec,
+            cycleSec - rSec
+        );
+
+    const inYellowWindow =
+        distToNearest <=
+        toleranceSec;
 
     return {
-      ...emptyResult,
-      cooldownRemainingSec:
-        Infinity
+        diffMin:
+            diffSec / 60,
+        d:
+            distToNearest / 60,
+        rSec,
+        inYellowWindow,
+        isInitialCooldown: false,
+        cooldownRemainingSec: 0
     };
-  }
-
-  const now =
-    Date.now();
-
-  const diffSec =
-    (now - anchor) / 1000;
-
-  if (
-    !isFinite(diffSec) ||
-    diffSec < 0
-  ) {
-
-    return {
-      ...emptyResult,
-      cooldownRemainingSec:
-        Infinity
-    };
-  }
-
-  const cycleSec =
-    Number(cycleMin) * 60;
-
-  const toleranceSec =
-    45;
-
-  const initialCooldownSec =
-    cycleSec +
-    toleranceSec;
-
-  const rSec =
-    diffSec % cycleSec;
-
-  if (
-    diffSec <
-    initialCooldownSec
-  ) {
-
-    return {
-      diffMin: diffSec / 60,
-      d: Infinity,
-      rSec,
-      inYellowWindow: false,
-      isInitialCooldown: true,
-      cooldownRemainingSec:
-        Math.max(
-          0,
-          initialCooldownSec -
-            diffSec
-        )
-    };
-  }
-
-  const distToNearest =
-    Math.min(
-      rSec,
-      cycleSec - rSec
-    );
-
-  const inYellowWindow =
-    distToNearest <=
-    toleranceSec;
-
-  return {
-    diffMin: diffSec / 60,
-    d: distToNearest / 60,
-    rSec,
-    inYellowWindow,
-    isInitialCooldown: false,
-    cooldownRemainingSec: 0
-  };
 }
 /* =========================================================
  [7210] Phase Engine:getCurrentCycle
@@ -5181,133 +5172,142 @@ function getLatestCopiedPlayer() {
     null
   );
 }
-/* =========================================================
- [7330] Phase Candidate Judge:getPinkPhaseScore
+/* =========================================================[
+7330] Phase Candidate Judge:getPinkPhaseScore
 ========================================================= */
 /* =====================================
  * Pink強度評価
  * 戻り値: 0.0 ～ 1.0
  * ===================================== */
 function getPinkPhaseScore(
-  player
+    player
 ) {
+    if (!player) {
+        return 0;
+    }
 
-  if (!player) {
-    return 0;
-  }
+    const target =
+        getPinkTarget(player);
 
-  const target =
-    getPinkTarget(player);
+    if (!target) {
+        return 0;
+    }
 
-  if (!target) {
-    return 0;
-  }
+    const cycleSec =
+        getCurrentCycle(player);
 
-  const cycleSec =
-    getCurrentCycle(player);
+    if (
+        !cycleSec ||
+        !isFinite(cycleSec)
+    ) {
+        return 0;
+    }
 
-  if (
-    !cycleSec ||
-    !isFinite(cycleSec)
-  ) {
-    return 0;
-  }
+    const diffSec =
+        (
+            Date.now() -
+            (
+                target.lastCopiedAt || 0
+            )
+        ) / 1000;
 
-  const diffSec =
-    (
-      Date.now() -
-      (
-        target.lastCopiedAt || 0
-      )
-    ) / 1000;
+    /*
+     * 修正
+     * コピー後1Cycleは
+     * Pink評価対象外
+     */
+    if (diffSec < cycleSec) {
+        return 0;
+    }
 
-  if (diffSec < cycleSec) {
-    return 1;
-  }
+    const theta =
+        (
+            2 *
+            Math.PI *
+            (diffSec % cycleSec)
+        ) / cycleSec;
 
-  const theta =
-    (
-      2 *
-      Math.PI *
-      (diffSec % cycleSec)
-    ) / cycleSec;
+    const cosValue =
+        Math.cos(theta);
 
-  const cosValue =
-    Math.cos(theta);
+    const encounterBonus =
+        getEncounterBonus(player);
 
-  const encounterBonus =
-    getEncounterBonus(player);
-
-  return Math.max(
-    0,
-    Math.min(
-      1,
-      Math.max(
+    return Math.max(
         0,
-        cosValue
-      ) *
-      encounterBonus
-    )
-  );
+        Math.min(
+            1,
+            Math.max(
+                0,
+                cosValue
+            ) *
+            encounterBonus
+        )
+    );
 }
-/* =========================================================
- [7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase3
-  Pink管理対象に対するPink周期アクティブ判定4 （PinkPool所属判定ではない）
+/* =========================================================[
+7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase3
+Pink管理対象に対するPink周期アクティブ判定4 （PinkPool所属判定ではない）
 ========================================================= */
 function isMatchingCandidateByCopyPhase(player) {
 
-  if (!player) {
-    return false;
-  }
+    if (!player) {
+        return false;
+    }
 
-  const target =
-    getPinkTarget(player);
+    const target =
+        getPinkTarget(player);
 
-  if (!target) {
-    return false;
-  }
+    if (!target) {
+        return false;
+    }
 
-  const cycleSec =
-    getCurrentCycle(player);
+    const cycleSec =
+        getCurrentCycle(player);
 
-  if (
-    !cycleSec ||
-    !isFinite(cycleSec)
-  ) {
-    return false;
-  }
+    if (
+        !cycleSec ||
+        !isFinite(cycleSec)
+    ) {
+        return false;
+    }
 
-  const threshold =
-    Number(
-      State.scoringConfig
-        ?.phase
-        ?.display
-        ?.pinkThreshold ?? 0
-    );
+    const threshold =
+        Number(
+            State.scoringConfig
+                ?.phase
+                ?.display
+                ?.pinkThreshold ?? 0
+        );
 
-  const diffSec =
-    (
-      Date.now() -
-      (
-        target.lastCopiedAt || 0
-      )
-    ) / 1000;
+    const diffSec =
+        (
+            Date.now() -
+            (
+                target.lastCopiedAt || 0
+            )
+        ) / 1000;
 
-  if (diffSec < cycleSec) {
-    return true;
-  }
+    /*
+     * 修正
+     * コピー後1Cycle未満は
+     * Pink候補扱いしない
+     */
+    if (diffSec < cycleSec) {
+        return false;
+    }
 
-  const theta =
-    (
-      2 *
-      Math.PI *
-      (diffSec % cycleSec)
-    ) / cycleSec;
+    const theta =
+        (
+            2 *
+            Math.PI *
+            (diffSec % cycleSec)
+        ) / cycleSec;
 
-  const cosValue =
-    Math.cos(theta);
+    const cosValue =
+        Math.cos(theta);
 
-  return cosValue > threshold;
+    return cosValue > threshold;
 }
 /* =========================================================
  [7400] Matching Score Engine:calcMatchingDiagnostics
@@ -6381,7 +6381,7 @@ function renderMatchingTable() {
             <th>RP</th>
             <th>店舗名</th>
             <th>Last Update</th>
-            <th>称号</th>
+                        <th>称号</th>
           </tr>
         </thead>
 
