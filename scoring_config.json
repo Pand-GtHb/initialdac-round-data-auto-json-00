@@ -33,7 +33,7 @@
     "yellow": {
       "baseCycleSec": 300,
       "alpha": 0.2,
-      "maxShiftSec": 60
+      "maxShiftSec": 150
     },
 
     "pink": {
