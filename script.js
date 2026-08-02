@@ -6276,9 +6276,9 @@ State.matchingRankedAll =
     selected;
 
   log(
-    `候補生成(修正版): Base=${base.length} / Selected=${selected.length}`
+    `候補生成: Base=${base.length} / Selected=${selected.length}`
+    `Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
   );
-
   saveCandidateEvent();
 }
 /* =========================================================
