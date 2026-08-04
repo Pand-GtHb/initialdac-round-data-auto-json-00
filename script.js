@@ -3324,84 +3324,124 @@ function getAreaScore(
   );
 }
 /* =========================================================
+ [6890] Score Normalizer Engine
+========================================================= */
+function buildScoreNormalizer(
+    list
+) {
+    const source =
+        (list || [])
+        .filter(
+            p => p && p.updateDate
+        )
+        .map(p => {
+
+            const rankScore =
+                Number(
+                    getRankWeight(p) || 0
+                );
+
+            const prideWeight =
+                Number(
+                    getPrideWeight(p) || 1
+                );
+
+            const areaFactor =
+                Number(
+                    getAreaScore(p) || 1
+                );
+
+            return {
+                rankComponent:
+                    rankScore *
+                    prideWeight,
+
+                areaComponent:
+                    areaFactor
+            };
+        });
+
+    const rankValues =
+        source.map(
+            x => x.rankComponent
+        );
+
+    const areaValues =
+        source.map(
+            x => x.areaComponent
+        );
+
+    return {
+
+        rankMin:
+            rankValues.length
+                ? Math.min(...rankValues)
+                : 0,
+
+        rankMax:
+            rankValues.length
+                ? Math.max(...rankValues)
+                : 1,
+
+        areaMin:
+            areaValues.length
+                ? Math.min(...areaValues)
+                : 0,
+
+        areaMax:
+            areaValues.length
+                ? Math.max(...areaValues)
+                : 1
+    };
+}
+/* =========================================================
  [6900] Candidate Score Engine
 ========================================================= */
 function buildCandidateScore(
-  player
+    player,
+    normalizer = null
 ) {
-  const detail =
-    calcMatchingScoreDetail(
-      player
-    );
+    const detail =
+        calcMatchingScoreDetail(
+            player,
+            normalizer
+        );
 
-  const score =
-    Number(
-      detail?.score ?? 0
-    );
+    const score =
+        Number(
+            detail?.score ?? 0
+        );
 
-  const phaseMultiplier =
-    getPhaseSelectionMultiplier(
-      player
-    );
+    const phaseMultiplier =
+        getPhaseSelectionMultiplier(
+            player
+        );
 
-  const effectiveWeight =
-    score *
-    phaseMultiplier;
+    const effectiveWeight =
+        score *
+        phaseMultiplier;
 
-  const rankKey =
-    getPlayerRankKey(
-      player
-    );
+    const rankKey =
+        getPlayerRankKey(
+            player
+        );
 
-  return {
-    ...player,
+    return {
+        ...player,
 
-    __rankKey:
-      rankKey,
+        __score: score,
 
-    __score:
-      score,
+        __detail: detail,
 
-    __phaseMultiplier:
-      Number(
-        phaseMultiplier.toFixed(
-          4
-        )
-      ),
+        __effectiveWeight:
+            effectiveWeight,
 
-    __effectiveWeight:
-      Number(
-        effectiveWeight.toFixed(
-          6
-        )
-      ),
+        __phaseMultiplier:
+            phaseMultiplier,
 
-    /* =====================================
-     * ログ分析用
-     * ===================================== */
-    __rankComponent:
-      Number(
-        detail?.rankComponent ?? 0
-      ),
-
-    __areaComponent:
-      Number(
-        detail?.areaComponent ?? 0
-      ),
-
-    __rankRatio:
-      Number(
-        detail?.rankRatio ?? 0
-      ),
-
-    __areaRatio:
-      Number(
-        detail?.areaRatio ?? 0
-      ),
-
-    __detail:
-      detail
-  };
+        __rankKey:
+            rankKey
+    };
 }
 /* =========================================================
  [7000] Rank Weight Engine:getPrideBandKey
@@ -5169,8 +5209,8 @@ function getLatestCopiedPlayer() {
     null
   );
 }
-/* =========================================================[
-7330] Phase Candidate Judge:getPinkPhaseScore
+/* =========================================================
+ [7330] Phase Candidate Judge:getPinkPhaseScore
 ========================================================= */
 /* =====================================
  * Pink強度評価
@@ -5242,9 +5282,9 @@ function getPinkPhaseScore(
         )
     );
 }
-/* =========================================================[
-7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase3
-Pink管理対象に対するPink周期アクティブ判定4 （PinkPool所属判定ではない）
+/* =========================================================
+ [7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase3
+  Pink管理対象に対するPink周期アクティブ判定4 （PinkPool所属判定ではない）
 ========================================================= */
 function isMatchingCandidateByCopyPhase(player) {
 
@@ -5364,239 +5404,230 @@ function calcMatchingDiagnostics(
 /* =========================================================
  [7410] Matching Score Engine:calcMatchingScoreDetail
 ========================================================= */
-function calcMatchingScoreDetail(player) {
+function calcMatchingScoreDetail(
+    player,
+    normalizer = null
+) {
+    if (!player || !player.updateDate) {
+        return { score: 0 };
+    }
 
-  if (
-    !player ||
-    !player.updateDate
-  ) {
-    return { score: 0 };
-  }
+    const rankScore =
+        Number(getRankWeight(player) || 0);
 
-  const rankScore =
-    Number(getRankWeight(player) || 0);
+    if (
+        !Number.isFinite(rankScore) ||
+        rankScore <= 0
+    ) {
+        return { score: 0 };
+    }
 
-  if (
-    !Number.isFinite(rankScore) ||
-    rankScore <= 0
-  ) {
-    return { score: 0 };
-  }
+    const prideWeight =
+        Number(getPrideWeight(player) || 1);
 
-  const prideWeight =
-    Number(getPrideWeight(player) || 1);
+    const areaFactor =
+        Number(getAreaScore(player) || 1);
 
-  const areaFactor =
-    Number(getAreaScore(player) || 1);
+    const timeWeight =
+        Number(getTimeWeight(player) || 0);
 
-  const timeWeight =
-    Number(getTimeWeight(player) || 0);
+    const safePrideWeight =
+        Number.isFinite(prideWeight)
+            ? prideWeight
+            : 1.0;
 
-  const safePrideWeight =
-    Number.isFinite(prideWeight)
-      ? prideWeight
-      : 1.0;
+    const safeAreaFactor =
+        Number.isFinite(areaFactor)
+            ? areaFactor
+            : 1.0;
 
-  const safeAreaFactor =
-    Number.isFinite(areaFactor)
-      ? areaFactor
-      : 1.0;
+    const safeTimeWeight =
+        Number.isFinite(timeWeight)
+            ? timeWeight
+            : 0;
 
-  const safeTimeWeight =
-    Number.isFinite(timeWeight)
-      ? timeWeight
-      : 0;
+    /* =====================================
+     * Rank Component
+     * ===================================== */
+    const rankComponent =
+        rankScore * safePrideWeight;
 
-  /* =====================================
-   * Rank Component
-   * ===================================== */
-  const rankComponent =
-    rankScore *
-    safePrideWeight;
+    /* =====================================
+     * Area Component
+     * ===================================== */
+    const areaComponent =
+        safeAreaFactor;
 
-  /* =====================================
-   * Area Component
-   * areaFactor は
-   * 1 ～ (1+scale)程度なので
-   * 0～1へ正規化
-   * ===================================== */
-  const areaScale =
-    Number(
-      State.scoringConfig
-        ?.area
-        ?.scale ?? 200
-    );
+    /* =====================================
+     * Min-Max Normalize
+     * ===================================== */
+    let normalizedRank = 1;
+    let normalizedArea = 1;
 
-  const normalizedArea =
-    Math.max(
-      0,
-      Math.min(
-        1,
-        (safeAreaFactor - 1) /
-        Math.max(1, areaScale)
-      )
-    );
+    if (normalizer) {
 
-  /* =====================================
-   * Rank 正規化
-   * 現在モデル内最大値を基準
-   * ===================================== */
-  const model =
-    State.rankModel;
+        const rankRange =
+            normalizer.rankMax -
+            normalizer.rankMin;
 
-  const myStar =
-    String(State.myStar);
+        const areaRange =
+            normalizer.areaMax -
+            normalizer.areaMin;
 
-  const rankTable =
-    model?.models?.[myStar]?.vs ?? {};
+        normalizedRank =
+            rankRange > 0
+                ? (
+                    rankComponent -
+                    normalizer.rankMin
+                ) / rankRange
+                : 1;
 
-  const maxRankWeight =
-    Math.max(
-      0.0001,
-      ...Object.values(rankTable)
-        .map(Number)
-        .filter(Number.isFinite)
-    );
+        normalizedArea =
+            areaRange > 0
+                ? (
+                    areaComponent -
+                    normalizer.areaMin
+                ) / areaRange
+                : 1;
+    }
 
-  const normalizedRank =
-    Math.max(
-      0,
-      Math.min(
-        1,
-        rankComponent /
-        maxRankWeight
-      )
-    );
+    normalizedRank =
+        Math.max(
+            0,
+            Math.min(1, normalizedRank)
+        );
 
-  /* =====================================
-   * Rank / Area Weight
-   * ScoringConfig制御
-   * ===================================== */
-  const rawRankWeight =
-    Number(
-      State.scoringConfig
-        ?.scoreWeights
-        ?.rank ?? 0.5
-    );
+    normalizedArea =
+        Math.max(
+            0,
+            Math.min(1, normalizedArea)
+        );
 
-  const rawAreaWeight =
-    Number(
-      State.scoringConfig
-        ?.scoreWeights
-        ?.area ?? 0.5
-    );
+    /* =====================================
+     * Weight Setting
+     * ===================================== */
+    const rawRankWeight =
+        Number(
+            State.scoringConfig
+            ?.scoreWeights
+            ?.rank ?? 0.5
+        );
 
-  const totalWeight =
-    Math.max(
-      0.0001,
-      rawRankWeight +
-      rawAreaWeight
-    );
+    const rawAreaWeight =
+        Number(
+            State.scoringConfig
+            ?.scoreWeights
+            ?.area ?? 0.5
+        );
 
-  const rankWeight =
-    rawRankWeight /
-    totalWeight;
+    const totalWeight =
+        Math.max(
+            0.0001,
+            rawRankWeight +
+            rawAreaWeight
+        );
 
-  const areaWeight =
-    rawAreaWeight /
-    totalWeight;
+    const rankWeight =
+        rawRankWeight /
+        totalWeight;
 
-  /* =====================================
-   * Base Score
-   * ===================================== */
-  const baseScore =
-    (
-      normalizedRank *
-      rankWeight +
+    const areaWeight =
+        rawAreaWeight /
+        totalWeight;
 
-      normalizedArea *
-      areaWeight
-    );
+    /* =====================================
+     * Contribution
+     * ===================================== */
+    const rankContribution =
+        normalizedRank *
+        rankWeight;
 
-  const rankingScore =
-    baseScore *
-    safeTimeWeight;
+    const areaContribution =
+        normalizedArea *
+        areaWeight;
 
-  const realtimeBoostValue =
-    Number(
-      getRealtimeBoost(player)
-    );
+    /* =====================================
+     * Base Score
+     * ===================================== */
+    const baseScore =
+        rankContribution +
+        areaContribution;
 
-  const realtimeBoost =
-    Math.min(
-      Number.isFinite(
-        realtimeBoostValue
-      )
-        ? realtimeBoostValue
-        : 1.0,
-      2.5
-    );
+    const rankingScore =
+        baseScore *
+        safeTimeWeight;
 
-  const encounterBonus =
-    Number(
-      getEncounterBonus(player) || 1.0
-    );
+    const realtimeBoostValue =
+        Number(
+            getRealtimeBoost(player)
+        );
 
-  const selectionWeight =
-    rankingScore *
-    (
-      1 +
-      (realtimeBoost - 1) * 0.4
-    ) *
-    encounterBonus;
+    const realtimeBoost =
+        Math.min(
+            Number.isFinite(
+                realtimeBoostValue
+            )
+                ? realtimeBoostValue
+                : 1.0,
+            2.5
+        );
 
-  const safeScore =
-    Number.isFinite(selectionWeight)
-      && selectionWeight > 0
-      ? selectionWeight
-      : 0.0001;
+    const encounterBonus =
+        Number(
+            getEncounterBonus(player) || 1.0
+        );
 
-  const rankRatio =
-    Math.round(
-      normalizedRank /
-      Math.max(
-        0.0001,
-        normalizedRank +
-        normalizedArea
-      ) * 100
-    );
+    const selectionWeight =
+        rankingScore *
+        (
+            1 +
+            (realtimeBoost - 1) * 0.4
+        ) *
+        encounterBonus;
 
-  const areaRatio =
-    100 - rankRatio;
+    const safeScore =
+        Number.isFinite(selectionWeight) &&
+        selectionWeight > 0
+            ? selectionWeight
+            : 0.0001;
 
-  return {
+    const rankRatio =
+        Math.round(
+            rankContribution /
+            Math.max(
+                0.0001,
+                rankContribution +
+                areaContribution
+            ) * 100
+        );
 
-    score: safeScore,
+    const areaRatio =
+        100 - rankRatio;
 
-    rankingScore,
+    return {
+        score: safeScore,
 
-    phaseWeight: 1.0,
+        rankComponent,
+        areaComponent,
 
-    realtimeBoost,
+        normalizedRank,
+        normalizedArea,
 
-    selectionWeight,
+        rankContribution,
+        areaContribution,
 
-    encounterBonus,
+        rankRatio,
+        areaRatio,
 
-    rankComponent,
+        rankWeight,
+        areaWeight,
 
-    areaComponent:
-      normalizedArea,
+        baseScore,
+        rankingScore,
 
-    normalizedRank,
-
-    normalizedArea,
-
-    rankWeight,
-
-    areaWeight,
-
-    rankRatio,
-
-    areaRatio
-
-  };
-
+        realtimeBoost,
+        encounterBonus
+    };
 }
 /* =========================================================
  [7420] Matching Score Engine:calcMatchingScore
@@ -5818,16 +5849,30 @@ function buildMatchingCandidates() {
     [...document.querySelectorAll(".pride-filter:checked")]
       .map(x => x.value);
 
-  const base =
-    State.filtered;
+const base =
+  State.filtered;
 
   /* =====================================
-   * スコア計算
+   * Score Normalizer
    * ===================================== */
+  const normalizer =
+    buildScoreNormalizer(
+      base
+    );
 
-  const scoredAll =
-    base.map(buildCandidateScore);
+ /* =====================================
+  * スコア計算
+  * ===================================== */
 
+const scoredAll =
+  base.map(
+ *  p =>
+      buildCandidateScore(
+*       p,
+        normalizer
+     *)
+  );
+  
   /* =====================================
    * UIフィルタ
    * ===================================== */
