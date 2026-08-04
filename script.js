@@ -5209,8 +5209,8 @@ function getLatestCopiedPlayer() {
     null
   );
 }
-/* =========================================================
- [7330] Phase Candidate Judge:getPinkPhaseScore
+/* =========================================================[
+7330] Phase Candidate Judge:getPinkPhaseScore
 ========================================================= */
 /* =====================================
  * Pink強度評価
@@ -5282,9 +5282,9 @@ function getPinkPhaseScore(
         )
     );
 }
-/* =========================================================
- [7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase3
-  Pink管理対象に対するPink周期アクティブ判定4 （PinkPool所属判定ではない）
+/* =========================================================[
+7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase3
+Pink管理対象に対するPink周期アクティブ判定4 （PinkPool所属判定ではない）
 ========================================================= */
 function isMatchingCandidateByCopyPhase(player) {
 
@@ -5401,8 +5401,8 @@ function calcMatchingDiagnostics(
       ranked.length
   };
 }
-/* =========================================================
- [7410] Matching Score Engine:calcMatchingScoreDetail
+/* =========================================================[
+7410] Matching Score Engine:calcMatchingScoreDetail
 ========================================================= */
 function calcMatchingScoreDetail(
     player,
@@ -5849,30 +5849,24 @@ function buildMatchingCandidates() {
     [...document.querySelectorAll(".pride-filter:checked")]
       .map(x => x.value);
 
-const base =
-  State.filtered;
+  const base =
+    State.filtered;
 
   /* =====================================
-   * Score Normalizer
+   * スコア計算
    * ===================================== */
+
   const normalizer =
-    buildScoreNormalizer(
-      base
+    buildScoreNormalizer(base);
+
+  const scoredAll =
+    base.map(p =>
+      buildCandidateScore(
+        p,
+        normalizer
+      )
     );
 
- /* =====================================
-  * スコア計算
-  * ===================================== */
-
-const scoredAll =
-  base.map(
- *  p =>
-      buildCandidateScore(
-*       p,
-        normalizer
-     *)
-  );
-  
   /* =====================================
    * UIフィルタ
    * ===================================== */
