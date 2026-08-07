@@ -4238,36 +4238,19 @@ function getEncounterHistory(
  [7077] Pink State Helpers:getEncounterBonus
 ========================================================= */
 function getEncounterBonus(
-  player
+    player
 ) {
-
-  const history =
-    getEncounterHistory(
-      player
-    );
-
-  const count =
-    Number(
-      history?.count || 0
-    );
-
-  if (
-    !Number.isFinite(count) ||
-    count <= 1
-  ) {
+    /*
+     * 方針
+     * 遭遇回数による加点は行わない
+     *
+     * encounterHistory は引き続き管理情報として保持する。
+     * ただしスコア計算には反映しない。
+     *
+     * 呼び出し構造維持のため、
+     * 常に倍率1.0を返す。
+     */
     return 1.0;
-  }
-
-  if (count === 2) {
-    return 1.3;
-  }
-
-  if (count === 3) {
-    return 1.6;
-  }
-
-  return 2.0;
-
 }
 /* =========================================================
  [7078] Yellow State Helpers:registerYellowSample
@@ -4751,10 +4734,10 @@ function getRoundedDiffMinAndPhaseDistance(
     /*
      * 修正
      * コピー後は
-     * 1YellowCycleだけ完全除外
+     * 1.5YellowCycle完全除外
      */
     const initialCooldownSec =
-        cycleSec;
+        cycleSec * 1.5;
 
     const rSec =
         diffSec % cycleSec;
