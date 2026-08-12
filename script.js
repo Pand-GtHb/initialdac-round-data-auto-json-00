@@ -5838,7 +5838,6 @@ function buildMatchingCandidates() {
   /* =====================================
    * スコア計算
    * ===================================== */
-
   const normalizer =
     buildScoreNormalizer(base);
 
@@ -5853,7 +5852,6 @@ function buildMatchingCandidates() {
   /* =====================================
    * UIフィルタ
    * ===================================== */
-
   const filteredByUi =
     scoredAll.filter(p => {
 
@@ -5882,7 +5880,6 @@ function buildMatchingCandidates() {
   /* =====================================
    * rankModelフィルタ
    * ===================================== */
-
   const filteredByRankModel =
     filteredByUi.filter(
       p =>
@@ -5898,63 +5895,64 @@ function buildMatchingCandidates() {
       ? filteredByRankModel
       : filteredByUi;
 
-/* =====================================
- * cooldown
- * ===================================== */
-const afterCooldown =
-  analysisBase.filter(p => {
+  /* =====================================
+   * cooldown
+   * ===================================== */
+  const afterCooldown =
+    analysisBase.filter(p => {
 
-    const pinkTarget =
-      getPinkTarget(p);
+      const pinkTarget =
+        getPinkTarget(p);
 
-    const click =
-      State.recentClicks.find(
-        r =>
-          normalizePlayerName(r.name)
-          ===
-          normalizePlayerName(p.name)
-          &&
-          String(
-            r.shopname ?? ""
+      const click =
+        State.recentClicks.find(
+          r =>
+            normalizePlayerName(r.name)
+            ===
+            normalizePlayerName(p.name)
+            &&
+            String(
+              r.shopname ?? ""
+            )
+            ===
+            String(
+              p.shopname ?? ""
+            )
+        );
+
+      const copiedAt =
+        pinkTarget?.lastCopiedAt ||
+        click?.copiedAt ||
+        click?.time ||
+        null;
+
+      if (!copiedAt) {
+        return true;
+      }
+
+      const phase =
+        getPhaseDistanceMin(
+          copiedAt,
+          Math.max(
+            1,
+            getCurrentCycle(p) / 60
           )
-          ===
-          String(
-            p.shopname ?? ""
-          )
-      );
+        );
 
-    const copiedAt =
-      pinkTarget?.lastCopiedAt ||
-      click?.copiedAt ||
-      click?.time ||
-      null;
+      /*
+       * Pink / Yellow 共通で
+       * 初回1サイクルは除外
+       */
+      if (
+        phase.isInitialCooldown
+      ) {
+        return false;
+      }
 
-    if (!copiedAt) {
       return true;
-    }
 
-    const phase =
-      getPhaseDistanceMin(
-        copiedAt,
-        Math.max(
-          1,
-          getCurrentCycle(p) / 60
-        )
-      );
+    });
 
-    /*
-     * Pink / Yellow 共通で
-     * 初回1サイクルは除外
-     */
-    if (
-      phase.isInitialCooldown
-    ) {
-      return false;
-    }
-
-    return true;
-
-  });
   /* =====================================
    * Pink / Yellow Pool 分離
    * ===================================== */
@@ -5988,68 +5986,68 @@ const afterCooldown =
         !yellowPool.includes(p)
     );
 
-/* =====================================
- * 抽選母集団
- * Pink / Yellow 優先
- * ===================================== */
-const primaryPool = [
-  ...pinkPool.sort(
-    (a, b) =>
-      b.__effectiveWeight -
-      a.__effectiveWeight
-  ),
+  /* =====================================
+   * 抽選母集団
+   * Pink / Yellow 優先
+   * ===================================== */
+  const primaryPool = [
+    ...pinkPool.sort(
+      (a, b) =>
+        b.__effectiveWeight -
+        a.__effectiveWeight
+    ),
 
-  ...yellowPool.sort(
-    (a, b) =>
-      b.__effectiveWeight -
-      a.__effectiveWeight
-  )
-];
-
-const fallbackPool =
-  otherPool.sort(
-    (a, b) =>
-      b.__effectiveWeight -
-      a.__effectiveWeight
-  );
-
-let rankedAll = [];
-
-const primaryCount =
-  primaryPool.length;
-
-const targetCount =
-  Math.min(
-    10,
-    afterCooldown.length
-  );
-
-if (
-  primaryCount >=
-  targetCount
-) {
-
-  rankedAll =
-    primaryPool;
-
-} else {
-
-  const shortage =
-    targetCount -
-    primaryCount;
-
-  rankedAll = [
-    ...primaryPool,
-
-    ...fallbackPool.slice(
-      0,
-      shortage
+    ...yellowPool.sort(
+      (a, b) =>
+        b.__effectiveWeight -
+        a.__effectiveWeight
     )
   ];
-}
 
-State.matchingRankedAll =
-  rankedAll;
+  const fallbackPool =
+    otherPool.sort(
+      (a, b) =>
+        b.__effectiveWeight -
+        a.__effectiveWeight
+    );
+
+  let rankedAll = [];
+
+  const primaryCount =
+    primaryPool.length;
+
+  const targetCount =
+    Math.min(
+      10,
+      afterCooldown.length
+    );
+
+  if (
+    primaryCount >=
+    targetCount
+  ) {
+
+    rankedAll =
+      primaryPool;
+
+  } else {
+
+    const shortage =
+      targetCount -
+      primaryCount;
+
+    rankedAll = [
+      ...primaryPool,
+
+      ...fallbackPool.slice(
+        0,
+        shortage
+      )
+    ];
+  }
+
+  State.matchingRankedAll =
+    rankedAll;
 
   /* =====================================
    * 分布抽選
@@ -6162,16 +6160,37 @@ State.matchingRankedAll =
         continue;
       }
 
+      /* =====================================
+       * ランク内上位20%のみ抽選対象
+       * ===================================== */
+
+      const sortedPool =
+        [...pool].sort(
+          (a, b) =>
+            b.__effectiveWeight -
+            a.__effectiveWeight
+        );
+
+      const eliteCount =
+        Math.max(
+          need,
+          Math.ceil(
+            sortedPool.length * 0.20
+          )
+        );
+
+      const elitePool =
+        sortedPool.slice(
+          0,
+          eliteCount
+        );
+
       const picked =
         selectByWeight(
-          pool.sort(
-            (a, b) =>
-              b.__effectiveWeight -
-              a.__effectiveWeight
-          ),
+          elitePool,
           Math.min(
             need,
-            pool.length
+            elitePool.length
           )
         );
 
@@ -7072,7 +7091,10 @@ function saveCopyEventUnified(
         -1,
 
       candidateEventId:
-        State.lastCandidateEventId ?? null
+        State.lastCandidateEventId ?? null,
+
+      candidateSnapshot:
+        buildCopyCandidateSnapshot()
 
     };
 
@@ -7157,6 +7179,9 @@ function saveCopyEventUnified(
 
   }
 
+  const copyCandidateSnapshot =
+    buildCopyCandidateSnapshot();
+
   const record = {
 
     t:
@@ -7209,7 +7234,10 @@ function saveCopyEventUnified(
       phaseInfo.raw,
 
     candidateEventId:
-      State.lastCandidateEventId ?? null
+      State.lastCandidateEventId ?? null,
+
+    candidateSnapshot:
+      copyCandidateSnapshot
 
   };
 
@@ -7223,6 +7251,42 @@ function saveCopyEventUnified(
   return record;
 
 }
+
+/* =========================================================
+ [9210] Copy Log:buildCopyCandidateSnapshot
+========================================================= */
+function buildCopyCandidateSnapshot() {
+
+  const candidates =
+    (State.matchingList ?? [])
+      .map(p => ({
+        name: p.name,
+        shopname: p.shopname ?? "",
+        displayRank: p.displayRank ?? null,
+        score: Number(
+          (p.__score ?? 0).toFixed(6)
+        ),
+        phaseMultiplier: Number(
+          (p.__phaseMultiplier ?? 0).toFixed(4)
+        ),
+        rankRatio:
+          p.__detail?.rankRatio ?? 0,
+        areaRatio:
+          p.__detail?.areaRatio ?? 0,
+        pinkTarget:
+          isCopiedPlayer(p),
+        encounterCount:
+          getEncounterHistory(p)?.count ?? 0
+      }));
+
+  return {
+    candidateCount:
+      candidates.length,
+    candidates
+  };
+
+}
+
 /* =========================================================
  [9300] Phase Analysis
 ========================================================= */
