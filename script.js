@@ -6161,7 +6161,7 @@ function buildMatchingCandidates() {
       }
 
       /* =====================================
-       * ランク内上位20%のみ抽選対象
+       * ランク内上位候補を優先
        * ===================================== */
 
       const sortedPool =
@@ -6171,31 +6171,14 @@ function buildMatchingCandidates() {
             a.__effectiveWeight
         );
 
-      const eliteCount =
-        Math.max(
-          need,
-          Math.ceil(
-            sortedPool.length * 0.20
-          )
-        );
-
-      const elitePool =
-        sortedPool.slice(
+      selected.push(
+        ...sortedPool.slice(
           0,
-          eliteCount
-        );
-
-      const picked =
-        selectByWeight(
-          elitePool,
           Math.min(
             need,
-            elitePool.length
+            sortedPool.length
           )
-        );
-
-      selected.push(
-        ...picked
+        )
       );
     }
 
