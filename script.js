@@ -4359,6 +4359,15 @@ function registerYellowSample(
 
   savePinkStateToStorage();
 
+  // Immediately update learned yellow adjustment so
+  // subsequent candidate generation uses the new sample.
+  try {
+    calcYellowCycle();
+    savePinkStateToStorage();
+  } catch (e) {
+    console.warn("[yellow] calcYellowCycle failed:", e);
+  }
+
   return sample;
 }
 /* =========================================================
