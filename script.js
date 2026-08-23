@@ -5755,78 +5755,68 @@ function getPhaseSelectionMultiplier(player) {
   return otherPriority;
 }
 /* =========================================================
- [7600] Weighted Selection
+ [7600] Candidate Selection (score priority)
+ 抽選を廃止し、候補は計算スコア上位順で採用する。
+ rank_model の分布制約は保持しつつ、同一ランク内の
+ 取得順は score 高い順にする。
 ========================================================= */
-function selectByWeight(
-  players,
-  count
+function getCandidateSelectionScore(player) {
+
+ if (!player) {
+   return 0;
+ }
+
+ return Number(
+   player.__score ??
+   player.__effectiveWeight ??
+   player.__weight ??
+   0
+ );
+}
+
+function selectByScorePriority(
+ players,
+ count
 ) {
 
-  const result = [];
+ const sorted =
+   [...players].sort(
+     (a, b) => {
 
-  let pool =
-    [...players];
+       const aScore =
+         getCandidateSelectionScore(a);
 
-  for (
-    let i = 0;
-    i < count &&
-    pool.length > 0;
-    i++
-  ) {
+       const bScore =
+         getCandidateSelectionScore(b);
 
-    const total =
-      pool.reduce(
-        (sum, p) =>
-          sum +
-          (
-            p.__effectiveWeight ??
-            p.__weight ??
-            p.__score ??
-            0
-          ),
-        0
-      );
+       if (
+         bScore !== aScore
+       ) {
+         return bScore - aScore;
+       }
 
-    if (total <= 0) {
-      break;
-    }
+       return (
+         Number(
+           b.__effectiveWeight ??
+           b.__weight ??
+           0
+         ) -
+         Number(
+           a.__effectiveWeight ??
+           a.__weight ??
+           0
+         )
+       );
+     }
+   );
 
-    let r =
-      Math.random() * total;
-
-    for (
-      let j = 0;
-      j < pool.length;
-      j++
-    ) {
-
-      r -= (
-        pool[j]
-          .__effectiveWeight ??
-        pool[j]
-          .__weight ??
-        pool[j]
-          .__score ??
-        0
-      );
-
-      if (r <= 0) {
-
-        result.push(
-          pool[j]
-        );
-
-        pool.splice(
-          j,
-          1
-        );
-
-        break;
-      }
-    }
-  }
-
-  return result;
+ return sorted.slice(
+   0,
+   Math.max(
+     0,
+     count
+   )
+ );
 }
 /* =========================================================
  [7700] Candidate Builder
@@ -6059,198 +6049,200 @@ function buildMatchingCandidates() {
     rankedAll;
 
   /* =====================================
-   * 分布抽選
+   * 分布ベース選出（抽選廃止）
+   * rank_model の quota を算出したうえで、
+   * 各ランク内では計算スコア順に採用する。
    * ===================================== */
 
   const totalCount =
-    Math.min(
-      10,
-      rankedAll.length
-    );
+   Math.min(
+     10,
+     rankedAll.length
+   );
 
   const myStar =
-    String(
-      State.myStar
-    );
+   String(
+     State.myStar
+   );
 
   const dist =
-    State.rankModel
-      ?.models?.[myStar]
-      ?.vs;
+   State.rankModel
+     ?.models?.[myStar]
+     ?.vs;
 
   let selected = [];
 
   if (
-    dist &&
-    totalCount > 0
+   dist &&
+   totalCount > 0
   ) {
 
-    const quota = {};
+   const quota = {};
 
-    let sum = 0;
+   let sum = 0;
 
-    const entries =
-      Object.entries(dist);
+   const entries =
+     Object.entries(dist);
 
-    entries.forEach(
-      ([key, ratio]) => {
+   entries.forEach(
+     ([key, ratio]) => {
 
-        const cnt =
-          Math.floor(
-            ratio * totalCount
-          );
+       const cnt =
+         Math.floor(
+           ratio * totalCount
+         );
 
-        quota[key] = cnt;
+       quota[key] = cnt;
 
-        sum += cnt;
-      }
-    );
+       sum += cnt;
+     }
+   );
 
-    const sortedKeys =
-      entries
-        .sort(
-          (a, b) =>
-            b[1] - a[1]
-        )
-        .map(
-          x => x[0]
-        );
+   const sortedKeys =
+     entries
+       .sort(
+         (a, b) =>
+           b[1] - a[1]
+       )
+       .map(
+         x => x[0]
+       );
 
-    let idx = 0;
+   let idx = 0;
 
-    while (
-      sum < totalCount &&
-      sortedKeys.length > 0
-    ) {
+   while (
+     sum < totalCount &&
+     sortedKeys.length > 0
+   ) {
 
-      const key =
-        sortedKeys[
-          idx %
-          sortedKeys.length
-        ];
+     const key =
+       sortedKeys[
+         idx %
+         sortedKeys.length
+       ];
 
-      quota[key] =
-        (quota[key] || 0) + 1;
+     quota[key] =
+       (quota[key] || 0) + 1;
 
-      sum++;
+     sum++;
 
-      idx++;
-    }
+     idx++;
+   }
 
-    const poolByRank = {};
+   const poolByRank = {};
 
-    rankedAll.forEach(p => {
+   rankedAll.forEach(p => {
 
-      const key =
-        p.__rankKey;
+     const key =
+       p.__rankKey;
 
-      if (!poolByRank[key]) {
-        poolByRank[key] = [];
-      }
+     if (!poolByRank[key]) {
+       poolByRank[key] = [];
+     }
 
-      poolByRank[key].push(p);
-    });
+     poolByRank[key].push(p);
+   });
 
-    for (
-      const rankKey in quota
-    ) {
+   for (
+     const rankKey in quota
+   ) {
 
-      const need =
-        quota[rankKey] ?? 0;
+     const need =
+       quota[rankKey] ?? 0;
 
-      if (need <= 0) {
-        continue;
-      }
+     if (need <= 0) {
+       continue;
+     }
 
-      const pool =
-        poolByRank[rankKey] ?? [];
+     const pool =
+       poolByRank[rankKey] ?? [];
 
-      if (pool.length === 0) {
-        continue;
-      }
+     if (pool.length === 0) {
+       continue;
+     }
 
-      /* =====================================
-       * ランク内上位候補を優先
-       * ===================================== */
+     const sortedPool =
+       [...pool].sort(
+         (a, b) =>
+           getCandidateSelectionScore(b) -
+           getCandidateSelectionScore(a)
+       );
 
-      const sortedPool =
-        [...pool].sort(
-          (a, b) =>
-            b.__effectiveWeight -
-            a.__effectiveWeight
-        );
+     selected.push(
+       ...sortedPool.slice(
+         0,
+         Math.min(
+           need,
+           sortedPool.length
+         )
+       )
+     );
+   }
 
-      selected.push(
-        ...sortedPool.slice(
-          0,
-          Math.min(
-            need,
-            sortedPool.length
-          )
-        )
-      );
-    }
+   if (
+     selected.length <
+     totalCount
+   ) {
 
-    if (
-      selected.length <
-      totalCount
-    ) {
+     const existingKeys =
+       new Set(
+         selected.map(
+           p =>
+             normalizePlayerName(
+               p.name
+             )
+             + "@@"
+             +
+             String(
+               p.updateDate ?? ""
+             )
+         )
+       );
 
-      const existingKeys =
-        new Set(
-          selected.map(
-            p =>
-              normalizePlayerName(
-                p.name
-              )
-              + "@@"
-              +
-              String(
-                p.updateDate ?? ""
-              )
-          )
-        );
+     const rest =
+       rankedAll.filter(
+         p =>
+           !existingKeys.has(
+             normalizePlayerName(
+               p.name
+             )
+             + "@@"
+             +
+             String(
+               p.updateDate ?? ""
+             )
+           )
+       );
 
-      const rest =
-        rankedAll.filter(
-          p =>
-            !existingKeys.has(
-              normalizePlayerName(
-                p.name
-              )
-              + "@@"
-              +
-              String(
-                p.updateDate ?? ""
-              )
-            )
-        );
+     const need =
+       totalCount -
+       selected.length;
 
-      const need =
-        totalCount -
-        selected.length;
+     if (
+       need > 0 &&
+       rest.length > 0
+     ) {
 
-      if (
-        need > 0 &&
-        rest.length > 0
-      ) {
-
-        selected.push(
-          ...selectByWeight(
-            rest,
-            need
-          )
-        );
-      }
-    }
+       selected.push(
+         ...selectByScorePriority(
+           rest,
+           need
+         )
+       );
+     }
+   }
 
   } else {
 
-    selected =
-      rankedAll.slice(
-        0,
-        totalCount
-      );
+   selected =
+     [...rankedAll].sort(
+       (a, b) =>
+         getCandidateSelectionScore(b) -
+         getCandidateSelectionScore(a)
+     ).slice(
+       0,
+       totalCount
+     );
   }
 
   /* =====================================
@@ -6290,8 +6282,8 @@ function buildMatchingCandidates() {
 
   selected.sort(
     (a, b) =>
-      b.__effectiveWeight -
-      a.__effectiveWeight
+      getCandidateSelectionScore(b) -
+      getCandidateSelectionScore(a)
   );
 
   selected.forEach(
