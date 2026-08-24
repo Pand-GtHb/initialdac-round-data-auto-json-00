@@ -1,23 +1,14 @@
 {
   "meta": {
-    "version": "scoring_config_v11_yellow_maxshift60_20260801",
-    "createdAt": "2026-08-01T10:00:00+09:00",
-    "basedOnLog": "viewer_analysis_20260731",
-    "description": "Yellow周期の上限張り付き検証版"
+    "version": "scoring_config_v12_phase_precision_tuning_20260825",
+    "createdAt": "2026-08-25T08:05:00+09:00",
+    "basedOnLog": "viewer_analysis_20260824",
+    "description": "Yellow/Pink Phase精度優先の候補絞り調整版"
   },
 
   "scoreWeights": {
     "rank": 0.6,
     "area": 0.4
-  },
-
-  "rank": {
-    "mode": "linear",
-    "scale": 24
-  },
-
-  "area": {
-    "scale": 15
   },
 
   "time": {
@@ -32,30 +23,30 @@
 
     "yellow": {
       "baseCycleSec": 300,
-      "alpha": 0.2,
+      "alpha": 0.15,
       "maxShiftSec": 150
     },
 
     "pink": {
       "baseCycleSec": 300,
-      "alpha": 0.3,
+      "alpha": 0.2,
       "maxShiftSec": 45
     },
 
     "display": {
-      "yellowThreshold": 0.4,
-      "pinkThreshold": 0.3
+      "yellowThreshold": 0.55,
+      "pinkThreshold": 0.45
     }
   },
 
   "candidate": {
-    "yellowBoost": 2.0,
-    "pinkBoost": 3.0,
-    "phasePower": 2.0,
+    "yellowBoost": 1.5,
+    "pinkBoost": 2.4,
+    "phasePower": 1.6,
 
     "poolPriority": {
-      "pink": 8,
-      "yellow": 2,
+      "pink": 5,
+      "yellow": 1.5,
       "other": 1
     }
   }
