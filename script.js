@@ -34,8 +34,11 @@ const State = {
   rankModel: null,
   myStar: 7,
   recentClicks: [],
+  recentClickIndex: null,
   areaModel: {},
   scoringConfig: null,
+  normalizerCache: null,
+  normalizerCacheKey: "",
   updateWatchTimer: null,
   updateCheckRunning: false,
   prefetchedRoundData: null,
@@ -3308,91 +3311,106 @@ function getAreaScore(
       areaKey
     ] ?? 0;
 
-  const scale =
-    Number(
-      State.scoringConfig
-        ?.area
-        ?.scale ?? 3.0
-    );
-
+  // B簡素化: scale は使わず、
+  // area の重みは scoreWeights.area のみで制御する
   return (
     1 +
-    (
-      areaWeight *
-      scale
-    )
+    areaWeight
   );
 }
 /* =========================================================
  [6890] Score Normalizer Engine
 ========================================================= */
+function getScoreNormalizerCacheKey(list) {
+ return [
+   (list || []).length,
+   State.generatedAt || "",
+   State.currentDetailKey || "",
+   State.currentView || ""
+ ].join("|");
+}
+
 function buildScoreNormalizer(
-    list
+   list
 ) {
-    const source =
-        (list || [])
-        .filter(
-            p => p && p.updateDate
-        )
-        .map(p => {
+   const cacheKey =
+       getScoreNormalizerCacheKey(list);
 
-            const rankScore =
-                Number(
-                    getRankWeight(p) || 0
-                );
+   if (
+       State.normalizerCacheKey === cacheKey &&
+       State.normalizerCache
+   ) {
+       return State.normalizerCache;
+   }
 
-            const prideWeight =
-                Number(
-                    getPrideWeight(p) || 1
-                );
+   const source =
+       (list || [])
+       .filter(
+           p => p && p.updateDate
+       )
+       .map(p => {
 
-            const areaFactor =
-                Number(
-                    getAreaScore(p) || 1
-                );
+           const rankScore =
+               Number(
+                   getRankWeight(p) || 0
+               );
 
-            return {
-                rankComponent:
-                    rankScore *
-                    prideWeight,
+           const prideWeight =
+               Number(
+                   getPrideWeight(p) || 1
+               );
 
-                areaComponent:
-                    areaFactor
-            };
-        });
+           const areaFactor =
+               Number(
+                   getAreaScore(p) || 1
+               );
 
-    const rankValues =
-        source.map(
-            x => x.rankComponent
-        );
+           return {
+               rankComponent:
+                   rankScore *
+                   prideWeight,
 
-    const areaValues =
-        source.map(
-            x => x.areaComponent
-        );
+               areaComponent:
+                   areaFactor
+           };
+       });
 
-    return {
+   const rankValues =
+       source.map(
+           x => x.rankComponent
+       );
 
-        rankMin:
-            rankValues.length
-                ? Math.min(...rankValues)
-                : 0,
+   const areaValues =
+       source.map(
+           x => x.areaComponent
+       );
 
-        rankMax:
-            rankValues.length
-                ? Math.max(...rankValues)
-                : 1,
+   const result = {
 
-        areaMin:
-            areaValues.length
-                ? Math.min(...areaValues)
-                : 0,
+       rankMin:
+           rankValues.length
+               ? Math.min(...rankValues)
+               : 0,
 
-        areaMax:
-            areaValues.length
-                ? Math.max(...areaValues)
-                : 1
-    };
+       rankMax:
+           rankValues.length
+               ? Math.max(...rankValues)
+               : 1,
+
+       areaMin:
+           areaValues.length
+               ? Math.min(...areaValues)
+               : 0,
+
+       areaMax:
+           areaValues.length
+               ? Math.max(...areaValues)
+               : 1
+   };
+
+   State.normalizerCache = result;
+   State.normalizerCacheKey = cacheKey;
+   return result;
 }
 /* =========================================================
  [6900] Candidate Score Engine
@@ -4459,6 +4477,8 @@ function recordClickFromCopiedInfo(
       20
     );
 
+  rebuildRecentClickIndex();
+
   registerPinkTarget(
     player,
     copiedAt
@@ -4543,157 +4563,229 @@ function recordClickFromCopiedInfo(
 /* =========================================================
  [7110] Realtime Boost Engine:getRealtimeBoost
 ========================================================= */
+function rebuildRecentClickIndex() {
+ const index = {
+   byName: new Map(),
+   byNameArea: new Map(),
+   byNameRank: new Map()
+ };
+
+ for (const r of State.recentClicks) {
+   if (!r) {
+     continue;
+   }
+
+   const key =
+     normalizePlayerName(
+       r.name ?? ""
+     );
+
+   if (!key) {
+     continue;
+   }
+
+   const byName =
+     index.byName.get(key) || [];
+   byName.push(r);
+   index.byName.set(key, byName);
+
+   const areaKey =
+     `${key}@@${String(r.area ?? "")}`;
+   const byArea =
+     index.byNameArea.get(areaKey) || [];
+   byArea.push(r);
+   index.byNameArea.set(areaKey, byArea);
+
+   const rankKey =
+     `${key}@@${String(r.rankKey ?? "")}`;
+   const byRank =
+     index.byNameRank.get(rankKey) || [];
+   byRank.push(r);
+   index.byNameRank.set(rankKey, byRank);
+ }
+
+ State.recentClickIndex = index;
+}
+
 function getRealtimeBoost(
-  player
+ player
 ) {
 
-  const detail =
-    getRealtimeBoostDetail(
-      player
-    );
+ const detail =
+   getRealtimeBoostDetail(
+     player
+   );
 
-  return detail.total;
+ return detail.total;
 }
 /* =========================================================
  [7120] Realtime Boost Engine:getRealtimeBoostDetail
 ========================================================= */
 function getRealtimeBoostDetail(
-  player
+ player
 ) {
 
-  if (
-    !State.recentClicks.length ||
-    !player
-  ) {
+ if (
+   !State.recentClicks.length ||
+   !player
+ ) {
 
-    return {
-      total: 1.0
-    };
-  }
+   return {
+     total: 1.0
+   };
+ }
 
-  const playerRankKey =
-    getPlayerRankKey(
-      player
-    );
+ if (!State.recentClickIndex) {
+   rebuildRecentClickIndex();
+ }
 
-  let bestLevel = 0;
+ const playerRankKey =
+   getPlayerRankKey(
+     player
+   );
 
-  let bestDecay = 0;
+ const targetName =
+   normalizePlayerName(
+     player.name ?? ""
+   );
 
-  for (
-    const r of
-    State.recentClicks
-  ) {
+ const nameAreaKey =
+   `${targetName}@@${String(player.area ?? "")}`;
 
-    const anchorTime =
-      Number(
-        r.copiedAt ||
-        r.time ||
-        0
-      );
+ const nameRankKey =
+   `${targetName}@@${String(playerRankKey ?? "")}`;
 
-    if (!anchorTime) {
-      continue;
-    }
+ const candidateList = [
+   ...(State.recentClickIndex.byName.get(targetName) || []),
+   ...(State.recentClickIndex.byNameArea.get(nameAreaKey) || []),
+   ...(State.recentClickIndex.byNameRank.get(nameRankKey) || [])
+ ];
 
-    const dtMin =
-      (
-        Date.now() -
-        anchorTime
-      ) / 60000;
+ const seen = new Set();
 
-    if (
-      !isFinite(dtMin) ||
-      dtMin < 0
-    ) {
-      continue;
-    }
+ let bestLevel = 0;
 
-    const decay =
-      Math.exp(
-        -dtMin / 8
-      );
+ let bestDecay = 0;
 
-    const samePlayer =
-      normalizePlayerName(
-        player.name
-      ) ===
-      normalizePlayerName(
-        r.name
-      ) &&
-      String(
-        player.updateDate ?? ""
-      ) ===
-      String(
-        r.updateDate ?? ""
-      );
+ for (const r of candidateList) {
+   const marker =
+     `${r.name ?? ""}|${r.updateDate ?? ""}|${r.copiedAt ?? r.time ?? ""}|${r.area ?? ""}|${r.rankKey ?? ""}`;
 
-    const sameRank =
-      String(playerRankKey)
-      ===
-      String(r.rankKey);
+   if (seen.has(marker)) {
+     continue;
+   }
 
-    const sameArea =
-      String(
-        player.area ?? ""
-      ) ===
-      String(
-        r.area ?? ""
-      );
+   seen.add(marker);
 
-    let level = 0;
+   const anchorTime =
+     Number(
+       r.copiedAt ||
+       r.time ||
+       0
+     );
 
-    if (samePlayer) {
+   if (!anchorTime) {
+     continue;
+   }
 
-      level = 3;
+   const dtMin =
+     (
+       Date.now() -
+       anchorTime
+     ) / 60000;
 
-    } else if (
-      sameRank &&
-      sameArea
-    ) {
+   if (
+     !isFinite(dtMin) ||
+     dtMin < 0
+   ) {
+     continue;
+   }
 
-      level = 2;
+   const decay =
+     Math.exp(
+       -dtMin / 8
+     );
 
-    } else if (
-      sameRank ||
-      sameArea
-    ) {
+   const samePlayer =
+     normalizePlayerName(
+       player.name
+     ) ===
+     normalizePlayerName(
+       r.name
+     ) &&
+     String(
+       player.updateDate ?? ""
+     ) ===
+     String(
+       r.updateDate ?? ""
+     );
 
-      level = 1;
-    }
+   const sameRank =
+     String(playerRankKey)
+     ===
+     String(r.rankKey);
 
-    if (
-      level > bestLevel
-    ) {
+   const sameArea =
+     String(
+       player.area ?? ""
+     ) ===
+     String(
+       r.area ?? ""
+     );
 
-      bestLevel = level;
+   let level = 0;
 
-      bestDecay = decay;
+   if (samePlayer) {
 
-    } else if (
-      level === bestLevel
-    ) {
+     level = 3;
 
-      bestDecay = Math.max(
-        bestDecay,
-        decay
-      );
-    }
-  }
+   } else if (
+     sameRank &&
+     sameArea
+   ) {
 
-  const boostByLevel = {
-    0: 1.0,
-    1: 1.2,
-    2: 1.6,
-    3: 2.5
-  };
+     level = 2;
 
-  return {
-    total:
-      boostByLevel[
-        bestLevel
-      ] * bestDecay
-  };
+   } else if (
+     sameRank ||
+     sameArea
+   ) {
+
+     level = 1;
+   }
+
+   if (
+     level > bestLevel
+   ) {
+
+     bestLevel = level;
+
+     bestDecay = decay;
+
+   } else if (
+     level === bestLevel
+   ) {
+
+     bestDecay = Math.max(
+       bestDecay,
+       decay
+     );
+   }
+ }
+
+ const boostByLevel = {
+   0: 1.0,
+   1: 1.2,
+   2: 1.6,
+   3: 2.5
+ };
+
+ return {
+   total:
+     boostByLevel[
+       bestLevel
+     ] * bestDecay
+ };
 }
 /* =========================================================
  [7200] Phase Engine:getRoundedDiffMinAndPhaseDistance
@@ -5208,135 +5300,127 @@ function getLatestCopiedPlayer() {
  * Pink強度評価
  * 戻り値: 0.0 ～ 1.0
  * ===================================== */
+function computePhaseSignal(player, mode = "pink") {
+ if (!player) {
+   return {
+     cycleSec: 0,
+     diffSec: 0,
+     cosValue: 0,
+     threshold: 0,
+     active: false
+   };
+ }
+
+ const target =
+   mode === "pink"
+     ? getPinkTarget(player)
+     : null;
+
+ if (mode === "pink" && !target) {
+   return {
+     cycleSec: 0,
+     diffSec: 0,
+     cosValue: 0,
+     threshold: 0,
+     active: false
+   };
+ }
+
+ const cycleSec =
+   getCurrentCycle(player);
+
+ if (
+   !cycleSec ||
+   !isFinite(cycleSec)
+ ) {
+   return {
+     cycleSec: 0,
+     diffSec: 0,
+     cosValue: 0,
+     threshold: 0,
+     active: false
+   };
+ }
+
+ const diffSec =
+   mode === "pink"
+     ? (Date.now() - (target.lastCopiedAt || 0)) / 1000
+     : (Date.now() - ((player.lastCopiedAt || player.copiedAt || 0))) / 1000;
+
+ if (diffSec < cycleSec) {
+   return {
+     cycleSec,
+     diffSec,
+     cosValue: 0,
+     threshold: 0,
+     active: false
+   };
+ }
+
+ const theta =
+   (2 * Math.PI * (diffSec % cycleSec)) / cycleSec;
+ const cosValue = Math.cos(theta);
+ const threshold =
+   Number(
+     State.scoringConfig
+       ?.phase
+       ?.display
+       ?.pinkThreshold ?? 0
+   );
+
+ return {
+   cycleSec,
+   diffSec,
+   cosValue,
+   threshold,
+   active: cosValue > threshold
+ };
+}
+
 function getPinkPhaseScore(
-    player
+   player
 ) {
-    if (!player) {
-        return 0;
-    }
+   if (!player) {
+       return 0;
+   }
 
-    const target =
-        getPinkTarget(player);
+   const target =
+       getPinkTarget(player);
 
-    if (!target) {
-        return 0;
-    }
+   if (!target) {
+       return 0;
+   }
 
-    const cycleSec =
-        getCurrentCycle(player);
+   const signal =
+       computePhaseSignal(player, "pink");
 
-    if (
-        !cycleSec ||
-        !isFinite(cycleSec)
-    ) {
-        return 0;
-    }
+   if (!signal.cycleSec || !signal.active) {
+       return 0;
+   }
 
-    const diffSec =
-        (
-            Date.now() -
-            (
-                target.lastCopiedAt || 0
-            )
-        ) / 1000;
+   const encounterBonus =
+       getEncounterBonus(player);
 
-    /*
-     * 修正
-     * コピー後1Cycleは
-     * Pink評価対象外
-     */
-    if (diffSec < cycleSec) {
-        return 0;
-    }
-
-    const theta =
-        (
-            2 *
-            Math.PI *
-            (diffSec % cycleSec)
-        ) / cycleSec;
-
-    const cosValue =
-        Math.cos(theta);
-
-    const encounterBonus =
-        getEncounterBonus(player);
-
-    return Math.max(
-        0,
-        Math.min(
-            1,
-            Math.max(
-                0,
-                cosValue
-            ) *
-            encounterBonus
-        )
-    );
+   return Math.max(
+       0,
+       Math.min(
+           1,
+           Math.max(
+               0,
+               signal.cosValue
+           ) *
+           encounterBonus
+       )
+   );
 }
 /* =========================================================[
 7340] Phase Candidate Judge:isMatchingCandidateByCopyPhase3
 Pink管理対象に対するPink周期アクティブ判定4 （PinkPool所属判定ではない）
 ========================================================= */
 function isMatchingCandidateByCopyPhase(player) {
-
-    if (!player) {
-        return false;
-    }
-
-    const target =
-        getPinkTarget(player);
-
-    if (!target) {
-        return false;
-    }
-
-    const cycleSec =
-        getCurrentCycle(player);
-
-    if (
-        !cycleSec ||
-        !isFinite(cycleSec)
-    ) {
-        return false;
-    }
-
-    const threshold =
-        Number(
-            State.scoringConfig
-                ?.phase
-                ?.display
-                ?.pinkThreshold ?? 0
-        );
-
-    const diffSec =
-        (
-            Date.now() -
-            (
-                target.lastCopiedAt || 0
-            )
-        ) / 1000;
-
-    /*
-     * 修正
-     * コピー後1Cycle未満は
-     * Pink候補扱いしない
-     */
-    if (diffSec < cycleSec) {
-        return false;
-    }
-
-    const theta =
-        (
-            2 *
-            Math.PI *
-            (diffSec % cycleSec)
-        ) / cycleSec;
-
-    const cosValue =
-        Math.cos(theta);
-
-    return cosValue > threshold;
+   const signal =
+     computePhaseSignal(player, "pink");
+   return signal.active;
 }
 /* =========================================================
  [7400] Matching Score Engine:calcMatchingDiagnostics
@@ -5569,12 +5653,14 @@ function calcMatchingScoreDetail(
             getEncounterBonus(player) || 1.0
         );
 
+    /*
+     * モデル基準のスコアを本体とし、
+     * realtime は候補補正として別の段階で扱う。
+     * Phase 適合者だけを候補に出す方針に合わせ、
+     * score には realtime を直接混ぜない。
+     */
     const selectionWeight =
         rankingScore *
-        (
-            1 +
-            (realtimeBoost - 1) * 0.4
-        ) *
         encounterBonus;
 
     const safeScore =
@@ -5635,90 +5721,183 @@ function calcMatchingScore(
 /* =========================================================
  [7500] PhaseSelectionMultiplier
 ========================================================= */
+function hasSamePlayerRecentClick(player) {
+
+  if (!player || !State.recentClicks.length) {
+   return false;
+  }
+
+  const targetName =
+   normalizePlayerName(player.name);
+
+  const targetUpdateDate =
+   String(player.updateDate ?? "");
+
+  return State.recentClicks.some(r => {
+
+   if (
+     normalizePlayerName(r.name) !==
+     targetName
+   ) {
+     return false;
+   }
+
+   return String(r.updateDate ?? "") ===
+     targetUpdateDate;
+  });
+}
+
+function computePhaseContext(player) {
+  const isPinkManaged =
+   isCopiedPlayer(player);
+
+  const pinkPhaseScore =
+   isPinkManaged
+     ? getPinkPhaseScore(player)
+     : 0;
+
+  const pinkThreshold =
+   Number(
+     State.scoringConfig
+       ?.phase
+       ?.display
+       ?.pinkThreshold ?? 0
+   );
+
+  const isPinkPhase =
+   isPinkManaged &&
+   pinkPhaseScore > pinkThreshold;
+
+  const isYellowPhase =
+   !isPinkManaged &&
+   isMatchingCandidateByPhase(player);
+
+  const phaseScore =
+   isPinkPhase
+     ? Math.max(0, pinkPhaseScore)
+     : isYellowPhase
+       ? Math.max(0, getYellowPhaseScore(player))
+       : 0;
+
+  return {
+   isPinkManaged,
+   isPinkPhase,
+   isYellowPhase,
+   phaseScore,
+   phaseSurge:
+     Number.isFinite(phaseScore) &&
+     phaseScore > 0.9,
+   samePlayerHit:
+     hasSamePlayerRecentClick(player)
+  };
+}
+
+function isPhaseEligibleCandidate(player) {
+  if (!player) {
+   return false;
+  }
+
+  if (isCopiedPlayer(player)) {
+   return isMatchingCandidateByCopyPhase(player);
+  }
+
+  return isMatchingCandidateByPhase(player);
+}
+
+function shouldSuppressOverweightedCandidate(player) {
+
+  if (!player) {
+   return false;
+  }
+
+  const ctx =
+   computePhaseContext(player);
+
+  return (
+   ctx.samePlayerHit &&
+   ctx.phaseSurge
+  );
+}
+
 function getPhaseSelectionMultiplier(player) {
 
   /* =====================================
    * 安全取得
    * ===================================== */
   const candidateCfg =
-    State.scoringConfig?.candidate ?? {};
+   State.scoringConfig?.candidate ?? {};
 
   const yellowBoost =
-    Number(candidateCfg.yellowBoost ?? 2.0);
+   Number(candidateCfg.yellowBoost ?? 2.0);
 
   const pinkBoost =
-    Number(candidateCfg.pinkBoost ?? 2.5);
+   Number(candidateCfg.pinkBoost ?? 2.5);
 
   const phasePower =
-    Number(candidateCfg.phasePower ?? 2.0);
+   Number(candidateCfg.phasePower ?? 2.0);
 
   /* =====================================
    * Pool優先度
    * ===================================== */
   const poolPriority =
-    candidateCfg.poolPriority ?? {};
+   candidateCfg.poolPriority ?? {};
 
   const pinkPriority =
-    Number(poolPriority.pink ?? 3);
+   Number(poolPriority.pink ?? 3);
 
   const yellowPriority =
-    Number(poolPriority.yellow ?? 2);
+   Number(poolPriority.yellow ?? 2);
 
   const otherPriority =
-    Number(poolPriority.other ?? 1);
+   Number(poolPriority.other ?? 1);
 
-  /* =====================================
-   * Pink周期判定
-   * （Pink管理対象かつ閾値超過）
-   * ===================================== */
-  const pinkPhaseScore =
-    getPinkPhaseScore(player);
-
-  const pinkThreshold =
-    Number(
-      State.scoringConfig
-        ?.phase
-        ?.display
-        ?.pinkThreshold ?? 0
-    );
+  const ctx =
+   computePhaseContext(player);
 
   const isPink =
-    isCopiedPlayer(player) &&
-    pinkPhaseScore > pinkThreshold;
+   ctx.isPinkPhase;
 
-  /* =====================================
-   * Yellow周期判定
-   * ===================================== */
   const isYellow =
-    !isCopiedPlayer(player) &&
-    isMatchingCandidateByPhase(player);
+   ctx.isYellowPhase;
+
+  const heavyOverlap =
+   ctx.samePlayerHit &&
+   ctx.phaseSurge;
 
   /* =====================================
    * Pink補正
    * ===================================== */
   if (isPink) {
 
-    const score =
-      Math.max(
-        0,
-        pinkPhaseScore
-      );
+   const score =
+     Math.max(
+       0,
+       ctx.phaseScore
+     );
 
-    const multiplier =
-      1 +
-      (
-        (pinkBoost - 1)
-        *
-        Math.pow(
-          score,
-          phasePower
-        )
-      );
+   const multiplier =
+     1 +
+     (
+       (pinkBoost - 1)
+       *
+       Math.pow(
+         score,
+         phasePower
+       )
+     );
 
-    return Math.max(
-      1,
-      multiplier * pinkPriority
-    );
+   const effectiveMultiplier =
+     heavyOverlap
+       ? Math.min(
+           multiplier * 0.85,
+           8.0
+         )
+       : multiplier;
+
+   return Math.max(
+     1,
+     effectiveMultiplier * pinkPriority
+   );
   }
 
   /* =====================================
@@ -5726,27 +5905,35 @@ function getPhaseSelectionMultiplier(player) {
    * ===================================== */
   if (isYellow) {
 
-    const score =
-      Math.max(
-        0,
-        getYellowPhaseScore(player)
-      );
+   const score =
+     Math.max(
+       0,
+       ctx.phaseScore
+     );
 
-    const multiplier =
-      1 +
-      (
-        (yellowBoost - 1)
-        *
-        Math.pow(
-          score,
-          phasePower
-        )
-      );
+   const multiplier =
+     1 +
+     (
+       (yellowBoost - 1)
+       *
+       Math.pow(
+         score,
+         phasePower
+       )
+     );
 
-    return Math.max(
-      1,
-      multiplier * yellowPriority
-    );
+   const effectiveMultiplier =
+     heavyOverlap
+       ? Math.min(
+           multiplier * 0.85,
+           8.0
+         )
+       : multiplier;
+
+   return Math.max(
+     1,
+     effectiveMultiplier * yellowPriority
+   );
   }
 
   /* =====================================
@@ -5900,6 +6087,12 @@ function buildMatchingCandidates() {
   const afterCooldown =
     analysisBase.filter(p => {
 
+      if (
+        !isPhaseEligibleCandidate(p)
+      ) {
+        return false;
+      }
+
       const pinkTarget =
         getPinkTarget(p);
 
@@ -5961,7 +6154,9 @@ function buildMatchingCandidates() {
    */
   const pinkPool =
     afterCooldown.filter(
-      p => isCopiedPlayer(p)
+      p =>
+        isCopiedPlayer(p) &&
+        isPhaseEligibleCandidate(p)
     );
 
   /*
@@ -5978,12 +6173,19 @@ function buildMatchingCandidates() {
   /*
    * その他
    */
+  const pinkSet = new Set(
+   pinkPool.map(p => buildPlayerIdentityKey(p))
+  );
+
+  const yellowSet = new Set(
+   yellowPool.map(p => buildPlayerIdentityKey(p))
+  );
+
   const otherPool =
-    afterCooldown.filter(
-      p =>
-        !pinkPool.includes(p) &&
-        !yellowPool.includes(p)
-    );
+   afterCooldown.filter(p => {
+     const key = buildPlayerIdentityKey(p);
+     return !pinkSet.has(key) && !yellowSet.has(key);
+   });
 
   /* =====================================
    * 抽選母集団
@@ -6048,6 +6250,17 @@ function buildMatchingCandidates() {
   State.matchingRankedAll =
     rankedAll;
 
+  const selectionSource =
+   rankedAll.filter(
+     p => !shouldSuppressOverweightedCandidate(p)
+   );
+
+  const rankedSource =
+   selectionSource.length >=
+   10
+     ? selectionSource
+     : rankedAll;
+
   /* =====================================
    * 分布ベース選出（抽選廃止）
    * rank_model の quota を算出したうえで、
@@ -6057,7 +6270,7 @@ function buildMatchingCandidates() {
   const totalCount =
    Math.min(
      10,
-     rankedAll.length
+     rankedSource.length
    );
 
   const myStar =
@@ -6131,7 +6344,7 @@ function buildMatchingCandidates() {
 
    const poolByRank = {};
 
-   rankedAll.forEach(p => {
+   rankedSource.forEach(p => {
 
      const key =
        p.__rankKey;
@@ -6200,7 +6413,7 @@ function buildMatchingCandidates() {
        );
 
      const rest =
-       rankedAll.filter(
+       rankedSource.filter(
          p =>
            !existingKeys.has(
              normalizePlayerName(
@@ -6235,7 +6448,7 @@ function buildMatchingCandidates() {
   } else {
 
    selected =
-     [...rankedAll].sort(
+     [...rankedSource].sort(
        (a, b) =>
          getCandidateSelectionScore(b) -
          getCandidateSelectionScore(a)
