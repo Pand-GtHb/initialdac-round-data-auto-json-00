@@ -6262,15 +6262,33 @@ function buildMatchingCandidates() {
      : rankedAll;
 
   /* =====================================
-   * 分布ベース選出（抽選廃止）
-   * rank_model の quota を算出したうえで、
-   * 各ランク内では計算スコア順に採用する。
+   * 分布枠 + 自由枠選出（抽選廃止）
+   * rank_model の quota を分布枠にだけ適用し、
+   * 残りは全体 score 上位の自由枠で補完する。
    * ===================================== */
 
   const totalCount =
    Math.min(
      10,
      rankedSource.length
+   );
+
+  const freeSlotCount =
+   Math.min(
+     3,
+     Math.max(
+       0,
+       Math.floor(
+         totalCount * 0.3
+       )
+     )
+   );
+
+  const distributionCount =
+   Math.max(
+     0,
+     totalCount -
+     freeSlotCount
    );
 
   const myStar =
@@ -6302,7 +6320,8 @@ function buildMatchingCandidates() {
 
        const cnt =
          Math.floor(
-           ratio * totalCount
+           ratio *
+           distributionCount
          );
 
        quota[key] = cnt;
@@ -6324,7 +6343,7 @@ function buildMatchingCandidates() {
    let idx = 0;
 
    while (
-     sum < totalCount &&
+     sum < distributionCount &&
      sortedKeys.length > 0
    ) {
 
@@ -6427,9 +6446,20 @@ function buildMatchingCandidates() {
            )
        );
 
+     const distributionShortage =
+       Math.max(
+         0,
+         distributionCount -
+         selected.length
+       );
+
      const need =
-       totalCount -
-       selected.length;
+       Math.min(
+         totalCount -
+         selected.length,
+         freeSlotCount +
+         distributionShortage
+       );
 
      if (
        need > 0 &&
