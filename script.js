@@ -5221,6 +5221,41 @@ function getPhaseWavePeriodSec(cycleSec) {
   return safeCycleSec * 2;
 }
 
+function computePhaseWaveScore(cycleSec, diffSec) {
+
+  const safeCycleSec =
+    Number(cycleSec);
+
+  const safeDiffSec =
+    Number(diffSec);
+
+  if (
+    !isFinite(safeCycleSec) ||
+    safeCycleSec <= 0 ||
+    !isFinite(safeDiffSec)
+  ) {
+    return 0;
+  }
+
+  const wavePeriodSec =
+    getPhaseWavePeriodSec(safeCycleSec);
+
+  if (!wavePeriodSec) {
+    return 0;
+  }
+
+  const rSec =
+    ((safeDiffSec % wavePeriodSec) + wavePeriodSec) % wavePeriodSec;
+
+  const theta =
+    (2 * Math.PI * rSec) /
+    wavePeriodSec;
+
+  return Math.abs(
+    Math.cos(theta)
+  );
+}
+
 function getYellowPhaseScore(player) {
 
   if (
@@ -5240,13 +5275,6 @@ function getYellowPhaseScore(player) {
     return 0;
   }
 
-  const wavePeriodSec =
-    getPhaseWavePeriodSec(cycleSec);
-
-  if (!wavePeriodSec) {
-    return 0;
-  }
-
   const anchor =
     parseDateJST(
       player.updateDate
@@ -5259,23 +5287,10 @@ function getYellowPhaseScore(player) {
   const diffSec =
     (Date.now() - anchor) / 1000;
 
-  const rSec =
-    diffSec % wavePeriodSec;
-
-  const theta =
-    (2 * Math.PI * rSec) /
-    wavePeriodSec;
-
-  /*
-   * peak と trough を同じ強さで扱う。
-   * 0 付近は中間であり、自分とマッチしづらいので候補から外す。
-   */
-  const cosValue =
-    Math.abs(
-      Math.cos(theta)
-    );
-
-  return cosValue;
+  return computePhaseWaveScore(
+    cycleSec,
+    diffSec
+  );
 }
 /* =========================================================
  [7310] Phase Candidate Judge:isMatchingCandidateByPhase
@@ -5375,19 +5390,6 @@ function computePhaseSignal(player, mode = "pink") {
    };
  }
 
- const wavePeriodSec =
-   getPhaseWavePeriodSec(cycleSec);
-
- if (!wavePeriodSec) {
-   return {
-     cycleSec: 0,
-     diffSec: 0,
-     cosValue: 0,
-     threshold: 0,
-     active: false
-   };
- }
-
  const diffSec =
    mode === "pink"
      ? (Date.now() - (target.lastCopiedAt || 0)) / 1000
@@ -5403,12 +5405,10 @@ function computePhaseSignal(player, mode = "pink") {
    };
  }
 
- const theta =
-   (2 * Math.PI * (diffSec % wavePeriodSec)) / wavePeriodSec;
-
  const cosValue =
-   Math.abs(
-     Math.cos(theta)
+   computePhaseWaveScore(
+     cycleSec,
+     diffSec
    );
 
  const threshold =
@@ -5699,6 +5699,11 @@ function calcMatchingScoreDetail(
             2.5
         );
 
+    const phaseWeight =
+        Number(
+            computePhaseContext(player)?.phaseScore ?? 0
+        );
+
     const encounterBonus =
         Number(
             getEncounterBonus(player) || 1.0
@@ -5755,6 +5760,7 @@ function calcMatchingScoreDetail(
         rankingScore,
 
         realtimeBoost,
+        phaseWeight,
         encounterBonus
     };
 }
@@ -7423,38 +7429,19 @@ function saveCopyEventUnified(
   }
 
   const phaseInfo =
-    getPhaseAnalysis(
-      player
+  getPhaseAnalysis(
+    player
+  );
+
+  let phaseScore =
+    Number(
+      phaseInfo?.phaseScore ?? 0
     );
 
-  let phaseScore = 0;
-
-  try {
-
-    const cycleSec =
-      phaseInfo.cycleSec || 300;
-
-    const rawSec =
-      phaseInfo.raw || 0;
-
-    const theta =
-      (
-        2 *
-        Math.PI *
-        (
-          rawSec %
-          cycleSec
-        )
-      ) /
-      cycleSec;
-
-    phaseScore =
-      Math.cos(theta);
-
-  } catch (e) {
-
+  if (
+    !Number.isFinite(phaseScore)
+  ) {
     phaseScore = 0;
-
   }
 
   const copyCandidateSnapshot =
@@ -7592,19 +7579,24 @@ function getPhaseAnalysis(
    * ===================================== */
 
   const isPink =
-    clicks.length >= 2;
+   clicks.length >= 2;
 
-  const base =
-    300;
+  const adjust =
+   isPink
+     ? State.phaseAdjust.pink
+     : State.phaseAdjust.yellow;
+
+  const cycleSec =
+   getCurrentCycle(player);
 
   /* =====================================
    * 最新クリック
    * ===================================== */
 
   const click =
-    clicks.length > 0
-      ? clicks[0]
-      : null;
+   clicks.length > 0
+     ? clicks[0]
+     : null;
 
   /* =====================================
    * raw計算
@@ -7614,88 +7606,51 @@ function getPhaseAnalysis(
 
   if (isPink) {
 
-    raw =
-      click
-        ? (
-            Date.now() -
-            (
-              click.copiedAt ??
-              click.time
-            )
-          ) / 1000
-        : 0;
+   raw =
+     click
+       ? (
+           Date.now() -
+           (
+             click.copiedAt ??
+             click.time
+           )
+         ) / 1000
+       : 0;
 
   } else {
 
-    const last =
-      parseDateJST(
-        player.updateDate
-      )?.getTime();
+   const last =
+     parseDateJST(
+       player.updateDate
+     )?.getTime();
 
-    raw =
-      last
-        ? (
-            Date.now() -
-            last
-          ) / 1000
-        : 0;
+   raw =
+     last
+       ? (
+           Date.now() -
+           last
+         ) / 1000
+       : 0;
   }
 
-  /* =====================================
-   * folded
-   * ===================================== */
+  const wavePeriodSec =
+   getPhaseWavePeriodSec(cycleSec);
 
   const folded =
-    foldToCycle(
-      raw,
-      base
-    );
+   cycleSec > 0
+     ? foldToCycle(
+         raw,
+         cycleSec
+       )
+     : 0;
 
-  /* =====================================
-   * adjust
-   * ===================================== */
-
-  const adjust =
-    isPink
-      ? State.phaseAdjust.pink
-      : State.phaseAdjust.yellow;
-
-  /* =====================================
-   * cycle
-   * ===================================== */
-
-  const cycle =
-    base +
-    clamp(
-      adjust,
-      -45,
-      45
-    );
-
-  /* =====================================
-   * cosValue
-   * ===================================== */
-
-  let cosValue = 0;
-
-  if (
-    cycle > 0 &&
-    isFinite(cycle)
-  ) {
-
-    const remainder =
-      raw % cycle;
-
-    const theta =
-      (
-        2 *
-        Math.PI *
-        remainder
-      ) / cycle;
-
-    cosValue =
-      Math.cos(theta);
-  }
+  const phaseScore =
+   wavePeriodSec > 0
+     ? computePhaseWaveScore(
+         cycleSec,
+         raw
+       )
+     : 0;
 
   /* =====================================
    * return
@@ -7703,21 +7658,25 @@ function getPhaseAnalysis(
 
   return {
 
-    mode:
-      isPink
-        ? 1
-        : 0,
+   mode:
+     isPink
+       ? 1
+       : 0,
 
-    raw,
+   raw,
 
-    folded,
+   folded,
 
-    adjust,
+   adjust,
 
-    cycleSec:
-      cycle,
+   cycleSec,
 
-    cosValue
+   wavePeriodSec,
+
+   phaseScore,
+
+   cosValue:
+     phaseScore
   };
 }
 /* =========================================================
