@@ -1,8 +1,7 @@
 {
   "meta": {
     "version": "scoring_config_v12_phase_precision_tuning_20260825",
-    "createdAt": "2026-08-25T08:05:00+09:00",
-    "basedOnLog": "viewer_analysis_20260824",
+    "createdAt": "2026-08-28T08:05:00+09:00",
     "description": "Yellow/Pink Phase精度優先の候補絞り調整版"
   },
 
@@ -35,18 +34,18 @@
 
     "display": {
       "yellowThreshold": 0.55,
-      "pinkThreshold": 0.45
+      "pinkThreshold": 0.50
     }
   },
 
   "candidate": {
-    "yellowBoost": 1.5,
-    "pinkBoost": 2.4,
-    "phasePower": 1.6,
+    "yellowBoost": 1.6,
+    "pinkBoost": 1.8,
+    "phasePower": 2.0,
 
     "poolPriority": {
-      "pink": 5,
-      "yellow": 1.5,
+      "pink": 1.5,
+      "yellow": 1.2,
       "other": 1
     }
   }
