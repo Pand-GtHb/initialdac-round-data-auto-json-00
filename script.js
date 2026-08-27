@@ -5198,6 +5198,29 @@ function getPhaseDistanceMin(
  * Yellow強度評価
  * 戻り値: 0.0 ～ 1.0
  * ===================================== */
+function getPhaseWavePeriodSec(cycleSec) {
+
+  const safeCycleSec =
+   Number(cycleSec);
+
+  if (
+   !isFinite(safeCycleSec) ||
+   safeCycleSec <= 0
+  ) {
+   return 0;
+  }
+
+  /*
+  * Yellow/Pink の cycleSec は
+  * 「ピーク→極小」までの間隔
+  * (= peak interval)
+  * として扱う。
+  * そのため、cos 波としての 1 周期は
+  * peak interval の 2 倍になる。
+  */
+  return safeCycleSec * 2;
+}
+
 function getYellowPhaseScore(player) {
 
   if (
@@ -5217,6 +5240,13 @@ function getYellowPhaseScore(player) {
     return 0;
   }
 
+  const wavePeriodSec =
+    getPhaseWavePeriodSec(cycleSec);
+
+  if (!wavePeriodSec) {
+    return 0;
+  }
+
   const anchor =
     parseDateJST(
       player.updateDate
@@ -5230,19 +5260,22 @@ function getYellowPhaseScore(player) {
     (Date.now() - anchor) / 1000;
 
   const rSec =
-    diffSec % cycleSec;
+    diffSec % wavePeriodSec;
 
   const theta =
     (2 * Math.PI * rSec) /
-    cycleSec;
+    wavePeriodSec;
 
+  /*
+   * peak と trough を同じ強さで扱う。
+   * 0 付近は中間であり、自分とマッチしづらいので候補から外す。
+   */
   const cosValue =
-    Math.cos(theta);
+    Math.abs(
+      Math.cos(theta)
+    );
 
-  return Math.max(
-    0,
-    cosValue
-  );
+  return cosValue;
 }
 /* =========================================================
  [7310] Phase Candidate Judge:isMatchingCandidateByPhase
@@ -5342,6 +5375,19 @@ function computePhaseSignal(player, mode = "pink") {
    };
  }
 
+ const wavePeriodSec =
+   getPhaseWavePeriodSec(cycleSec);
+
+ if (!wavePeriodSec) {
+   return {
+     cycleSec: 0,
+     diffSec: 0,
+     cosValue: 0,
+     threshold: 0,
+     active: false
+   };
+ }
+
  const diffSec =
    mode === "pink"
      ? (Date.now() - (target.lastCopiedAt || 0)) / 1000
@@ -5358,8 +5404,13 @@ function computePhaseSignal(player, mode = "pink") {
  }
 
  const theta =
-   (2 * Math.PI * (diffSec % cycleSec)) / cycleSec;
- const cosValue = Math.cos(theta);
+   (2 * Math.PI * (diffSec % wavePeriodSec)) / wavePeriodSec;
+
+ const cosValue =
+   Math.abs(
+     Math.cos(theta)
+   );
+
  const threshold =
    Number(
      State.scoringConfig
