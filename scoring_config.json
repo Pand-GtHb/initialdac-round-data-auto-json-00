@@ -29,7 +29,7 @@
     "pink": {
       "baseCycleSec": 300,
       "alpha": 0.2,
-      "maxShiftSec": 45
+      "maxShiftSec": 150
     },
 
     "display": {
