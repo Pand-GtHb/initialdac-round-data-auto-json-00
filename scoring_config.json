@@ -34,7 +34,7 @@
 
     "display": {
       "yellowThreshold": 0.80,
-      "pinkThreshold": 0.75
+      "pinkThreshold": 0.55
     }
   },
 
