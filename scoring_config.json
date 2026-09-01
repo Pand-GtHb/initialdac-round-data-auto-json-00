@@ -21,7 +21,7 @@
   },
 
   "phaseError": {
-    "yellowThreshold": 0.80,
+    "yellowThreshold": 0.70,
     "pinkThreshold": 0.55,
     "yellowLambda": 0.03,
     "pinkLambda": 0.03
