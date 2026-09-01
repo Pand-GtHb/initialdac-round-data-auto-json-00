@@ -192,12 +192,10 @@ function switchDisplayView(view) {
  [1000] Logging Core
 ========================================================= */
 const LOG_STORAGE_KEYS = {
-  viewerLogs: "initialdac_viewer_logs",
   copyEvents: "initialdac_copy_events_"
 };
 
 const LOG_STORAGE_LIMITS = {
-  viewerLogs: 300,
   copyEvents: 200
 };
 
@@ -1520,38 +1518,10 @@ document.addEventListener(
         "searchInput"
       );
 
-    const exportJsonBtn =
-      document.getElementById(
-        "exportJsonBtn"
-      );
-
     const analysisLogBtn =
       document.getElementById(
         "analysisLogBtn"
       );
-
-    /* =====================================
-     * Viewer Log Export
-     * ===================================== */
-
-    if (exportJsonBtn) {
-
-      if (
-        typeof exportViewerLogsAsJSON ===
-        "function"
-      ) {
-
-        exportJsonBtn.onclick =
-          exportViewerLogsAsJSON;
-
-      } else {
-
-        exportJsonBtn.disabled =
-          true;
-
-      }
-
-    }
 
     /* =====================================
      * Analysis Log Export
@@ -3353,12 +3323,29 @@ function getHistoricalScore(
   opponentRankKey,
   area
 ) {
+  return getHistoricalScoreDetail(
+    viewerRankKey,
+    opponentRankKey,
+    area
+  ).score;
+}
+
+function getHistoricalScoreDetail(
+  viewerRankKey,
+  opponentRankKey,
+  area
+) {
 
   if (
     !viewerRankKey ||
     !State.jointModel
   ) {
-    return 1.0;
+    return {
+      score: 1.0,
+      matched: false,
+      viewerTier: null,
+      opponentTier: null
+    };
   }
 
   const viewerTier =
@@ -3376,7 +3363,12 @@ function getHistoricalScore(
     !probList ||
     !probList.length
   ) {
-    return 1.0;
+    return {
+      score: 1.0,
+      matched: false,
+      viewerTier,
+      opponentTier
+    };
   }
 
   const hit =
@@ -3386,9 +3378,14 @@ function getHistoricalScore(
         o.area === String(area)
     );
 
-  return hit
-    ? hit.prob
-    : 0.0001;
+  return {
+    score: hit
+      ? hit.prob
+      : 0.0001,
+    matched: Boolean(hit),
+    viewerTier,
+    opponentTier
+  };
 }
 /* =========================================================
  [6900] Candidate Score Engine
@@ -5266,7 +5263,7 @@ function getYellowPhaseScore(player) {
     return 0;
   }
 
-  const cycleSec =
+  cycleSec =
     getCurrentCycle(player);
 
   if (
@@ -5392,7 +5389,7 @@ function computePhaseSignal(player, mode = "pink") {
    };
  }
 
- const cycleSec =
+ cycleSec =
    getCurrentCycle(player);
 
  if (
@@ -5591,12 +5588,15 @@ function calcMatchingScoreDetail(
     const viewerRankKey =
         State.myRankKey;
 
-    const historicalScore =
-        getHistoricalScore(
+    const historical =
+        getHistoricalScoreDetail(
             viewerRankKey,
             rankKey,
             player.area
         );
+
+    const historicalScore =
+        historical.score;
 
     const isPinkManaged =
         Boolean(phaseCtx?.isPinkManaged);
@@ -5648,12 +5648,28 @@ function calcMatchingScoreDetail(
         score: safeScore,
 
         historicalScore,
+        historicalMatched: historical.matched,
+        viewerTier: historical.viewerTier,
+        opponentTier: historical.opponentTier,
+        area: String(player.area ?? ""),
+        isPinkManaged,
         playerBoost,
         rankBoost,
         areaBoost,
         realtimeBoost,
 
+        phaseError: phaseCtx?.phaseError ?? 0,
+        phaseScore: phaseCtx?.phaseScore ?? 0,
+        cycleCount: phaseCtx?.cycleCount ?? 0,
+        cycleSec: phaseCtx?.cycleSec ?? 0,
+        decay: phaseCtx?.decay ?? 0,
+        finalPhaseScore,
+        effectivePhaseScore,
         phaseWeight: effectivePhaseScore,
+        isYellow: Boolean(phaseCtx?.isYellowPhase),
+        isPink: Boolean(phaseCtx?.isPinkPhase),
+        yellowThreshold: phaseCtx?.yellowThreshold ?? 0,
+        pinkThreshold: phaseCtx?.pinkThreshold ?? 0,
         encounterBonus
     };
 }
@@ -5740,13 +5756,15 @@ function getPlayerCycleCount(player) {
 function computePhaseContext(player) {
   const isPinkManaged = isCopiedPlayer(player);
   let metrics = null;
+  let cycleSec = 0;
 
   if (isPinkManaged) {
    metrics = computePhaseSignal(player, "pink");
+   cycleSec = Number(metrics?.cycleSec ?? 0);
   } else {
    const anchor =
      parseDateJST(player?.updateDate)?.getTime();
-   const cycleSec =
+   cycleSec =
      getCurrentCycle(player);
    const lambda =
      Number(
@@ -5788,28 +5806,33 @@ function computePhaseContext(player) {
        ?.pinkThreshold ?? 0.5
    );
 
+  const yellowThreshold =
+   Number(
+     State.scoringConfig
+       ?.phaseError
+       ?.yellowThreshold ?? 0.5
+   );
+
   const isPinkPhase =
    isPinkManaged &&
    finalPhaseScore > pinkThreshold;
 
   const isYellowPhase =
    !isPinkManaged &&
-   finalPhaseScore >
-     Number(
-       State.scoringConfig
-         ?.phaseError
-         ?.yellowThreshold ?? 0.5
-     );
+   finalPhaseScore > yellowThreshold;
 
   return {
    isPinkManaged,
    isPinkPhase,
    isYellowPhase,
    cycleCount: Number(metrics?.cycleCount ?? 0),
+   cycleSec,
    phaseError,
    phaseScore,
    decay,
    finalPhaseScore,
+   yellowThreshold,
+   pinkThreshold,
    phaseSurge:
      Number.isFinite(finalPhaseScore) &&
      finalPhaseScore > 0.9,
@@ -6412,22 +6435,28 @@ function appendLog(
     }
   }
 
-  saveViewerLogToStorage({
-    savedAt: t,
-    type,
-    message:
-      String(
-        msg ?? ""
-      ),
-    currentView:
-      State.currentView || "",
-    generatedAt:
-      State.generatedAt || "",
-    latestRound:
-      State.latestRound || "",
-    latestUpdateAt:
-      State.latestUpdateAt || ""
-  });
+  if (
+    type === "warn" ||
+    type === "error"
+  ) {
+    logEvent(
+      "runtime",
+      {
+        logSchemaVersion:
+          "phase_score_v2",
+        severity: type,
+        message: String(msg ?? ""),
+        currentView:
+          State.currentView || "",
+        generatedAt:
+          State.generatedAt || "",
+        latestRound:
+          State.latestRound || "",
+        latestUpdateAt:
+          State.latestUpdateAt || ""
+      }
+    );
+  }
 }
 /* =========================================================
  [9010] Viewer Log Core:allowLog
@@ -6620,19 +6649,6 @@ function pushStoredRecord(
   );
 }
 /* =========================================================
- [9110] Viewer Log Storage:saveViewerLogToStorage
-========================================================= */
-function saveViewerLogToStorage(
-  payload
-) {
-
-  pushStoredRecord(
-    LOG_STORAGE_KEYS.viewerLogs,
-    payload,
-    LOG_STORAGE_LIMITS.viewerLogs
-  );
-}
-/* =========================================================
  [9120] Viewer Log Storage:readStoredArraySafe
 ========================================================= */
 function readStoredArraySafe(
@@ -6732,23 +6748,40 @@ function saveCopyEventUnified(
       t:
         Date.now(),
 
+      logSchemaVersion:
+        "phase_score_v2",
+
       dk:
         buildDailyKey(),
 
       n:
-        "",
+        playerName,
 
-      s:
-        0,
+      shopname:
+        shopName,
 
-      p:
-        0,
+      score:
+        null,
 
-      r:
-        0,
+      scoreRank:
+        null,
 
-      c:
-        -1,
+      wasInTop10:
+        false,
+
+      predictionAgeSec:
+        State.lastCandidateEventId
+          ? Number(
+              (
+                (Date.now() -
+                  State.lastCandidateEventId) /
+                1000
+              ).toFixed(3)
+            )
+          : null,
+
+      unmatchedPlayer:
+        true,
 
       candidateEventId:
         State.lastCandidateEventId ?? null,
@@ -6804,22 +6837,6 @@ function saveCopyEventUnified(
 
   }
 
-  const phaseInfo =
-  getPhaseAnalysis(
-    player
-  );
-
-  let phaseScore =
-    Number(
-      phaseInfo?.phaseScore ?? 0
-    );
-
-  if (
-    !Number.isFinite(phaseScore)
-  ) {
-    phaseScore = 0;
-  }
-
   const copyCandidateSnapshot =
     buildCopyCandidateSnapshot();
 
@@ -6828,51 +6845,88 @@ function saveCopyEventUnified(
     t:
       Date.now(),
 
+    logSchemaVersion:
+      "phase_score_v2",
+
     dk:
       buildDailyKey(),
 
     n:
       player.name ?? "",
 
-    s:
-      Number(
-        detail.score ?? 0
-      ),
+    score:
+      Number(detail.score ?? 0),
 
-    p:
-      Number(
-        detail.phaseWeight ?? 0
-      ),
+    scoreRank:
+      candidateRank > 0
+        ? candidateRank
+        : null,
 
-    r:
-      Number(
-        detail.realtimeBoost ?? 0
-      ),
+    wasInTop10:
+      candidateRank >= 1 &&
+      candidateRank <= 10,
 
-    c:
-      candidateRank,
+    predictionAgeSec:
+      State.lastCandidateEventId
+        ? Number(
+            (
+              (Date.now() -
+                State.lastCandidateEventId) /
+              1000
+            ).toFixed(3)
+          )
+        : null,
 
-    ph:
-      Number(
-        phaseScore.toFixed(
-          4
-        )
-      ),
+    scoreBreakdown: {
+      historicalScore:
+        Number(detail.historicalScore ?? 0),
+      historicalMatched:
+        Boolean(detail.historicalMatched),
+      playerBoost:
+        Number(detail.playerBoost ?? 1),
+      rankBoost:
+        Number(detail.rankBoost ?? 1),
+      areaBoost:
+        Number(detail.areaBoost ?? 1),
+      realtimeBoost:
+        Number(detail.realtimeBoost ?? 1),
+      phaseError:
+        Number(detail.phaseError ?? 0),
+      phaseScore:
+        Number(detail.phaseScore ?? 0),
+      decay:
+        Number(detail.decay ?? 0),
+      finalPhaseScore:
+        Number(detail.finalPhaseScore ?? 0),
+      encounterBonus:
+        Number(detail.encounterBonus ?? 1),
+      effectivePhaseScore:
+        Number(detail.effectivePhaseScore ?? 0)
+    },
 
-    pm:
-      phaseInfo.mode,
+    viewerTier:
+      detail.viewerTier ?? null,
 
-    pc:
-      phaseInfo.cycleSec,
+    opponentTier:
+      detail.opponentTier ?? null,
 
-    pa:
-      phaseInfo.adjust,
+    area:
+      detail.area ?? "",
 
-    pf:
-      phaseInfo.folded,
+    isYellow:
+      Boolean(detail.isYellow),
 
-    pr:
-      phaseInfo.raw,
+    isPink:
+      Boolean(detail.isPink),
+
+    isPinkManaged:
+      Boolean(detail.isPinkManaged),
+
+    yellowThreshold:
+      Number(detail.yellowThreshold ?? 0),
+
+    pinkThreshold:
+      Number(detail.pinkThreshold ?? 0),
 
     candidateEventId:
       State.lastCandidateEventId ?? null,
@@ -6901,26 +6955,54 @@ function buildCopyCandidateSnapshot() {
   const candidates =
     (State.matchingList ?? [])
       .map(p => ({
+        scoreRank: p.displayRank ?? null,
         name: p.name,
         shopname: p.shopname ?? "",
-        displayRank: p.displayRank ?? null,
+        rankKey: p.__rankKey ?? null,
+        area: String(p.area ?? ""),
         score: Number(
           (p.__score ?? 0).toFixed(6)
         ),
-        historicalScore:
-          Number(
-            (p.__detail?.historicalScore ?? 0).toFixed(6)
-          ),
-        realtimeBoost:
-          Number(
-            (p.__detail?.realtimeBoost ?? 0).toFixed(4)
-          ),
-        phaseScore:
-          Number(
-            (p.__detail?.phaseWeight ?? 0).toFixed(4)
-          ),
-        pinkTarget:
-          isCopiedPlayer(p),
+        scoreBreakdown: {
+          historicalScore:
+            Number(p.__detail?.historicalScore ?? 0),
+          historicalMatched:
+            Boolean(p.__detail?.historicalMatched),
+          playerBoost:
+            Number(p.__detail?.playerBoost ?? 1),
+          rankBoost:
+            Number(p.__detail?.rankBoost ?? 1),
+          areaBoost:
+            Number(p.__detail?.areaBoost ?? 1),
+          realtimeBoost:
+            Number(p.__detail?.realtimeBoost ?? 1),
+          phaseError:
+            Number(p.__detail?.phaseError ?? 0),
+          phaseScore:
+            Number(p.__detail?.phaseScore ?? 0),
+          decay:
+            Number(p.__detail?.decay ?? 0),
+          finalPhaseScore:
+            Number(p.__detail?.finalPhaseScore ?? 0),
+          effectivePhaseScore:
+            Number(p.__detail?.effectivePhaseScore ?? 0),
+          encounterBonus:
+            Number(p.__detail?.encounterBonus ?? 1)
+        },
+        isYellow:
+          Boolean(p.__detail?.isYellow),
+        isPink:
+          Boolean(p.__detail?.isPink),
+        isPinkManaged:
+          Boolean(p.__detail?.isPinkManaged),
+        yellowThreshold:
+          Number(p.__detail?.yellowThreshold ?? 0),
+        pinkThreshold:
+          Number(p.__detail?.pinkThreshold ?? 0),
+        cycleCount:
+          Number(p.__detail?.cycleCount ?? 0),
+        cycleSec:
+          Number(p.__detail?.cycleSec ?? 0),
         encounterCount:
           getEncounterHistory(p)?.count ?? 0
       }));
@@ -7172,6 +7254,9 @@ function saveCandidateEvent() {
 
     t: now,
 
+    logSchemaVersion:
+      "phase_score_v2",
+
     e: "candidate",
 
     id: now,
@@ -7211,11 +7296,45 @@ function saveCandidateEvent() {
     candidateCount:
       State.matchingList.length,
 
+    candidatePoolSize:
+      State.filtered.length,
+
+    eligibleCount:
+      State.matchingRankedAll.length,
+
+    viewerTier:
+      mapRankKeyToTierKey(
+        State.myRankKey
+      ),
+
+    yellowThreshold:
+      Number(
+        State.scoringConfig
+          ?.phaseError
+          ?.yellowThreshold ?? 0.5
+      ),
+
+    pinkThreshold:
+      Number(
+        State.scoringConfig
+          ?.phaseError
+          ?.pinkThreshold ?? 0.5
+      ),
+
     candidates:
       State.matchingList.map(p => ({
 
+        scoreRank:
+          p.displayRank ?? null,
+
         name:
           p.name,
+
+        rankKey:
+          p.__rankKey ?? null,
+
+        area:
+          String(p.area ?? ""),
 
         score:
           Number(
@@ -7223,43 +7342,53 @@ function saveCandidateEvent() {
               .toFixed(6)
           ),
 
-        historicalScore:
-          Number(
-            (
-              p.__detail?.historicalScore ?? 0
-            ).toFixed(6)
-          ),
+        scoreBreakdown: {
+          historicalScore:
+            Number(p.__detail?.historicalScore ?? 0),
+          historicalMatched:
+            Boolean(p.__detail?.historicalMatched),
+          playerBoost:
+            Number(p.__detail?.playerBoost ?? 1),
+          rankBoost:
+            Number(p.__detail?.rankBoost ?? 1),
+          areaBoost:
+            Number(p.__detail?.areaBoost ?? 1),
+          realtimeBoost:
+            Number(p.__detail?.realtimeBoost ?? 1),
+          phaseError:
+            Number(p.__detail?.phaseError ?? 0),
+          phaseScore:
+            Number(p.__detail?.phaseScore ?? 0),
+          decay:
+            Number(p.__detail?.decay ?? 0),
+          finalPhaseScore:
+            Number(p.__detail?.finalPhaseScore ?? 0),
+          encounterBonus:
+            Number(p.__detail?.encounterBonus ?? 1),
+          effectivePhaseScore:
+            Number(p.__detail?.effectivePhaseScore ?? 0)
+        },
 
-        playerBoost:
-          Number(
-            (
-              p.__detail?.playerBoost ?? 0
-            ).toFixed(4)
-          ),
+        isYellow:
+          Boolean(p.__detail?.isYellow),
 
-        rankBoost:
-          Number(
-            (
-              p.__detail?.rankBoost ?? 0
-            ).toFixed(4)
-          ),
+        isPink:
+          Boolean(p.__detail?.isPink),
 
-        areaBoost:
-          Number(
-            (
-              p.__detail?.areaBoost ?? 0
-            ).toFixed(4)
-          ),
+        isPinkManaged:
+          Boolean(p.__detail?.isPinkManaged),
 
-        phaseScore:
-          Number(
-            (
-              p.__detail?.phaseWeight ?? 0
-            ).toFixed(4)
-          ),
+        yellowThreshold:
+          Number(p.__detail?.yellowThreshold ?? 0),
 
-        pinkTarget:
-          isCopiedPlayer(p),
+        pinkThreshold:
+          Number(p.__detail?.pinkThreshold ?? 0),
+
+        cycleCount:
+          Number(p.__detail?.cycleCount ?? 0),
+
+        cycleSec:
+          Number(p.__detail?.cycleSec ?? 0),
 
         encounterCount:
           getEncounterHistory(p)?.count ?? 0
@@ -7689,7 +7818,9 @@ async function exportTodayViewerLogsAsJSON() {
 
     copyEvents,
 
-    candidateEvents: []
+    candidateEvents: [],
+
+    runtimeEvents: []
 
   };
 
@@ -7706,7 +7837,8 @@ async function exportTodayViewerLogsAsJSON() {
       const tx =
         logDB.transaction(
           [
-            LOG_STORE.candidateEvents
+            LOG_STORE.candidateEvents,
+            LOG_STORE.events
           ],
           "readonly"
         );
@@ -7752,6 +7884,47 @@ async function exportTodayViewerLogsAsJSON() {
               ts <= endTs
             );
 
+          }
+        );
+
+      const eventStore =
+        tx.objectStore(
+          LOG_STORE.events
+        );
+
+      const events =
+        await new Promise(
+          (
+            resolve,
+            reject
+          ) => {
+
+            const req =
+              eventStore.getAll();
+
+            req.onsuccess =
+              () =>
+                resolve(
+                  req.result || []
+                );
+
+            req.onerror =
+              reject;
+          }
+        );
+
+      payload.runtimeEvents =
+        events.filter(
+          event => {
+
+            const ts =
+              Number(event?.t ?? 0);
+
+            return (
+              event?.e === "runtime" &&
+              ts >= startTs &&
+              ts <= endTs
+            );
           }
         );
 
@@ -7818,6 +7991,8 @@ async function exportTodayViewerLogsAsJSON() {
  [9910] Viewer Log Export
 ========================================================= */
 async function exportViewerLogsAsJSON() {
+
+  return exportTodayViewerLogsAsJSON();
 
   const input =
     document.getElementById(
