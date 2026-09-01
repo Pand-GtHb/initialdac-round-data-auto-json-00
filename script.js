@@ -31,14 +31,17 @@ const State = {
   matchingList: [],
   matchingRankedAll: [],
   matchingDiagnostics: null,
-  rankModel: null,
   myStar: 7,
+  myRankKey: "R7",
   recentClicks: [],
   recentClickIndex: null,
-  areaModel: {},
+  jointModel: null,
+  playerActivity: {},
+  rankActivity: {},
+  areaActivity: {},
+  sessionStartAt: Date.now(),
+  viewerLastCopiedAt: null,
   scoringConfig: null,
-  normalizerCache: null,
-  normalizerCacheKey: "",
   updateWatchTimer: null,
   updateCheckRunning: false,
   prefetchedRoundData: null,
@@ -880,54 +883,60 @@ function applyLatestUpdateJson(
   );
 }
 /* =========================================================
- [3400] Rank Model Loader:loadRankModel
+ [3400] Joint Model Loader:loadJointModel
+ rank_model.json / area_model は廃止。
+ 過去対戦実績は joint_model.json（count集計）へ一本化。
 ========================================================= */
-async function loadRankModel() {
+async function loadJointModel() {
 
   log(
-    "rank_model.json 取得準備中"
+    "joint_model.json 取得準備中"
   );
 
   try {
 
     const json =
-      await fetchRankModelJson();
+      await fetchJointModelJson();
 
-    applyRankModelJson(
+    applyJointModelJson(
       json
     );
 
   } catch (e) {
 
-    State.rankModel = null;
+    State.jointModel = null;
 
     logWarn(
-      "rank_model.json 未取得：" +
+      "joint_model.json 未取得：" +
       e.message
     );
   }
 }
 /* =========================================================
- [3410] Rank Model Loader:fetchRankModelJson
+ [3410] Joint Model Loader:fetchJointModelJson
 ========================================================= */
-async function fetchRankModelJson() {
+async function fetchJointModelJson() {
 
   return fetchJSON(
-    "rank_model.json"
+    "joint_model.json"
   );
 }
 /* =========================================================
- [3420] Rank Model Loader:applyRankModelJson
+ [3420] Joint Model Loader:applyJointModelJson
+ 保持しているのは count のみ。
+ 確率化（正規化）はロード時にここで行う。
 ========================================================= */
-function applyRankModelJson(
+function applyJointModelJson(
   json
 ) {
 
-  State.rankModel =
-    json;
+  State.jointModel =
+    normalizeJointModel(
+      json
+    );
 
   log(
-    "rank_model.json 読み込み完了"
+    "joint_model.json 読み込み完了"
   );
 }
 /* =========================================================
@@ -1349,6 +1358,8 @@ async function init() {
 
   restorePinkStateFromStorage();
 
+  restoreRealtimeActivityFromStorage();
+
   startProgress();
 
   buildRubyFilters();
@@ -1361,14 +1372,14 @@ async function init() {
       areaJson,
       latestRoundJson,
       latestUpdateJson,
-      rankModelJson,
+      jointModelJson,
       scoringConfigJson,
       roundDataJson
     ] = await Promise.all([
       fetchAreaListJson(),
       fetchLatestRoundJson(),
       fetchLatestUpdateJson(),
-      fetchRankModelJson(),
+      fetchJointModelJson(),
       fetchScoringConfigJson(),
       fetchRoundDataJson()
     ]);
@@ -1383,8 +1394,8 @@ async function init() {
       latestUpdateJson
     );
 
-    applyRankModelJson(
-      rankModelJson
+    applyJointModelJson(
+      jointModelJson
     );
 
     applyScoringConfigJson(
@@ -1415,7 +1426,7 @@ async function init() {
 
     await loadLatestUpdate();
 
-    await loadRankModel();
+    await loadJointModel();
 
     await loadScoringConfig();
 
@@ -2098,11 +2109,6 @@ function applyFilters() {
           filterStartMs
         );
       }
-    );
-
-  State.areaModel =
-    buildAreaDistribution(
-      State.filtered
     );
 
   log(
@@ -3254,190 +3260,152 @@ function applyPlayerFilter(
   );
 }
 /* =========================================================
- [6800] Area Engine
+ [6800] Joint Model Engine
+ 過去対戦実績の count を確率化して保持する。
+ 保持しているのは count のみ、確率はロード時に計算する。
+ 構造:
+ {
+   viewerTiers: {
+     "<viewerTier>": {
+       total: N,
+       opponents: { "<opponentTier>_<area>": count, ... }
+     }
+   }
+ }
+ Phase 情報はこのモデルには含まれない。
+ HistoricalScore は viewerTier × opponentTier × area の
+ 3軸のみで算出し、PhaseScore は別項として乗算する。
 ========================================================= */
-function buildAreaDistribution(
-  list
-) {
+function normalizeJointModel(json) {
 
-  const counts = {};
+  const viewerTiers =
+    json?.viewerTiers;
 
-  for (
-    const p of
-    (list || [])
+  if (
+    !viewerTiers ||
+    typeof viewerTiers !== "object"
   ) {
-
-    const k =
-      String(
-        p.area ?? ""
-      );
-
-    if (!k) continue;
-
-    counts[k] =
-      (counts[k] || 0) + 1;
+    return null;
   }
 
-  const total =
-    Object.values(
-      counts
-    ).reduce(
-      (a, b) => a + b,
-      0
-    ) || 1;
+  const byViewerTier = {};
 
-  const dist = {};
+  for (const viewerTier in viewerTiers) {
 
-  for (const k in counts) {
+    const entry =
+      viewerTiers[viewerTier];
 
-    dist[k] =
-      counts[k] / total;
+    const opponents =
+      entry?.opponents ?? {};
+
+    const total =
+      Object.values(opponents)
+        .reduce(
+          (a, c) => a + Number(c ?? 0),
+          0
+        ) || 1;
+
+    const probList = [];
+
+    for (const key in opponents) {
+
+      /*
+       * key = "<opponentTier>_<area>"
+       * opponentTier は R1..R8 または PRIDE_A..PRIDE_G
+       * （PRIDE_* はアンダースコアを含むため
+       *   最後の "_" で area を切り分ける）
+       */
+      const lastSep =
+        key.lastIndexOf("_");
+
+      if (lastSep < 0) continue;
+
+      const opponentTier =
+        key.slice(0, lastSep);
+
+      const area =
+        key.slice(lastSep + 1);
+
+      const count =
+        Number(opponents[key] ?? 0);
+
+      probList.push({
+        opponentTier,
+        area,
+        count,
+        prob: count / total
+      });
+    }
+
+    byViewerTier[viewerTier] = probList;
   }
 
-  return dist;
-}
-
-function getAreaScore(
-  player
-) {
-
-  const areaKey =
-    String(
-      player?.area ?? ""
-    );
-
-  const areaWeight =
-    State.areaModel?.[
-      areaKey
-    ] ?? 0;
-
-  // B簡素化: scale は使わず、
-  // area の重みは scoreWeights.area のみで制御する
-  return (
-    1 +
-    areaWeight
-  );
+  return { byViewerTier };
 }
 /* =========================================================
- [6890] Score Normalizer Engine
+ [6810] Historical Score Engine:getHistoricalScore
+ HistoricalScore = P(opponentTier, area | viewerTier)
+ 該当データが無い場合は中立値（1.0）または
+ ほぼゼロ（0.0001）を返す。
 ========================================================= */
-function getScoreNormalizerCacheKey(list) {
- return [
-   (list || []).length,
-   State.generatedAt || "",
-   State.currentDetailKey || "",
-   State.currentView || ""
- ].join("|");
-}
-
-function buildScoreNormalizer(
-   list
+function getHistoricalScore(
+  viewerRankKey,
+  opponentRankKey,
+  area
 ) {
-   const cacheKey =
-       getScoreNormalizerCacheKey(list);
 
-   if (
-       State.normalizerCacheKey === cacheKey &&
-       State.normalizerCache
-   ) {
-       return State.normalizerCache;
-   }
+  if (
+    !viewerRankKey ||
+    !State.jointModel
+  ) {
+    return 1.0;
+  }
 
-   const source =
-       (list || [])
-       .filter(
-           p => p && p.updateDate
-       )
-       .map(p => {
+  const viewerTier =
+    mapRankKeyToTierKey(viewerRankKey);
 
-           const rankScore =
-               Number(
-                   getRankWeight(p) || 0
-               );
+  const opponentTier =
+    mapRankKeyToTierKey(opponentRankKey);
 
-           const prideWeight =
-               Number(
-                   getPrideWeight(p) || 1
-               );
+  const probList =
+    State.jointModel.byViewerTier?.[
+      viewerTier
+    ];
 
-           const areaFactor =
-               Number(
-                   getAreaScore(p) || 1
-               );
+  if (
+    !probList ||
+    !probList.length
+  ) {
+    return 1.0;
+  }
 
-           return {
-               rankComponent:
-                   rankScore *
-                   prideWeight,
+  const hit =
+    probList.find(
+      o =>
+        o.opponentTier === String(opponentTier) &&
+        o.area === String(area)
+    );
 
-               areaComponent:
-                   areaFactor
-           };
-       });
-
-   const rankValues =
-       source.map(
-           x => x.rankComponent
-       );
-
-   const areaValues =
-       source.map(
-           x => x.areaComponent
-       );
-
-   const result = {
-
-       rankMin:
-           rankValues.length
-               ? Math.min(...rankValues)
-               : 0,
-
-       rankMax:
-           rankValues.length
-               ? Math.max(...rankValues)
-               : 1,
-
-       areaMin:
-           areaValues.length
-               ? Math.min(...areaValues)
-               : 0,
-
-       areaMax:
-           areaValues.length
-               ? Math.max(...areaValues)
-               : 1
-   };
-
-   State.normalizerCache = result;
-   State.normalizerCacheKey = cacheKey;
-   return result;
+  return hit
+    ? hit.prob
+    : 0.0001;
 }
 /* =========================================================
  [6900] Candidate Score Engine
+ Score = HistoricalScore × PlayerBoost × RankBoost × AreaBoost × PhaseScore
 ========================================================= */
 function buildCandidateScore(
-    player,
-    normalizer = null
+    player
 ) {
     const detail =
         calcMatchingScoreDetail(
-            player,
-            normalizer
+            player
         );
 
     const score =
         Number(
             detail?.score ?? 0
         );
-
-    const phaseMultiplier =
-        getPhaseSelectionMultiplier(
-            player
-        );
-
-    const effectiveWeight =
-        score *
-        phaseMultiplier;
 
     const rankKey =
         getPlayerRankKey(
@@ -3452,10 +3420,7 @@ function buildCandidateScore(
         __detail: detail,
 
         __effectiveWeight:
-            effectiveWeight,
-
-        __phaseMultiplier:
-            phaseMultiplier,
+            score,
 
         __rankKey:
             rankKey
@@ -3509,6 +3474,25 @@ function getPlayerRankKey(player) {
   return null;
 }
 /* =========================================================
+ [7015] Rank Weight Engine:mapRankKeyToTierKey
+ 内部rankKey（R1..R8 / P_A..P_G）を
+ joint_model.json の tierKey（R1..R8 / PRIDE_A..PRIDE_G）へ変換する。
+========================================================= */
+function mapRankKeyToTierKey(rankKey) {
+
+  if (!rankKey) return null;
+
+  if (rankKey.startsWith("R")) {
+    return rankKey;
+  }
+
+  if (rankKey.startsWith("P_")) {
+    return `PRIDE_${rankKey.slice(2)}`;
+  }
+
+  return rankKey;
+}
+/* =========================================================
  [7020] Rank Weight Engine:syncMyRankSelection
 ========================================================= */
 function syncMyRankSelection(
@@ -3530,138 +3514,15 @@ function syncMyRankSelection(
   ) {
 
     State.myStar = num;
+    State.myRankKey = `R${num}`;
 
   } else {
 
     State.myStar = 6;
+    State.myRankKey = selectedMyRank;
   }
 
   return selectedMyRank;
-}
-/* =========================================================
- [7030] Rank Weight Engine:getVirtualStar
-========================================================= */
-function getVirtualStar(player) {
-
-  if (
-    player.onlineBattleRankId === RUBY_ID
-  ) {
-    return String(
-      Number(player.starCnt ?? 0)
-    );
-  }
-
-  if (
-    Number(
-      player.pridePoint ?? 0
-    ) > 0
-  ) {
-    return "PRIDE";
-  }
-
-  return null;
-}
-/* =========================================================
- [7040] Rank Weight Engine:getRankWeight
-========================================================= */
-function getRankWeight(player) {
-
-  const model =
-    State.rankModel;
-
-  if (!model) {
-    return 0;
-  }
-
-  const myStar =
-    String(State.myStar);
-
-  const opp =
-    getVirtualStar(player);
-
-  if (!opp) {
-    return 0;
-  }
-
-  const table =
-    model.models?.[myStar]?.vs;
-
-  if (!table) {
-    return 0;
-  }
-
-  return Number(
-    table[opp] ?? 0
-  );
-}
-/* =========================================================
- [7050] Rank Weight Engine:getPrideWeight
-========================================================= */
-function getPrideWeight(player) {
-
-  if (!State.rankModel) {
-    return 1.0;
-  }
-
-  if (
-    Number(
-      player.pridePoint ?? 0
-    ) <= 0
-  ) {
-    return 1.0;
-  }
-
-  const model =
-    State.rankModel;
-
-  const myStar =
-    String(State.myStar);
-
-  const dist =
-    model.models?.[myStar]
-      ?.pride_distribution;
-
-  if (!dist) {
-    return 1.0;
-  }
-
-  const pt =
-    Number(
-      player.pridePoint ?? 0
-    );
-
-  const bands =
-    model.pride?.bands;
-
-  if (!bands) {
-    return 1.0;
-  }
-
-  for (const key in bands) {
-
-    const band = bands[key];
-
-    const min =
-      Number(
-        band.min ?? 0
-      );
-
-    const max =
-      Number(
-        band.max ?? Infinity
-      );
-
-    if (
-      pt >= min &&
-      pt <= max
-    ) {
-      return Number(
-        dist[key] ?? 1.0
-      );
-    }
-  }
-
-  return 1.0;
 }
 /* =========================================================
  [7060] Rank Weight Engine:getTimeWeight
@@ -3795,9 +3656,12 @@ function savePinkStateToStorage() {
   try {
     const payload = {
       /*
-       * Pink対象は当日管理のみ
-       * 永続保存しない
+       * Pink対象は当日分のみ復元対象とする
+       * （dailyKeyで翌日以降は自動失効）
        */
+      pinkTargets:
+        State.pinkTargets || {},
+
       encounterHistory:
         State.encounterHistory || {},
 
@@ -3850,9 +3714,36 @@ function restorePinkStateFromStorage() {
       JSON.parse(raw);
 
     /*
-     * Pink対象復元なし
+     * Pink対象復元
+     * 当日分（dailyKey一致）のみ有効とし、
+     * 前日以前のエントリは復元時に除外する。
      */
     State.pinkTargets = {};
+
+    if (
+      parsed?.pinkTargets &&
+      typeof parsed.pinkTargets ===
+        "object"
+    ) {
+
+      const today =
+        buildDailyKey();
+
+      for (
+        const [key, entry]
+          of Object.entries(parsed.pinkTargets)
+      ) {
+
+        if (
+          entry &&
+          entry.dailyKey === today
+        ) {
+          State.pinkTargets[key] = entry;
+        }
+
+      }
+
+    }
 
     if (
       parsed?.encounterHistory &&
@@ -3930,6 +3821,12 @@ function getPinkTarget(player) {
     ];
 
   if (directTarget) {
+
+    if (isPinkTargetStale(directTarget)) {
+      delete State.pinkTargets[directKey];
+      return null;
+    }
+
     return directTarget;
   }
 
@@ -3980,6 +3877,11 @@ function getPinkTarget(player) {
       resolvedEntry
     ] = fallbackEntry;
 
+    if (isPinkTargetStale(resolvedEntry)) {
+      delete State.pinkTargets[legacyKey];
+      return null;
+    }
+
     if (
       legacyKey !== directKey
     ) {
@@ -4000,6 +3902,26 @@ function getPinkTarget(player) {
 
   return null;
 
+}
+/* =========================================================
+ [7073b] Pink State Helpers:isPinkTargetStale
+ 「当日」判定：dailyKeyが変わっていれば
+ 前日以前のPink登録として失効させる。
+========================================================= */
+function isPinkTargetStale(entry) {
+
+  if (!entry) {
+    return true;
+  }
+
+  const today =
+    buildDailyKey();
+
+  if (!entry.dailyKey) {
+    return false;
+  }
+
+  return entry.dailyKey !== today;
 }
 /* =========================================================
  [7074] Pink State Helpers:registerPinkTarget
@@ -4048,6 +3970,9 @@ function registerPinkTarget(
 
       lastCopiedAt:
         now,
+
+      dailyKey:
+        buildDailyKey(),
 
       history: []
 
@@ -4314,10 +4239,10 @@ function registerYellowSample(
    * Yellow基準周期
    *
    * 現在の学習処理は
-   * 300±45秒を前提としているため
-   * 保存時も300秒基準で折り畳み
+   * 345±45秒を前提としているため
+   * 保存時も345秒基準で折り畳み
    */
-  const baseCycleSec = 300;
+  const baseCycleSec = 345;
 
   /*
    * 周期ズレ
@@ -4425,6 +4350,9 @@ function recordClickFromCopiedInfo(
   const copiedAt =
     Date.now();
 
+  State.viewerLastCopiedAt =
+    copiedAt;
+
   const areaName =
     AreaList[
       String(player.area)
@@ -4494,6 +4422,12 @@ function recordClickFromCopiedInfo(
    */
   registerYellowSample(
     player,
+    copiedAt
+  );
+
+  recordRealtimeActivity(
+    player,
+    rankKey,
     copiedAt
   );
 
@@ -4607,185 +4541,230 @@ function rebuildRecentClickIndex() {
  State.recentClickIndex = index;
 }
 
-function getRealtimeBoost(
- player
+function getBoostDecayHalfLifeSec() {
+
+  return Number(
+    State.scoringConfig
+      ?.realtimeBoost
+      ?.decaySec ?? 3600
+  );
+}
+
+function computeBoostValue(
+  entry
 ) {
 
- const detail =
-   getRealtimeBoostDetail(
-     player
-   );
+  if (!entry) {
+    return 1.0;
+  }
 
- return detail.total;
+  const count =
+    Number(entry.count ?? 0);
+
+  const lastSeen =
+    Number(entry.lastSeen ?? 0);
+
+  if (
+    !count ||
+    !lastSeen ||
+    !isFinite(lastSeen)
+  ) {
+    return 1.0;
+  }
+
+  const deltaSec =
+    (Date.now() - lastSeen) / 1000;
+
+  if (
+    !isFinite(deltaSec) ||
+    deltaSec < 0
+  ) {
+    return 1.0;
+  }
+
+  const T =
+    getBoostDecayHalfLifeSec();
+
+  const magnitude =
+    1 + Math.log(1 + count);
+
+  const decay =
+    Math.exp(-deltaSec / T);
+
+  return magnitude * decay;
+}
+
+function recordRealtimeActivity(
+  player,
+  rankKey,
+  timestamp
+) {
+
+  if (!player) return;
+
+  const now =
+    Number(timestamp) ||
+    Date.now();
+
+  const playerId =
+    normalizePlayerName(
+      player.name ?? ""
+    );
+
+  if (playerId) {
+
+    const prev =
+      State.playerActivity[
+        playerId
+      ] || { count: 0 };
+
+    State.playerActivity[
+      playerId
+    ] = {
+      count:
+        Number(prev.count ?? 0) + 1,
+      lastSeen: now
+    };
+  }
+
+  const rk =
+    String(rankKey ?? "");
+
+  if (rk) {
+
+    const prev =
+      State.rankActivity[rk] ||
+      { count: 0 };
+
+    State.rankActivity[rk] = {
+      count:
+        Number(prev.count ?? 0) + 1,
+      lastSeen: now
+    };
+  }
+
+  const areaKey =
+    String(player.area ?? "");
+
+  if (areaKey) {
+
+    const prev =
+      State.areaActivity[
+        areaKey
+      ] || { count: 0 };
+
+    State.areaActivity[
+      areaKey
+    ] = {
+      count:
+        Number(prev.count ?? 0) + 1,
+      lastSeen: now
+    };
+  }
+
+  saveRealtimeActivityToStorage();
+}
+
+/* =========================================================
+ [7110] Realtime Boost Engine:getPlayerBoost
+========================================================= */
+function getPlayerBoost(player) {
+
+  if (!player) return 1.0;
+
+  const playerId =
+    normalizePlayerName(
+      player.name ?? ""
+    );
+
+  return computeBoostValue(
+    State.playerActivity[
+      playerId
+    ]
+  );
 }
 /* =========================================================
- [7120] Realtime Boost Engine:getRealtimeBoostDetail
+ [7120] Realtime Boost Engine:getRankBoost
 ========================================================= */
-function getRealtimeBoostDetail(
- player
-) {
+function getRankBoost(rankKey) {
 
- if (
-   !State.recentClicks.length ||
-   !player
- ) {
+  return computeBoostValue(
+    State.rankActivity[
+      String(rankKey ?? "")
+    ]
+  );
+}
+/* =========================================================
+ [7130] Realtime Boost Engine:getAreaBoost
+========================================================= */
+function getAreaBoost(area) {
 
-   return {
-     total: 1.0
-   };
- }
+  return computeBoostValue(
+    State.areaActivity[
+      String(area ?? "")
+    ]
+  );
+}
+/* =========================================================
+ [7140] Realtime Boost Engine:Storage Persistence
+========================================================= */
+const REALTIME_ACTIVITY_STORAGE_KEY =
+  "matchingRealtimeActivity_v1";
 
- if (!State.recentClickIndex) {
-   rebuildRecentClickIndex();
- }
+function saveRealtimeActivityToStorage() {
 
- const playerRankKey =
-   getPlayerRankKey(
-     player
-   );
+  try {
 
- const targetName =
-   normalizePlayerName(
-     player.name ?? ""
-   );
+    localStorage.setItem(
+      REALTIME_ACTIVITY_STORAGE_KEY,
+      JSON.stringify({
+        playerActivity:
+          State.playerActivity,
+        rankActivity:
+          State.rankActivity,
+        areaActivity:
+          State.areaActivity,
+        viewerLastCopiedAt:
+          State.viewerLastCopiedAt
+      })
+    );
 
- const nameAreaKey =
-   `${targetName}@@${String(player.area ?? "")}`;
+  } catch (e) {
+    /* storage unavailable: ignore */
+  }
+}
 
- const nameRankKey =
-   `${targetName}@@${String(playerRankKey ?? "")}`;
+function restoreRealtimeActivityFromStorage() {
 
- const candidateList = [
-   ...(State.recentClickIndex.byName.get(targetName) || []),
-   ...(State.recentClickIndex.byNameArea.get(nameAreaKey) || []),
-   ...(State.recentClickIndex.byNameRank.get(nameRankKey) || [])
- ];
+  try {
 
- const seen = new Set();
+    const raw =
+      localStorage.getItem(
+        REALTIME_ACTIVITY_STORAGE_KEY
+      );
 
- let bestLevel = 0;
+    if (!raw) return;
 
- let bestDecay = 0;
+    const parsed =
+      JSON.parse(raw);
 
- for (const r of candidateList) {
-   const marker =
-     `${r.name ?? ""}|${r.updateDate ?? ""}|${r.copiedAt ?? r.time ?? ""}|${r.area ?? ""}|${r.rankKey ?? ""}`;
+    State.playerActivity =
+      parsed?.playerActivity || {};
 
-   if (seen.has(marker)) {
-     continue;
-   }
+    State.rankActivity =
+      parsed?.rankActivity || {};
 
-   seen.add(marker);
+    State.areaActivity =
+      parsed?.areaActivity || {};
 
-   const anchorTime =
-     Number(
-       r.copiedAt ||
-       r.time ||
-       0
-     );
+    if (parsed?.viewerLastCopiedAt) {
+      State.viewerLastCopiedAt =
+        parsed.viewerLastCopiedAt;
+    }
 
-   if (!anchorTime) {
-     continue;
-   }
-
-   const dtMin =
-     (
-       Date.now() -
-       anchorTime
-     ) / 60000;
-
-   if (
-     !isFinite(dtMin) ||
-     dtMin < 0
-   ) {
-     continue;
-   }
-
-   const decay =
-     Math.exp(
-       -dtMin / 8
-     );
-
-   const samePlayer =
-     normalizePlayerName(
-       player.name
-     ) ===
-     normalizePlayerName(
-       r.name
-     ) &&
-     String(
-       player.updateDate ?? ""
-     ) ===
-     String(
-       r.updateDate ?? ""
-     );
-
-   const sameRank =
-     String(playerRankKey)
-     ===
-     String(r.rankKey);
-
-   const sameArea =
-     String(
-       player.area ?? ""
-     ) ===
-     String(
-       r.area ?? ""
-     );
-
-   let level = 0;
-
-   if (samePlayer) {
-
-     level = 3;
-
-   } else if (
-     sameRank &&
-     sameArea
-   ) {
-
-     level = 2;
-
-   } else if (
-     sameRank ||
-     sameArea
-   ) {
-
-     level = 1;
-   }
-
-   if (
-     level > bestLevel
-   ) {
-
-     bestLevel = level;
-
-     bestDecay = decay;
-
-   } else if (
-     level === bestLevel
-   ) {
-
-     bestDecay = Math.max(
-       bestDecay,
-       decay
-     );
-   }
- }
-
- const boostByLevel = {
-   0: 1.0,
-   1: 1.2,
-   2: 1.6,
-   3: 2.5
- };
-
- return {
-   total:
-     boostByLevel[
-       bestLevel
-     ] * bestDecay
- };
+  } catch (e) {
+    /* storage unavailable or corrupt: ignore */
+  }
 }
 /* =========================================================
  [7200] Phase Engine:getRoundedDiffMinAndPhaseDistance
@@ -4900,7 +4879,7 @@ function calcYellowCycle(player) {
     State.scoringConfig?.phase?.yellow ?? {};
 
   const base =
-    cfg.baseCycleSec ?? 300;
+    cfg.baseCycleSec ?? 345;
 
   const samples =
     State.yellowSamples ?? [];
@@ -5027,7 +5006,7 @@ function calcPinkCycle(
       ?.phase?.pink || {};
 
   const base =
-    cfg.baseCycleSec || 300;
+    cfg.baseCycleSec || 345;
 
   const foldedList = [];
 
@@ -5198,30 +5177,15 @@ function getPhaseDistanceMin(
  * Yellow強度評価
  * 戻り値: 0.0 ～ 1.0
  * ===================================== */
-function getPhaseWavePeriodSec(cycleSec) {
-
-  const safeCycleSec =
-   Number(cycleSec);
-
-  if (
-   !isFinite(safeCycleSec) ||
-   safeCycleSec <= 0
-  ) {
-   return 0;
-  }
-
-  /*
-  * Yellow/Pink の cycleSec は
-  * 「ピーク→極小」までの間隔
-  * (= peak interval)
-  * として扱う。
-  * そのため、cos 波としての 1 周期は
-  * peak interval の 2 倍になる。
-  */
-  return safeCycleSec * 2;
-}
-
-function computePhaseWaveScore(cycleSec, diffSec) {
+/* =====================================
+ * PhaseError → PhaseScore → CycleDecay
+ * → FinalPhaseScore の一本化評価
+ * ===================================== */
+function computePhaseMetrics(
+  diffSec,
+  cycleSec,
+  lambda
+) {
 
   const safeCycleSec =
     Number(cycleSec);
@@ -5229,31 +5193,68 @@ function computePhaseWaveScore(cycleSec, diffSec) {
   const safeDiffSec =
     Number(diffSec);
 
+  const safeLambda =
+    Number.isFinite(Number(lambda))
+      ? Number(lambda)
+      : 0.03;
+
   if (
     !isFinite(safeCycleSec) ||
     safeCycleSec <= 0 ||
-    !isFinite(safeDiffSec)
+    !isFinite(safeDiffSec) ||
+    safeDiffSec < 0
   ) {
-    return 0;
+    return {
+      cycleCount: 0,
+      phaseError: 0,
+      phaseScore: 0,
+      decay: 0,
+      finalPhaseScore: 0
+    };
   }
 
-  const wavePeriodSec =
-    getPhaseWavePeriodSec(safeCycleSec);
+  const phasePos =
+    safeDiffSec % safeCycleSec;
 
-  if (!wavePeriodSec) {
-    return 0;
-  }
+  const phaseError =
+    Math.min(
+      phasePos,
+      safeCycleSec - phasePos
+    );
 
-  const rSec =
-    ((safeDiffSec % wavePeriodSec) + wavePeriodSec) % wavePeriodSec;
+  const phaseScore =
+    Math.max(
+      0,
+      Math.min(
+        1,
+        1 -
+        (
+          phaseError /
+          (safeCycleSec / 2)
+        )
+      )
+    );
 
-  const theta =
-    (2 * Math.PI * rSec) /
-    wavePeriodSec;
+  const cycleCount =
+    Math.floor(
+      safeDiffSec / safeCycleSec
+    );
 
-  return Math.abs(
-    Math.cos(theta)
-  );
+  const decay =
+    Math.exp(
+      -safeLambda * cycleCount
+    );
+
+  const finalPhaseScore =
+    phaseScore * decay;
+
+  return {
+    cycleCount,
+    phaseError,
+    phaseScore,
+    decay,
+    finalPhaseScore
+  };
 }
 
 function getYellowPhaseScore(player) {
@@ -5287,10 +5288,18 @@ function getYellowPhaseScore(player) {
   const diffSec =
     (Date.now() - anchor) / 1000;
 
-  return computePhaseWaveScore(
+  const lambda =
+    Number(
+      State.scoringConfig
+        ?.phaseError
+        ?.yellowLambda ?? 0.03
+    );
+
+  return computePhaseMetrics(
+    diffSec,
     cycleSec,
-    diffSec
-  );
+    lambda
+  ).finalPhaseScore;
 }
 /* =========================================================
  [7310] Phase Candidate Judge:isMatchingCandidateByPhase
@@ -5320,8 +5329,11 @@ function isMatchingCandidateByPhase(
 
   const threshold =
     Number(
+      State.scoringConfig
+        ?.phaseError
+        ?.yellowThreshold ??
       phaseCfg.display
-        ?.yellowThreshold ?? 0
+        ?.yellowThreshold ?? 0.5
     );
 
   const score =
@@ -5353,7 +5365,10 @@ function computePhaseSignal(player, mode = "pink") {
    return {
      cycleSec: 0,
      diffSec: 0,
-     cosValue: 0,
+     phaseError: 0,
+     phaseScore: 0,
+     decay: 0,
+     finalPhaseScore: 0,
      threshold: 0,
      active: false
    };
@@ -5368,7 +5383,10 @@ function computePhaseSignal(player, mode = "pink") {
    return {
      cycleSec: 0,
      diffSec: 0,
-     cosValue: 0,
+     phaseError: 0,
+     phaseScore: 0,
+     decay: 0,
+     finalPhaseScore: 0,
      threshold: 0,
      active: false
    };
@@ -5384,7 +5402,10 @@ function computePhaseSignal(player, mode = "pink") {
    return {
      cycleSec: 0,
      diffSec: 0,
-     cosValue: 0,
+     phaseError: 0,
+     phaseScore: 0,
+     decay: 0,
+     finalPhaseScore: 0,
      threshold: 0,
      active: false
    };
@@ -5399,32 +5420,49 @@ function computePhaseSignal(player, mode = "pink") {
    return {
      cycleSec,
      diffSec,
-     cosValue: 0,
+     phaseError: 0,
+     phaseScore: 0,
+     decay: 0,
+     finalPhaseScore: 0,
      threshold: 0,
      active: false
    };
  }
 
- const cosValue =
-   computePhaseWaveScore(
+ const lambda =
+   Number(
+     State.scoringConfig
+       ?.phaseError
+       ?.pinkLambda ?? 0.03
+   );
+
+ const metrics =
+   computePhaseMetrics(
+     diffSec,
      cycleSec,
-     diffSec
+     lambda
    );
 
  const threshold =
    Number(
      State.scoringConfig
+       ?.phaseError
+       ?.pinkThreshold ??
+     State.scoringConfig
        ?.phase
        ?.display
-       ?.pinkThreshold ?? 0
+       ?.pinkThreshold ?? 0.5
    );
 
  return {
    cycleSec,
    diffSec,
-   cosValue,
+   phaseError: metrics.phaseError,
+   phaseScore: metrics.phaseScore,
+   decay: metrics.decay,
+   finalPhaseScore: metrics.finalPhaseScore,
    threshold,
-   active: cosValue > threshold
+   active: metrics.finalPhaseScore > threshold
  };
 }
 
@@ -5458,7 +5496,7 @@ function getPinkPhaseScore(
            1,
            Math.max(
                0,
-               signal.cosValue
+               signal.finalPhaseScore
            ) *
            encounterBonus
        )
@@ -5530,237 +5568,92 @@ function calcMatchingDiagnostics(
 }
 /* =========================================================[
 7410] Matching Score Engine:calcMatchingScoreDetail
+ Score = HistoricalScore × PlayerBoost × RankBoost × AreaBoost × PhaseScore
 ========================================================= */
 function calcMatchingScoreDetail(
-    player,
-    normalizer = null
+    player
 ) {
     if (!player || !player.updateDate) {
         return { score: 0 };
     }
 
-    const rankScore =
-        Number(getRankWeight(player) || 0);
+    const phaseCtx =
+        computePhaseContext(player);
 
-    if (
-        !Number.isFinite(rankScore) ||
-        rankScore <= 0
-    ) {
-        return { score: 0 };
-    }
+    const finalPhaseScore =
+        Number(
+            phaseCtx?.finalPhaseScore ?? 0
+        );
 
-    const prideWeight =
-        Number(getPrideWeight(player) || 1);
+    const rankKey =
+        getPlayerRankKey(player);
 
-    const areaFactor =
-        Number(getAreaScore(player) || 1);
+    const viewerRankKey =
+        State.myRankKey;
 
-    const timeWeight =
-        Number(getTimeWeight(player) || 0);
+    const historicalScore =
+        getHistoricalScore(
+            viewerRankKey,
+            rankKey,
+            player.area
+        );
 
-    const safePrideWeight =
-        Number.isFinite(prideWeight)
-            ? prideWeight
+    const isPinkManaged =
+        Boolean(phaseCtx?.isPinkManaged);
+
+    const playerBoost =
+        isPinkManaged
+            ? getPlayerBoost(player)
             : 1.0;
 
-    const safeAreaFactor =
-        Number.isFinite(areaFactor)
-            ? areaFactor
+    const rankBoost =
+        isPinkManaged
+            ? getRankBoost(rankKey)
             : 1.0;
 
-    const safeTimeWeight =
-        Number.isFinite(timeWeight)
-            ? timeWeight
-            : 0;
-
-    /* =====================================
-     * Rank Component
-     * ===================================== */
-    const rankComponent =
-        rankScore * safePrideWeight;
-
-    /* =====================================
-     * Area Component
-     * ===================================== */
-    const areaComponent =
-        safeAreaFactor;
-
-    /* =====================================
-     * Min-Max Normalize
-     * ===================================== */
-    let normalizedRank = 1;
-    let normalizedArea = 1;
-
-    if (normalizer) {
-
-        const rankRange =
-            normalizer.rankMax -
-            normalizer.rankMin;
-
-        const areaRange =
-            normalizer.areaMax -
-            normalizer.areaMin;
-
-        normalizedRank =
-            rankRange > 0
-                ? (
-                    rankComponent -
-                    normalizer.rankMin
-                ) / rankRange
-                : 1;
-
-        normalizedArea =
-            areaRange > 0
-                ? (
-                    areaComponent -
-                    normalizer.areaMin
-                ) / areaRange
-                : 1;
-    }
-
-    normalizedRank =
-        Math.max(
-            0,
-            Math.min(1, normalizedRank)
-        );
-
-    normalizedArea =
-        Math.max(
-            0,
-            Math.min(1, normalizedArea)
-        );
-
-    /* =====================================
-     * Weight Setting
-     * ===================================== */
-    const rawRankWeight =
-        Number(
-            State.scoringConfig
-            ?.scoreWeights
-            ?.rank ?? 0.5
-        );
-
-    const rawAreaWeight =
-        Number(
-            State.scoringConfig
-            ?.scoreWeights
-            ?.area ?? 0.5
-        );
-
-    const totalWeight =
-        Math.max(
-            0.0001,
-            rawRankWeight +
-            rawAreaWeight
-        );
-
-    const rankWeight =
-        rawRankWeight /
-        totalWeight;
-
-    const areaWeight =
-        rawAreaWeight /
-        totalWeight;
-
-    /* =====================================
-     * Contribution
-     * ===================================== */
-    const rankContribution =
-        normalizedRank *
-        rankWeight;
-
-    const areaContribution =
-        normalizedArea *
-        areaWeight;
-
-    /* =====================================
-     * Base Score
-     * ===================================== */
-    const baseScore =
-        rankContribution +
-        areaContribution;
-
-    const rankingScore =
-        baseScore *
-        safeTimeWeight;
-
-    const realtimeBoostValue =
-        Number(
-            getRealtimeBoost(player)
-        );
+    const areaBoost =
+        isPinkManaged
+            ? getAreaBoost(player.area)
+            : 1.0;
 
     const realtimeBoost =
-        Math.min(
-            Number.isFinite(
-                realtimeBoostValue
-            )
-                ? realtimeBoostValue
-                : 1.0,
-            2.5
-        );
-
-    const phaseWeight =
-        Number(
-            computePhaseContext(player)?.phaseScore ?? 0
-        );
+        playerBoost *
+        rankBoost *
+        areaBoost;
 
     const encounterBonus =
         Number(
             getEncounterBonus(player) || 1.0
         );
 
-    /*
-     * モデル基準のスコアを本体とし、
-     * realtime は候補補正として別の段階で扱う。
-     * Phase 適合者だけを候補に出す方針に合わせ、
-     * score には realtime を直接混ぜない。
-     */
-    const selectionWeight =
-        rankingScore *
-        encounterBonus;
+    const effectivePhaseScore =
+        isPinkManaged
+            ? finalPhaseScore * encounterBonus
+            : finalPhaseScore;
+
+    const rawScore =
+        historicalScore *
+        playerBoost *
+        rankBoost *
+        areaBoost *
+        effectivePhaseScore;
 
     const safeScore =
-        Number.isFinite(selectionWeight) &&
-        selectionWeight > 0
-            ? selectionWeight
-            : 0.0001;
-
-    const rankRatio =
-        Math.round(
-            rankContribution /
-            Math.max(
-                0.0001,
-                rankContribution +
-                areaContribution
-            ) * 100
-        );
-
-    const areaRatio =
-        100 - rankRatio;
+        Number.isFinite(rawScore) &&
+        rawScore > 0
+            ? rawScore
+            : 0;
 
     return {
         score: safeScore,
 
-        rankComponent,
-        areaComponent,
-
-        normalizedRank,
-        normalizedArea,
-
-        rankContribution,
-        areaContribution,
-
-        rankRatio,
-        areaRatio,
-
-        rankWeight,
-        areaWeight,
-
-        baseScore,
-        rankingScore,
-
+        historicalScore,
+        playerBoost,
+        rankBoost,
+        areaBoost,
         realtimeBoost,
-        phaseWeight,
+
+        phaseWeight: effectivePhaseScore,
         encounterBonus
     };
 }
@@ -5804,205 +5697,130 @@ function hasSamePlayerRecentClick(player) {
   });
 }
 
-function computePhaseContext(player) {
-  const isPinkManaged =
-   isCopiedPlayer(player);
+function getPlayerCycleCount(player) {
 
-  const pinkPhaseScore =
-   isPinkManaged
-     ? getPinkPhaseScore(player)
-     : 0;
+  if (!player) return 0;
+
+  if (isCopiedPlayer(player)) {
+
+    const signal =
+      computePhaseSignal(player, "pink");
+
+    return Math.round(
+      (signal?.diffSec ?? 0) /
+      (signal?.cycleSec || 1)
+    );
+  }
+
+  if (!player.updateDate) return 0;
+
+  const cycleSec =
+    getCurrentCycle(player);
+
+  const anchor =
+    parseDateJST(
+      player.updateDate
+    )?.getTime();
+
+  if (
+    !cycleSec ||
+    !anchor
+  ) {
+    return 0;
+  }
+
+  const diffSec =
+    (Date.now() - anchor) / 1000;
+
+  return Math.round(
+    diffSec / cycleSec
+  );
+}
+
+function computePhaseContext(player) {
+  const isPinkManaged = isCopiedPlayer(player);
+  let metrics = null;
+
+  if (isPinkManaged) {
+   metrics = computePhaseSignal(player, "pink");
+  } else {
+   const anchor =
+     parseDateJST(player?.updateDate)?.getTime();
+   const cycleSec =
+     getCurrentCycle(player);
+   const lambda =
+     Number(
+       State.scoringConfig
+         ?.phaseError
+         ?.yellowLambda ?? 0.03
+     );
+
+   metrics =
+     anchor && cycleSec
+       ? computePhaseMetrics(
+           (Date.now() - anchor) / 1000,
+           cycleSec,
+           lambda
+         )
+       : null;
+  }
+
+  const phaseError =
+   Number(metrics?.phaseError ?? 0);
+
+  const phaseScore =
+   Number(metrics?.phaseScore ?? 0);
+
+  const decay =
+   Number(metrics?.decay ?? 0);
+
+  const finalPhaseScore =
+   Number(metrics?.finalPhaseScore ?? 0);
 
   const pinkThreshold =
    Number(
      State.scoringConfig
+       ?.phaseError
+       ?.pinkThreshold ??
+     State.scoringConfig
        ?.phase
        ?.display
-       ?.pinkThreshold ?? 0
+       ?.pinkThreshold ?? 0.5
    );
 
   const isPinkPhase =
    isPinkManaged &&
-   pinkPhaseScore > pinkThreshold;
+   finalPhaseScore > pinkThreshold;
 
   const isYellowPhase =
    !isPinkManaged &&
-   isMatchingCandidateByPhase(player);
-
-  const phaseScore =
-   isPinkPhase
-     ? Math.max(0, pinkPhaseScore)
-     : isYellowPhase
-       ? Math.max(0, getYellowPhaseScore(player))
-       : 0;
+   finalPhaseScore >
+     Number(
+       State.scoringConfig
+         ?.phaseError
+         ?.yellowThreshold ?? 0.5
+     );
 
   return {
    isPinkManaged,
    isPinkPhase,
    isYellowPhase,
+   cycleCount: Number(metrics?.cycleCount ?? 0),
+   phaseError,
    phaseScore,
+   decay,
+   finalPhaseScore,
    phaseSurge:
-     Number.isFinite(phaseScore) &&
-     phaseScore > 0.9,
+     Number.isFinite(finalPhaseScore) &&
+     finalPhaseScore > 0.9,
    samePlayerHit:
      hasSamePlayerRecentClick(player)
   };
 }
-
-function isPhaseEligibleCandidate(player) {
-  if (!player) {
-   return false;
-  }
-
-  if (isCopiedPlayer(player)) {
-   return isMatchingCandidateByCopyPhase(player);
-  }
-
-  return isMatchingCandidateByPhase(player);
-}
-
-function shouldSuppressOverweightedCandidate(player) {
-
-  if (!player) {
-   return false;
-  }
-
-  const ctx =
-   computePhaseContext(player);
-
-  return (
-   ctx.samePlayerHit &&
-   ctx.phaseSurge
-  );
-}
-
-function getPhaseSelectionMultiplier(player) {
-
-  /* =====================================
-   * 安全取得
-   * ===================================== */
-  const candidateCfg =
-   State.scoringConfig?.candidate ?? {};
-
-  const yellowBoost =
-   Number(candidateCfg.yellowBoost ?? 2.0);
-
-  const pinkBoost =
-   Number(candidateCfg.pinkBoost ?? 2.5);
-
-  const phasePower =
-   Number(candidateCfg.phasePower ?? 2.0);
-
-  /* =====================================
-   * Pool優先度
-   * ===================================== */
-  const poolPriority =
-   candidateCfg.poolPriority ?? {};
-
-  const pinkPriority =
-   Number(poolPriority.pink ?? 3);
-
-  const yellowPriority =
-   Number(poolPriority.yellow ?? 2);
-
-  const otherPriority =
-   Number(poolPriority.other ?? 1);
-
-  const ctx =
-   computePhaseContext(player);
-
-  const isPink =
-   ctx.isPinkPhase;
-
-  const isYellow =
-   ctx.isYellowPhase;
-
-  const heavyOverlap =
-   ctx.samePlayerHit &&
-   ctx.phaseSurge;
-
-  /* =====================================
-   * Pink補正
-   * ===================================== */
-  if (isPink) {
-
-   const score =
-     Math.max(
-       0,
-       ctx.phaseScore
-     );
-
-   const multiplier =
-     1 +
-     (
-       (pinkBoost - 1)
-       *
-       Math.pow(
-         score,
-         phasePower
-       )
-     );
-
-   const effectiveMultiplier =
-     heavyOverlap
-       ? Math.min(
-           multiplier * 0.85,
-           8.0
-         )
-       : multiplier;
-
-   return Math.max(
-     1,
-     effectiveMultiplier * pinkPriority
-   );
-  }
-
-  /* =====================================
-   * Yellow補正
-   * ===================================== */
-  if (isYellow) {
-
-   const score =
-     Math.max(
-       0,
-       ctx.phaseScore
-     );
-
-   const multiplier =
-     1 +
-     (
-       (yellowBoost - 1)
-       *
-       Math.pow(
-         score,
-         phasePower
-       )
-     );
-
-   const effectiveMultiplier =
-     heavyOverlap
-       ? Math.min(
-           multiplier * 0.85,
-           8.0
-         )
-       : multiplier;
-
-   return Math.max(
-     1,
-     effectiveMultiplier * yellowPriority
-   );
-  }
-
-  /* =====================================
-   * Other
-   * ===================================== */
-  return otherPriority;
-}
 /* =========================================================
  [7600] Candidate Selection (score priority)
- 抽選を廃止し、候補は計算スコア上位順で採用する。
- rank_model の分布制約は保持しつつ、同一ランク内の
- 取得順は score 高い順にする。
+ 候補は計算スコア(HistoricalScore×PlayerBoost×RankBoost×AreaBoost×PhaseScore)
+ の上位順で採用する。
 ========================================================= */
 function getCandidateSelectionScore(player) {
 
@@ -6015,51 +5833,6 @@ function getCandidateSelectionScore(player) {
    player.__effectiveWeight ??
    player.__weight ??
    0
- );
-}
-
-function selectByScorePriority(
- players,
- count
-) {
-
- const sorted =
-   [...players].sort(
-     (a, b) => {
-
-       const aScore =
-         getCandidateSelectionScore(a);
-
-       const bScore =
-         getCandidateSelectionScore(b);
-
-       if (
-         bScore !== aScore
-       ) {
-         return bScore - aScore;
-       }
-
-       return (
-         Number(
-           b.__effectiveWeight ??
-           b.__weight ??
-           0
-         ) -
-         Number(
-           a.__effectiveWeight ??
-           a.__weight ??
-           0
-         )
-       );
-     }
-   );
-
- return sorted.slice(
-   0,
-   Math.max(
-     0,
-     count
-   )
  );
 }
 /* =========================================================
@@ -6079,16 +5852,13 @@ function buildMatchingCandidates() {
     State.filtered;
 
   /* =====================================
-   * スコア計算
+   * STEP3〜6: HistoricalScore / RealtimeBoost
+   * / PhaseScore を合成したスコア計算
    * ===================================== */
-  const normalizer =
-    buildScoreNormalizer(base);
-
   const scoredAll =
     base.map(p =>
       buildCandidateScore(
-        p,
-        normalizer
+        p
       )
     );
 
@@ -6121,58 +5891,21 @@ function buildMatchingCandidates() {
     });
 
   /* =====================================
-   * rankModelフィルタ
-   * ===================================== */
-  const filteredByRankModel =
-    filteredByUi.filter(
-      p =>
-        Number(
-          p.__detail?.rankingScore ?? 0
-        ) > 0
-    );
-
-  let analysisBase =
-    (
-      filteredByRankModel.length > 0
-    )
-      ? filteredByRankModel
-      : filteredByUi;
-
-  /* =====================================
    * cooldown
+   * Pink管理対象について初回1サイクルは除外する。
    * ===================================== */
   const afterCooldown =
-    analysisBase.filter(p => {
-
-      if (
-        !isPhaseEligibleCandidate(p)
-      ) {
-        return false;
-      }
+    filteredByUi.filter(p => {
 
       const pinkTarget =
         getPinkTarget(p);
 
-      const click =
-        State.recentClicks.find(
-          r =>
-            normalizePlayerName(r.name)
-            ===
-            normalizePlayerName(p.name)
-            &&
-            String(
-              r.shopname ?? ""
-            )
-            ===
-            String(
-              p.shopname ?? ""
-            )
-        );
+      if (!pinkTarget) {
+        return true;
+      }
 
       const copiedAt =
         pinkTarget?.lastCopiedAt ||
-        click?.copiedAt ||
-        click?.time ||
         null;
 
       if (!copiedAt) {
@@ -6189,8 +5922,7 @@ function buildMatchingCandidates() {
         );
 
       /*
-       * Pink / Yellow 共通で
-       * 初回1サイクルは除外
+       * Pink管理対象は初回1サイクルは除外
        */
       if (
         phase.isInitialCooldown
@@ -6202,389 +5934,33 @@ function buildMatchingCandidates() {
 
     });
 
-  /* =====================================
-   * Pink / Yellow Pool 分離
-   * ===================================== */
-
-  /*
-   * Pink管理対象は全員PinkPool
-   */
-  const pinkPool =
+  const scoreEligible =
     afterCooldown.filter(
-      p =>
-        isCopiedPlayer(p) &&
-        isPhaseEligibleCandidate(p)
+      p => getCandidateSelectionScore(p) > 0
     );
-
-  /*
-   * Yellow管理対象
-   * （Pink管理対象は除外）
-   */
-  const yellowPool =
-    afterCooldown.filter(
-      p =>
-        !isCopiedPlayer(p) &&
-        isMatchingCandidateByPhase(p)
-    );
-
-  /*
-   * その他
-   */
-  const pinkSet = new Set(
-   pinkPool.map(p => buildPlayerIdentityKey(p))
-  );
-
-  const yellowSet = new Set(
-   yellowPool.map(p => buildPlayerIdentityKey(p))
-  );
-
-  const otherPool =
-   afterCooldown.filter(p => {
-     const key = buildPlayerIdentityKey(p);
-     return !pinkSet.has(key) && !yellowSet.has(key);
-   });
-
-  /* =====================================
-   * 抽選母集団
-   * Pink / Yellow 優先
-   * ===================================== */
-  const primaryPool = [
-    ...pinkPool.sort(
-      (a, b) =>
-        b.__effectiveWeight -
-        a.__effectiveWeight
-    ),
-
-    ...yellowPool.sort(
-      (a, b) =>
-        b.__effectiveWeight -
-        a.__effectiveWeight
-    )
-  ];
-
-  const fallbackPool =
-    otherPool.sort(
-      (a, b) =>
-        b.__effectiveWeight -
-        a.__effectiveWeight
-    );
-
-  let rankedAll = [];
-
-  const primaryCount =
-    primaryPool.length;
-
-  const targetCount =
-    Math.min(
-      10,
-      afterCooldown.length
-    );
-
-  if (
-    primaryCount >=
-    targetCount
-  ) {
-
-    rankedAll =
-      primaryPool;
-
-  } else {
-
-    const shortage =
-      targetCount -
-      primaryCount;
-
-    rankedAll = [
-      ...primaryPool,
-
-      ...fallbackPool.slice(
-        0,
-        shortage
-      )
-    ];
-  }
 
   State.matchingRankedAll =
-    rankedAll;
-
-  const selectionSource =
-   rankedAll.filter(
-     p => !shouldSuppressOverweightedCandidate(p)
-   );
-
-  const rankedSource =
-   selectionSource.length >=
-   10
-     ? selectionSource
-     : rankedAll;
+    [...scoreEligible].sort(
+      (a, b) =>
+        getCandidateSelectionScore(b) -
+        getCandidateSelectionScore(a)
+    );
 
   /* =====================================
-   * 分布枠 + 自由枠選出（抽選廃止）
-   * rank_model の quota を分布枠にだけ適用し、
-   * 残りは全体 score 上位の自由枠で補完する。
+   * STEP7: Score順に並べる
+   * STEP8: 上位10人を表示
    * ===================================== */
-
-  const totalCount =
-   Math.min(
-     10,
-     rankedSource.length
-   );
-
-  const freeSlotCount =
-   Math.min(
-     3,
-     Math.max(
-       0,
-       Math.floor(
-         totalCount * 0.3
-       )
-     )
-   );
-
-  const distributionCount =
-   Math.max(
-     0,
-     totalCount -
-     freeSlotCount
-   );
-
-  const myStar =
-   String(
-     State.myStar
-   );
-
-  const dist =
-   State.rankModel
-     ?.models?.[myStar]
-     ?.vs;
-
-  let selected = [];
-
-  if (
-   dist &&
-   totalCount > 0
-  ) {
-
-   const quota = {};
-
-   let sum = 0;
-
-   const entries =
-     Object.entries(dist);
-
-   entries.forEach(
-     ([key, ratio]) => {
-
-       const cnt =
-         Math.floor(
-           ratio *
-           distributionCount
-         );
-
-       quota[key] = cnt;
-
-       sum += cnt;
-     }
-   );
-
-   const sortedKeys =
-     entries
-       .sort(
-         (a, b) =>
-           b[1] - a[1]
-       )
-       .map(
-         x => x[0]
-       );
-
-   let idx = 0;
-
-   while (
-     sum < distributionCount &&
-     sortedKeys.length > 0
-   ) {
-
-     const key =
-       sortedKeys[
-         idx %
-         sortedKeys.length
-       ];
-
-     quota[key] =
-       (quota[key] || 0) + 1;
-
-     sum++;
-
-     idx++;
-   }
-
-   const poolByRank = {};
-
-   rankedSource.forEach(p => {
-
-     const key =
-       p.__rankKey;
-
-     if (!poolByRank[key]) {
-       poolByRank[key] = [];
-     }
-
-     poolByRank[key].push(p);
-   });
-
-   for (
-     const rankKey in quota
-   ) {
-
-     const need =
-       quota[rankKey] ?? 0;
-
-     if (need <= 0) {
-       continue;
-     }
-
-     const pool =
-       poolByRank[rankKey] ?? [];
-
-     if (pool.length === 0) {
-       continue;
-     }
-
-     const sortedPool =
-       [...pool].sort(
-         (a, b) =>
-           getCandidateSelectionScore(b) -
-           getCandidateSelectionScore(a)
-       );
-
-     selected.push(
-       ...sortedPool.slice(
-         0,
-         Math.min(
-           need,
-           sortedPool.length
-         )
-       )
-     );
-   }
-
-   if (
-     selected.length <
-     totalCount
-   ) {
-
-     const existingKeys =
-       new Set(
-         selected.map(
-           p =>
-             normalizePlayerName(
-               p.name
-             )
-             + "@@"
-             +
-             String(
-               p.updateDate ?? ""
-             )
-         )
-       );
-
-     const rest =
-       rankedSource.filter(
-         p =>
-           !existingKeys.has(
-             normalizePlayerName(
-               p.name
-             )
-             + "@@"
-             +
-             String(
-               p.updateDate ?? ""
-             )
-           )
-       );
-
-     const distributionShortage =
-       Math.max(
-         0,
-         distributionCount -
-         selected.length
-       );
-
-     const need =
-       Math.min(
-         totalCount -
-         selected.length,
-         freeSlotCount +
-         distributionShortage
-       );
-
-     if (
-       need > 0 &&
-       rest.length > 0
-     ) {
-
-       selected.push(
-         ...selectByScorePriority(
-           rest,
-           need
-         )
-       );
-     }
-   }
-
-  } else {
-
-   selected =
-     [...rankedSource].sort(
-       (a, b) =>
-         getCandidateSelectionScore(b) -
-         getCandidateSelectionScore(a)
-     ).slice(
-       0,
-       totalCount
-     );
-  }
-
-  /* =====================================
-   * 重複排除
-   * ===================================== */
-
-  const uniq =
-    new Set();
-
-  selected =
-    selected.filter(p => {
-
-      const key =
-        normalizePlayerName(
-          p.name
-        )
-        + "@@"
-        +
-        String(
-          p.updateDate ?? ""
-        );
-
-      if (
-        uniq.has(key)
-      ) {
-        return false;
-      }
-
-      uniq.add(key);
-
-      return true;
-    });
-
-  /* =====================================
-   * ソート
-   * ===================================== */
-
-  selected.sort(
-    (a, b) =>
-      getCandidateSelectionScore(b) -
-      getCandidateSelectionScore(a)
-  );
+  const selected =
+    [...scoreEligible]
+      .sort(
+        (a, b) =>
+          getCandidateSelectionScore(b) -
+          getCandidateSelectionScore(a)
+      )
+      .slice(
+        0,
+        10
+      );
 
   selected.forEach(
     (p, i) => {
@@ -7531,13 +6907,18 @@ function buildCopyCandidateSnapshot() {
         score: Number(
           (p.__score ?? 0).toFixed(6)
         ),
-        phaseMultiplier: Number(
-          (p.__phaseMultiplier ?? 0).toFixed(4)
-        ),
-        rankRatio:
-          p.__detail?.rankRatio ?? 0,
-        areaRatio:
-          p.__detail?.areaRatio ?? 0,
+        historicalScore:
+          Number(
+            (p.__detail?.historicalScore ?? 0).toFixed(6)
+          ),
+        realtimeBoost:
+          Number(
+            (p.__detail?.realtimeBoost ?? 0).toFixed(4)
+          ),
+        phaseScore:
+          Number(
+            (p.__detail?.phaseWeight ?? 0).toFixed(4)
+          ),
         pinkTarget:
           isCopiedPlayer(p),
         encounterCount:
@@ -7633,8 +7014,12 @@ function getPhaseAnalysis(
        : 0;
   }
 
-  const wavePeriodSec =
-   getPhaseWavePeriodSec(cycleSec);
+  const lambda =
+   Number(
+     State.scoringConfig
+       ?.phaseError
+       ?.[isPink ? "pinkLambda" : "yellowLambda"] ?? 0.03
+   );
 
   const folded =
    cycleSec > 0
@@ -7644,13 +7029,20 @@ function getPhaseAnalysis(
        )
      : 0;
 
-  const phaseScore =
-   wavePeriodSec > 0
-     ? computePhaseWaveScore(
+  const metrics =
+   cycleSec > 0
+     ? computePhaseMetrics(
+         raw,
          cycleSec,
-         raw
+         lambda
        )
-     : 0;
+     : {
+         cycleCount: 0,
+         phaseError: 0,
+         phaseScore: 0,
+         decay: 0,
+         finalPhaseScore: 0
+       };
 
   /* =====================================
    * return
@@ -7671,12 +7063,20 @@ function getPhaseAnalysis(
 
    cycleSec,
 
-   wavePeriodSec,
+   cycleCount:
+     metrics.cycleCount,
 
-   phaseScore,
+   phaseError:
+     metrics.phaseError,
 
-   cosValue:
-     phaseScore
+   phaseScore:
+     metrics.phaseScore,
+
+   decay:
+     metrics.decay,
+
+   finalPhaseScore:
+     metrics.finalPhaseScore
   };
 }
 /* =========================================================
@@ -7688,7 +7088,7 @@ function saveCandidateEvent() {
     Date.now();
 
   const yellowCycle =
-    300 +
+    345 +
     clamp(
       State.phaseAdjust?.yellow ?? 0,
       -45,
@@ -7696,7 +7096,7 @@ function saveCandidateEvent() {
     );
 
   const pinkCycle =
-    300 +
+    345 +
     clamp(
       State.phaseAdjust?.pink ?? 0,
       -45,
@@ -7709,7 +7109,7 @@ function saveCandidateEvent() {
   const yellowSamples =
     State.yellowSamples ?? [];
 
-  const baseCycleSec = 300;
+  const baseCycleSec = 345;
 
   const yellowValues =
     yellowSamples
@@ -7823,32 +7223,40 @@ function saveCandidateEvent() {
               .toFixed(6)
           ),
 
-        phaseMultiplier:
+        historicalScore:
           Number(
             (
-              p.__phaseMultiplier ?? 0
+              p.__detail?.historicalScore ?? 0
+            ).toFixed(6)
+          ),
+
+        playerBoost:
+          Number(
+            (
+              p.__detail?.playerBoost ?? 0
             ).toFixed(4)
           ),
 
-        rankComponent:
+        rankBoost:
           Number(
             (
-              p.__detail?.rankComponent ?? 0
-            ).toFixed(6)
+              p.__detail?.rankBoost ?? 0
+            ).toFixed(4)
           ),
 
-        areaComponent:
+        areaBoost:
           Number(
             (
-              p.__detail?.normalizedArea ?? 0
-            ).toFixed(6)
+              p.__detail?.areaBoost ?? 0
+            ).toFixed(4)
           ),
 
-        rankRatio:
-          p.__detail?.rankRatio ?? 0,
-
-        areaRatio:
-          p.__detail?.areaRatio ?? 0,
+        phaseScore:
+          Number(
+            (
+              p.__detail?.phaseWeight ?? 0
+            ).toFixed(4)
+          ),
 
         pinkTarget:
           isCopiedPlayer(p),
