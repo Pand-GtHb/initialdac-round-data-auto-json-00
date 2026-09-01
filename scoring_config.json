@@ -1,52 +1,33 @@
 {
   "meta": {
-    "version": "scoring_config_v12_phase_precision_tuning_20260825",
-    "createdAt": "2026-08-28T08:05:00+09:00",
-    "description": "Yellow/Pink Phase精度優先の候補絞り調整版"
-  },
-
-  "scoreWeights": {
-    "rank": 0.6,
-    "area": 0.4
-  },
-
-  "time": {
-    "mode": "multiply",
-    "exp": 0.8
+    "version": "scoring_config_v13_phasescore_20260830",
+    "createdAt": "2026-08-30T20:17:00+09:00",
+    "modifiedAt": "2026-09-01T11:17:55+09:00",
+    "description": "YellowはHistoricalScore×FinalPhaseScore、PinkはRealtimeBoostを加えたPhaseScore採用版"
   },
 
   "phase": {
-    "amplitude": 0.0,
-    "base": 1.0,
-    "floor": 1.0,
-
     "yellow": {
-      "baseCycleSec": 300,
+      "baseCycleSec": 345,
       "alpha": 0.15,
       "maxShiftSec": 150
     },
 
     "pink": {
-      "baseCycleSec": 300,
+      "baseCycleSec": 345,
       "alpha": 0.2,
       "maxShiftSec": 150
-    },
-
-    "display": {
-      "yellowThreshold": 0.80,
-      "pinkThreshold": 0.55
     }
   },
 
-  "candidate": {
-    "yellowBoost": 1.6,
-    "pinkBoost": 1.8,
-    "phasePower": 2.0,
+  "phaseError": {
+    "yellowThreshold": 0.80,
+    "pinkThreshold": 0.55,
+    "yellowLambda": 0.03,
+    "pinkLambda": 0.03
+  },
 
-    "poolPriority": {
-      "pink": 1.5,
-      "yellow": 1.2,
-      "other": 1
-    }
+  "realtimeBoost": {
+    "decaySec": 3600
   }
 }
