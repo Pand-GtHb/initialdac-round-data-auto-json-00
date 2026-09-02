@@ -4979,12 +4979,37 @@ function calcYellowCycle(player) {
   const maxShift =
     cfg.maxShiftSec ?? 45;
 
-  const clamped =
+  const clampedRaw =
     clamp(
       updated,
       -maxShift,
       maxShift
     );
+
+  /*
+   * サンプル数ガード
+   *
+   * 少数サンプル（外れ値1件など）による
+   * 急激な周期シフト・発振を防ぐため、
+   * minSamples に対するサンプル数の割合を
+   * 信頼度として adjust に乗算する。
+   *
+   * サンプルが十分（minSamples以上）
+   * であれば信頼度1.0（そのまま採用）。
+   */
+  const minSamples =
+    cfg.minSamples ?? 8;
+
+  const trust =
+    minSamples > 0
+      ? Math.min(
+          1,
+          values.length / minSamples
+        )
+      : 1;
+
+  const clamped =
+    clampedRaw * trust;
 
   State.phaseAdjust.yellow =
     clamped;
@@ -5083,12 +5108,34 @@ function calcPinkCycle(
   const maxShift =
     cfg.maxShiftSec || 45;
 
-  const clamped =
+  const clampedRaw =
     clamp(
       updated,
       -maxShift,
       maxShift
     );
+
+  /*
+   * サンプル数ガード
+   *
+   * 少数サンプル（外れ値1件など）による
+   * 急激な周期シフト・発振を防ぐため、
+   * minSamples に対するサンプル数の割合を
+   * 信頼度として adjust に乗算する。
+   */
+  const minSamples =
+    cfg.minSamples ?? 8;
+
+  const trust =
+    minSamples > 0
+      ? Math.min(
+          1,
+          foldedList.length / minSamples
+        )
+      : 1;
+
+  const clamped =
+    clampedRaw * trust;
 
   State.phaseAdjust.pink =
     clamped;
@@ -7169,20 +7216,37 @@ function saveCandidateEvent() {
   const now =
     Date.now();
 
+  /*
+   * ログ整合性修正
+   *
+   * 以前はここで -45〜45 のハードコード値を
+   * 使っていたため、実際のスコアリングに使う
+   * calcYellowCycle / calcPinkCycle（configの
+   * maxShiftSec を参照）と乖離していた。
+   * ここも同じ config を参照して統一する。
+   */
+  const yellowCfg =
+    State.scoringConfig
+      ?.phase?.yellow ?? {};
+
+  const pinkCfg =
+    State.scoringConfig
+      ?.phase?.pink ?? {};
+
   const yellowCycle =
-    345 +
+    (yellowCfg.baseCycleSec ?? 345) +
     clamp(
       State.phaseAdjust?.yellow ?? 0,
-      -45,
-      45
+      -(yellowCfg.maxShiftSec ?? 45),
+      (yellowCfg.maxShiftSec ?? 45)
     );
 
   const pinkCycle =
-    345 +
+    (pinkCfg.baseCycleSec ?? 345) +
     clamp(
       State.phaseAdjust?.pink ?? 0,
-      -45,
-      45
+      -(pinkCfg.maxShiftSec ?? 45),
+      (pinkCfg.maxShiftSec ?? 45)
     );
 
   /*
