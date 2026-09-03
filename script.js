@@ -43,7 +43,7 @@ const State = {
   viewerLastCopiedAt: null,
   scoringConfig: null,
   updateWatchTimer: null,
-  updateCheckRunning: false,
+  // updateCheckRunning は削除 (常に checkUpdate を実行)
   prefetchedRoundData: null,
   prefetchedForUpdateAt: "",
   prefetchInFlight: null,
@@ -589,6 +589,17 @@ async function fetchJSON(
 
   const MAX_RETRY = 3;
 
+  // タイムアウト値の設定
+  // 注: Viewer 運用環境のネットワークが不安定（WiFi 途切れ頻発）
+  // かつ SEGA データが 15 分ごと更新という制約を考慮
+  // DNS 解決 1-2秒 + 接続確立 1-2秒 + ファイル取得を考慮した時間設定
+  const TIMEOUT_MS =
+    path === 'latest_update.json'
+      ? 8000    // 1KB 程度のファイル（ただしネットワーク遅延を想定）
+      : path === 'integrated_data.json'
+      ? 20000   // 複数 MB の大きいファイル
+      : 10000;  // その他（標準）
+
   let lastError = null;
 
   for (
@@ -603,7 +614,7 @@ async function fetchJSON(
     const timeoutTimer =
       setTimeout(() => {
         controller.abort();
-      }, 10000);
+      }, TIMEOUT_MS);
 
     const startedAt =
       performance.now();
@@ -614,6 +625,10 @@ async function fetchJSON(
         `${BASE_URL}/${path}?t=${Date.now()}`,
         {
           cache,
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          },
           signal: controller.signal
         }
       );
@@ -657,7 +672,7 @@ async function fetchJSON(
         e.name === "AbortError"
       ) {
         logWarn(
-          `${path} Timeout`
+          `${path} Timeout (${TIMEOUT_MS}ms)`
         );
       }
 
@@ -1243,28 +1258,10 @@ async function prefetchLatestRoundData(
 }
 /* =========================================================
  [3800] Update Watch Core
+ 改善: updateCheckRunning を削除し、常に latest_update.json をチェック
+ prefetch が実行中の場合は、prefetchInFlight で制御
 ========================================================= */
 async function checkUpdate() {
-
-  /* =====================================
-   * 多重実行防止
-   * ===================================== */
-
-  if (State.updateCheckRunning) {
-
-    logWarn(
-      "checkUpdate重複実行を抑止"
-    );
-
-    console.warn(
-      "[checkUpdate] skipped (already running)"
-    );
-
-    return;
-  }
-
-  State.updateCheckRunning =
-    true;
 
   try {
 
@@ -1320,16 +1317,26 @@ async function checkUpdate() {
       }
 
       logWarn(
-        "新しいデータが公開されています。"
+        "新しいデータが公開されています。更新時刻: " + latest
       );
 
       /* =====================================
        * 先読み開始
        * ===================================== */
 
-      prefetchLatestRoundData(
-        latest
-      );
+      // prefetch が実行中でなければ開始
+      if (
+        !State.prefetchInFlight ||
+        State.prefetchInFlight.status === "fulfilled"
+      ) {
+        prefetchLatestRoundData(
+          latest
+        );
+      } else {
+        logWarn(
+          "Prefetch already in flight, skipping duplicate"
+        );
+      }
     }
 
   } catch (e) {
@@ -1339,10 +1346,6 @@ async function checkUpdate() {
       e.message
     );
 
-  } finally {
-
-    State.updateCheckRunning =
-      false;
   }
 }
 /* =========================================================
@@ -1914,7 +1917,7 @@ function startUpdateWatch() {
   }
 
   log(
-    "更新監視開始(30秒間隔)"
+    "✓ 更新監視開始(30秒間隔) - latest_update.json は常にチェック"
   );
 
   checkUpdate();
