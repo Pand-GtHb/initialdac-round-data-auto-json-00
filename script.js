@@ -3086,10 +3086,14 @@ function buildPhaseCycleRowHTML(mode) {
       filterToMs / 60000
     ) * 60000;
 
+  const filterToMinuteEndMs =
+    filterToFloorMs + 60000;
+
   /*
    * 現在時刻を基準にした周期中心のうち、
-   * Filter To（秒切り捨て）時刻以前となる最初の周期を
-   * 第1サイクルとする。境界時刻そのものは含める。
+   * Filter To（秒切り捨て）の分全体
+   * （xx:00〜xx:59）を含められる最初の周期を
+   * 第1サイクルとする。
    */
   const firstCycleIndex =
     Math.max(
@@ -3097,7 +3101,8 @@ function buildPhaseCycleRowHTML(mode) {
       Math.ceil(
         (
           phaseReferenceMs -
-          filterToFloorMs
+          filterToMinuteEndMs +
+          1
         ) /
         (cycleSec * 1000)
       )
