@@ -2791,8 +2791,11 @@ function showDetail(
 ========================================================= */
 /*
  * 学習中のYellow/Pink周期を「現在時刻」を起点として
- * 1〜3周期後の窓（許容誤差帯）で可視化するための
+ * 1〜3周期前（過去方向）の窓（許容誤差帯）で可視化するための
  * 汎用モニターバー。
+ *
+ * 左端＝現在時刻で固定し、右にいくほど過去
+ * （1周期前・2周期前・3周期前）を表す。
  *
  * 特定プレイヤーの実測値ではなく、学習済みの
  * 周期長・調整値・サンプル信頼度・許容誤差幅を
@@ -2848,7 +2851,8 @@ function buildPhaseCycleWindowHTML(
   halfWidthSec,
   totalSec,
   decayLambda,
-  colorRgb
+  colorRgb,
+  textColor
 ) {
 
   const centerSec =
@@ -2874,12 +2878,24 @@ function buildPhaseCycleWindowHTML(
       -decayLambda * n
     );
 
+  /*
+   * 遠い周期ほど帯を薄く（信頼度低下を表現）
+   * ただし薄すぎて視認できなくならないよう
+   * 下限を設ける。
+   */
   const opacity =
-    (0.35 + 0.5 * decay).toFixed(2);
+    Math.max(
+      0.5,
+      Math.min(1, decay)
+    ).toFixed(2);
 
+  /*
+   * 左端＝現在時刻を起点として過去にさかのぼる。
+   * n周期前の中心時刻 = 現在時刻 - n×周期長
+   */
   const centerClock =
     formatClockHms(
-      Date.now() + centerSec * 1000
+      Date.now() - centerSec * 1000
     );
 
   return `
@@ -2892,22 +2908,20 @@ function buildPhaseCycleWindowHTML(
         bottom:0;
         background:rgba(${colorRgb},${opacity});
         border-radius:3px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
       "
-      title="第${n}周期：${centerClock} 頃（許容 ±${Math.round(halfWidthSec)}秒）"
-    ></div>
-    <div
-      style="
-        position:absolute;
-        left:${leftPct}%;
-        width:${Math.max(widthPct, 10)}%;
-        top:100%;
-        margin-top:2px;
-        font-size:10px;
-        color:#665c00;
-        white-space:nowrap;
-      "
+      title="${n}周期前：${centerClock} 頃（許容 ±${Math.round(halfWidthSec)}秒）"
     >
-      +${n}周期 ${centerClock}
+      <span
+        style="
+          font-size:10px;
+          font-weight:bold;
+          color:${textColor};
+          white-space:nowrap;
+        "
+      >${centerClock}</span>
     </div>
   `;
 }
@@ -2980,10 +2994,20 @@ function buildPhaseCycleRowHTML(mode) {
   const totalSec =
     cycleSec * 3;
 
+  /*
+   * 詳細表示・候補表示の行ハイライトと同じ色に統一
+   * .match-row-yellow { background-color:#FFFFCC }
+   * .match-row-pink   { background-color:#FFE4EC }
+   */
   const colorRgb =
     isPink
-      ? "233,30,99"
-      : "255,193,7";
+      ? "255,228,236"
+      : "255,255,204";
+
+  const textColor =
+    isPink
+      ? "#ad1457"
+      : "#665c00";
 
   const windows =
     [1, 2, 3]
@@ -2994,7 +3018,8 @@ function buildPhaseCycleRowHTML(mode) {
           halfWidthSec,
           totalSec,
           lambda,
-          colorRgb
+          colorRgb,
+          textColor
         )
       )
       .join("");
@@ -3006,7 +3031,7 @@ function buildPhaseCycleRowHTML(mode) {
     isPink ? "#c2185b" : "#a67c00";
 
   return `
-    <div style="margin-bottom:20px;">
+    <div style="margin-bottom:14px;">
 
       <div style="font-size:12px; color:#555; margin-bottom:4px;">
         <strong style="color:${labelColor};">${label}周期モニター</strong>
@@ -3018,7 +3043,7 @@ function buildPhaseCycleRowHTML(mode) {
       <div
         style="
           position:relative;
-          height:16px;
+          height:20px;
           background:#eee;
           border-radius:4px;
         "
@@ -3050,7 +3075,7 @@ function buildPhaseCycleMonitorHTML() {
       style="
         border:1px solid #ddd;
         border-radius:6px;
-        padding:10px 14px 24px;
+        padding:10px 14px;
         margin-bottom:14px;
         background:#fafafa;
       "
