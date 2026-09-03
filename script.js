@@ -2997,7 +2997,7 @@ function buildPhaseCycleRowHTML(mode) {
       : 100;
 
   const totalSec =
-    cycleSec * 3;
+    cycleSec * 5;
 
   /*
    * 詳細表示・候補表示の行ハイライトと同じ色に統一
@@ -3015,7 +3015,7 @@ function buildPhaseCycleRowHTML(mode) {
       : "#665c00";
 
   const windows =
-    [1, 2, 3]
+    [1, 2, 3, 4, 5]
       .map(n =>
         buildPhaseCycleWindowHTML(
           cycleSec,
@@ -3038,10 +3038,10 @@ function buildPhaseCycleRowHTML(mode) {
     <div style="margin-bottom:14px;">
 
       <div style="font-size:12px; color:#555; margin-bottom:4px;">
-        <strong style="color:${labelColor};">${label}周期モニター</strong>
-        ：現在周期 ${cycleSec.toFixed(1)}秒（基準345秒 ${adjust >= 0 ? "+" : ""}${adjust.toFixed(1)}秒）
-        ／サンプル ${samples}/${minSamples}（信頼度${trustPct}%）
-        ／許容誤差 ±${halfWidthSec.toFixed(0)}秒（しきい値${threshold}）
+        <strong style="color:${labelColor};">${label}</strong>
+        ：周期 ${cycleSec.toFixed(1)}秒（基準345秒 ${adjust >= 0 ? "+" : ""}${adjust.toFixed(1)}秒）
+        ／信頼度${trustPct}%
+        ／許容 ±${halfWidthSec.toFixed(0)}秒（しきい値${threshold}）
       </div>
 
       <div
