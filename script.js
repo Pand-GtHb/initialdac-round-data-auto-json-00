@@ -2979,6 +2979,39 @@ function buildPhaseCycleWindowHTML(
   `;
 }
 /* =========================================================
+ [6152a] Phase Cycle Monitor:getPhaseWindowHalfWidthSec
+========================================================= */
+function getPhaseWindowHalfWidthSec(
+  cycleSec,
+  cycleCount,
+  threshold,
+  lambda
+) {
+  const decay =
+    Math.exp(
+      -Number(lambda) *
+      Number(cycleCount)
+    );
+
+  const requiredPhaseScore =
+    decay > 0
+      ? Number(threshold) / decay
+      : Infinity;
+
+  if (
+    !isFinite(requiredPhaseScore) ||
+    requiredPhaseScore >= 1
+  ) {
+    return 0;
+  }
+
+  return Math.max(
+    0,
+    (1 - requiredPhaseScore) *
+    (cycleSec / 2)
+  );
+}
+/* =========================================================
  [6153] Phase Cycle Monitor:buildPhaseCycleRowHTML
 ========================================================= */
 function buildPhaseCycleRowHTML(mode) {
@@ -3015,10 +3048,11 @@ function buildPhaseCycleRowHTML(mode) {
       ] ?? (isPink ? 0.55 : 0.7)
     );
 
-  const halfWidthSec =
-    Math.max(
-      0,
-      (1 - threshold) * (cycleSec / 2)
+  const lambda =
+    Number(
+      errCfg[
+        isPink ? "pinkLambda" : "yellowLambda"
+      ] ?? 0.03
     );
 
   const samples =
@@ -3043,29 +3077,11 @@ function buildPhaseCycleRowHTML(mode) {
   const filterToMs =
     getFilterToMs();
 
+  const totalSec =
+    cycleSec * 5;
+
   const phaseReferenceMs =
     nowMs;
-
-  const filterToFloorMs =
-    Math.floor(
-      filterToMs / 60000
-    ) * 60000;
-
-  const firstCycleIndex =
-    Math.max(
-      0,
-      Math.ceil(
-        (
-          phaseReferenceMs -
-          filterToFloorMs
-        ) /
-        (cycleSec * 1000)
-      )
-    );
-
-  const totalSec =
-    cycleSec *
-    (firstCycleIndex + 5);
 
   const staleSec =
     Math.max(
@@ -3110,22 +3126,24 @@ function buildPhaseCycleRowHTML(mode) {
 
   const windows =
     [0, 1, 2, 3, 4]
-      .map(offset => {
-        const n =
-          firstCycleIndex + offset;
-
-        return buildPhaseCycleWindowHTML(
+      .map(n =>
+        buildPhaseCycleWindowHTML(
           cycleSec,
           n,
-          halfWidthSec,
+          getPhaseWindowHalfWidthSec(
+            cycleSec,
+            n,
+            threshold,
+            lambda
+          ),
           totalSec,
           colorRgb,
           textColor,
           rightOffsetPct,
           rightWidthPct,
           phaseReferenceMs
-        );
-      })
+        )
+      )
       .join("");
 
   const label =
@@ -3141,7 +3159,7 @@ function buildPhaseCycleRowHTML(mode) {
         <strong style="color:${labelColor};">${label}</strong>
         ：周期 ${cycleSec.toFixed(1)}秒（基準345秒 ${adjust >= 0 ? "+" : ""}${adjust.toFixed(1)}秒）
         ／信頼度${trustPct}%
-        ／許容 ±${halfWidthSec.toFixed(0)}秒（しきい値${threshold}）
+        ／許容幅はdecay反映（しきい値${threshold}）
       </div>
 
       <div
