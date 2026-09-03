@@ -2930,10 +2930,12 @@ function buildPhaseCycleWindowHTML(
     );
 
   /*
-   * PhaseグラフはFilterのTo時刻（秒切り捨て）を起点として
+   * 表のYellow/Pink判定と同じく現在時刻を起点として
    * n周期前の中心時刻を表示する。
-   * 第1帯（n=0）はFilterのTo時刻ジャスト以前を示す。
-   * 表のYellow/Pink判定（現在時刻基準）とは独立した表示とする。
+   * 第1帯はFilterのTo時刻（秒切り捨て）より前になる
+   * 最初の周期位置から開始する。
+   * 黒領域はデータの古さを示す表示であり、
+   * 周期計算の基準時刻には使用しない。
    *
    * バー内表示は秒単位の厳密性を求めないため
    * 時:分のみ（formatClockHm）。
@@ -3035,9 +3037,6 @@ function buildPhaseCycleRowHTML(mode) {
         )
       : 100;
 
-  const totalSec =
-    cycleSec * 5;
-
   const nowMs =
     Date.now();
 
@@ -3045,9 +3044,28 @@ function buildPhaseCycleRowHTML(mode) {
     getFilterToMs();
 
   const phaseReferenceMs =
+    nowMs;
+
+  const filterToFloorMs =
     Math.floor(
       filterToMs / 60000
     ) * 60000;
+
+  const firstCycleIndex =
+    Math.max(
+      0,
+      Math.ceil(
+        (
+          phaseReferenceMs -
+          filterToFloorMs
+        ) /
+        (cycleSec * 1000)
+      )
+    );
+
+  const totalSec =
+    cycleSec *
+    (firstCycleIndex + 5);
 
   const staleSec =
     Math.max(
@@ -3092,8 +3110,11 @@ function buildPhaseCycleRowHTML(mode) {
 
   const windows =
     [0, 1, 2, 3, 4]
-      .map(n =>
-        buildPhaseCycleWindowHTML(
+      .map(offset => {
+        const n =
+          firstCycleIndex + offset;
+
+        return buildPhaseCycleWindowHTML(
           cycleSec,
           n,
           halfWidthSec,
@@ -3103,8 +3124,8 @@ function buildPhaseCycleRowHTML(mode) {
           rightOffsetPct,
           rightWidthPct,
           phaseReferenceMs
-        )
-      )
+        );
+      })
       .join("");
 
   const label =
