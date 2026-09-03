@@ -2930,10 +2930,10 @@ function buildPhaseCycleWindowHTML(
     );
 
   /*
-   * 表のYellow/Pink判定と同じく現在時刻を起点として
+   * PhaseグラフはFilterのTo時刻（秒切り捨て）を起点として
    * n周期前の中心時刻を表示する。
-   * 黒領域はデータの古さを示す表示であり、
-   * 周期計算の基準時刻には使用しない。
+   * 第1帯（n=0）はFilterのTo時刻ジャスト以前を示す。
+   * 表のYellow/Pink判定（現在時刻基準）とは独立した表示とする。
    *
    * バー内表示は秒単位の厳密性を求めないため
    * 時:分のみ（formatClockHm）。
@@ -3044,6 +3044,11 @@ function buildPhaseCycleRowHTML(mode) {
   const filterToMs =
     getFilterToMs();
 
+  const phaseReferenceMs =
+    Math.floor(
+      filterToMs / 60000
+    ) * 60000;
+
   const staleSec =
     Math.max(
       0,
@@ -3097,7 +3102,7 @@ function buildPhaseCycleRowHTML(mode) {
           textColor,
           rightOffsetPct,
           rightWidthPct,
-          nowMs
+          phaseReferenceMs
         )
       )
       .join("");
