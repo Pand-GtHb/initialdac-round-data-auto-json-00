@@ -3077,11 +3077,34 @@ function buildPhaseCycleRowHTML(mode) {
   const filterToMs =
     getFilterToMs();
 
-  const totalSec =
-    cycleSec * 5;
-
   const phaseReferenceMs =
     nowMs;
+
+  const filterToFloorMs =
+    Math.floor(
+      filterToMs / 60000
+    ) * 60000;
+
+  /*
+   * 現在時刻を基準にした周期中心のうち、
+   * Filter To（秒切り捨て）時刻以前となる最初の周期を
+   * 第1サイクルとする。境界時刻そのものは含める。
+   */
+  const firstCycleIndex =
+    Math.max(
+      0,
+      Math.ceil(
+        (
+          phaseReferenceMs -
+          filterToFloorMs
+        ) /
+        (cycleSec * 1000)
+      )
+    );
+
+  const totalSec =
+    cycleSec *
+    (firstCycleIndex + 5);
 
   const staleSec =
     Math.max(
@@ -3126,8 +3149,11 @@ function buildPhaseCycleRowHTML(mode) {
 
   const windows =
     [0, 1, 2, 3, 4]
-      .map(n =>
-        buildPhaseCycleWindowHTML(
+      .map(offset => {
+        const n =
+          firstCycleIndex + offset;
+
+        return buildPhaseCycleWindowHTML(
           cycleSec,
           n,
           getPhaseWindowHalfWidthSec(
@@ -3142,8 +3168,8 @@ function buildPhaseCycleRowHTML(mode) {
           rightOffsetPct,
           rightWidthPct,
           phaseReferenceMs
-        )
-      )
+        );
+      })
       .join("");
 
   const label =
