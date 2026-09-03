@@ -2787,6 +2787,286 @@ function showDetail(
   );
 }
 /* =========================================================
+ [6150] Phase Cycle Monitor:formatClockHms
+========================================================= */
+/*
+ * 学習中のYellow/Pink周期を「現在時刻」を起点として
+ * 1〜3周期後の窓（許容誤差帯）で可視化するための
+ * 汎用モニターバー。
+ *
+ * 特定プレイヤーの実測値ではなく、学習済みの
+ * 周期長・調整値・サンプル信頼度・許容誤差幅を
+ * 一目で確認できるようにする目的の表示。
+ */
+function formatClockHms(ms) {
+
+  return new Date(ms).toLocaleTimeString(
+    "ja-JP",
+    { hour12: false }
+  );
+}
+/* =========================================================
+ [6151] Phase Cycle Monitor:getPinkSampleCount
+========================================================= */
+function getPinkSampleCount() {
+
+  const targets =
+    Object.values(
+      State.pinkTargets || {}
+    );
+
+  let count = 0;
+
+  for (const entry of targets) {
+
+    const history =
+      entry.history || [];
+
+    if (history.length < 2) {
+      continue;
+    }
+
+    const latest =
+      Number(history[history.length - 1] || 0);
+
+    const prev =
+      Number(history[history.length - 2] || 0);
+
+    if (latest && prev) {
+      count++;
+    }
+  }
+
+  return count;
+}
+/* =========================================================
+ [6152] Phase Cycle Monitor:buildPhaseCycleWindowHTML
+========================================================= */
+function buildPhaseCycleWindowHTML(
+  cycleSec,
+  n,
+  halfWidthSec,
+  totalSec,
+  decayLambda,
+  colorRgb
+) {
+
+  const centerSec =
+    cycleSec * n;
+
+  const leftPct =
+    Math.max(
+      0,
+      ((centerSec - halfWidthSec) / totalSec) * 100
+    );
+
+  const widthPct =
+    Math.max(
+      0.5,
+      Math.min(
+        100 - leftPct,
+        ((halfWidthSec * 2) / totalSec) * 100
+      )
+    );
+
+  const decay =
+    Math.exp(
+      -decayLambda * n
+    );
+
+  const opacity =
+    (0.35 + 0.5 * decay).toFixed(2);
+
+  const centerClock =
+    formatClockHms(
+      Date.now() + centerSec * 1000
+    );
+
+  return `
+    <div
+      style="
+        position:absolute;
+        left:${leftPct}%;
+        width:${widthPct}%;
+        top:0;
+        bottom:0;
+        background:rgba(${colorRgb},${opacity});
+        border-radius:3px;
+      "
+      title="第${n}周期：${centerClock} 頃（許容 ±${Math.round(halfWidthSec)}秒）"
+    ></div>
+    <div
+      style="
+        position:absolute;
+        left:${leftPct}%;
+        width:${Math.max(widthPct, 10)}%;
+        top:100%;
+        margin-top:2px;
+        font-size:10px;
+        color:#665c00;
+        white-space:nowrap;
+      "
+    >
+      +${n}周期 ${centerClock}
+    </div>
+  `;
+}
+/* =========================================================
+ [6153] Phase Cycle Monitor:buildPhaseCycleRowHTML
+========================================================= */
+function buildPhaseCycleRowHTML(mode) {
+
+  const isPink =
+    mode === "pink";
+
+  const cfg =
+    State.scoringConfig
+      ?.phase?.[mode] ?? {};
+
+  const errCfg =
+    State.scoringConfig
+      ?.phaseError ?? {};
+
+  const cycleSec =
+    isPink
+      ? calcPinkCycle()
+      : calcYellowCycle();
+
+  const adjust =
+    Number(
+      (
+        isPink
+          ? State.phaseAdjust?.pink
+          : State.phaseAdjust?.yellow
+      ) ?? 0
+    );
+
+  const threshold =
+    Number(
+      errCfg[
+        isPink ? "pinkThreshold" : "yellowThreshold"
+      ] ?? (isPink ? 0.55 : 0.7)
+    );
+
+  const lambda =
+    Number(
+      errCfg[
+        isPink ? "pinkLambda" : "yellowLambda"
+      ] ?? 0.03
+    );
+
+  const halfWidthSec =
+    Math.max(
+      0,
+      (1 - threshold) * (cycleSec / 2)
+    );
+
+  const samples =
+    isPink
+      ? getPinkSampleCount()
+      : (State.yellowSamples?.length ?? 0);
+
+  const minSamples =
+    Number(cfg.minSamples ?? 8);
+
+  const trustPct =
+    minSamples > 0
+      ? Math.min(
+          100,
+          Math.round((samples / minSamples) * 100)
+        )
+      : 100;
+
+  const totalSec =
+    cycleSec * 3;
+
+  const colorRgb =
+    isPink
+      ? "233,30,99"
+      : "255,193,7";
+
+  const windows =
+    [1, 2, 3]
+      .map(n =>
+        buildPhaseCycleWindowHTML(
+          cycleSec,
+          n,
+          halfWidthSec,
+          totalSec,
+          lambda,
+          colorRgb
+        )
+      )
+      .join("");
+
+  const label =
+    isPink ? "Pink" : "Yellow";
+
+  const labelColor =
+    isPink ? "#c2185b" : "#a67c00";
+
+  return `
+    <div style="margin-bottom:20px;">
+
+      <div style="font-size:12px; color:#555; margin-bottom:4px;">
+        <strong style="color:${labelColor};">${label}周期モニター</strong>
+        ：現在周期 ${cycleSec.toFixed(1)}秒（基準345秒 ${adjust >= 0 ? "+" : ""}${adjust.toFixed(1)}秒）
+        ／サンプル ${samples}/${minSamples}（信頼度${trustPct}%）
+        ／許容誤差 ±${halfWidthSec.toFixed(0)}秒（しきい値${threshold}）
+      </div>
+
+      <div
+        style="
+          position:relative;
+          height:16px;
+          background:#eee;
+          border-radius:4px;
+        "
+      >
+        <div
+          style="
+            position:absolute;
+            left:0;
+            top:-2px;
+            bottom:-2px;
+            width:2px;
+            background:#333;
+          "
+          title="現在時刻 ${formatClockHms(Date.now())}"
+        ></div>
+        ${windows}
+      </div>
+
+    </div>
+  `;
+}
+/* =========================================================
+ [6154] Phase Cycle Monitor:buildPhaseCycleMonitorHTML
+========================================================= */
+function buildPhaseCycleMonitorHTML() {
+
+  return `
+    <div
+      style="
+        border:1px solid #ddd;
+        border-radius:6px;
+        padding:10px 14px 24px;
+        margin-bottom:14px;
+        background:#fafafa;
+      "
+    >
+      ${buildPhaseCycleRowHTML("yellow")}
+      ${buildPhaseCycleRowHTML("pink")}
+
+      <div style="font-size:10px; color:#888;">
+        ※学習周期の目安を示す一般モニターです（特定プレイヤーの実測値ではありません）。
+        帯の色が薄いほど周期が進み、スコアの減衰（decay）が効いていることを表します。
+      </div>
+
+    </div>
+  `;
+}
+/* =========================================================
  [6200] Player Row Renderer
 ========================================================= */
 function renderDetailTable(
@@ -2807,6 +3087,8 @@ function renderDetailTable(
     );
 
   area.innerHTML = `
+    ${buildPhaseCycleMonitorHTML()}
+
     <h3>
 
       <span style="margin-right:8px;">
@@ -4006,6 +4288,19 @@ function registerPinkTarget(
 
   savePinkStateToStorage();
 
+  /*
+   * Yellowと同様、新しいPink履歴が増えた直後に
+   * 明示的に学習（EMA更新）を行う。
+   * これ以外（getCurrentCycle経由の通常参照）では
+   * calcPinkCycle は読み取り専用として動作する。
+   */
+  try {
+    calcPinkCycle(null, { learn: true });
+    savePinkStateToStorage();
+  } catch (e) {
+    console.warn("[pink] calcPinkCycle failed:", e);
+  }
+
   return entry;
 
 }
@@ -4302,7 +4597,7 @@ function registerYellowSample(
   // Immediately update learned yellow adjustment so
   // subsequent candidate generation uses the new sample.
   try {
-    calcYellowCycle();
+    calcYellowCycle(null, { learn: true });
     savePinkStateToStorage();
   } catch (e) {
     console.warn("[yellow] calcYellowCycle failed:", e);
@@ -4870,13 +5165,45 @@ function getCurrentCycle(
 /* =========================================================
  [7220] Phase Engine:calcYellowCycle
 ========================================================= */
-function calcYellowCycle(player) {
+function calcYellowCycle(player, opts = {}) {
+
+  const learn =
+    Boolean(opts.learn);
 
   const cfg =
     State.scoringConfig?.phase?.yellow ?? {};
 
   const base =
     cfg.baseCycleSec ?? 345;
+
+  const maxShift =
+    cfg.maxShiftSec ?? 45;
+
+  /*
+   * 読み取り専用モード（既定）
+   *
+   * getCurrentCycle経由の参照（行ハイライト・スコアリング等）は
+   * 1回の描画で何十〜何百回も呼ばれる。そのたびにここで
+   * EMA更新（学習）を行うと、同じサンプル集合に対して
+   * 呼び出し回数分だけ学習が繰り返し進んでしまい、
+   * 本来「新しいサンプルが増えた時だけ」働くはずの学習が
+   * 実質的に毎描画で暴走する不具合になる。
+   *
+   * そのため、新しいサンプル登録直後（registerYellowSample）で
+   * learn:true を明示した時だけ学習・上書きを行い、
+   * それ以外（既定）は現在保持している adjust を
+   * そのまま読むだけの純粋な参照とする。
+   */
+  if (!learn) {
+    return (
+      base +
+      clamp(
+        State.phaseAdjust?.yellow ?? 0,
+        -maxShift,
+        maxShift
+      )
+    );
+  }
 
   const samples =
     State.yellowSamples ?? [];
@@ -4886,8 +5213,8 @@ function calcYellowCycle(player) {
       base +
       clamp(
         State.phaseAdjust?.yellow ?? 0,
-        -(cfg.maxShiftSec ?? 45),
-        (cfg.maxShiftSec ?? 45)
+        -maxShift,
+        maxShift
       )
     );
   }
@@ -4976,9 +5303,6 @@ function calcYellowCycle(player) {
       cfg.alpha ?? 0.2
     );
 
-  const maxShift =
-    cfg.maxShiftSec ?? 45;
-
   const clampedRaw =
     clamp(
       updated,
@@ -5020,8 +5344,12 @@ function calcYellowCycle(player) {
  [7230] Phase Engine:calcPinkCycle
 ========================================================= */
 function calcPinkCycle(
-  player
+  player,
+  opts = {}
 ) {
+
+  const learn =
+    Boolean(opts.learn);
 
   const cfg =
     State.scoringConfig
@@ -5029,6 +5357,28 @@ function calcPinkCycle(
 
   const base =
     cfg.baseCycleSec || 345;
+
+  const maxShift =
+    cfg.maxShiftSec || 45;
+
+  /*
+   * 読み取り専用モード（既定）
+   *
+   * Yellowと同様、getCurrentCycle経由の参照で
+   * 毎回EMA更新してしまう不具合を避けるため、
+   * learn:true が明示された時（新規Pinkサンプル登録直後）
+   * だけ学習・上書きを行う。
+   */
+  if (!learn) {
+    return (
+      base +
+      clamp(
+        State.phaseAdjust?.pink ?? 0,
+        -maxShift,
+        maxShift
+      )
+    );
+  }
 
   const foldedList = [];
 
@@ -5076,9 +5426,11 @@ function calcPinkCycle(
 
     return (
       base +
-      (
+      clamp(
         State.phaseAdjust
-          ?.pink ?? 0
+          ?.pink ?? 0,
+        -maxShift,
+        maxShift
       )
     );
   }
@@ -5104,9 +5456,6 @@ function calcPinkCycle(
       avg,
       cfg.alpha || 0.3
     );
-
-  const maxShift =
-    cfg.maxShiftSec || 45;
 
   const clampedRaw =
     clamp(
@@ -6131,6 +6480,8 @@ function renderMatchingTable() {
     State.matchingList.length;
 
   area.innerHTML = `
+    ${buildPhaseCycleMonitorHTML()}
+
     <h3>
       マッチング候補：
       <span id="matchingCount">
