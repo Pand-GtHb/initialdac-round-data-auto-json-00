@@ -2829,6 +2829,37 @@ function formatClockHm(ms) {
   return `${hh}:${mm}`;
 }
 /* =========================================================
+ [6150c] Phase Cycle Monitor:getFilterToMs
+========================================================= */
+function getFilterToMs() {
+
+  const generatedAt =
+    parseDateJST(
+      State.generatedAt
+    );
+
+  if (
+    generatedAt &&
+    isFinite(generatedAt.getTime())
+  ) {
+    return generatedAt.getTime();
+  }
+
+  const latestUpdateAt =
+    parseDateJST(
+      State.latestUpdateAt
+    );
+
+  if (
+    latestUpdateAt &&
+    isFinite(latestUpdateAt.getTime())
+  ) {
+    return latestUpdateAt.getTime();
+  }
+
+  return Date.now();
+}
+/* =========================================================
  [6151] Phase Cycle Monitor:getPinkSampleCount
 ========================================================= */
 function getPinkSampleCount() {
@@ -2871,16 +2902,20 @@ function buildPhaseCycleWindowHTML(
   halfWidthSec,
   totalSec,
   colorRgb,
-  textColor
+  textColor,
+  rightOffsetPct,
+  rightWidthPct
 ) {
 
   const centerSec =
     cycleSec * n;
 
   const leftPct =
+    rightOffsetPct +
     Math.max(
       0,
-      ((centerSec - halfWidthSec) / totalSec) * 100
+      ((centerSec - halfWidthSec) / totalSec) *
+        rightWidthPct
     );
 
   const widthPct =
@@ -2888,7 +2923,8 @@ function buildPhaseCycleWindowHTML(
       0.5,
       Math.min(
         100 - leftPct,
-        ((halfWidthSec * 2) / totalSec) * 100
+        ((halfWidthSec * 2) / totalSec) *
+          rightWidthPct
       )
     );
 
@@ -2999,6 +3035,38 @@ function buildPhaseCycleRowHTML(mode) {
   const totalSec =
     cycleSec * 5;
 
+  const nowMs =
+    Date.now();
+
+  const filterToMs =
+    getFilterToMs();
+
+  const staleSec =
+    Math.max(
+      0,
+      (nowMs - filterToMs) / 1000
+    );
+
+  /*
+   * 左端＝現在時刻、右方向＝過去。
+   * 黒領域は現在時刻からFilterのTo時刻までを示す。
+   * 運用上の最大45分を基準に、全体の20%を上限とする。
+   */
+  const staleMaxSec =
+    45 * 60;
+
+  const stalePct =
+    Math.min(
+      20,
+      (staleSec / staleMaxSec) * 20
+    );
+
+  const rightOffsetPct =
+    stalePct;
+
+  const rightWidthPct =
+    100 - stalePct;
+
   /*
    * 詳細表示・候補表示の行ハイライトと同じ色に統一
    * .match-row-yellow { background-color:#FFFFCC }
@@ -3023,7 +3091,9 @@ function buildPhaseCycleRowHTML(mode) {
           halfWidthSec,
           totalSec,
           colorRgb,
-          textColor
+          textColor,
+          rightOffsetPct,
+          rightWidthPct
         )
       )
       .join("");
@@ -3050,8 +3120,32 @@ function buildPhaseCycleRowHTML(mode) {
           height:26px;
           background:#eee;
           border-radius:4px;
+          overflow:hidden;
         "
       >
+        <div
+          style="
+            position:absolute;
+            left:0;
+            top:0;
+            bottom:0;
+            width:${stalePct}%;
+            background:#111;
+            color:#fff;
+            display:flex;
+            align-items:center;
+            justify-content:flex-start;
+            padding-left:4px;
+            box-sizing:border-box;
+            font-size:14px;
+            font-weight:bold;
+            white-space:nowrap;
+            z-index:2;
+          "
+          title="FilterのTo：${formatClockHms(filterToMs)}"
+        >
+          ${formatClockHm(filterToMs)}
+        </div>
         <div
           style="
             position:absolute;
@@ -3061,7 +3155,7 @@ function buildPhaseCycleRowHTML(mode) {
             width:2px;
             background:#333;
           "
-          title="現在時刻 ${formatClockHms(Date.now())}"
+          title="現在時刻 ${formatClockHms(nowMs)}"
         ></div>
         ${windows}
       </div>
