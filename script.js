@@ -2929,8 +2929,9 @@ function buildPhaseCycleWindowHTML(
     );
 
   /*
-   * 左端＝現在時刻を起点として過去にさかのぼる。
-   * n周期前の中心時刻 = 現在時刻 - n×周期長
+   * 黒領域の右端（FilterのTo時刻）を起点として
+   * n周期前の中心時刻を表示する。
+   * n周期前の中心時刻 = FilterのTo - n×周期長
    *
    * バー内表示は秒単位の厳密性を求めないため
    * 時:分のみ（formatClockHm）。
@@ -2938,12 +2939,12 @@ function buildPhaseCycleWindowHTML(
    */
   const centerClockShort =
     formatClockHm(
-      Date.now() - centerSec * 1000
+      getFilterToMs() - centerSec * 1000
     );
 
   const centerClockFull =
     formatClockHms(
-      Date.now() - centerSec * 1000
+      getFilterToMs() - centerSec * 1000
     );
 
   return `
@@ -3134,8 +3135,8 @@ function buildPhaseCycleRowHTML(mode) {
             color:#fff;
             display:flex;
             align-items:center;
-            justify-content:flex-start;
-            padding-left:4px;
+            justify-content:flex-end;
+            padding-right:4px;
             box-sizing:border-box;
             font-size:14px;
             font-weight:bold;
