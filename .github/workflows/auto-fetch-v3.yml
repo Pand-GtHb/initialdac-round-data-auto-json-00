@@ -36,28 +36,42 @@ jobs:
           echo "round=$ROUND" >> $GITHUB_OUTPUT
 
       # ▼ ③ 全エリア JSON を並列取得
-      - name: Fetch JSON (parallel 20)
+      - name: Fetch JSON (parallel 20) with failure tracking
         run: |
           mkdir -p tmp
           export ROUND=${{ steps.round.outputs.round }}
+          FAILED_AREAS=""
+          SUCCESS_COUNT=0
+          FAIL_COUNT=0
 
           seq 0 62 | xargs -I{} -P 20 sh -c '
             AREA={}
             URL="https://initiald.sega.jp/inidac/json/ranking/v1/roundPoint/rp_round-${ROUND}_area-${AREA}.json"
             OUT="tmp/area-${AREA}.json"
 
-            echo "Fetching $URL"
+            echo "Fetching area $AREA..."
 
             if curl -f -s "$URL" -o "$OUT"; then
-              echo "OK: area $AREA"
+              echo "✓ OK: area $AREA"
             else
               echo "{}" > "$OUT"
-              echo "FAILED: area $AREA → {} に置換"
+              echo "✗ FAILED: area $AREA → {} に置換"
+              echo "$AREA" >> tmp/failed_areas.txt
             fi
           '
 
-      # ▼ ④ JSON統合
-      - name: Merge JSON (reduce optimized)
+          # 失敗したエリアをカウント
+          if [ -f tmp/failed_areas.txt ]; then
+            FAIL_COUNT=$(wc -l < tmp/failed_areas.txt)
+            FAILED_AREAS=$(tr '\n' ',' < tmp/failed_areas.txt | sed 's/,$//')
+            echo "⚠ Failed areas: $FAILED_AREAS ($FAIL_COUNT / 63)"
+          fi
+
+          SUCCESS_COUNT=$(find tmp -name 'area-*.json' -type f | wc -l)
+          echo "📊 Fetched $SUCCESS_COUNT / 63 areas successfully"
+
+      # ▼ ④ JSON統合・検証
+      - name: Merge & Validate JSON
         run: |
           jq -n '
             [inputs as $data |
@@ -91,20 +105,71 @@ jobs:
             }
           ' tmp/*.json > integrated_data.json
 
-      # ▼ ⑤ minify
-      - name: Minify JSON
-        run: |
-          jq -c '.' integrated_data.json > integrated_data.min.json
-          mv integrated_data.min.json integrated_data.json
+          # ① ファイルサイズ検証
+          SIZE=$(stat -c%s integrated_data.json 2>/dev/null || stat -f%z integrated_data.json 2>/dev/null)
+          if [ -z "$SIZE" ] || [ "$SIZE" -lt 1000 ]; then
+            echo "✗ ERROR: integrated_data.json too small: ${SIZE:-0} bytes (minimum 1000 bytes required)"
+            exit 1
+          fi
+          echo "✓ File size OK: $SIZE bytes"
 
-      # ▼ ⑥ latest_update.json（JST）
+          # ② JSON 構造検証
+          if ! jq empty integrated_data.json 2>/dev/null; then
+            echo "✗ ERROR: integrated_data.json is invalid JSON"
+            exit 1
+          fi
+          echo "✓ JSON structure valid"
+
+          # ③ records 数検証
+          RECORDS=$(jq '.records | length' integrated_data.json 2>/dev/null || echo 0)
+          if [ "$RECORDS" -lt 500 ]; then
+            echo "✗ ERROR: Too few records: $RECORDS (minimum 500 required)"
+            exit 1
+          fi
+          echo "✓ Records count OK: $RECORDS records"
+
+          # ④ generatedAt タイムスタンプ検証
+          GENERATED_AT=$(jq -r '.generatedAt // empty' integrated_data.json 2>/dev/null)
+          if [ -z "$GENERATED_AT" ]; then
+            echo "✗ ERROR: generatedAt timestamp missing"
+            exit 1
+          fi
+          echo "✓ Generated at: $GENERATED_AT"
+
+      # ▼ ⑤ minify・検証
+      - name: Minify & Verify JSON
+        run: |
+          if ! jq -c '.' integrated_data.json > integrated_data.min.json 2>/dev/null; then
+            echo "✗ ERROR: Minify failed"
+            exit 1
+          fi
+
+          # minify後のファイルサイズ検証
+          MINIFIED_SIZE=$(stat -c%s integrated_data.min.json 2>/dev/null || stat -f%z integrated_data.min.json 2>/dev/null)
+          if [ -z "$MINIFIED_SIZE" ] || [ "$MINIFIED_SIZE" -lt 1000 ]; then
+            echo "✗ ERROR: Minified file too small: ${MINIFIED_SIZE:-0} bytes"
+            exit 1
+          fi
+
+          if [ ! -s integrated_data.min.json ]; then
+            echo "✗ ERROR: Minify produced empty file"
+            exit 1
+          fi
+
+          mv integrated_data.min.json integrated_data.json
+          echo "✓ Minify succeeded (${MINIFIED_SIZE} bytes)"
+
+      # ▼ ⑥ latest_update.json（JST）生成
+      # 注意：ここまでの全ステップが成功した直後に生成されるため、
+      # タイムスタンプは integrated_data.json が完全に検証されたことを示す
       - name: Generate latest_update.json
         run: |
           NOW_JST=$(TZ=Asia/Tokyo date +"%Y-%m-%d %H:%M:%S")
           echo "{\"lastUpdated\":\"${NOW_JST}\"}" > latest_update.json
+          echo "✓ Generated latest_update.json: $NOW_JST"
 
-      # ▼ ⑦ Commit & Push（競合耐性あり）
-      - name: Commit & Push (with retry)
+      # ▼ ⑦ Commit & Push（エラー検知付き）
+      - name: Commit & Push with error handling
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
@@ -112,14 +177,32 @@ jobs:
           git add integrated_data.json latest_update.json
 
           # 変更なければ終了
-          git diff --cached --quiet && echo "No changes" && exit 0
+          if git diff --cached --quiet; then
+            echo "ℹ No changes to commit"
+            exit 0
+          fi
 
           git commit -m "Auto update integrated_data.json & latest_update.json (round ${{ steps.round.outputs.round }})"
 
-          # ★競合耐性付き push
+          # リトライ付き push（明示的なエラー検知）
+          PUSH_SUCCESS=false
           for i in 1 2 3; do
-            echo "Attempt $i: pull --rebase + push"
-            git pull --rebase origin main && git push origin main && break
-            echo "Retrying in 5 seconds..."
-            sleep 5
+            echo "Attempt $i/3: pull --rebase + push"
+            if git pull --rebase origin main 2>&1 && git push origin main 2>&1; then
+              echo "✓ Push succeeded"
+              PUSH_SUCCESS=true
+              break
+            else
+              if [ $i -lt 3 ]; then
+                echo "⚠ Push failed. Retrying in 5 seconds..."
+                sleep 5
+              fi
+            fi
           done
+
+          if [ "$PUSH_SUCCESS" = false ]; then
+            echo "✗ CRITICAL ERROR: Failed to push after 3 attempts"
+            echo "latest_update.json was NOT published to GitHub"
+            git status
+            exit 1
+          fi
