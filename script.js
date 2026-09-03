@@ -2929,9 +2929,9 @@ function buildPhaseCycleWindowHTML(
     );
 
   /*
-   * 黒領域の右端（FilterのTo時刻）を起点として
+   * FilterのTo時刻を起点として
    * n周期前の中心時刻を表示する。
-   * n周期前の中心時刻 = FilterのTo - n×周期長
+   * n=0 はFilterのTo時刻ジャストを含む。
    *
    * バー内表示は秒単位の厳密性を求めないため
    * 時:分のみ（formatClockHm）。
@@ -3084,7 +3084,7 @@ function buildPhaseCycleRowHTML(mode) {
       : "#665c00";
 
   const windows =
-    [1, 2, 3, 4, 5]
+    [0, 1, 2, 3, 4]
       .map(n =>
         buildPhaseCycleWindowHTML(
           cycleSec,
@@ -3135,17 +3135,17 @@ function buildPhaseCycleRowHTML(mode) {
             color:#fff;
             display:flex;
             align-items:center;
-            justify-content:flex-end;
-            padding-right:4px;
+            justify-content:flex-start;
+            padding-left:4px;
             box-sizing:border-box;
             font-size:14px;
             font-weight:bold;
             white-space:nowrap;
             z-index:2;
           "
-          title="FilterのTo：${formatClockHms(filterToMs)}"
+          title="現在時刻：${formatClockHms(nowMs)} ／ FilterのTo：${formatClockHms(filterToMs)}"
         >
-          ${formatClockHm(filterToMs)}
+          ${formatClockHm(nowMs)}
         </div>
         <div
           style="
