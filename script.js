@@ -2809,6 +2809,26 @@ function formatClockHms(ms) {
   );
 }
 /* =========================================================
+ [6150b] Phase Cycle Monitor:formatClockHm
+========================================================= */
+/*
+ * バー内の時刻表示用（秒なし・時:分のみ）。
+ * 帯自体がある程度の幅（許容誤差）を持つ表示のため、
+ * 秒単位の厳密性は不要という判断による。
+ */
+function formatClockHm(ms) {
+
+  const d = new Date(ms);
+
+  const hh =
+    String(d.getHours()).padStart(2, "0");
+
+  const mm =
+    String(d.getMinutes()).padStart(2, "0");
+
+  return `${hh}:${mm}`;
+}
+/* =========================================================
  [6151] Phase Cycle Monitor:getPinkSampleCount
 ========================================================= */
 function getPinkSampleCount() {
@@ -2850,7 +2870,6 @@ function buildPhaseCycleWindowHTML(
   n,
   halfWidthSec,
   totalSec,
-  decayLambda,
   colorRgb,
   textColor
 ) {
@@ -2873,27 +2892,20 @@ function buildPhaseCycleWindowHTML(
       )
     );
 
-  const decay =
-    Math.exp(
-      -decayLambda * n
-    );
-
-  /*
-   * 遠い周期ほど帯を薄く（信頼度低下を表現）
-   * ただし薄すぎて視認できなくならないよう
-   * 下限を設ける。
-   */
-  const opacity =
-    Math.max(
-      0.5,
-      Math.min(1, decay)
-    ).toFixed(2);
-
   /*
    * 左端＝現在時刻を起点として過去にさかのぼる。
    * n周期前の中心時刻 = 現在時刻 - n×周期長
+   *
+   * バー内表示は秒単位の厳密性を求めないため
+   * 時:分のみ（formatClockHm）。
+   * ツールチップ（title）は詳細確認用に秒まで表示する。
    */
-  const centerClock =
+  const centerClockShort =
+    formatClockHm(
+      Date.now() - centerSec * 1000
+    );
+
+  const centerClockFull =
     formatClockHms(
       Date.now() - centerSec * 1000
     );
@@ -2906,22 +2918,22 @@ function buildPhaseCycleWindowHTML(
         width:${widthPct}%;
         top:0;
         bottom:0;
-        background:rgba(${colorRgb},${opacity});
+        background:rgb(${colorRgb});
         border-radius:3px;
         display:flex;
         align-items:center;
         justify-content:center;
       "
-      title="${n}周期前：${centerClock} 頃（許容 ±${Math.round(halfWidthSec)}秒）"
+      title="${n}周期前：${centerClockFull} 頃（許容 ±${Math.round(halfWidthSec)}秒）"
     >
       <span
         style="
-          font-size:10px;
+          font-size:14px;
           font-weight:bold;
           color:${textColor};
           white-space:nowrap;
         "
-      >${centerClock}</span>
+      >${centerClockShort}</span>
     </div>
   `;
 }
@@ -2960,13 +2972,6 @@ function buildPhaseCycleRowHTML(mode) {
       errCfg[
         isPink ? "pinkThreshold" : "yellowThreshold"
       ] ?? (isPink ? 0.55 : 0.7)
-    );
-
-  const lambda =
-    Number(
-      errCfg[
-        isPink ? "pinkLambda" : "yellowLambda"
-      ] ?? 0.03
     );
 
   const halfWidthSec =
@@ -3017,7 +3022,6 @@ function buildPhaseCycleRowHTML(mode) {
           n,
           halfWidthSec,
           totalSec,
-          lambda,
           colorRgb,
           textColor
         )
@@ -3043,7 +3047,7 @@ function buildPhaseCycleRowHTML(mode) {
       <div
         style="
           position:relative;
-          height:20px;
+          height:26px;
           background:#eee;
           border-radius:4px;
         "
@@ -3082,12 +3086,6 @@ function buildPhaseCycleMonitorHTML() {
     >
       ${buildPhaseCycleRowHTML("yellow")}
       ${buildPhaseCycleRowHTML("pink")}
-
-      <div style="font-size:10px; color:#888;">
-        ※学習周期の目安を示す一般モニターです（特定プレイヤーの実測値ではありません）。
-        帯の色が薄いほど周期が進み、スコアの減衰（decay）が効いていることを表します。
-      </div>
-
     </div>
   `;
 }
@@ -6426,25 +6424,12 @@ function buildMatchingCandidates() {
 /* =========================================================
  [7800] Matching Header
 ========================================================= */
-function renderMatchingHeader() {
-
-  const headerEl =
-    document.getElementById(
-      "matchingHeader"
-    );
-
-  if (!headerEl) {
-    return;
-  }
+function buildMatchingRankCountsHTML() {
 
   if (
     !State.matchingList.length
   ) {
-
-    headerEl.innerHTML =
-      "<span>マッチング候補は現在 0人です。</span>";
-
-    return;
+    return "<span>マッチング候補は現在 0人です。</span>";
   }
 
   const counts = {};
@@ -6486,8 +6471,26 @@ function renderMatchingHeader() {
         `;
       });
 
-  headerEl.innerHTML =
-    parts.join("");
+  return parts.join("");
+}
+
+function renderMatchingHeader() {
+
+  const headerEl =
+    document.getElementById(
+      "matchingHeader"
+    );
+
+  if (!headerEl) {
+    return;
+  }
+
+  /*
+   * ランクアイコン：人数の表示は
+   * マッチング候補テーブル側（PhaseグラフとTableの間）に統合したため、
+   * 従来のこの位置（matchingHeader要素）は空にする。
+   */
+  headerEl.innerHTML = "";
 }
 /* =========================================================
  [7810] Matching Table Renderer
@@ -6501,18 +6504,16 @@ function renderMatchingTable() {
 
   if (!area) return;
 
-  const total =
-    State.matchingList.length;
-
   area.innerHTML = `
     ${buildPhaseCycleMonitorHTML()}
 
-    <h3>
-      マッチング候補：
-      <span id="matchingCount">
-        ${fmt(total)}
-      </span>人
-    </h3>
+    <div
+      id="matchingRankCounts"
+      class="mt10"
+      style="margin-bottom:10px;"
+    >
+      ${buildMatchingRankCountsHTML()}
+    </div>
 
     <div style="overflow-x:auto;">
 
