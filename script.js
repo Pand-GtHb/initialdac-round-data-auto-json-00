@@ -2905,7 +2905,8 @@ function buildPhaseCycleWindowHTML(
   textColor,
   rightOffsetPct,
   rightWidthPct,
-  referenceMs
+  referenceMs,
+  positionSec = cycleSec
 ) {
 
   const centerSec =
@@ -2915,7 +2916,7 @@ function buildPhaseCycleWindowHTML(
     rightOffsetPct +
     Math.max(
       0,
-      ((centerSec - halfWidthSec) / totalSec) *
+      ((positionSec - halfWidthSec) / totalSec) *
         rightWidthPct
     );
 
@@ -3103,8 +3104,7 @@ function buildPhaseCycleRowHTML(mode) {
     );
 
   const totalSec =
-    cycleSec *
-    (firstCycleIndex + 5);
+    cycleSec * 5;
 
   const staleSec =
     Math.max(
@@ -3167,7 +3167,8 @@ function buildPhaseCycleRowHTML(mode) {
           textColor,
           rightOffsetPct,
           rightWidthPct,
-          phaseReferenceMs
+          phaseReferenceMs,
+          (offset + 0.5) * cycleSec
         );
       })
       .join("");
