@@ -2904,7 +2904,8 @@ function buildPhaseCycleWindowHTML(
   colorRgb,
   textColor,
   rightOffsetPct,
-  rightWidthPct
+  rightWidthPct,
+  referenceMs
 ) {
 
   const centerSec =
@@ -2929,9 +2930,10 @@ function buildPhaseCycleWindowHTML(
     );
 
   /*
-   * FilterのTo時刻を起点として
+   * 表のYellow/Pink判定と同じく現在時刻を起点として
    * n周期前の中心時刻を表示する。
-   * n=0 はFilterのTo時刻ジャストを含む。
+   * 黒領域はデータの古さを示す表示であり、
+   * 周期計算の基準時刻には使用しない。
    *
    * バー内表示は秒単位の厳密性を求めないため
    * 時:分のみ（formatClockHm）。
@@ -2939,12 +2941,12 @@ function buildPhaseCycleWindowHTML(
    */
   const centerClockShort =
     formatClockHm(
-      getFilterToMs() - centerSec * 1000
+      referenceMs - centerSec * 1000
     );
 
   const centerClockFull =
     formatClockHms(
-      getFilterToMs() - centerSec * 1000
+      referenceMs - centerSec * 1000
     );
 
   return `
@@ -3094,7 +3096,8 @@ function buildPhaseCycleRowHTML(mode) {
           colorRgb,
           textColor,
           rightOffsetPct,
-          rightWidthPct
+          rightWidthPct,
+          nowMs
         )
       )
       .join("");
