@@ -7378,6 +7378,12 @@ function allowLog(
   if (
     message.startsWith(
       "コピー:"
+    ) ||
+    message.includes(
+      "コピー取消"
+    ) ||
+    message.includes(
+      "重複コピー"
     )
   ) {
     return true;
