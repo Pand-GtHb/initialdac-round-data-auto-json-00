@@ -4942,6 +4942,25 @@ function recordClickFromCopiedInfo(
       player
     );
 
+  /* ----------------------------------------------------
+   * 2b. Undo用スナップショット取得
+   * 「コピークリック前の状態」に正確に戻すため、
+   * 変更を加える対象（PinkTarget / EncounterHistory / YellowSamples）の
+   * 現状（クリック前）をディープコピーで保存しておく。
+   * ---------------------------------------------------- */
+  const undoIdentityKey = buildPlayerIdentityKey(player);
+
+  const snapshotBeforeCopy = {
+    pinkEntry: State.pinkTargets[undoIdentityKey]
+      ? JSON.parse(JSON.stringify(State.pinkTargets[undoIdentityKey]))
+      : null,
+    encounterEntry: State.encounterHistory[undoIdentityKey]
+      ? JSON.parse(JSON.stringify(State.encounterHistory[undoIdentityKey]))
+      : null,
+    yellowSamples: JSON.parse(JSON.stringify(State.yellowSamples || [])),
+    phaseAdjust: JSON.parse(JSON.stringify(State.phaseAdjust || { yellow: 0, pink: 0 }))
+  };
+
   State.recentClicks.unshift({
 
     name:
@@ -4975,7 +4994,20 @@ function recordClickFromCopiedInfo(
       copiedAt,
 
     predictedRank:
-      predictedRank
+      predictedRank,
+
+    /*
+     * コピークリック前の状態に戻すためのスナップショット
+     * （undoLastCopiedInfo から参照）
+     */
+    __undoSnapshot:
+      snapshotBeforeCopy,
+
+    __undoIdentityKey:
+      undoIdentityKey,
+
+    __undoApplied:
+      !isDuplicateGuard
 
   });
 
@@ -5097,6 +5129,10 @@ function recordClickFromCopiedInfo(
 }
 /* =========================================================
  [7105] Realtime Boost Engine:undoLastCopiedInfo
+ 「コピークリック前の状態」に正確に戻す（スナップショット復元方式）。
+ 再計算による誤差・条件分岐ミスを避けるため、コピー時に保存しておいた
+ スナップショットでState.pinkTargets / encounterHistory / yellowSamples /
+ phaseAdjust をそのまま上書き復元する。
 ========================================================= */
 function undoLastCopiedInfo() {
   if (!State.recentClicks || State.recentClicks.length === 0) {
@@ -5112,76 +5148,74 @@ function undoLastCopiedInfo() {
 
   if (!lastTarget) return false;
 
-  const targetName = normalizePlayerName(lastTarget.name ?? "");
-  const targetShop = normalizePlayerName(lastTarget.shopname ?? "");
-  const copiedAt = Number(lastTarget.time || lastTarget.copiedAt || 0);
-
-  /* 1. Yellow周期学習サンプルの最新1件（時間一致）を取り消し */
-  if (State.yellowSamples && State.yellowSamples.length > 0) {
-    const yIndex = State.yellowSamples.findIndex(
-      s => s.copiedAt === copiedAt || Math.abs(s.copiedAt - copiedAt) < 1000
-    );
-    if (yIndex >= 0) {
-      State.yellowSamples.splice(yIndex, 1);
-      try {
-        calcYellowCycle(null, { learn: true });
-      } catch (e) {
-        console.warn("[undo] calcYellowCycle re-learn failed:", e);
-      }
+  /*
+   * 重複コピーガードによりそもそも学習データへの登録が
+   * 行われていなかった場合は、復元処理自体が不要
+   */
+  if (!lastTarget.__undoApplied) {
+    savePinkStateToStorage();
+    logEvent("match-copied-undo", {
+      player: { name: lastTarget.name, shopname: lastTarget.shopname },
+      wasDuplicateGuardSkip: true,
+      timestamp: Date.now()
+    });
+    if (typeof log === "function") {
+      log(`[コピー取消完了] ${lastTarget.name} （重複ガード対象のため学習データへの影響なし）`);
     }
+    return true;
   }
 
-  /* 2. Pinkターゲット履歴を取り消し */
-  const playerIdentity = `${targetName}@@${targetShop}`;
-  const pinkEntry = State.pinkTargets[playerIdentity] || Object.values(State.pinkTargets || {}).find(
-    e => normalizePlayerName(e?.name ?? "") === targetName && normalizePlayerName(e?.shopname ?? "") === targetShop
-  );
+  const snapshot = lastTarget.__undoSnapshot;
+  const identityKey = lastTarget.__undoIdentityKey;
 
-  if (pinkEntry) {
-    pinkEntry.copyCount = Math.max(0, (pinkEntry.copyCount || 1) - 1);
-    if (Array.isArray(pinkEntry.history)) {
-      const hIndex = pinkEntry.history.indexOf(copiedAt);
-      if (hIndex >= 0) {
-        pinkEntry.history.splice(hIndex, 1);
-      } else {
-        pinkEntry.history.pop();
-      }
-    }
-    if (pinkEntry.copyCount <= 0 || pinkEntry.history.length === 0) {
-      delete State.pinkTargets[pinkEntry.key || playerIdentity];
-    }
-    try {
-      calcPinkCycle(null, { learn: true });
-    } catch (e) {
-      console.warn("[undo] calcPinkCycle re-learn failed:", e);
-    }
-  }
+  if (snapshot && identityKey) {
 
-  /* 3. 遭遇履歴（EncounterHistory）を取り消し */
-  const encEntry = State.encounterHistory[playerIdentity] || Object.values(State.encounterHistory || {}).find(
-    e => normalizePlayerName(e?.name ?? "") === targetName && normalizePlayerName(e?.shopname ?? "") === targetShop
-  );
-  if (encEntry) {
-    encEntry.count = Math.max(0, (encEntry.count || 1) - 1);
-    if (encEntry.count <= 0) {
-      delete State.encounterHistory[encEntry.key || playerIdentity];
+    /* 1. Pinkターゲット：コピー前の状態に完全復元 */
+    if (snapshot.pinkEntry) {
+      /* 元々Pink管理対象だった → その時点の状態にそのまま戻す */
+      State.pinkTargets[identityKey] = snapshot.pinkEntry;
+    } else {
+      /* 誤って「初めて」Pink管理対象になった → 対象から完全に除外 */
+      delete State.pinkTargets[identityKey];
+    }
+
+    /* 2. 遭遇履歴：コピー前の状態に完全復元 */
+    if (snapshot.encounterEntry) {
+      State.encounterHistory[identityKey] = snapshot.encounterEntry;
+    } else {
+      delete State.encounterHistory[identityKey];
+    }
+
+    /* 3. Yellow周期学習サンプル：コピー前の配列にそのまま戻す */
+    State.yellowSamples = snapshot.yellowSamples;
+
+    /* 4. 周期補正値（EMA学習結果）もコピー前の値に戻す */
+    State.phaseAdjust = snapshot.phaseAdjust;
+
+  } else {
+    if (typeof log === "function") {
+      logWarn(`[コピー取消] ${lastTarget.name} のスナップショットが見つからないため、学習データは変更していません`);
     }
   }
 
   savePinkStateToStorage();
 
-  /* 4. 取り消しイベントのログ記録 */
+  /* 5. 取り消しイベントのログ記録 */
   logEvent("match-copied-undo", {
     player: {
       name: lastTarget.name,
       shopname: lastTarget.shopname
     },
-    undoneCopiedAt: copiedAt,
+    undoneCopiedAt: Number(lastTarget.time || lastTarget.copiedAt || 0),
+    restoredToPinkManaged: Boolean(snapshot?.pinkEntry),
     timestamp: Date.now()
   });
 
   if (typeof log === "function") {
-    log(`[コピー取消完了] ${lastTarget.name} のマッチング記録・学習サンプルを取り消しました`);
+    const statusMsg = snapshot?.pinkEntry
+      ? "（Pink管理継続・周期基準を巻き戻し）"
+      : "（Pink管理対象から除外）";
+    log(`[コピー取消完了] ${lastTarget.name} のマッチング記録・学習サンプルをコピー前の状態に復元しました ${statusMsg}`);
   }
 
   return true;
