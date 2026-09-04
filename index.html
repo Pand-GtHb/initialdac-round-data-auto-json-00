@@ -248,6 +248,56 @@ td.center { text-align:center; }
 }
 
 /* ---------------------------------------------------------
+   ★ スマホ用メインボタンレイアウト
+--------------------------------------------------------- */
+.main-btn-group {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    width: 100%;
+}
+
+.btn-primary {
+    flex: 1;
+    padding: 12px 6px;
+    font-size: 15px;
+    font-weight: bold;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: #0078D4;
+    color: white;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+    white-space: nowrap;
+}
+
+.btn-matching {
+    background: #e91e63;
+    color: white;
+}
+
+.btn-undo {
+    background: #555;
+    color: white;
+}
+
+.sub-btn-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+
+.btn-sub {
+    padding: 6px 10px;
+    font-size: 12px;
+    background: #eee;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+/* ---------------------------------------------------------
    ★ script.js が生成する RUBY/PRIDE の行
 --------------------------------------------------------- */
 .filter-row {
@@ -348,26 +398,14 @@ td.center { text-align:center; }
   <div class="value"><div id="prideFilters"></div></div>
 </div>
 
-<!-- 各種ボタン -->
-<div class="mt10">
-  <button id="reloadBtn">RELOAD　</button>
-  <button id="filterBtn">FLT　</button>
-  <button id="summaryCsvBtn">SumCSV　</button>
-  <button id="allCsvBtn">AllCSV　</button>
-
-  <input
-    type="date"
-    id="logExportDate"
-    title="Today"
-    style="
-      margin-left:8px;
-      margin-right:4px;
-    ">
-  <button id="analysisLogBtn">LOG　</button>
-
-</div>
-
 <div id="logBox"></div>
+
+<!-- 各種ボタン（スマホ最優先レイアウト） -->
+<div class="main-btn-group">
+  <button id="reloadBtn" class="btn-primary">🔄 RELOAD</button>
+  <button id="matchingBtn" class="btn-primary btn-matching">⚔️ MATCHING</button>
+  <button id="undoCopyBtn" class="btn-primary btn-undo">↩️ コピー取消</button>
+</div>
 
 <div id="searchRow">
 
@@ -391,8 +429,7 @@ td.center { text-align:center; }
         <option value="P_G">PRIDE G</option>
     </select>
 
-    <button id="matchingBtn">MATCHING　</button>
-    <input id="searchInput" type="text" placeholder="Filter by player name" />
+    <input id="searchInput" type="text" placeholder="プレイヤー名検索..." />
 </div>
 
 <div id="summaryView">
@@ -417,6 +454,25 @@ td.center { text-align:center; }
   <button id="matchingBackBtn">◀◀◀SUMMARY</button>
   <div id="matchingHeader" class="mt10"></div>
   <div id="matchingArea" class="mt10"></div>
+</div>
+
+<!-- ★ サブ操作エリア（最下部に配置） -->
+<div class="sub-btn-group mt10" style="margin-top: 20px; border-top: 1px solid #ccc; padding-top: 10px;">
+  <input
+    type="date"
+    id="logExportDate"
+    title="Today"
+    style="padding: 4px; font-size: 12px;">
+  <button id="analysisLogBtn" class="btn-sub">📊 LOG保存</button>
+
+  <details style="display:inline-block; margin-left: 6px;">
+    <summary style="font-size: 12px; cursor: pointer; color: #555;">🛠️ サブ機能 (CSV/FLT)</summary>
+    <div style="margin-top: 4px;">
+      <button id="filterBtn" class="btn-sub">FLT</button>
+      <button id="summaryCsvBtn" class="btn-sub">SumCSV</button>
+      <button id="allCsvBtn" class="btn-sub">AllCSV</button>
+    </div>
+  </details>
 </div>
 
 <script src="script.js?cb=4"></script>
