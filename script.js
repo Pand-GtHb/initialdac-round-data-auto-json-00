@@ -1526,6 +1526,19 @@ document.addEventListener(
         "analysisLogBtn"
       );
 
+    const undoCopyBtn =
+      document.getElementById(
+        "undoCopyBtn"
+      );
+
+    if (undoCopyBtn) {
+      undoCopyBtn.onclick = () => {
+        if (typeof undoLastCopiedInfo === "function") {
+          undoLastCopiedInfo();
+        }
+      };
+    }
+
     /* =====================================
      * Analysis Log Export
      * ===================================== */
@@ -2883,14 +2896,13 @@ function getPinkSampleCount() {
       continue;
     }
 
-    const latest =
-      Number(history[history.length - 1] || 0);
-
-    const prev =
-      Number(history[history.length - 2] || 0);
-
-    if (latest && prev) {
-      count++;
+    /* Pink対象ごとの有効な履歴間隔（ペア）数を正しく累計 */
+    for (let i = 1; i < history.length; i++) {
+      const latest = Number(history[i] || 0);
+      const prev = Number(history[i - 1] || 0);
+      if (latest && prev && latest > prev) {
+        count++;
+      }
     }
   }
 
@@ -3527,9 +3539,14 @@ function buildPlayerRowHTML(
           ? "pink-managed"
           : "";
 
+  const phaseRescueClass =
+    p.__phaseRescue
+      ? " phase-rescue"
+      : "";
+
   return `
     <tr
-      class="${rowStateClass}"
+      class="${rowStateClass}${phaseRescueClass}"
       data-updated="${p.updateDate}"
       data-name="${safeName}"
       data-shopname="${safeShop}"
@@ -3553,7 +3570,11 @@ function buildPlayerRowHTML(
           '${safeShop}'
         )"
       >
-        ${p.name}
+        ${p.name}${
+          p.__phaseRescue
+            ? ' <span style="background:#e0f2ff;color:#0b5da6;border-radius:3px;padding:0 4px;font-size:0.8em;" title="Phase救済枠：FinalPhaseScoreが高いため選出">P↑</span>'
+            : ""
+        }
       </td>
 
       <td class="right">
@@ -4129,10 +4150,31 @@ function buildPlayerIdentityKey(player) {
   return "__empty__";
 }
 /* =========================================================
+ [7070b] Pink State Helpers:checkAndCleanDailyState
+========================================================= */
+function checkAndCleanDailyState() {
+  const today = buildDailyKey();
+  let cleaned = false;
+  if (State.pinkTargets && typeof State.pinkTargets === "object") {
+    for (const [key, entry] of Object.entries(State.pinkTargets)) {
+      if (entry && entry.dailyKey !== today) {
+        delete State.pinkTargets[key];
+        cleaned = true;
+      }
+    }
+  }
+  if (cleaned) {
+    if (typeof log === "function") {
+      log("日付変更を検知：前日のPink管理ターゲットを自動クリーンアップしました");
+    }
+  }
+}
+/* =========================================================
  [7071] Pink State Helpers:savePinkStateToStorage
 ========================================================= */
 function savePinkStateToStorage() {
   try {
+    checkAndCleanDailyState();
     const payload = {
       /*
        * Pink対象は当日分のみ復元対象とする
@@ -4728,6 +4770,15 @@ function registerYellowSample(
   }
 
   /*
+   * フィルタ対象期間（45分＝2700秒）を超える古すぎるデータは
+   * 周期学習のノイズ・過学習・矛盾の原因となるためサンプルから除外する
+   */
+  const maxAllowableDiffSec = 45 * 60;
+  if (diffSec > maxAllowableDiffSec) {
+    return null;
+  }
+
+  /*
    * Yellow基準周期
    *
    * 現在の学習処理は
@@ -4842,6 +4893,40 @@ function recordClickFromCopiedInfo(
   const copiedAt =
     Date.now();
 
+  /* ----------------------------------------------------
+   * 1. 重複コピーガード（Debounce Guard）
+   * 15秒以内に同一プレイヤーが連続コピーされた場合、
+   * 周期学習データの歪みを防ぐため学習サンプル登録をスキップする
+   * ---------------------------------------------------- */
+  const lastClick = State.recentClicks[0];
+  const isSamePlayerAsLast =
+    lastClick &&
+    normalizePlayerName(lastClick.name ?? "") === normalizedName &&
+    normalizePlayerName(lastClick.shopname ?? "") === normalizedShop;
+
+  const timeDiffSec = lastClick ? (copiedAt - Number(lastClick.time || 0)) / 1000 : Infinity;
+  const isDuplicateGuard = isSamePlayerAsLast && timeDiffSec < 15;
+
+  if (isDuplicateGuard) {
+    if (typeof log === "function") {
+      log(`[重複コピーガード] ${player.name} (直前コピーから ${Math.round(timeDiffSec)}秒): 周期学習登録をスキップしました`);
+    }
+  }
+
+  /* ----------------------------------------------------
+   * 2. 直前予測順位の自動特定
+   * 現在のマッチング候補リスト（State.matchingList）における
+   * このプレイヤーの予測順位（1-indexed）を取得
+   * ---------------------------------------------------- */
+  const candidateIndex = (State.matchingList || []).findIndex(
+    p =>
+      normalizePlayerName(p.name ?? "") === normalizedName &&
+      normalizePlayerName(p.shopname ?? "") === normalizedShop
+  );
+
+  const predictedRank = candidateIndex >= 0 ? candidateIndex + 1 : null;
+  const scoreDetail = calcMatchingScoreDetail(player);
+
   State.viewerLastCopiedAt =
     copiedAt;
 
@@ -4887,7 +4972,10 @@ function recordClickFromCopiedInfo(
       copiedAt,
 
     copiedAt:
-      copiedAt
+      copiedAt,
+
+    predictedRank:
+      predictedRank
 
   });
 
@@ -4899,28 +4987,51 @@ function recordClickFromCopiedInfo(
 
   rebuildRecentClickIndex();
 
-  registerPinkTarget(
-    player,
-    copiedAt
-  );
+  /* 重複ガード中でない場合のみ周期学習・履歴に登録 */
+  if (!isDuplicateGuard) {
+    registerPinkTarget(
+      player,
+      copiedAt
+    );
 
-  updateEncounterHistory(
-    player,
-    copiedAt
-  );
+    updateEncounterHistory(
+      player,
+      copiedAt
+    );
 
-  /*
-   * Yellow周期学習用サンプル登録
-   */
-  registerYellowSample(
-    player,
-    copiedAt
-  );
+    /*
+     * Yellow周期学習用サンプル登録
+     */
+    registerYellowSample(
+      player,
+      copiedAt
+    );
 
-  recordRealtimeActivity(
-    player,
-    rankKey,
-    copiedAt
+    recordRealtimeActivity(
+      player,
+      rankKey,
+      copiedAt
+    );
+  }
+
+  /* ----------------------------------------------------
+   * 3. マッチング実績＆予測的中の自動ログ記録
+   * ---------------------------------------------------- */
+  logEvent(
+    "match-copied",
+    {
+      player: {
+        name: player.name ?? "",
+        shopname: player.shopname ?? "",
+        area: player.area ?? "",
+        rankKey: rankKey
+      },
+      predictedRank: predictedRank,
+      totalCandidates: (State.matchingList || []).length,
+      score: Number((scoreDetail.score || 0).toFixed(6)),
+      isDuplicateGuard: isDuplicateGuard,
+      timestamp: copiedAt
+    }
   );
 
   const pinkTarget =
@@ -4928,7 +5039,7 @@ function recordClickFromCopiedInfo(
       player
     );
 
-  if (pinkTarget) {
+  if (pinkTarget && !isDuplicateGuard) {
 
     logEvent(
       "pink-trigger",
@@ -4971,9 +5082,7 @@ function recordClickFromCopiedInfo(
         score:
           Number(
             (
-              calcMatchingScoreDetail(
-                player
-              ).score || 0
+              scoreDetail.score || 0
             ).toFixed(6)
           ),
 
@@ -4987,8 +5096,96 @@ function recordClickFromCopiedInfo(
 
 }
 /* =========================================================
- [7110] Realtime Boost Engine:getRealtimeBoost
+ [7105] Realtime Boost Engine:undoLastCopiedInfo
 ========================================================= */
+function undoLastCopiedInfo() {
+  if (!State.recentClicks || State.recentClicks.length === 0) {
+    if (typeof log === "function") {
+      log("取消対象の直前コピー履歴がありません");
+    }
+    return false;
+  }
+
+  /* 直前のコピー履歴を1件取得して除外 */
+  const lastTarget = State.recentClicks.shift();
+  rebuildRecentClickIndex();
+
+  if (!lastTarget) return false;
+
+  const targetName = normalizePlayerName(lastTarget.name ?? "");
+  const targetShop = normalizePlayerName(lastTarget.shopname ?? "");
+  const copiedAt = Number(lastTarget.time || lastTarget.copiedAt || 0);
+
+  /* 1. Yellow周期学習サンプルの最新1件（時間一致）を取り消し */
+  if (State.yellowSamples && State.yellowSamples.length > 0) {
+    const yIndex = State.yellowSamples.findIndex(
+      s => s.copiedAt === copiedAt || Math.abs(s.copiedAt - copiedAt) < 1000
+    );
+    if (yIndex >= 0) {
+      State.yellowSamples.splice(yIndex, 1);
+      try {
+        calcYellowCycle(null, { learn: true });
+      } catch (e) {
+        console.warn("[undo] calcYellowCycle re-learn failed:", e);
+      }
+    }
+  }
+
+  /* 2. Pinkターゲット履歴を取り消し */
+  const playerIdentity = `${targetName}@@${targetShop}`;
+  const pinkEntry = State.pinkTargets[playerIdentity] || Object.values(State.pinkTargets || {}).find(
+    e => normalizePlayerName(e?.name ?? "") === targetName && normalizePlayerName(e?.shopname ?? "") === targetShop
+  );
+
+  if (pinkEntry) {
+    pinkEntry.copyCount = Math.max(0, (pinkEntry.copyCount || 1) - 1);
+    if (Array.isArray(pinkEntry.history)) {
+      const hIndex = pinkEntry.history.indexOf(copiedAt);
+      if (hIndex >= 0) {
+        pinkEntry.history.splice(hIndex, 1);
+      } else {
+        pinkEntry.history.pop();
+      }
+    }
+    if (pinkEntry.copyCount <= 0 || pinkEntry.history.length === 0) {
+      delete State.pinkTargets[pinkEntry.key || playerIdentity];
+    }
+    try {
+      calcPinkCycle(null, { learn: true });
+    } catch (e) {
+      console.warn("[undo] calcPinkCycle re-learn failed:", e);
+    }
+  }
+
+  /* 3. 遭遇履歴（EncounterHistory）を取り消し */
+  const encEntry = State.encounterHistory[playerIdentity] || Object.values(State.encounterHistory || {}).find(
+    e => normalizePlayerName(e?.name ?? "") === targetName && normalizePlayerName(e?.shopname ?? "") === targetShop
+  );
+  if (encEntry) {
+    encEntry.count = Math.max(0, (encEntry.count || 1) - 1);
+    if (encEntry.count <= 0) {
+      delete State.encounterHistory[encEntry.key || playerIdentity];
+    }
+  }
+
+  savePinkStateToStorage();
+
+  /* 4. 取り消しイベントのログ記録 */
+  logEvent("match-copied-undo", {
+    player: {
+      name: lastTarget.name,
+      shopname: lastTarget.shopname
+    },
+    undoneCopiedAt: copiedAt,
+    timestamp: Date.now()
+  });
+
+  if (typeof log === "function") {
+    log(`[コピー取消完了] ${lastTarget.name} のマッチング記録・学習サンプルを取り消しました`);
+  }
+
+  return true;
+}
 function rebuildRecentClickIndex() {
  const index = {
    byName: new Map(),
@@ -6568,18 +6765,90 @@ function buildMatchingCandidates() {
   /* =====================================
    * STEP7: Score順に並べる
    * STEP8: 上位10人を表示
+   *
+   * 二段階選出（Phase救済枠）
+   * ------------------------------------
+   * 通常スコア順だけでは、FinalPhaseScore
+   * （周期ピーク近傍＝的中確度が高い状態）
+   * が高くても、HistoricalScoreが低いために
+   * Top10圏外へ落ちる相手が発生する
+   * （例：phaseError極小でも29位落選）。
+   *
+   * このため、通常スコア上位
+   * NORMAL_SLOT_COUNT人を確保したうえで、
+   * 残り枠 PHASE_RESCUE_SLOT_COUNT人分は、
+   * 通常選出から漏れた候補のうち
+   * FinalPhaseScoreが高い順に追加する。
+   *
+   * 対象はhistoricalMatched=trueの相手に限定し、
+   * 実績のない組み合わせ（historicalScore未マッチ）
+   * による過剰な救済を避ける。
    * ===================================== */
-  const selected =
-    [...scoreEligible]
+  const NORMAL_SLOT_COUNT = 8;
+  const PHASE_RESCUE_SLOT_COUNT = 2;
+
+  const rankedByScore =
+    [...scoreEligible].sort(
+      (a, b) =>
+        getCandidateSelectionScore(b) -
+        getCandidateSelectionScore(a)
+    );
+
+  const normalSelected =
+    rankedByScore.slice(
+      0,
+      NORMAL_SLOT_COUNT
+    );
+
+  const normalSelectedKeys =
+    new Set(
+      normalSelected.map(
+        p =>
+          normalizePlayerName(p.name) +
+          "|" +
+          normalizePlayerName(p.shopname ?? "")
+      )
+    );
+
+  const phaseRescuePool =
+    rankedByScore.filter(p => {
+
+      const key =
+        normalizePlayerName(p.name) +
+        "|" +
+        normalizePlayerName(p.shopname ?? "");
+
+      if (normalSelectedKeys.has(key)) {
+        return false;
+      }
+
+      return Boolean(
+        p.__detail?.historicalMatched
+      );
+    });
+
+  const phaseRescueSelected =
+    [...phaseRescuePool]
       .sort(
         (a, b) =>
-          getCandidateSelectionScore(b) -
-          getCandidateSelectionScore(a)
+          Number(b.__detail?.finalPhaseScore ?? 0) -
+          Number(a.__detail?.finalPhaseScore ?? 0)
       )
       .slice(
         0,
-        10
+        PHASE_RESCUE_SLOT_COUNT
       );
+
+  phaseRescueSelected.forEach(
+    p => {
+      p.__phaseRescue = true;
+    }
+  );
+
+  const selected = [
+    ...normalSelected,
+    ...phaseRescueSelected
+  ];
 
   selected.forEach(
     (p, i) => {
@@ -6593,7 +6862,9 @@ function buildMatchingCandidates() {
     selected;
 
   log(
-    `候補生成: Base=${base.length} / Selected=${selected.length}  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
+    `候補生成: Base=${base.length} / Selected=${selected.length}` +
+    `（通常${normalSelected.length}＋Phase救済${phaseRescueSelected.length}）` +
+    `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
   );
 
   saveCandidateEvent();
@@ -7441,6 +7712,28 @@ function saveCopyEventUnified(
   const copyCandidateSnapshot =
     buildCopyCandidateSnapshot();
 
+  /*
+   * Pink管理対象の再登場分析用
+   * ・pinkEntryAgeSec: 初回コピーからの経過秒
+   * ・cycleCountAtCopy: コピー時点での周期経過回数
+   */
+  const pinkTargetAtCopy =
+    getPinkTarget(player);
+
+  const pinkEntryAgeSec =
+    pinkTargetAtCopy?.firstCopiedAt
+      ? Number(
+          (
+            (Date.now() -
+              pinkTargetAtCopy.firstCopiedAt) /
+            1000
+          ).toFixed(1)
+        )
+      : null;
+
+  const cycleCountAtCopy =
+    getPlayerCycleCount(player);
+
   const record = {
 
     t:
@@ -7528,6 +7821,13 @@ function saveCopyEventUnified(
 
     pinkThreshold:
       Number(detail.pinkThreshold ?? 0),
+
+    /*
+     * Pink再登場分析用フィールド
+     */
+    pinkEntryAgeSec,
+
+    cycleCountAtCopy,
 
     candidateEventId:
       State.lastCandidateEventId ?? null,
@@ -7868,6 +8168,84 @@ function saveCandidateEvent() {
           ) / 2;
   }
 
+  /*
+   * Pink学習状況
+   *
+   * calcPinkCycle(learn:true) と同じロジックで
+   * foldedList（Pink再マッチング間隔サンプル）を
+   * 算出し、学習の信頼度をログへ可視化する。
+   * ここではState.phaseAdjust.pinkを上書きしない
+   * 読み取り専用の再計算とする。
+   */
+  const pinkBaseCycleSec =
+    pinkCfg.baseCycleSec ?? 345;
+
+  const pinkFoldedList = [];
+
+  const pinkTargets =
+    Object.values(
+      State.pinkTargets || {}
+    );
+
+  for (const entry of pinkTargets) {
+
+    const history =
+      entry.history || [];
+
+    if (history.length < 2) {
+      continue;
+    }
+
+    const latest =
+      Number(history[history.length - 1] || 0);
+
+    const prev =
+      Number(history[history.length - 2] || 0);
+
+    if (!latest || !prev) {
+      continue;
+    }
+
+    const interval =
+      (latest - prev) / 1000;
+
+    const folded =
+      foldToCycle(
+        interval,
+        pinkBaseCycleSec
+      );
+
+    if (isFinite(folded)) {
+      pinkFoldedList.push(folded);
+    }
+  }
+
+  const pinkMedianOffset =
+    pinkFoldedList.length > 0
+      ? pinkFoldedList.reduce(
+          (a, b) => a + b,
+          0
+        ) / pinkFoldedList.length
+      : 0;
+
+  const pinkMinSamples =
+    pinkCfg.minSamples ?? 8;
+
+  const pinkTrust =
+    pinkMinSamples > 0
+      ? Math.min(
+          1,
+          pinkFoldedList.length / pinkMinSamples
+        )
+      : 1;
+
+  const pinkAdjustRaw =
+    clamp(
+      pinkMedianOffset,
+      -(pinkCfg.maxShiftSec ?? 45),
+      (pinkCfg.maxShiftSec ?? 45)
+    );
+
   const record = {
 
     t: now,
@@ -7910,6 +8288,28 @@ function saveCandidateEvent() {
       ),
 
     pinkCycle,
+
+    /*
+     * Pink周期学習の可視化用フィールド
+     * （Yellowのyellow*系フィールドに相当）
+     */
+    pinkSampleCount:
+      pinkFoldedList.length,
+
+    pinkMedianOffset:
+      Number(
+        pinkMedianOffset.toFixed(2)
+      ),
+
+    pinkTrust:
+      Number(
+        pinkTrust.toFixed(3)
+      ),
+
+    pinkAdjustRaw:
+      Number(
+        pinkAdjustRaw.toFixed(2)
+      ),
 
     candidateCount:
       State.matchingList.length,
@@ -8007,6 +8407,9 @@ function saveCandidateEvent() {
 
         cycleSec:
           Number(p.__detail?.cycleSec ?? 0),
+
+        isPhaseRescue:
+          Boolean(p.__phaseRescue),
 
         encounterCount:
           getEncounterHistory(p)?.count ?? 0
