@@ -147,7 +147,6 @@ const State = {
   currentDetailIcon: "",
   matchingList: [],
   matchingRankedAll: [],
-  matchingDiagnostics: null,
   myStar: 7,
   myRankKey: "R7",
   recentClicks: [],
@@ -156,7 +155,6 @@ const State = {
   playerActivity: {},
   rankActivity: {},
   areaActivity: {},
-  sessionStartAt: Date.now(),
   viewerLastCopiedAt: null,
   scoringConfig: null,
   updateWatchTimer: null,
@@ -281,10 +279,16 @@ function compactYMD(ymd) {
 
 /* =========================================================
  [2030] Date Utility:buildDailyKey（旧 [2030]）
-========================================================= */
+ ※ ゲーム運用日に合わせた日付けキー（午前4時＝28時切替）
+ ========================================================= */
 function buildDailyKey() {
 
   const d = new Date();
+
+  // 午前4時(4:00)未満は前日扱いにする（28時締め）
+  if (d.getHours() < 4) {
+    d.setDate(d.getDate() - 1);
+  }
 
   const y = d.getFullYear();
   const m = ("0" + (d.getMonth() + 1)).slice(-2);
@@ -835,6 +839,8 @@ function normalizeJointModel(json) {
   }
 
   const byViewerTier = {};
+  const opponentTierSet = new Set();
+  const areaSet = new Set();
 
   for (const viewerTier in viewerTiers) {
 
@@ -872,6 +878,14 @@ function normalizeJointModel(json) {
       const area =
         key.slice(lastSep + 1);
 
+      opponentTierSet.add(
+        opponentTier
+      );
+
+      areaSet.add(
+        area
+      );
+
       const count =
         Number(opponents[key] ?? 0);
 
@@ -886,7 +900,12 @@ function normalizeJointModel(json) {
     byViewerTier[viewerTier] = probList;
   }
 
-  return { byViewerTier };
+  return {
+    byViewerTier,
+    historicalSupportSize:
+      opponentTierSet.size *
+      areaSet.size
+  };
 }
 
 /* =========================================================
@@ -2499,16 +2518,16 @@ function registerPinkTarget(
   savePinkStateToStorage();
 
   /*
-   * Yellowと同様、新しいPink履歴が増えた直後に
+   * 新しいPink履歴間隔（区間）が追加された直後（history.length >= 2）のみ
    * 明示的に学習（EMA更新）を行う。
-   * これ以外（getCurrentCycle経由の通常参照）では
-   * calcPinkCycle は読み取り専用として動作する。
    */
-  try {
-    calcPinkCycle(null, { learn: true });
-    savePinkStateToStorage();
-  } catch (e) {
-    console.warn("[pink] calcPinkCycle failed:", e);
+  if (entry.history && entry.history.length >= 2) {
+    try {
+      calcPinkCycle(null, { learn: true });
+      savePinkStateToStorage();
+    } catch (e) {
+      console.warn("[pink] calcPinkCycle failed:", e);
+    }
   }
 
   return entry;
@@ -3098,18 +3117,7 @@ function hasSamePlayerRecentClick(player) {
 
    return String(r.updateDate ?? "") ===
      targetUpdateDate;
-  });
-}
-
-/* =========================================================
- [6420] Recent Clicks:getLatestCopiedPlayer【State】（旧 [7320]）
-========================================================= */
-function getLatestCopiedPlayer() {
-
-  return (
-    State.recentClicks[0] ||
-    null
-  );
+   });
 }
 
 
@@ -3352,27 +3360,30 @@ function calcPinkCycle(
       continue;
     }
 
-    const latest =
-      Number(history[history.length - 1] || 0);
+    /* Pink対象ごとの全過去マッチング間隔（隣接ペア）をすべて折りたたんで登録 */
+    for (let i = 1; i < history.length; i++) {
+      const latest =
+        Number(history[i] || 0);
 
-    const prev =
-      Number(history[history.length - 2] || 0);
+      const prev =
+        Number(history[i - 1] || 0);
 
-    if (!latest || !prev) {
-      continue;
-    }
+      if (!latest || !prev || latest <= prev) {
+        continue;
+      }
 
-    const interval =
-      (latest - prev) / 1000;
+      const interval =
+        (latest - prev) / 1000;
 
-    const folded =
-      foldToCycle(
-        interval,
-        base
-      );
+      const folded =
+        foldToCycle(
+          interval,
+          base
+        );
 
-    if (isFinite(folded)) {
-      foldedList.push(folded);
+      if (isFinite(folded)) {
+        foldedList.push(folded);
+      }
     }
   }
 
@@ -3391,14 +3402,24 @@ function calcPinkCycle(
     );
   }
 
-  const sum =
-    foldedList.reduce(
-      (a, b) => a + b,
-      0
+  /* 中央値算出（外れ値に強い収束処理） */
+  const values =
+    [...foldedList].sort(
+      (a, b) => a - b
     );
 
-  const avg =
-    sum / foldedList.length;
+  const mid =
+    Math.floor(
+      values.length / 2
+    );
+
+  const median =
+    (values.length % 2)
+      ? values[mid]
+      : (
+          values[mid - 1] +
+          values[mid]
+        ) / 2;
 
   const prev =
     Number(
@@ -3409,7 +3430,7 @@ function calcPinkCycle(
   const updated =
     updateAdjust(
       prev,
-      avg,
+      median,
       cfg.alpha || 0.3
     );
 
@@ -3676,6 +3697,7 @@ function computePhaseSignal(player, mode = "pink", nowMs = Date.now()) {
  return {
    cycleSec,
    diffSec,
+   cycleCount: metrics.cycleCount,
    phaseError: metrics.phaseError,
    phaseScore: metrics.phaseScore,
    decay: metrics.decay,
@@ -3731,47 +3753,6 @@ function getYellowPhaseScore(player, nowMs = Date.now()) {
     cycleSec,
     lambda
   ).finalPhaseScore;
-}
-
-/* =========================================================
- [7220] Phase Signal:getPinkPhaseScore【State】（旧 [7330] 内）
-========================================================= */
-function getPinkPhaseScore(
-   player,
-   nowMs = Date.now()
-) {
-   if (!player) {
-       return 0;
-   }
-
-   const target =
-       getPinkTarget(player);
-
-   if (!target) {
-       return 0;
-   }
-
-   const signal =
-       computePhaseSignal(player, "pink", nowMs);
-
-   if (!signal.cycleSec || !signal.active) {
-       return 0;
-   }
-
-   const encounterBonus =
-       getEncounterBonus(player);
-
-   return Math.max(
-       0,
-       Math.min(
-           1,
-           Math.max(
-               0,
-               signal.finalPhaseScore
-           ) *
-           encounterBonus
-       )
-   );
 }
 
 /* =========================================================
@@ -4029,172 +4010,142 @@ function getPlayerCycleCount(player, nowMs = Date.now()) {
   );
 }
 
-/* =========================================================
- [7440] Phase Analysis:getPhaseAnalysis【State】（旧 [9300]）
-========================================================= */
-function getPhaseAnalysis(
-  player,
-  nowMs = Date.now()
-) {
-
-  /* =====================================
-   * コピー履歴取得
-   * ===================================== */
-
-  const clicks =
-    State.recentClicks.filter(
-      r =>
-        normalizePlayerName(
-          r.name
-        ) ===
-        normalizePlayerName(
-          player.name
-        )
-    );
-
-  /* =====================================
-   * モード判定
-   * ===================================== */
-
-  const isPink =
-   clicks.length >= 2;
-
-  const adjust =
-   isPink
-     ? State.phaseAdjust.pink
-     : State.phaseAdjust.yellow;
-
-  const cycleSec =
-   getCurrentCycle(player);
-
-  /* =====================================
-   * 最新クリック
-   * ===================================== */
-
-  const click =
-   clicks.length > 0
-     ? clicks[0]
-     : null;
-
-  /* =====================================
-   * raw計算
-   * ===================================== */
-
-  let raw = 0;
-
-  if (isPink) {
-
-   raw =
-     click
-       ? (
-           nowMs -
-           (
-             click.copiedAt ??
-             click.time
-           )
-         ) / 1000
-       : 0;
-
-  } else {
-
-   const last =
-     parseDateJST(
-       player.updateDate
-     )?.getTime();
-
-   raw =
-     last
-       ? (
-           nowMs -
-           last
-         ) / 1000
-       : 0;
-  }
-
-  const lambda =
-   Number(
-     State.scoringConfig
-       ?.phaseError
-       ?.[isPink ? "pinkLambda" : "yellowLambda"] ?? 0.03
-   );
-
-  const folded =
-   cycleSec > 0
-     ? foldToCycle(
-         raw,
-         cycleSec
-       )
-     : 0;
-
-  const metrics =
-   cycleSec > 0
-     ? computePhaseMetrics(
-         raw,
-         cycleSec,
-         lambda
-       )
-     : {
-         cycleCount: 0,
-         phaseError: 0,
-         phaseScore: 0,
-         decay: 0,
-         finalPhaseScore: 0
-       };
-
-  /* =====================================
-   * return
-   * ===================================== */
-
-  return {
-
-   mode:
-     isPink
-       ? 1
-       : 0,
-
-   raw,
-
-   folded,
-
-   adjust,
-
-   cycleSec,
-
-   cycleCount:
-     metrics.cycleCount,
-
-   phaseError:
-     metrics.phaseError,
-
-   phaseScore:
-     metrics.phaseScore,
-
-   decay:
-     metrics.decay,
-
-   finalPhaseScore:
-     metrics.finalPhaseScore
-  };
-}
-
-
 /* #################################################################
  [LAYER 8000] Matching Calculation
  ################################################################# */
 
 /* =========================================================
- [8000] Historical Score:getHistoricalScore【State】（旧 [6810]）
+ [8005] Historical Score:Adjacent Tier Pooling【State】
 ========================================================= */
-function getHistoricalScore(
-  viewerRankKey,
-  opponentRankKey,
-  area
+const HISTORICAL_RELIABILITY_K = 100;
+
+function getHistoricalDistribution(
+  viewerTier
 ) {
-  return getHistoricalScoreDetail(
-    viewerRankKey,
-    opponentRankKey,
-    area
-  ).score;
+
+  const probList =
+    State.jointModel?.byViewerTier?.[
+      viewerTier
+    ] ?? [];
+
+  const total =
+    probList.reduce(
+      (sum, item) =>
+        sum + Number(item.count ?? 0),
+      0
+    );
+
+  return {
+    probList,
+    total
+  };
+}
+
+function getDistributionCellScore(
+  distribution,
+  opponentTier,
+  area,
+  supportSize
+) {
+
+  const hit =
+    distribution.probList.find(
+      item =>
+        item.opponentTier ===
+          String(opponentTier) &&
+        item.area === String(area)
+    );
+
+  const backoffScore =
+    distribution.total > 0 &&
+    supportSize > 0
+      ? 1 / (
+          distribution.total +
+          supportSize
+        )
+      : 0.0001;
+
+  return {
+    score: hit
+      ? hit.prob
+      : backoffScore,
+    matched: Boolean(hit)
+  };
+}
+
+function getAdjacentTierDistribution(
+  viewerTier
+) {
+
+  if (!/^R[1-8]$/.test(viewerTier)) {
+    return null;
+  }
+
+  const currentRank =
+    Number(viewerTier.slice(1));
+
+  const availableRanks =
+    Object.keys(
+      State.jointModel?.byViewerTier ?? {}
+    )
+      .filter(
+        tier => /^R[1-8]$/.test(tier)
+      )
+      .map(
+        tier => Number(tier.slice(1))
+      )
+      .filter(
+        rank => rank !== currentRank
+      );
+
+  const lowerRanks =
+    availableRanks.filter(
+      rank => rank < currentRank
+    );
+
+  const higherRanks =
+    availableRanks.filter(
+      rank => rank > currentRank
+    );
+
+  const adjacentRanks = [
+    lowerRanks.length
+      ? Math.max(...lowerRanks)
+      : null,
+    higherRanks.length
+      ? Math.min(...higherRanks)
+      : null
+  ].filter(
+    Number.isFinite
+  );
+
+  const distributions =
+    adjacentRanks.map(
+      rank => ({
+        viewerTier: `R${rank}`,
+        ...getHistoricalDistribution(
+          `R${rank}`
+        )
+      })
+    )
+      .filter(
+        distribution =>
+          distribution.total > 0
+      );
+
+  const total =
+    distributions.reduce(
+      (sum, distribution) =>
+        sum + distribution.total,
+      0
+    );
+
+  return total > 0
+    ? {
+        distributions,
+        total
+      }
+    : null;
 }
 
 /* =========================================================
@@ -4213,6 +4164,7 @@ function getHistoricalScoreDetail(
     return {
       score: 1.0,
       matched: false,
+      backoff: false,
       viewerTier: null,
       opponentTier: null
     };
@@ -4224,190 +4176,115 @@ function getHistoricalScoreDetail(
   const opponentTier =
     mapRankKeyToTierKey(opponentRankKey);
 
-  const probList =
-    State.jointModel.byViewerTier?.[
+  const ownDistribution =
+    getHistoricalDistribution(
       viewerTier
-    ];
+    );
+
+  const adjacentDistribution =
+    getAdjacentTierDistribution(
+      viewerTier
+    );
 
   if (
-    !probList ||
-    !probList.length
+    ownDistribution.total <= 0 &&
+    !adjacentDistribution
   ) {
     return {
       score: 1.0,
       matched: false,
+      backoff: false,
       viewerTier,
       opponentTier
     };
   }
 
-  const hit =
-    probList.find(
-      o =>
-        o.opponentTier === String(opponentTier) &&
-        o.area === String(area)
-    );
-
-  return {
-    score: hit
-      ? hit.prob
-      : 0.0001,
-    matched: Boolean(hit),
-    viewerTier,
-    opponentTier
-  };
-}
-
-/* =========================================================
- [8100] Time Weight:getTimeWeight【State】【DOM】（旧 [7060]）
-========================================================= */
-function getTimeWeight(player, nowMs = Date.now()) {
-
-  if (
-    !player ||
-    !player.updateDate
-  ) {
-    return 0;
-  }
-
-  const now =
-    nowMs;
-
-  const last =
-    parseDateJST(
-      player.updateDate
-    )?.getTime();
-
-  if (
-    !last ||
-    !isFinite(last)
-  ) {
-    return 0;
-  }
-
-  const diffMin =
-    (now - last) / 60000;
-
-  if (
-    !isFinite(diffMin) ||
-    diffMin < 0
-  ) {
-    return 0;
-  }
-
-  const maxRange =
-    readRangeMinutes();
-
-  if (
-    !maxRange ||
-    !isFinite(maxRange) ||
-    maxRange <= 0
-  ) {
-    return 0;
-  }
-
-  const normalized =
-    Math.max(
-      0,
-      1 - diffMin / maxRange
-    );
-
-  const mode =
-    State.scoringConfig?.time?.mode ??
-    "multiply";
-
-  const exp =
+  const supportSize =
     Number(
-      State.scoringConfig?.time?.exp
-      ?? 1.2
+      State.jointModel.historicalSupportSize ?? 0
     );
 
-  let weight;
+  const ownCell =
+    ownDistribution.total > 0
+      ? getDistributionCellScore(
+          ownDistribution,
+          opponentTier,
+          area,
+          supportSize
+        )
+      : null;
 
-  if (mode === "multiply") {
+  const adjacentCells =
+    adjacentDistribution?.distributions.map(
+      distribution => ({
+        viewerTier:
+          distribution.viewerTier,
+        total:
+          distribution.total,
+        ...getDistributionCellScore(
+          distribution,
+          opponentTier,
+          area,
+          supportSize
+        )
+      })
+    ) ?? [];
 
-    weight =
-      Math.pow(
-        normalized,
-        exp
-      );
-
-  } else if (
-    mode === "linear"
-  ) {
-
-    weight =
-      normalized;
-
-  } else {
-
-    weight =
-      Math.pow(
-        normalized,
-        exp
-      );
-  }
-
-  if (!isFinite(weight)) {
-    return 0;
-  }
-
-  return weight;
-}
-
-/* =========================================================
- [8200] Matching Score:calcMatchingDiagnostics【State】（旧 [7400]）
-========================================================= */
-function calcMatchingDiagnostics(
-  list
-) {
-
-  const ranked =
-    [...list].sort(
-      (a, b) =>
-        b.__score - a.__score
-    );
-
-  const top =
-    ranked
-      .slice(0, 5)
-      .map(
-        p => p.__score || 0
-      );
-
-  const top1 =
-    top[0] || 0;
-
-  const top2 =
-    top[1] || 0;
-
-  const mean =
-    top.length
-      ? top.reduce(
-          (a, b) => a + b,
+  const adjacentScore =
+    adjacentDistribution
+      ? adjacentCells.reduce(
+          (sum, cell) =>
+            sum +
+            cell.score *
+            cell.total /
+            adjacentDistribution.total,
           0
-        ) / top.length
+        )
       : 0;
 
+  const adjacentMatched =
+    adjacentCells.some(
+      cell => cell.matched
+    );
+
+  const ownReliability =
+    ownDistribution.total > 0
+      ? ownDistribution.total /
+        (
+          ownDistribution.total +
+          HISTORICAL_RELIABILITY_K
+        )
+      : 0;
+
+  const score =
+    adjacentDistribution
+      ? ownCell
+        ? ownCell.score *
+            ownReliability +
+          adjacentScore *
+            (1 - ownReliability)
+        : adjacentScore
+      : ownCell?.score ?? 1.0;
+
   return {
-
-    gap12:
-      top1 - top2,
-
-    gap15:
-      top1 -
-      (top[4] || 0),
-
-    top5Mean:
-      mean,
-
-    top1Ratio:
-      mean
-        ? top1 / mean
-        : 0,
-
-    totalRanked:
-      ranked.length
+    score,
+    matched:
+      Boolean(ownCell?.matched) ||
+      adjacentMatched,
+    backoff:
+      !ownCell?.matched &&
+      !adjacentMatched,
+    ownReliability,
+    ownSampleCount:
+      ownDistribution.total,
+    adjacentSampleCount:
+      adjacentDistribution?.total ?? 0,
+    adjacentViewerTiers:
+      adjacentCells.map(
+        cell => cell.viewerTier
+      ),
+    viewerTier,
+    opponentTier
   };
 }
 
@@ -4496,6 +4373,8 @@ function calcMatchingScoreDetail(
 
         historicalScore,
         historicalMatched: historical.matched,
+        historicalBackoff:
+            Boolean(historical.backoff),
         viewerTier: historical.viewerTier,
         opponentTier: historical.opponentTier,
         area: String(player.area ?? ""),
@@ -4519,18 +4398,6 @@ function calcMatchingScoreDetail(
         pinkThreshold: phaseCtx?.pinkThreshold ?? 0,
         encounterBonus
     };
-}
-
-/* =========================================================
- [8220] Matching Score:calcMatchingScore（旧 [7420]）
-========================================================= */
-function calcMatchingScore(
-  player
-) {
-
-  return calcMatchingScoreDetail(
-    player
-  ).score;
 }
 
 /* =========================================================
@@ -4695,6 +4562,12 @@ function buildMatchingCandidates() {
         getCandidateSelectionScore(a)
     );
 
+  State.matchingRankedAll.forEach(
+    (p, i) => {
+      p.__scoreRank = i + 1;
+    }
+  );
+
   /* =====================================
    * STEP7: Score順に並べる
    * STEP8: 上位10人を表示
@@ -4713,12 +4586,14 @@ function buildMatchingCandidates() {
    * 通常選出から漏れた候補のうち
    * FinalPhaseScoreが高い順に追加する。
    *
-   * 対象はhistoricalMatched=trueの相手に限定し、
-   * 実績のない組み合わせ（historicalScore未マッチ）
-   * による過剰な救済を避ける。
+   * 2枠は原則として既知の履歴セルと未観測セルに1枠ずつ
+   * 配分し、履歴データが疎なランク帯・地域も完全には
+   * 排除しない。片方が空なら他方で補完する。
    * ===================================== */
   const NORMAL_SLOT_COUNT = 8;
   const PHASE_RESCUE_SLOT_COUNT = 2;
+  const MATCHED_RESCUE_SLOT_COUNT = 1;
+  const BACKOFF_RESCUE_SLOT_COUNT = 1;
 
   const rankedByScore =
     [...scoreEligible].sort(
@@ -4755,22 +4630,67 @@ function buildMatchingCandidates() {
         return false;
       }
 
-      return Boolean(
-        p.__detail?.historicalMatched
-      );
+      return true;
     });
 
-  const phaseRescueSelected =
-    [...phaseRescuePool]
-      .sort(
-        (a, b) =>
-          Number(b.__detail?.finalPhaseScore ?? 0) -
-          Number(a.__detail?.finalPhaseScore ?? 0)
-      )
-      .slice(
-        0,
-        PHASE_RESCUE_SLOT_COUNT
+  const rankedPhaseRescuePool =
+    [...phaseRescuePool].sort(
+      (a, b) =>
+        Number(b.__detail?.finalPhaseScore ?? 0) -
+        Number(a.__detail?.finalPhaseScore ?? 0)
+    );
+
+  const phaseRescueSelected = [];
+
+  const appendRescueCandidates = (
+    pool,
+    limit,
+    reason
+  ) => {
+
+    for (const player of pool) {
+
+      if (
+        phaseRescueSelected.length >=
+          PHASE_RESCUE_SLOT_COUNT ||
+        phaseRescueSelected.filter(
+          p => p.__rescueReason === reason
+        ).length >= limit ||
+        phaseRescueSelected.includes(player)
+      ) {
+        continue;
+      }
+
+      player.__rescueReason =
+        reason;
+
+      phaseRescueSelected.push(
+        player
       );
+    }
+  };
+
+  appendRescueCandidates(
+    rankedPhaseRescuePool.filter(
+      p => p.__detail?.historicalMatched
+    ),
+    MATCHED_RESCUE_SLOT_COUNT,
+    "phase"
+  );
+
+  appendRescueCandidates(
+    rankedPhaseRescuePool.filter(
+      p => p.__detail?.historicalBackoff
+    ),
+    BACKOFF_RESCUE_SLOT_COUNT,
+    "historical-backoff"
+  );
+
+  appendRescueCandidates(
+    rankedPhaseRescuePool,
+    PHASE_RESCUE_SLOT_COUNT,
+    "phase"
+  );
 
   phaseRescueSelected.forEach(
     p => {
@@ -5797,7 +5717,9 @@ function buildPlayerRowHTML(
       >
         ${p.name}${
           p.__phaseRescue
-            ? ' <span style="background:#e0f2ff;color:#0b5da6;border-radius:3px;padding:0 4px;font-size:0.8em;" title="Phase救済枠：FinalPhaseScoreが高いため選出">P↑</span>'
+            ? p.__rescueReason === "historical-backoff"
+              ? ' <span style="background:#fff3cd;color:#7a5200;border-radius:3px;padding:0 4px;font-size:0.8em;" title="履歴補完救済枠：未観測のランク帯・地域から位相上位を選出">H↑</span>'
+              : ' <span style="background:#e0f2ff;color:#0b5da6;border-radius:3px;padding:0 4px;font-size:0.8em;" title="Phase救済枠：FinalPhaseScoreが高いため選出">P↑</span>'
             : ""
         }
       </td>
@@ -6857,29 +6779,19 @@ function copyToClipboard(
 }
 
 /* =========================================================
- [12100] CSV Export:downloadCSV【DOM】（旧 [8000]）
+ [12050] Generic Downloader:downloadBlob【DOM】
 ========================================================= */
-function downloadCSV(
+function downloadBlob(
+  content,
   filename,
-  header,
-  body
+  mimeType = "application/json;charset=utf-8"
 ) {
-
-  const bom =
-    "\uFEFF";
-
-  const csv =
-    bom +
-    header +
-    "\n" +
-    body;
 
   const blob =
     new Blob(
-      [csv],
+      [content],
       {
-        type:
-          "text/csv;charset=utf-8"
+        type: mimeType
       }
     );
 
@@ -6902,6 +6814,31 @@ function downloadCSV(
 
   URL.revokeObjectURL(
     url
+  );
+}
+
+/* =========================================================
+ [12100] CSV Export:downloadCSV【DOM】（旧 [8000]）
+========================================================= */
+function downloadCSV(
+  filename,
+  header,
+  body
+) {
+
+  const bom =
+    "\uFEFF";
+
+  const csv =
+    bom +
+    header +
+    "\n" +
+    body;
+
+  downloadBlob(
+    csv,
+    filename,
+    "text/csv;charset=utf-8"
   );
 }
 
@@ -7010,50 +6947,6 @@ function exportAllCSV() {
     "all_records.csv",
     header,
     body
-  );
-}
-
-/* =========================================================
- [12200] JSON Export:downloadJSON【DOM】（旧 [9800]）
-========================================================= */
-function downloadJSON(
-  data
-) {
-
-  const blob =
-    new Blob(
-      [
-        JSON.stringify(
-          data,
-          null,
-          2
-        )
-      ],
-      {
-        type:
-          "application/json"
-      }
-    );
-
-  const url =
-    URL.createObjectURL(
-      blob
-    );
-
-  const a =
-    document.createElement(
-      "a"
-    );
-
-  a.href = url;
-
-  a.download =
-    "viewer_analysis_logs.json";
-
-  a.click();
-
-  URL.revokeObjectURL(
-    url
   );
 }
 
@@ -7318,260 +7211,18 @@ async function exportTodayViewerLogsAsJSON() {
   const filename =
     `viewer_analysis_${dateKey}.json`;
 
-  const blob =
-    new Blob(
-      [
-        JSON.stringify(
-          payload,
-          null,
-          2
-        )
-      ],
-      {
-        type:
-          "application/json;charset=utf-8"
-      }
-    );
-
-  const url =
-    URL.createObjectURL(
-      blob
-    );
-
-  const a =
-    document.createElement(
-      "a"
-    );
-
-  a.href =
-    url;
-
-  a.download =
-    filename;
-
-  a.click();
-
-  URL.revokeObjectURL(
-    url
+  downloadBlob(
+    JSON.stringify(
+      payload,
+      null,
+      2
+    ),
+    filename,
+    "application/json;charset=utf-8"
   );
 
   log(
     `分析JSON出力完了: ${filename}`
-  );
-
-}
-
-/* =========================================================
- [12220] JSON Export:exportViewerLogsAsJSON【State】【永続化】【DOM】（旧 [9910]）
-========================================================= */
-async function exportViewerLogsAsJSON() {
-
-  return exportTodayViewerLogsAsJSON();
-
-  // TODO(整理メモ): この return 以降は到達不能コード。次段階で削除検討
-
-  const input =
-    document.getElementById(
-      "logExportDate"
-    );
-
-  const rawDate =
-    String(
-      input?.value ?? ""
-    ).trim();
-
-  let dateKey;
-
-  /*
-   * 日付未指定
-   * → 当日
-   */
-  if (!rawDate) {
-
-    dateKey =
-      compactYMD(
-        getTodayYMDJa()
-      );
-
-  } else {
-
-    /*
-     * 日付指定
-     */
-    dateKey =
-      rawDate.replaceAll(
-        "-",
-        ""
-      );
-
-  }
-
-  log(
-    `[viewer-log] rawDate=${rawDate} dateKey=${dateKey}`
-  );
-
-  const year =
-    Number(
-      dateKey.slice(
-        0,
-        4
-      )
-    );
-
-  const month =
-    Number(
-      dateKey.slice(
-        4,
-        6
-      )
-    ) - 1;
-
-  const day =
-    Number(
-      dateKey.slice(
-        6,
-        8
-      )
-    );
-
-  const targetDate =
-    `${year}/${String(
-      month + 1
-    ).padStart(
-      2,
-      "0"
-    )}/${String(
-      day
-    ).padStart(
-      2,
-      "0"
-    )}`;
-
-  const startDate =
-    new Date(
-      year,
-      month,
-      day,
-      0,
-      0,
-      0,
-      0
-    );
-
-  const endDate =
-    new Date(
-      year,
-      month,
-      day,
-      23,
-      59,
-      59,
-      999
-    );
-
-  const startTs =
-    startDate.getTime();
-
-  const endTs =
-    endDate.getTime();
-
-  const viewerLogs =
-    readStoredArraySafe(
-      LOG_STORAGE_KEYS.viewerLogs
-    );
-
-  const filteredViewerLogs =
-    viewerLogs.filter(
-      log => {
-
-        if (
-          !log?.savedAt
-        ) {
-          return false;
-        }
-
-        const ts =
-          Date.parse(
-            log.savedAt.replace(
-              /\//g,
-              "-"
-            )
-          );
-
-        return (
-          !Number.isNaN(
-            ts
-          ) &&
-          ts >= startTs &&
-          ts <= endTs
-        );
-
-      }
-    );
-
-  const payload = {
-
-    exportedAt:
-      Date.now(),
-
-    rawDate,
-
-    dateKey,
-
-    targetDate,
-
-    range: {
-      start: startTs,
-      end: endTs
-    },
-
-    viewerLogs:
-      filteredViewerLogs
-
-  };
-
-  const filename =
-    `viewer_runtime_${dateKey}.json`;
-
-  const blob =
-    new Blob(
-      [
-        JSON.stringify(
-          payload,
-          null,
-          2
-        )
-      ],
-      {
-        type:
-          "application/json;charset=utf-8"
-      }
-    );
-
-  const url =
-    URL.createObjectURL(
-      blob
-    );
-
-  const a =
-    document.createElement(
-      "a"
-    );
-
-  a.href =
-    url;
-
-  a.download =
-    filename;
-
-  a.click();
-
-  URL.revokeObjectURL(
-    url
-  );
-
-  log(
-    `ViewerLog出力完了: ${filename}`
   );
 
 }
@@ -7637,6 +7288,9 @@ function saveCopyEventUnified(
       scoreRank:
         null,
 
+      predictedRank:
+        null,
+
       wasInTop10:
         false,
 
@@ -7681,6 +7335,9 @@ function saveCopyEventUnified(
   const rankedAll =
     State.matchingRankedAll ?? [];
 
+  const displayedCandidates =
+    State.matchingList ?? [];
+
   let candidateRank = -1;
 
   const idx =
@@ -7707,6 +7364,29 @@ function saveCopyEventUnified(
       idx + 1;
 
   }
+
+  const displayedIndex =
+    displayedCandidates.findIndex(
+      p =>
+        normalizePlayerName(
+          p.name
+        ) ===
+          normalizePlayerName(
+            player.name
+          )
+        &&
+        normalizePlayerName(
+          p.shopname ?? ""
+        ) ===
+          normalizePlayerName(
+            player.shopname ?? ""
+          )
+    );
+
+  const predictedRank =
+    displayedIndex >= 0
+      ? displayedIndex + 1
+      : null;
 
   const copyCandidateSnapshot =
     buildCopyCandidateSnapshot();
@@ -7747,6 +7427,9 @@ function saveCopyEventUnified(
     n:
       player.name ?? "",
 
+    shopname:
+      player.shopname ?? "",
+
     score:
       Number(detail.score ?? 0),
 
@@ -7755,9 +7438,10 @@ function saveCopyEventUnified(
         ? candidateRank
         : null,
 
+    predictedRank,
+
     wasInTop10:
-      candidateRank >= 1 &&
-      candidateRank <= 10,
+      predictedRank !== null,
 
     predictionAgeSec:
       State.lastCandidateEventId
@@ -7775,6 +7459,8 @@ function saveCopyEventUnified(
         Number(detail.historicalScore ?? 0),
       historicalMatched:
         Boolean(detail.historicalMatched),
+      historicalBackoff:
+        Boolean(detail.historicalBackoff),
       playerBoost:
         Number(detail.playerBoost ?? 1),
       rankBoost:
@@ -7856,6 +7542,7 @@ function buildCopyCandidateSnapshot() {
     (State.matchingList ?? [])
       .map(p => ({
         scoreRank: p.displayRank ?? null,
+        globalScoreRank: p.__scoreRank ?? null,
         name: p.name,
         shopname: p.shopname ?? "",
         rankKey: p.__rankKey ?? null,
@@ -7868,6 +7555,8 @@ function buildCopyCandidateSnapshot() {
             Number(p.__detail?.historicalScore ?? 0),
           historicalMatched:
             Boolean(p.__detail?.historicalMatched),
+          historicalBackoff:
+            Boolean(p.__detail?.historicalBackoff),
           playerBoost:
             Number(p.__detail?.playerBoost ?? 1),
           rankBoost:
@@ -7904,7 +7593,11 @@ function buildCopyCandidateSnapshot() {
         cycleSec:
           Number(p.__detail?.cycleSec ?? 0),
         encounterCount:
-          getEncounterHistory(p)?.count ?? 0
+          getEncounterHistory(p)?.count ?? 0,
+        isPhaseRescue:
+          Boolean(p.__phaseRescue),
+        rescueReason:
+          p.__rescueReason ?? null
       }));
 
   return {
@@ -8080,6 +7773,9 @@ function recordClickFromCopiedInfo(
 
   /* 重複ガード中でない場合のみ周期学習・履歴に登録 */
   if (!isDuplicateGuard) {
+    const isPinkManagedBefore =
+      Boolean(snapshotBeforeCopy.pinkEntry);
+
     registerPinkTarget(
       player,
       copiedAt
@@ -8091,12 +7787,17 @@ function recordClickFromCopiedInfo(
     );
 
     /*
-     * Yellow周期学習用サンプル登録
+     * 学習の分離
+     * 当日初コピー（＝コピー前時点でPink未管理）の時だけ
+     * Yellow周期学習用サンプルとして登録・学習を行う。
+     * （Pink管理対象の再マッチングデータがYellowに混入するのを防ぐ）
      */
-    registerYellowSample(
-      player,
-      copiedAt
-    );
+    if (!isPinkManagedBefore) {
+      registerYellowSample(
+        player,
+        copiedAt
+      );
+    }
 
     recordRealtimeActivity(
       player,
@@ -8559,9 +8260,14 @@ function saveCandidateEvent() {
 
         scoreRank:
           p.displayRank ?? null,
+        globalScoreRank:
+          p.__scoreRank ?? null,
 
         name:
           p.name,
+
+        shopname:
+          p.shopname ?? "",
 
         rankKey:
           p.__rankKey ?? null,
@@ -8580,6 +8286,8 @@ function saveCandidateEvent() {
             Number(p.__detail?.historicalScore ?? 0),
           historicalMatched:
             Boolean(p.__detail?.historicalMatched),
+          historicalBackoff:
+            Boolean(p.__detail?.historicalBackoff),
           playerBoost:
             Number(p.__detail?.playerBoost ?? 1),
           rankBoost:
@@ -8625,6 +8333,8 @@ function saveCandidateEvent() {
 
         isPhaseRescue:
           Boolean(p.__phaseRescue),
+        rescueReason:
+          p.__rescueReason ?? null,
 
         encounterCount:
           getEncounterHistory(p)?.count ?? 0
@@ -9114,18 +8824,6 @@ function readSelectedPrides() {
     .map(
       x => x.value
     );
-}
-/* =========================================================
- [16030] DOM Input Reader:readMyRankValue【DOM】
-========================================================= */
-function readMyRankValue() {
-
-  const el =
-    document.getElementById(
-      "myRankSelect"
-    );
-
-  return el?.value;
 }
 
 /* #################################################################
