@@ -3689,14 +3689,16 @@ function computePhaseSignal(player, mode = "pink", nowMs = Date.now()) {
 }
 
 /* =========================================================
- [7205] Phase Detail:buildPlayerPhaseDetailText【State】
+ [7205] Phase Detail:getPlayerPhaseDetail【State】
 ========================================================= */
-function buildPlayerPhaseDetailText(
+function getPlayerPhaseDetail(
  player,
  nowMs = Date.now()
 ) {
  if (!player) {
-   return "Phase：計算できません";
+   return {
+     error: "Phase：計算できません"
+   };
  }
 
  const isPink =
@@ -3712,7 +3714,9 @@ function buildPlayerPhaseDetailText(
    !isFinite(cycleSec) ||
    cycleSec <= 0
  ) {
-   return "Phase：周期を計算できません";
+   return {
+     error: "Phase：周期を計算できません"
+   };
  }
 
  const anchorMs =
@@ -3729,14 +3733,18 @@ function buildPlayerPhaseDetailText(
    !isFinite(anchorMs) ||
    anchorMs <= 0
  ) {
-   return `Phase（${isPink ? "Pink" : "Yellow"}）：基準時刻を取得できません`;
+   return {
+     error: `Phase（${isPink ? "Pink" : "Yellow"}）：基準時刻を取得できません`
+   };
  }
 
  const diffSec =
    (nowMs - anchorMs) / 1000;
 
  if (diffSec < 0) {
-   return `Phase（${isPink ? "Pink" : "Yellow"}）：基準時刻が現在時刻より後です`;
+   return {
+     error: `Phase（${isPink ? "Pink" : "Yellow"}）：基準時刻が現在時刻より後です`
+   };
  }
 
  const lambda =
@@ -3756,7 +3764,122 @@ function buildPlayerPhaseDetailText(
      lambda
    );
 
- return `Phase（${mode === "pink" ? "Pink" : "Yellow"}）：周期=${cycleSec.toFixed(1)}秒　${metrics.cycleCount}サイクル／誤差±${Math.round(metrics.phaseError)}秒`;
+ /*
+  * ピーク方向判定（表示専用）
+  *
+  * phasePos：直前の周期境界（ピーク）からの経過秒数（0〜cycleSec未満）。
+  * 半周期未満＝直前のピークからまだ日が浅い＝ピークを「過ぎた」直後。
+  * 半周期以上＝次のピークの方が近い＝ピークが「これから」来る。
+  *
+  * ※ isMatchingCandidateByPhase 等の判定・スコアリングは
+  *   引き続き絶対値の phaseError / finalPhaseScore を用いるため、
+  *   本判定を追加しても既存の候補選出ロジックには影響しない。
+  */
+ const phasePos =
+   diffSec % cycleSec;
+
+ const peakDirection =
+   phasePos < cycleSec / 2
+     ? "past"
+     : "upcoming";
+
+ return {
+   mode,
+   cycleSec,
+   cycleCount: metrics.cycleCount,
+   phaseError: metrics.phaseError,
+   peakDirection
+ };
+}
+
+/* =========================================================
+ [7206] Phase Detail:buildPlayerPhaseSummaryText【State】
+========================================================= */
+function buildPlayerPhaseSummaryText(
+ player,
+ nowMs = Date.now()
+) {
+ const detail =
+   getPlayerPhaseDetail(
+     player,
+     nowMs
+   );
+
+ if (detail.error) {
+   return detail.error;
+ }
+
+ const signedError =
+   detail.peakDirection === "past"
+     ? Math.round(detail.phaseError)
+     : -Math.round(detail.phaseError);
+
+ const signedLabel =
+   signedError >= 0
+     ? `＋${signedError}秒`
+     : `－${Math.abs(signedError)}秒`;
+
+ return `${detail.mode === "pink" ? "Pink" : "Yellow"}=${detail.cycleSec.toFixed(1)}秒　${detail.cycleCount}サイクル／${signedLabel}`;
+}
+
+/* =========================================================
+ [7207] Phase Detail:showPlayerPhaseDetailDialog【DOM】
+========================================================= */
+function showPlayerPhaseDetailDialog(
+ player
+) {
+ const overlay =
+   document.createElement("div");
+
+ const dialog =
+   document.createElement("div");
+
+ const closeButton =
+   document.createElement("button");
+
+ const detail =
+   document.createElement("div");
+
+ overlay.style.cssText =
+   "position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,0.35);box-sizing:border-box;";
+
+ dialog.style.cssText =
+   "width:min(420px,100%);padding:20px;border-radius:10px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,0.28);font-size:20px;font-weight:bold;line-height:1.6;color:#222;";
+
+ closeButton.type = "button";
+ closeButton.textContent = "閉じる";
+ closeButton.style.cssText =
+   "display:block;margin:16px 0 0 auto;padding:8px 14px;border:1px solid #999;border-radius:5px;background:#f5f5f5;font-size:16px;cursor:pointer;";
+
+ detail.textContent =
+   buildPlayerPhaseSummaryText(
+     player
+   );
+
+ const close = () => {
+   overlay.remove();
+ };
+
+ closeButton.addEventListener(
+   "click",
+   close
+ );
+
+ overlay.addEventListener(
+   "click",
+   event => {
+     if (event.target === overlay) {
+       close();
+     }
+   }
+ );
+
+ dialog.append(
+   detail,
+   closeButton
+ );
+ overlay.append(dialog);
+ document.body.append(overlay);
 }
 
 /* =========================================================
@@ -5814,6 +5937,9 @@ function buildPlayerRowHTML(
       ? " phase-rescue"
       : "";
 
+  const phaseSummary =
+    buildPlayerPhaseSummaryText(p);
+
   return `
     <tr
       class="${rowStateClass}${phaseRescueClass}"
@@ -5881,19 +6007,16 @@ function buildPlayerRowHTML(
             cursor:pointer;
           "
           title="タップしてPhaseを表示"
-          aria-expanded="false"
         >${p.updateDate}</button>
         <div
-          class="phase-detail"
           style="
-            display:none;
             margin-top:3px;
             font-size:11px;
             line-height:1.35;
             color:#555;
             white-space:nowrap;
           "
-        ></div>
+        >${phaseSummary}</div>
       </td>
 
       <td class="center">
@@ -6449,12 +6572,7 @@ function renderPlayerRowsToBody(
           const row =
             trigger.closest("tr");
 
-          const detail =
-            row?.querySelector(
-              ".phase-detail"
-            );
-
-          if (!row || !detail) {
+          if (!row) {
             return;
           }
 
@@ -6466,28 +6584,8 @@ function renderPlayerRowsToBody(
               row.dataset.updated || ""
           };
 
-          const isExpanded =
-            trigger.getAttribute(
-              "aria-expanded"
-            ) === "true";
-
-          if (isExpanded) {
-            detail.style.display = "none";
-            trigger.setAttribute(
-              "aria-expanded",
-              "false"
-            );
-            return;
-          }
-
-          detail.textContent =
-            buildPlayerPhaseDetailText(
-              player
-            );
-          detail.style.display = "block";
-          trigger.setAttribute(
-            "aria-expanded",
-            "true"
+          showPlayerPhaseDetailDialog(
+            player
           );
         }
       );
