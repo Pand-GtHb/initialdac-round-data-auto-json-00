@@ -154,7 +154,6 @@ const State = {
   jointModel: null,
   playerActivity: {},
   rankActivity: {},
-  areaActivity: {},
   viewerLastCopiedAt: null,
   scoringConfig: null,
   updateWatchTimer: null,
@@ -900,11 +899,35 @@ function normalizeJointModel(json) {
     byViewerTier[viewerTier] = probList;
   }
 
+  /*
+   * 2026-09 joint_model 地域軸廃止対応:
+   * area="ALL" を含むモデルでは ALL を
+   * ワイルドカードとして扱うため、
+   * 実際のマッチング粒度は opponentTier のみ。
+   * この場合に地域数を掛けると support が
+   * 過大評価され backoff スコアが実態より
+   * 小さくなりすぎる。
+   * 旧地域別モデル（ALL を含まない）では
+   * 従来通り opponentTier × area の
+   * 組み合わせ数を supportSize とする。
+   */
+  const usesAreaWildcard =
+    areaSet.has("ALL");
+
+  const historicalSupportSize =
+    usesAreaWildcard
+      ? opponentTierSet.size
+      : opponentTierSet.size *
+        areaSet.size;
+
   return {
     byViewerTier,
-    historicalSupportSize:
-      opponentTierSet.size *
-      areaSet.size
+    usesAreaWildcard,
+    historicalOpponentTierCount:
+      opponentTierSet.size,
+    historicalAreaCount:
+      areaSet.size,
+    historicalSupportSize
   };
 }
 
@@ -1348,8 +1371,6 @@ function saveRealtimeActivityToStorage() {
           State.playerActivity,
         rankActivity:
           State.rankActivity,
-        areaActivity:
-          State.areaActivity,
         viewerLastCopiedAt:
           State.viewerLastCopiedAt
       })
@@ -1382,9 +1403,6 @@ function restoreRealtimeActivityFromStorage() {
 
     State.rankActivity =
       parsed?.rankActivity || {};
-
-    State.areaActivity =
-      parsed?.areaActivity || {};
 
     if (parsed?.viewerLastCopiedAt) {
       State.viewerLastCopiedAt =
@@ -2720,24 +2738,11 @@ function updateEncounterHistory(
 
 }
 
-/* =========================================================
- [6120] Encounter History:getEncounterBonus（旧 [7077]）
-========================================================= */
-function getEncounterBonus(
-    player
-) {
-    /*
-     * 方針
-     * 遭遇回数による加点は行わない
-     *
-     * encounterHistory は引き続き管理情報として保持する。
-     * ただしスコア計算には反映しない。
-     *
-     * 呼び出し構造維持のため、
-     * 常に倍率1.0を返す。
-     */
-    return 1.0;
-}
+/*
+ * 【2026-09 削除】getEncounterBonus は常に1.0を返す
+ * 無効化済み関数だったため、呼び出し箇所とあわせて削除した。
+ * encounterHistory 自体は undo 等の管理情報として引き続き利用する。
+ */
 
 /* =========================================================
  [6200] Yellow Samples:registerYellowSample【State】【永続化】（旧 [7078]）
@@ -2919,25 +2924,6 @@ function recordRealtimeActivity(
     };
   }
 
-  const areaKey =
-    String(player.area ?? "");
-
-  if (areaKey) {
-
-    const prev =
-      State.areaActivity[
-        areaKey
-      ] || { count: 0 };
-
-    State.areaActivity[
-      areaKey
-    ] = {
-      count:
-        Number(prev.count ?? 0) + 1,
-      lastSeen: now
-    };
-  }
-
   saveRealtimeActivityToStorage();
 }
 
@@ -3032,17 +3018,12 @@ function getRankBoost(rankKey) {
   );
 }
 
-/* =========================================================
- [6350] Realtime Boost:getAreaBoost【State】（旧 [7130]）
-========================================================= */
-function getAreaBoost(area) {
-
-  return computeBoostValue(
-    State.areaActivity[
-      String(area ?? "")
-    ]
-  );
-}
+/*
+ * 【2026-09 削除】getAreaBoost は廃止した。
+ * Pink管理対象の母数が少なく areaActivity が playerActivity の
+ * 劣化コピーになり、realtimeBoost が二乗効果で歪む問題があったため。
+ * State.areaActivity の記録・永続化処理もあわせて削除した。
+ */
 
 /* =========================================================
  [6400] Recent Clicks:rebuildRecentClickIndex【State】（旧 [7105] 内）
@@ -4048,12 +4029,20 @@ function getDistributionCellScore(
   supportSize
 ) {
 
+  /*
+   * area === "ALL" のセルは「地域を区別しない集計」であることを示す
+   * ワイルドカードとして扱う（2026-09 joint_model地域軸廃止対応）。
+   * 実際の候補地域(area)がどの都道府県コードであっても一致とみなす。
+   */
   const hit =
     distribution.probList.find(
       item =>
         item.opponentTier ===
           String(opponentTier) &&
-        item.area === String(area)
+        (
+          item.area === "ALL" ||
+          item.area === String(area)
+        )
     );
 
   const backoffScore =
@@ -4325,6 +4314,15 @@ function calcMatchingScoreDetail(
     const isPinkManaged =
         Boolean(phaseCtx?.isPinkManaged);
 
+    /*
+     * 【2026-09 realtimeBoost是正】
+     * 以前は areaBoost (player.area 単位の直近活動カウント) も
+     * 掛け合わせていたが、Pink管理対象の母数が少ないため
+     * areaActivity の実体がほぼ playerActivity と同一になり、
+     * 「個人の活動シグナル」を実質二乗で効かせてしまう歪みが
+     * 生じていた（実地ログ検証で67件中62件が同値と確認）。
+     * そのためエリア単位のリアルタイムブーストは廃止する。
+     */
     const playerBoost =
         isPinkManaged
             ? getPlayerBoost(player)
@@ -4335,31 +4333,17 @@ function calcMatchingScoreDetail(
             ? getRankBoost(rankKey)
             : 1.0;
 
-    const areaBoost =
-        isPinkManaged
-            ? getAreaBoost(player.area)
-            : 1.0;
-
     const realtimeBoost =
         playerBoost *
-        rankBoost *
-        areaBoost;
-
-    const encounterBonus =
-        Number(
-            getEncounterBonus(player) || 1.0
-        );
+        rankBoost;
 
     const effectivePhaseScore =
-        isPinkManaged
-            ? finalPhaseScore * encounterBonus
-            : finalPhaseScore;
+        finalPhaseScore;
 
     const rawScore =
         historicalScore *
         playerBoost *
         rankBoost *
-        areaBoost *
         effectivePhaseScore;
 
     const safeScore =
@@ -4381,7 +4365,6 @@ function calcMatchingScoreDetail(
         isPinkManaged,
         playerBoost,
         rankBoost,
-        areaBoost,
         realtimeBoost,
 
         phaseError: phaseCtx?.phaseError ?? 0,
@@ -4395,8 +4378,7 @@ function calcMatchingScoreDetail(
         isYellow: Boolean(phaseCtx?.isYellowPhase),
         isPink: Boolean(phaseCtx?.isPinkPhase),
         yellowThreshold: phaseCtx?.yellowThreshold ?? 0,
-        pinkThreshold: phaseCtx?.pinkThreshold ?? 0,
-        encounterBonus
+        pinkThreshold: phaseCtx?.pinkThreshold ?? 0
     };
 }
 
@@ -7465,8 +7447,6 @@ function saveCopyEventUnified(
         Number(detail.playerBoost ?? 1),
       rankBoost:
         Number(detail.rankBoost ?? 1),
-      areaBoost:
-        Number(detail.areaBoost ?? 1),
       realtimeBoost:
         Number(detail.realtimeBoost ?? 1),
       phaseError:
@@ -7477,8 +7457,6 @@ function saveCopyEventUnified(
         Number(detail.decay ?? 0),
       finalPhaseScore:
         Number(detail.finalPhaseScore ?? 0),
-      encounterBonus:
-        Number(detail.encounterBonus ?? 1),
       effectivePhaseScore:
         Number(detail.effectivePhaseScore ?? 0)
     },
@@ -7561,8 +7539,6 @@ function buildCopyCandidateSnapshot() {
             Number(p.__detail?.playerBoost ?? 1),
           rankBoost:
             Number(p.__detail?.rankBoost ?? 1),
-          areaBoost:
-            Number(p.__detail?.areaBoost ?? 1),
           realtimeBoost:
             Number(p.__detail?.realtimeBoost ?? 1),
           phaseError:
@@ -7574,9 +7550,7 @@ function buildCopyCandidateSnapshot() {
           finalPhaseScore:
             Number(p.__detail?.finalPhaseScore ?? 0),
           effectivePhaseScore:
-            Number(p.__detail?.effectivePhaseScore ?? 0),
-          encounterBonus:
-            Number(p.__detail?.encounterBonus ?? 1)
+            Number(p.__detail?.effectivePhaseScore ?? 0)
         },
         isYellow:
           Boolean(p.__detail?.isYellow),
@@ -8292,8 +8266,6 @@ function saveCandidateEvent() {
             Number(p.__detail?.playerBoost ?? 1),
           rankBoost:
             Number(p.__detail?.rankBoost ?? 1),
-          areaBoost:
-            Number(p.__detail?.areaBoost ?? 1),
           realtimeBoost:
             Number(p.__detail?.realtimeBoost ?? 1),
           phaseError:
@@ -8304,8 +8276,6 @@ function saveCandidateEvent() {
             Number(p.__detail?.decay ?? 0),
           finalPhaseScore:
             Number(p.__detail?.finalPhaseScore ?? 0),
-          encounterBonus:
-            Number(p.__detail?.encounterBonus ?? 1),
           effectivePhaseScore:
             Number(p.__detail?.effectivePhaseScore ?? 0)
         },
