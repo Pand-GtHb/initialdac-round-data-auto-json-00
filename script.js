@@ -531,6 +531,79 @@ function clamp(
 }
 
 /* =========================================================
+ [2430] Math Utility:rejectFoldedOutliers（周期学習：外れ値除去）
+ ※ 立ち上がり強化（sqrtカーブ）で少数サンプルの影響力を上げる分、
+   中央値算出前に「明らかに調整幅を超える」折り畳み値を除外し、
+   1件の異常値がそのまま採用されるリスクを抑える。
+========================================================= */
+function rejectFoldedOutliers(
+  values,
+  maxShiftSec
+) {
+
+  const limit =
+    Number(maxShiftSec);
+
+  if (
+    !isFinite(limit) ||
+    limit <= 0
+  ) {
+    return values;
+  }
+
+  const filtered =
+    values.filter(
+      v => Math.abs(v) <= limit
+    );
+
+  /*
+   * 全件が外れ値扱いになった場合は、
+   * データ消失（trust=0扱い）を避けるため
+   * 元の配列をそのまま使う。
+   */
+  return filtered.length > 0
+    ? filtered
+    : values;
+}
+
+/* =========================================================
+ [2440] Math Utility:computeSampleTrust（周期学習：サンプル数信頼度）
+ ※ 従来の線形カーブ（count/minSamples）から平方根カーブに変更し、
+   少数サンプル時の立ち上がりを強化する。
+   例（minSamples=8）：1件→35.4%／2件→50.0%／4件→70.7%／8件→100%
+========================================================= */
+function computeSampleTrust(
+  sampleCount,
+  minSamples
+) {
+
+  const count =
+    Number(sampleCount);
+
+  const min =
+    Number(minSamples);
+
+  if (
+    !isFinite(min) ||
+    min <= 0
+  ) {
+    return 1;
+  }
+
+  if (
+    !isFinite(count) ||
+    count <= 0
+  ) {
+    return 0;
+  }
+
+  return Math.min(
+    1,
+    Math.sqrt(count / min)
+  );
+}
+
+/* =========================================================
  [2500] Phase Metrics:computePhaseMetrics（旧 [7300] 内）
 ========================================================= */
 /* =====================================
@@ -3211,19 +3284,32 @@ function calcYellowCycle(player, opts = {}) {
   }
 
   /*
+   * 外れ値除去
+   *
+   * 立ち上がり強化（sqrtカーブ）により少数サンプルでも
+   * adjust への反映率が上がるため、中央値算出前に
+   * maxShiftSec を超える折り畳み値（明らかな異常値）を除外する。
+   */
+  const trimmedValues =
+    rejectFoldedOutliers(
+      values,
+      maxShift
+    );
+
+  /*
    * 中央値算出
    */
   const mid =
     Math.floor(
-      values.length / 2
+      trimmedValues.length / 2
     );
 
   const median =
-    (values.length % 2)
-      ? values[mid]
+    (trimmedValues.length % 2)
+      ? trimmedValues[mid]
       : (
-          values[mid - 1] +
-          values[mid]
+          trimmedValues[mid - 1] +
+          trimmedValues[mid]
         ) / 2;
 
   /*
@@ -3262,6 +3348,7 @@ function calcYellowCycle(player, opts = {}) {
    * minSamples に対するサンプル数の割合を
    * 信頼度として adjust に乗算する。
    *
+   * 立ち上がり強化のため線形ではなくsqrtカーブを採用。
    * サンプルが十分（minSamples以上）
    * であれば信頼度1.0（そのまま採用）。
    */
@@ -3269,12 +3356,10 @@ function calcYellowCycle(player, opts = {}) {
     cfg.minSamples ?? 8;
 
   const trust =
-    minSamples > 0
-      ? Math.min(
-          1,
-          values.length / minSamples
-        )
-      : 1;
+    computeSampleTrust(
+      values.length,
+      minSamples
+    );
 
   const clamped =
     clampedRaw * trust;
@@ -3389,17 +3474,30 @@ function calcPinkCycle(
       (a, b) => a - b
     );
 
+  /*
+   * 外れ値除去
+   *
+   * 立ち上がり強化（sqrtカーブ）により少数サンプルでも
+   * adjust への反映率が上がるため、中央値算出前に
+   * maxShiftSec を超える折り畳み値（明らかな異常値）を除外する。
+   */
+  const trimmedValues =
+    rejectFoldedOutliers(
+      values,
+      maxShift
+    );
+
   const mid =
     Math.floor(
-      values.length / 2
+      trimmedValues.length / 2
     );
 
   const median =
-    (values.length % 2)
-      ? values[mid]
+    (trimmedValues.length % 2)
+      ? trimmedValues[mid]
       : (
-          values[mid - 1] +
-          values[mid]
+          trimmedValues[mid - 1] +
+          trimmedValues[mid]
         ) / 2;
 
   const prev =
@@ -3429,17 +3527,17 @@ function calcPinkCycle(
    * 急激な周期シフト・発振を防ぐため、
    * minSamples に対するサンプル数の割合を
    * 信頼度として adjust に乗算する。
+   *
+   * 立ち上がり強化のため線形ではなくsqrtカーブを採用。
    */
   const minSamples =
     cfg.minSamples ?? 8;
 
   const trust =
-    minSamples > 0
-      ? Math.min(
-          1,
-          foldedList.length / minSamples
-        )
-      : 1;
+    computeSampleTrust(
+      foldedList.length,
+      minSamples
+    );
 
   const clamped =
     clampedRaw * trust;
