@@ -167,6 +167,26 @@ const State = {
     pink: 0
   },
 
+  /*
+   * Phase学習の診断情報（分析用）
+   *
+   * calcYellowCycle/calcPinkCycle が learn:true で
+   * 実行された際に更新される。読み取り専用モードの
+   * 呼び出しでも最新の診断値を参照できるようにする。
+   */
+  phaseDiag: {
+    yellow: {
+      sampleCount: 0,
+      trust: 1,
+      adjustValue: 0
+    },
+    pink: {
+      sampleCount: 0,
+      trust: 1,
+      adjustValue: 0
+    }
+  },
+
   lastCandidateEventId: null,
 
   /* --- 新仕様追加（Fact） --- */
@@ -3367,6 +3387,16 @@ function calcYellowCycle(player, opts = {}) {
   State.phaseAdjust.yellow =
     clamped;
 
+  /*
+   * 分析用診断情報の記録
+   * （trust強化・外れ値除去の効果検証のため）
+   */
+  State.phaseDiag.yellow = {
+    sampleCount: values.length,
+    trust,
+    adjustValue: clamped
+  };
+
   return base + clamped;
 }
 
@@ -3544,6 +3574,16 @@ function calcPinkCycle(
 
   State.phaseAdjust.pink =
     clamped;
+
+  /*
+   * 分析用診断情報の記録
+   * （trust強化・外れ値除去の効果検証のため）
+   */
+  State.phaseDiag.pink = {
+    sampleCount: foldedList.length,
+    trust,
+    adjustValue: clamped
+  };
 
   return base + clamped;
 }
@@ -4220,6 +4260,11 @@ function computePhaseContext(player, nowMs = Date.now()) {
    !isPinkManaged &&
    finalPhaseScore > yellowThreshold;
 
+  const phaseDiag =
+   isPinkManaged
+     ? State.phaseDiag?.pink
+     : State.phaseDiag?.yellow;
+
   return {
    isPinkManaged,
    isPinkPhase,
@@ -4232,6 +4277,12 @@ function computePhaseContext(player, nowMs = Date.now()) {
    finalPhaseScore,
    yellowThreshold,
    pinkThreshold,
+   phaseSampleCount:
+     Number(phaseDiag?.sampleCount ?? 0),
+   phaseTrust:
+     Number(phaseDiag?.trust ?? 1),
+   phaseAdjustValue:
+     Number(phaseDiag?.adjustValue ?? 0),
    phaseSurge:
      Number.isFinite(finalPhaseScore) &&
      finalPhaseScore > 0.9,
@@ -4670,7 +4721,18 @@ function calcMatchingScoreDetail(
         isYellow: Boolean(phaseCtx?.isYellowPhase),
         isPink: Boolean(phaseCtx?.isPinkPhase),
         yellowThreshold: phaseCtx?.yellowThreshold ?? 0,
-        pinkThreshold: phaseCtx?.pinkThreshold ?? 0
+        pinkThreshold: phaseCtx?.pinkThreshold ?? 0,
+
+        /*
+         * 分析用診断情報
+         * （周期学習のサンプル数・信頼度・調整量）
+         */
+        phaseSampleCount:
+            phaseCtx?.phaseSampleCount ?? 0,
+        phaseTrust:
+            phaseCtx?.phaseTrust ?? 1,
+        phaseAdjustValue:
+            phaseCtx?.phaseAdjustValue ?? 0
     };
 }
 
@@ -7885,7 +7947,13 @@ function saveCopyEventUnified(
       finalPhaseScore:
         Number(detail.finalPhaseScore ?? 0),
       effectivePhaseScore:
-        Number(detail.effectivePhaseScore ?? 0)
+        Number(detail.effectivePhaseScore ?? 0),
+      phaseSampleCount:
+        Number(detail.phaseSampleCount ?? 0),
+      phaseTrust:
+        Number(detail.phaseTrust ?? 1),
+      phaseAdjustValue:
+        Number(detail.phaseAdjustValue ?? 0)
     },
 
     viewerTier:
@@ -7977,7 +8045,13 @@ function buildCopyCandidateSnapshot() {
           finalPhaseScore:
             Number(p.__detail?.finalPhaseScore ?? 0),
           effectivePhaseScore:
-            Number(p.__detail?.effectivePhaseScore ?? 0)
+            Number(p.__detail?.effectivePhaseScore ?? 0),
+          phaseSampleCount:
+            Number(p.__detail?.phaseSampleCount ?? 0),
+          phaseTrust:
+            Number(p.__detail?.phaseTrust ?? 1),
+          phaseAdjustValue:
+            Number(p.__detail?.phaseAdjustValue ?? 0)
         },
         isYellow:
           Boolean(p.__detail?.isYellow),
@@ -8704,7 +8778,13 @@ function saveCandidateEvent() {
           finalPhaseScore:
             Number(p.__detail?.finalPhaseScore ?? 0),
           effectivePhaseScore:
-            Number(p.__detail?.effectivePhaseScore ?? 0)
+            Number(p.__detail?.effectivePhaseScore ?? 0),
+          phaseSampleCount:
+            Number(p.__detail?.phaseSampleCount ?? 0),
+          phaseTrust:
+            Number(p.__detail?.phaseTrust ?? 1),
+          phaseAdjustValue:
+            Number(p.__detail?.phaseAdjustValue ?? 0)
         },
 
         isYellow:
