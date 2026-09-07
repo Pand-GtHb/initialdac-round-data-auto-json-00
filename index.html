@@ -384,19 +384,34 @@ td.center { text-align:center; }
   <div class="value"><span id="jsonUpdateTime">-</span></div>
 </div>
 
-<!-- ★ RUBY -->
-<div class="row3 mt10">
-  <div class="label">RUBY</div>
-  <div class="colon">：</div>
-  <div class="value"><div id="rubyFilters"></div></div>
-</div>
+<!-- ★ 省略セクション（RUBY/PRIDEフィルタ + サブ機能） -->
+<details class="mt10" style="display:block;">
+  <summary style="font-size: 12px; cursor: pointer; color: #555;">🛠️ サブ機能 (CSV/FLT/フィルタ)</summary>
 
-<!-- ★ PRIDE -->
-<div class="row3">
-  <div class="label">PRIDE</div>
-  <div class="colon">：</div>
-  <div class="value"><div id="prideFilters"></div></div>
-</div>
+  <div style="margin-top: 6px;">
+
+    <!-- ★ RUBY -->
+    <div class="row3">
+      <div class="label">RUBY</div>
+      <div class="colon">：</div>
+      <div class="value"><div id="rubyFilters"></div></div>
+    </div>
+
+    <!-- ★ PRIDE -->
+    <div class="row3">
+      <div class="label">PRIDE</div>
+      <div class="colon">：</div>
+      <div class="value"><div id="prideFilters"></div></div>
+    </div>
+
+    <div style="margin-top: 4px;">
+      <button id="filterBtn" class="btn-sub">FLT</button>
+      <button id="summaryCsvBtn" class="btn-sub">SumCSV</button>
+      <button id="allCsvBtn" class="btn-sub">AllCSV</button>
+    </div>
+
+  </div>
+</details>
 
 <div id="logBox"></div>
 
@@ -459,15 +474,6 @@ td.center { text-align:center; }
     title="Today"
     style="padding: 4px; font-size: 12px;">
   <button id="analysisLogBtn" class="btn-sub">📊 LOG保存</button>
-
-  <details style="display:inline-block; margin-left: 6px;">
-    <summary style="font-size: 12px; cursor: pointer; color: #555;">🛠️ サブ機能 (CSV/FLT)</summary>
-    <div style="margin-top: 4px;">
-      <button id="filterBtn" class="btn-sub">FLT</button>
-      <button id="summaryCsvBtn" class="btn-sub">SumCSV</button>
-      <button id="allCsvBtn" class="btn-sub">AllCSV</button>
-    </div>
-  </details>
 </div>
 
 <script src="script.js?cb=4"></script>
