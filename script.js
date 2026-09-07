@@ -5245,43 +5245,57 @@ function buildPhaseCycleWindowHTML(
   cycleSec,
   n,
   halfWidthSec,
-  totalSec,
+  filterFromMs,
+  filterToMs,
   colorRgb,
   textColor,
-  rightOffsetPct,
-  rightWidthPct,
-  referenceMs,
-  positionSec = cycleSec
+  referenceMs
 ) {
 
   const centerSec =
     cycleSec * n;
 
-  const leftPct =
-    rightOffsetPct +
+  const centerMs =
+    referenceMs - centerSec * 1000;
+
+  const windowFromMs =
+    centerMs - halfWidthSec * 1000;
+
+  const windowToMs =
+    centerMs + halfWidthSec * 1000;
+
+  const clippedFromMs =
     Math.max(
-      0,
-      ((positionSec - halfWidthSec) / totalSec) *
-        rightWidthPct
+      filterFromMs,
+      windowFromMs
     );
 
-  const widthPct =
-    Math.max(
-      0.5,
-      Math.min(
-        100 - leftPct,
-        ((halfWidthSec * 2) / totalSec) *
-          rightWidthPct
-      )
+  const clippedToMs =
+    Math.min(
+      filterToMs,
+      windowToMs
     );
+
+  if (clippedFromMs >= clippedToMs) {
+    return "";
+  }
+
+  const rangeMs =
+    filterToMs - filterFromMs;
+
+  const leftPct =
+    ((filterToMs - clippedToMs) / rangeMs) *
+    100;
+
+  const widthPct =
+    ((clippedToMs - clippedFromMs) / rangeMs) *
+    100;
 
   /*
    * 表のYellow/Pink判定と同じく現在時刻を起点として
    * n周期前の中心時刻を表示する。
-   * 第1帯はFilterのTo時刻（秒切り捨て）より前になる
-   * 最初の周期位置から開始する。
-   * 黒領域はデータの古さを示す表示であり、
-   * 周期計算の基準時刻には使用しない。
+   * 表示範囲だけをFilter From〜Toに合わせ、帯の両端を
+   * その範囲内にクリップする。周期計算の基準時刻は変えない。
    *
    * バー内表示は秒単位の厳密性を求めないため
    * 時:分のみ（formatClockHm）。
@@ -5388,64 +5402,31 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
   const filterToMs =
     getFilterToMs(nowMs);
 
+  const rangeMinutes =
+    readRangeMinutes();
+
+  if (
+    !isFinite(rangeMinutes) ||
+    rangeMinutes <= 0
+  ) {
+    return "";
+  }
+
+  const filterFromMs =
+    filterToMs -
+    rangeMinutes * 60 * 1000;
+
   const phaseReferenceMs =
     nowMs;
 
-  const filterToFloorMs =
-    Math.floor(
-      filterToMs / 60000
-    ) * 60000;
-
-  const filterToMinuteEndMs =
-    filterToFloorMs + 60000;
-
-  /*
-   * 現在時刻を基準にした周期中心のうち、
-   * Filter To（秒切り捨て）の分全体
-   * （xx:00〜xx:59）を含められる最初の周期を
-   * 第1サイクルとする。
-   */
-  const firstCycleIndex =
+  const maxCycleIndex =
     Math.max(
       0,
       Math.ceil(
-        (
-          phaseReferenceMs -
-          filterToMinuteEndMs +
-          1
-        ) /
+        (phaseReferenceMs - filterFromMs) /
         (cycleSec * 1000)
-      )
+      ) + 1
     );
-
-  const totalSec =
-    cycleSec * 5;
-
-  const staleSec =
-    Math.max(
-      0,
-      (nowMs - filterToMs) / 1000
-    );
-
-  /*
-   * 左端＝現在時刻、右方向＝過去。
-   * 黒領域は現在時刻からFilterのTo時刻までを示す。
-   * 運用上の最大45分を基準に、全体の20%を上限とする。
-   */
-  const staleMaxSec =
-    45 * 60;
-
-  const stalePct =
-    Math.min(
-      20,
-      (staleSec / staleMaxSec) * 20
-    );
-
-  const rightOffsetPct =
-    stalePct;
-
-  const rightWidthPct =
-    100 - stalePct;
 
   /*
    * 詳細表示・候補表示の行ハイライトと同じ色に統一
@@ -5463,10 +5444,11 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
       : "#665c00";
 
   const windows =
-    [0, 1, 2, 3, 4]
-      .map(offset => {
-        const n =
-          firstCycleIndex + offset;
+    Array.from(
+      { length: maxCycleIndex + 1 },
+      (_, n) => n
+    )
+      .map(n => {
 
         return buildPhaseCycleWindowHTML(
           cycleSec,
@@ -5477,13 +5459,11 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
             threshold,
             lambda
           ),
-          totalSec,
+          filterFromMs,
+          filterToMs,
           colorRgb,
           textColor,
-          rightOffsetPct,
-          rightWidthPct,
-          phaseReferenceMs,
-          (offset + 0.5) * cycleSec
+          phaseReferenceMs
         );
       })
       .join("");
@@ -5513,41 +5493,23 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
           overflow:hidden;
         "
       >
-        <div
-          style="
-            position:absolute;
-            left:0;
-            top:0;
-            bottom:0;
-            width:${stalePct}%;
-            background:#111;
-            color:#fff;
-            display:flex;
-            align-items:center;
-            justify-content:flex-start;
-            padding-left:4px;
-            box-sizing:border-box;
-            font-size:14px;
-            font-weight:bold;
-            white-space:nowrap;
-            z-index:2;
-          "
-          title="現在時刻：${formatClockHms(nowMs)} ／ FilterのTo：${formatClockHms(filterToMs)}"
-        >
-          ${formatClockHm(nowMs)}
-        </div>
-        <div
-          style="
-            position:absolute;
-            left:0;
-            top:-2px;
-            bottom:-2px;
-            width:2px;
-            background:#333;
-          "
-          title="現在時刻 ${formatClockHms(nowMs)}"
-        ></div>
         ${windows}
+      </div>
+      <div
+        style="
+          display:flex;
+          justify-content:space-between;
+          margin-top:2px;
+          font-size:11px;
+          color:#555;
+        "
+      >
+        <span title="Filter To：${formatClockHms(filterToMs)}">
+          To ${formatClockHm(filterToMs)}
+        </span>
+        <span title="Filter From：${formatClockHms(filterFromMs)}">
+          From ${formatClockHm(filterFromMs)}
+        </span>
       </div>
 
     </div>
