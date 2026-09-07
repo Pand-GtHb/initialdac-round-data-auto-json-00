@@ -6576,6 +6576,11 @@ function renderDetailTable(
   area.innerHTML = `
     ${buildPhaseCycleMonitorHTML()}
 
+    <div class="rank-nav-box">
+        <button id="prevRankBtn" class="rank-nav-btn">　◀◀◀　</button>
+        <button id="nextRankBtn" class="rank-nav-btn">　▶▶▶　</button>
+    </div>
+
     <h3>
 
       <span style="margin-right:8px;">
@@ -6619,6 +6624,10 @@ function renderDetailTable(
 
     </div>
   `;
+
+  setupRankNavigation(
+    State.currentDetailKey
+  );
 
   renderDetailRows(
     list,
@@ -8802,9 +8811,12 @@ function showDetail(
       ? rankInfo.icon
       : "";
 
-  setupRankNavigation(
-    key
-  );
+  /*
+   * 【2026-09 レイアウト変更】
+   * ランク上下ボタンをPhaseグラフの下（detailArea内）に
+   * 動的生成するようにしたため、setupRankNavigation は
+   * renderDetailTable内でDOM生成後に呼び出す。
+   */
 
   if (!row) {
 
