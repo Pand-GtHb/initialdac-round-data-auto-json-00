@@ -9454,6 +9454,11 @@ document.addEventListener(
         "filterBtn"
       );
 
+    const rangeSelect =
+      document.getElementById(
+        "rangeSelect"
+      );
+
     const summaryCsvBtn =
       document.getElementById(
         "summaryCsvBtn"
@@ -9551,22 +9556,34 @@ document.addEventListener(
      * Filter
      * ===================================== */
 
+    const applyFilterAndRefreshSummary =
+      () => {
+
+        startProgress();
+
+        applyFilters();
+
+        buildSummary();
+
+        renderSummary();
+
+        stopProgress();
+
+      };
+
     if (filterBtn) {
 
       filterBtn.onclick =
-        () => {
+        applyFilterAndRefreshSummary;
 
-          startProgress();
+    }
 
-          applyFilters();
+    if (rangeSelect) {
 
-          buildSummary();
-
-          renderSummary();
-
-          stopProgress();
-
-        };
+      rangeSelect.addEventListener(
+        "change",
+        applyFilterAndRefreshSummary
+      );
 
     }
 
