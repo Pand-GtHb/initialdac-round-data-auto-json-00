@@ -3689,6 +3689,77 @@ function computePhaseSignal(player, mode = "pink", nowMs = Date.now()) {
 }
 
 /* =========================================================
+ [7205] Phase Detail:buildPlayerPhaseDetailText【State】
+========================================================= */
+function buildPlayerPhaseDetailText(
+ player,
+ nowMs = Date.now()
+) {
+ if (!player) {
+   return "Phase：計算できません";
+ }
+
+ const isPink =
+   isCopiedPlayer(player);
+
+ const mode =
+   isPink ? "pink" : "yellow";
+
+ const cycleSec =
+   getCurrentCycle(player);
+
+ if (
+   !isFinite(cycleSec) ||
+   cycleSec <= 0
+ ) {
+   return "Phase：周期を計算できません";
+ }
+
+ const anchorMs =
+   isPink
+     ? Number(
+         getPinkTarget(player)
+           ?.lastCopiedAt
+       )
+     : parseDateJST(
+         player.updateDate
+       )?.getTime();
+
+ if (
+   !isFinite(anchorMs) ||
+   anchorMs <= 0
+ ) {
+   return `Phase（${isPink ? "Pink" : "Yellow"}）：基準時刻を取得できません`;
+ }
+
+ const diffSec =
+   (nowMs - anchorMs) / 1000;
+
+ if (diffSec < 0) {
+   return `Phase（${isPink ? "Pink" : "Yellow"}）：基準時刻が現在時刻より後です`;
+ }
+
+ const lambda =
+   Number(
+     State.scoringConfig
+       ?.phaseError?.[
+         isPink
+           ? "pinkLambda"
+           : "yellowLambda"
+       ] ?? 0.03
+   );
+
+ const metrics =
+   computePhaseMetrics(
+     diffSec,
+     cycleSec,
+     lambda
+   );
+
+ return `Phase（${mode === "pink" ? "Pink" : "Yellow"}）：周期=${cycleSec.toFixed(1)}秒　${metrics.cycleCount}サイクル／誤差±${Math.round(metrics.phaseError)}秒`;
+}
+
+/* =========================================================
  [7210] Phase Signal:getYellowPhaseScore【State】（旧 [7300] 内）
 ========================================================= */
 function getYellowPhaseScore(player, nowMs = Date.now()) {
@@ -5796,8 +5867,33 @@ function buildPlayerRowHTML(
         </div>
       </td>
       
-      <td class="left">
-        ${p.updateDate}
+      <td class="left phase-last-update">
+        <button
+          type="button"
+          class="phase-detail-trigger"
+          style="
+            border:0;
+            padding:0;
+            background:transparent;
+            color:inherit;
+            font:inherit;
+            text-align:left;
+            cursor:pointer;
+          "
+          title="タップしてPhaseを表示"
+          aria-expanded="false"
+        >${p.updateDate}</button>
+        <div
+          class="phase-detail"
+          style="
+            display:none;
+            margin-top:3px;
+            font-size:11px;
+            line-height:1.35;
+            color:#555;
+            white-space:nowrap;
+          "
+        ></div>
       </td>
 
       <td class="center">
@@ -6342,6 +6438,60 @@ function renderPlayerRowsToBody(
       .join("");
 
   tbody.innerHTML = rows;
+
+  tbody.querySelectorAll(
+    ".phase-detail-trigger"
+  )
+    .forEach(trigger => {
+      trigger.addEventListener(
+        "click",
+        () => {
+          const row =
+            trigger.closest("tr");
+
+          const detail =
+            row?.querySelector(
+              ".phase-detail"
+            );
+
+          if (!row || !detail) {
+            return;
+          }
+
+          const player = {
+            name: row.dataset.name || "",
+            shopname:
+              row.dataset.shopname || "",
+            updateDate:
+              row.dataset.updated || ""
+          };
+
+          const isExpanded =
+            trigger.getAttribute(
+              "aria-expanded"
+            ) === "true";
+
+          if (isExpanded) {
+            detail.style.display = "none";
+            trigger.setAttribute(
+              "aria-expanded",
+              "false"
+            );
+            return;
+          }
+
+          detail.textContent =
+            buildPlayerPhaseDetailText(
+              player
+            );
+          detail.style.display = "block";
+          trigger.setAttribute(
+            "aria-expanded",
+            "true"
+          );
+        }
+      );
+    });
 
   highlightMatchingRows(
     tbody
