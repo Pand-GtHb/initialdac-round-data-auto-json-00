@@ -5278,7 +5278,17 @@ function buildPhaseCycleWindowHTML(
       windowToMs
     );
 
-  if (clippedFromMs >= clippedToMs) {
+  const centerIsInFilterRange =
+    centerMs >= filterFromMs &&
+    centerMs <= filterToMs;
+
+  if (
+    clippedFromMs > clippedToMs ||
+    (
+      clippedFromMs === clippedToMs &&
+      !centerIsInFilterRange
+    )
+  ) {
     return "";
   }
 
@@ -5292,9 +5302,28 @@ function buildPhaseCycleWindowHTML(
       phaseWidthPct
     );
 
+  const availableWidthPct =
+    phaseOffsetPct +
+    phaseWidthPct -
+    leftPct;
+
+  /*
+   * decay により許容幅が 0 になった古い周期も、
+   * Filter範囲内の中心時刻は細いマーカーとして残す。
+   */
   const widthPct =
-    ((clippedToMs - clippedFromMs) / rangeMs) *
-    phaseWidthPct;
+    Math.min(
+      availableWidthPct,
+      Math.max(
+        0.5,
+        ((clippedToMs - clippedFromMs) / rangeMs) *
+          phaseWidthPct
+      )
+    );
+
+  if (widthPct <= 0) {
+    return "";
+  }
 
   /*
    * 表のYellow/Pink判定と同じく現在時刻を起点として
@@ -5316,6 +5345,24 @@ function buildPhaseCycleWindowHTML(
       referenceMs - centerSec * 1000
     );
 
+  /*
+   * 範囲端に掛かる帯は描画するが、中心時刻がFilter Toより
+   * 新しい、またはFilter Fromより古い場合は時刻文字を表示しない。
+   */
+  const centerLabel =
+    centerIsInFilterRange
+      ? `
+        <span
+          style="
+            font-size:14px;
+            font-weight:bold;
+            color:${textColor};
+            white-space:nowrap;
+          "
+        >${centerClockShort}</span>
+      `
+      : "";
+
   return `
     <div
       style="
@@ -5332,14 +5379,7 @@ function buildPhaseCycleWindowHTML(
       "
       title="${n}周期前：${centerClockFull} 頃（許容 ±${Math.round(halfWidthSec)}秒）"
     >
-      <span
-        style="
-          font-size:14px;
-          font-weight:bold;
-          color:${textColor};
-          white-space:nowrap;
-        "
-      >${centerClockShort}</span>
+      ${centerLabel}
     </div>
   `;
 }
