@@ -25,7 +25,7 @@ jobs:
       # ▼ ① latest_round.json を取得
       - name: Fetch latest_round.json
         run: |
-          curl -f -s -o latest_round.json \
+          curl -f -s --retry 5 --retry-delay 2 --retry-max-time 90 --retry-all-errors -o latest_round.json \
             https://pand-gthb.github.io/initialdac-round-data-auto-json-00/latest_round.json
 
       # ▼ ② latestRound を読み取る
