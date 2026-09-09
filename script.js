@@ -3278,9 +3278,41 @@ function calcYellowCycle(player, opts = {}) {
          * 902 → 2
          * 1198 → -2
          */
-        return foldToCycle(
-          diffSec,
-          base
+        const folded =
+          foldToCycle(
+            diffSec,
+            base
+          );
+
+        /*
+         * 【2026-09 改善3】1周期当たりの誤差へ正規化
+         *
+         * 従来は複数周期分の折り畳み誤差（foldedSec）を
+         * そのまま1周期分の誤差として学習していたため、
+         * 経過周期数が多いサンプルほど誤差が実際より
+         * 大きく（あるいは小さく）評価されるおそれがあった。
+         *
+         * 保存済みの cycleCount（経過周期数）で割ることで、
+         * 1周期当たりの誤差に正規化してから学習する。
+         * 旧データ等で cycleCount が未保存の場合は、
+         * diffSec / base から後方互換的に導出する。
+         */
+        const cycleCount =
+          Number.isFinite(
+            Number(s.cycleCount)
+          ) &&
+          Number(s.cycleCount) > 0
+            ? Number(s.cycleCount)
+            : Math.max(
+                1,
+                Math.round(
+                  diffSec / base
+                )
+              );
+
+        return (
+          folded /
+          Math.max(1, cycleCount)
         );
       })
       .filter(
@@ -4680,8 +4712,49 @@ function calcMatchingScoreDetail(
         playerBoost *
         rankBoost;
 
+    /*
+     * 【2026-09 改善2】位相を主要スコアから補助要素へ弱める
+     *
+     * 以前は finalPhaseScore をそのまま乗算していたため、
+     * 位相学習の信頼度（phaseTrust）が低い（サンプル不足）状態でも
+     * 位相ズレの影響がスコアへフルに効いてしまっていた。
+     *
+     * ここでは phaseTrust と設定可能な phaseWeight を用いて
+     * 「1 - phaseWeight * phaseTrust * (1 - finalPhaseScore)」
+     * という信頼度ブレンドに変更する。
+     *
+     * phaseWeight=0 なら位相は無視（常に1.0）、
+     * phaseWeight=1 かつ phaseTrust=1 なら従来同様
+     * finalPhaseScore がそのまま反映される。
+     */
+    const phaseTrust =
+        clamp(
+            Number(
+                phaseCtx?.phaseTrust ?? 1
+            ),
+            0,
+            1
+        );
+
+    const phaseWeight =
+        clamp(
+            Number(
+                State.scoringConfig
+                    ?.phase?.weight ?? 0.35
+            ),
+            0,
+            1
+        );
+
     const effectivePhaseScore =
-        finalPhaseScore;
+        clamp(
+            1 -
+                phaseWeight *
+                phaseTrust *
+                (1 - finalPhaseScore),
+            0,
+            1
+        );
 
     const rawScore =
         historicalScore *
@@ -4717,7 +4790,7 @@ function calcMatchingScoreDetail(
         decay: phaseCtx?.decay ?? 0,
         finalPhaseScore,
         effectivePhaseScore,
-        phaseWeight: effectivePhaseScore,
+        phaseWeight,
         isYellow: Boolean(phaseCtx?.isYellowPhase),
         isPink: Boolean(phaseCtx?.isPinkPhase),
         yellowThreshold: phaseCtx?.yellowThreshold ?? 0,
@@ -4729,8 +4802,7 @@ function calcMatchingScoreDetail(
          */
         phaseSampleCount:
             phaseCtx?.phaseSampleCount ?? 0,
-        phaseTrust:
-            phaseCtx?.phaseTrust ?? 1,
+        phaseTrust,
         phaseAdjustValue:
             phaseCtx?.phaseAdjustValue ?? 0
     };
@@ -4922,12 +4994,15 @@ function buildMatchingCandidates() {
    * 通常選出から漏れた候補のうち
    * FinalPhaseScoreが高い順に追加する。
    *
-   * 2枠は原則として既知の履歴セルと未観測セルに1枠ずつ
-   * 配分し、履歴データが疎なランク帯・地域も完全には
-   * 排除しない。片方が空なら他方で補完する。
+   * 【2026-09 改善4】救済枠を2枠→1枠へ縮小
+   * 救済枠自体が例外的補完のため、位相の重み低下（改善2）と
+   * 合わせて枠を絞る。1枠のみのため、既知の履歴セル
+   * （historicalMatched）を優先し、次点で未観測セル
+   * （historicalBackoff）、それでも埋まらなければ
+   * FinalPhaseScore最上位から1名を採用する。
    * ===================================== */
-  const NORMAL_SLOT_COUNT = 8;
-  const PHASE_RESCUE_SLOT_COUNT = 2;
+  const NORMAL_SLOT_COUNT = 9;
+  const PHASE_RESCUE_SLOT_COUNT = 1;
   const MATCHED_RESCUE_SLOT_COUNT = 1;
   const BACKOFF_RESCUE_SLOT_COUNT = 1;
 
@@ -8524,9 +8599,33 @@ function saveCandidateEvent() {
          * 905 → 5
          * 1198 → -2
          */
-        return foldToCycle(
-          diffSec,
-          baseCycleSec
+        const folded =
+          foldToCycle(
+            diffSec,
+            baseCycleSec
+          );
+
+        /*
+         * 【2026-09 改善3】学習ロジック（calcYellowCycle）と
+         * 整合させるため、こちらの診断表示も
+         * 1周期当たりの誤差へ正規化する。
+         */
+        const cycleCount =
+          Number.isFinite(
+            Number(s.cycleCount)
+          ) &&
+          Number(s.cycleCount) > 0
+            ? Number(s.cycleCount)
+            : Math.max(
+                1,
+                Math.round(
+                  diffSec / baseCycleSec
+                )
+              );
+
+        return (
+          folded /
+          Math.max(1, cycleCount)
         );
 
       })
@@ -8642,7 +8741,7 @@ function saveCandidateEvent() {
     t: now,
 
     logSchemaVersion:
-      "phase_score_v2",
+      "phase_score_v3",
 
     e: "candidate",
 
@@ -8779,6 +8878,8 @@ function saveCandidateEvent() {
             Number(p.__detail?.finalPhaseScore ?? 0),
           effectivePhaseScore:
             Number(p.__detail?.effectivePhaseScore ?? 0),
+          phaseWeight:
+            Number(p.__detail?.phaseWeight ?? 0),
           phaseSampleCount:
             Number(p.__detail?.phaseSampleCount ?? 0),
           phaseTrust:
@@ -8815,6 +8916,91 @@ function saveCandidateEvent() {
 
         encounterCount:
           getEncounterHistory(p)?.count ?? 0
+
+      })),
+
+    /*
+     * 【2026-09 改善5】スコア対象の全候補を分析ログへ保存
+     *
+     * 表示用 candidates は選出された最大10名分しか
+     * 含まないため、後から任意の実績相手について
+     * 「予測時点でのglobal score rank」「表示選出の有無」を
+     * 特定できない問題があった。
+     *
+     * ここでは matchingRankedAll（スコア対象の全候補、
+     * スコア順）をそのまま保存する。1候補あたりの情報量を
+     * 抑えるため、表示用 candidates で重複するUI補助情報
+     * （viewerTier等の描画専用フィールド）は除き、
+     * 識別情報・グローバル順位・選出可否・主要な
+     * scoreBreakdownのみを保持する。
+     *
+     * candidateEvents ストア自体のレコード数（イベント件数）は
+     * 従来どおり putLog による1イベント1レコードのままで、
+     * 既存の件数上限・容量対策（LOG_STORAGE_LIMITS等）には
+     * 影響しない。1レコード内で全候補を欠落させないことのみ
+     * 変更する。
+     */
+    allCandidates:
+      State.matchingRankedAll.map(p => ({
+
+        globalScoreRank:
+          p.__scoreRank ?? null,
+
+        name:
+          p.name,
+
+        shopname:
+          p.shopname ?? "",
+
+        rankKey:
+          p.__rankKey ?? null,
+
+        area:
+          String(p.area ?? ""),
+
+        score:
+          Number(
+            (p.__score ?? 0)
+              .toFixed(6)
+          ),
+
+        wasDisplayed:
+          Boolean(p.displayRank),
+        displayRank:
+          p.displayRank ?? null,
+        isPhaseRescue:
+          Boolean(p.__phaseRescue),
+        rescueReason:
+          p.__rescueReason ?? null,
+
+        scoreBreakdown: {
+          historicalScore:
+            Number(p.__detail?.historicalScore ?? 0),
+          historicalMatched:
+            Boolean(p.__detail?.historicalMatched),
+          historicalBackoff:
+            Boolean(p.__detail?.historicalBackoff),
+          playerBoost:
+            Number(p.__detail?.playerBoost ?? 1),
+          rankBoost:
+            Number(p.__detail?.rankBoost ?? 1),
+          realtimeBoost:
+            Number(p.__detail?.realtimeBoost ?? 1),
+          phaseError:
+            Number(p.__detail?.phaseError ?? 0),
+          phaseScore:
+            Number(p.__detail?.phaseScore ?? 0),
+          decay:
+            Number(p.__detail?.decay ?? 0),
+          finalPhaseScore:
+            Number(p.__detail?.finalPhaseScore ?? 0),
+          effectivePhaseScore:
+            Number(p.__detail?.effectivePhaseScore ?? 0),
+          phaseWeight:
+            Number(p.__detail?.phaseWeight ?? 0),
+          phaseTrust:
+            Number(p.__detail?.phaseTrust ?? 1)
+        }
 
       }))
   };
