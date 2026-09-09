@@ -147,6 +147,7 @@ const State = {
   currentDetailIcon: "",
   matchingList: [],
   matchingRankedAll: [],
+  matchingTierCounts: {},
   myStar: 7,
   myRankKey: "R7",
   recentClicks: [],
@@ -4375,6 +4376,36 @@ function getPlayerCycleCount(player, nowMs = Date.now()) {
 ========================================================= */
 const HISTORICAL_RELIABILITY_K = 100;
 
+function getHistoricalMinOwnSamplesForNoBackoff() {
+
+  const value =
+    Number(
+      State.scoringConfig
+        ?.historical
+        ?.minOwnSamplesForNoBackoff ?? 100
+    );
+
+  return Number.isFinite(value)
+    ? Math.max(0, value)
+    : 100;
+}
+
+function getHistoricalTierCandidateCount(
+  tierCounts,
+  opponentTier
+) {
+
+  const count =
+    Number(
+      tierCounts?.[opponentTier] ?? 1
+    );
+
+  return Number.isFinite(count) &&
+    count > 0
+      ? count
+      : 1;
+}
+
 function getHistoricalDistribution(
   viewerTier
 ) {
@@ -4401,7 +4432,8 @@ function getDistributionCellScore(
   distribution,
   opponentTier,
   area,
-  supportSize
+  supportSize,
+  tierCandidateCount
 ) {
 
   /*
@@ -4429,10 +4461,17 @@ function getDistributionCellScore(
         )
       : 0.0001;
 
-  return {
-    score: hit
+  const tierProbability =
+    hit
       ? hit.prob
-      : backoffScore,
+      : backoffScore;
+
+  return {
+    score:
+      tierProbability /
+      tierCandidateCount,
+    tierProbability,
+    tierCandidateCount,
     matched: Boolean(hit)
   };
 }
@@ -4518,7 +4557,8 @@ function getAdjacentTierDistribution(
 function getHistoricalScoreDetail(
   viewerRankKey,
   opponentRankKey,
-  area
+  area,
+  tierCounts = State.matchingTierCounts
 ) {
 
   if (
@@ -4540,15 +4580,31 @@ function getHistoricalScoreDetail(
   const opponentTier =
     mapRankKeyToTierKey(opponentRankKey);
 
+  const tierCandidateCount =
+    getHistoricalTierCandidateCount(
+      tierCounts,
+      opponentTier
+    );
+
   const ownDistribution =
     getHistoricalDistribution(
       viewerTier
     );
 
+  const minOwnSamplesForNoBackoff =
+    getHistoricalMinOwnSamplesForNoBackoff();
+
+  const ownDistributionIsReliable =
+    ownDistribution.total > 0 &&
+    ownDistribution.total >=
+      minOwnSamplesForNoBackoff;
+
   const adjacentDistribution =
-    getAdjacentTierDistribution(
-      viewerTier
-    );
+    ownDistributionIsReliable
+      ? null
+      : getAdjacentTierDistribution(
+          viewerTier
+        );
 
   if (
     ownDistribution.total <= 0 &&
@@ -4558,6 +4614,9 @@ function getHistoricalScoreDetail(
       score: 1.0,
       matched: false,
       backoff: false,
+      tierProbability: 1.0,
+      tierCandidateCount,
+      minOwnSamplesForNoBackoff,
       viewerTier,
       opponentTier
     };
@@ -4574,7 +4633,8 @@ function getHistoricalScoreDetail(
           ownDistribution,
           opponentTier,
           area,
-          supportSize
+          supportSize,
+          tierCandidateCount
         )
       : null;
 
@@ -4589,7 +4649,8 @@ function getHistoricalScoreDetail(
           distribution,
           opponentTier,
           area,
-          supportSize
+          supportSize,
+          tierCandidateCount
         )
       })
     ) ?? [];
@@ -4612,7 +4673,9 @@ function getHistoricalScoreDetail(
     );
 
   const ownReliability =
-    ownDistribution.total > 0
+    ownDistributionIsReliable
+      ? 1
+      : ownDistribution.total > 0
       ? ownDistribution.total /
         (
           ownDistribution.total +
@@ -4638,6 +4701,33 @@ function getHistoricalScoreDetail(
     backoff:
       !ownCell?.matched &&
       !adjacentMatched,
+    tierProbability:
+      ownDistributionIsReliable
+        ? ownCell?.tierProbability ?? 1.0
+        : adjacentDistribution
+        ? ownCell
+          ? ownCell.tierProbability *
+              ownReliability +
+            adjacentCells.reduce(
+              (sum, cell) =>
+                sum +
+                cell.tierProbability *
+                cell.total /
+                adjacentDistribution.total,
+              0
+            ) *
+              (1 - ownReliability)
+          : adjacentCells.reduce(
+              (sum, cell) =>
+                sum +
+                cell.tierProbability *
+                cell.total /
+                adjacentDistribution.total,
+              0
+            )
+        : ownCell?.tierProbability ?? 1.0,
+    tierCandidateCount,
+    minOwnSamplesForNoBackoff,
     ownReliability,
     ownSampleCount:
       ownDistribution.total,
@@ -4656,7 +4746,8 @@ function getHistoricalScoreDetail(
  [8210] Matching Score:calcMatchingScoreDetail【State】（旧 [7410]）
 ========================================================= */
 function calcMatchingScoreDetail(
-    player
+    player,
+    tierCounts = State.matchingTierCounts
 ) {
     if (!player || !player.updateDate) {
         return { score: 0 };
@@ -4680,7 +4771,8 @@ function calcMatchingScoreDetail(
         getHistoricalScoreDetail(
             viewerRankKey,
             rankKey,
-            player.area
+            player.area,
+            tierCounts
         );
 
     const historicalScore =
@@ -4775,6 +4867,18 @@ function calcMatchingScoreDetail(
         historicalMatched: historical.matched,
         historicalBackoff:
             Boolean(historical.backoff),
+        tierProbability:
+            Number(historical.tierProbability ?? historical.score),
+        tierCandidateCount:
+            Number(historical.tierCandidateCount ?? 1),
+        minOwnSamplesForNoBackoff:
+            Number(historical.minOwnSamplesForNoBackoff ?? 100),
+        ownSampleCount:
+            Number(historical.ownSampleCount ?? 0),
+        adjacentSampleCount:
+            Number(historical.adjacentSampleCount ?? 0),
+        adjacentViewerTiers:
+            historical.adjacentViewerTiers ?? [],
         viewerTier: historical.viewerTier,
         opponentTier: historical.opponentTier,
         area: String(player.area ?? ""),
@@ -4812,11 +4916,13 @@ function calcMatchingScoreDetail(
  [8230] Candidate Score:buildCandidateScore（旧 [6900]）
 ========================================================= */
 function buildCandidateScore(
-    player
+    player,
+    tierCounts = State.matchingTierCounts
 ) {
     const detail =
         calcMatchingScoreDetail(
-            player
+            player,
+            tierCounts
         );
 
     const score =
@@ -4875,22 +4981,20 @@ function buildMatchingCandidates() {
   const base =
     State.filtered;
 
-  /* =====================================
-   * STEP3〜6: HistoricalScore / RealtimeBoost
-   * / PhaseScore を合成したスコア計算
-   * ===================================== */
-  const scoredAll =
-    base.map(p =>
-      buildCandidateScore(
-        p
-      )
-    );
+  const baseWithRank =
+    base.map(p => ({
+      ...p,
+      __rankKey:
+        getPlayerRankKey(
+          p
+        )
+    }));
 
   /* =====================================
    * UIフィルタ
    * ===================================== */
   const filteredByUi =
-    scoredAll.filter(p => {
+    baseWithRank.filter(p => {
 
       if (!p.updateDate) {
         return false;
@@ -4958,8 +5062,42 @@ function buildMatchingCandidates() {
 
     });
 
+  const tierCounts = {};
+
+  afterCooldown.forEach(p => {
+
+    const opponentTier =
+      mapRankKeyToTierKey(
+        p.__rankKey
+      );
+
+    if (!opponentTier) {
+      return;
+    }
+
+    tierCounts[opponentTier] =
+      Number(
+        tierCounts[opponentTier] ?? 0
+      ) + 1;
+  });
+
+  State.matchingTierCounts =
+    tierCounts;
+
+  /* =====================================
+   * STEP3〜6: 候補集合確定後に履歴スコアを
+   * 個人priorへ変換し、Realtime/Phaseと合成する。
+   * ===================================== */
+  const scoredAll =
+    afterCooldown.map(p =>
+      buildCandidateScore(
+        p,
+        tierCounts
+      )
+    );
+
   const scoreEligible =
-    afterCooldown.filter(
+    scoredAll.filter(
       p => getCandidateSelectionScore(p) > 0
     );
 
@@ -8007,6 +8145,18 @@ function saveCopyEventUnified(
         Boolean(detail.historicalMatched),
       historicalBackoff:
         Boolean(detail.historicalBackoff),
+      tierProbability:
+        Number(detail.tierProbability ?? 0),
+      tierCandidateCount:
+        Number(detail.tierCandidateCount ?? 1),
+      minOwnSamplesForNoBackoff:
+        Number(detail.minOwnSamplesForNoBackoff ?? 100),
+      ownSampleCount:
+        Number(detail.ownSampleCount ?? 0),
+      adjacentSampleCount:
+        Number(detail.adjacentSampleCount ?? 0),
+      adjacentViewerTiers:
+        detail.adjacentViewerTiers ?? [],
       playerBoost:
         Number(detail.playerBoost ?? 1),
       rankBoost:
@@ -8105,6 +8255,18 @@ function buildCopyCandidateSnapshot() {
             Boolean(p.__detail?.historicalMatched),
           historicalBackoff:
             Boolean(p.__detail?.historicalBackoff),
+          tierProbability:
+            Number(p.__detail?.tierProbability ?? 0),
+          tierCandidateCount:
+            Number(p.__detail?.tierCandidateCount ?? 1),
+          minOwnSamplesForNoBackoff:
+            Number(p.__detail?.minOwnSamplesForNoBackoff ?? 100),
+          ownSampleCount:
+            Number(p.__detail?.ownSampleCount ?? 0),
+          adjacentSampleCount:
+            Number(p.__detail?.adjacentSampleCount ?? 0),
+          adjacentViewerTiers:
+            p.__detail?.adjacentViewerTiers ?? [],
           playerBoost:
             Number(p.__detail?.playerBoost ?? 1),
           rankBoost:
@@ -8862,6 +9024,18 @@ function saveCandidateEvent() {
             Boolean(p.__detail?.historicalMatched),
           historicalBackoff:
             Boolean(p.__detail?.historicalBackoff),
+          tierProbability:
+            Number(p.__detail?.tierProbability ?? 0),
+          tierCandidateCount:
+            Number(p.__detail?.tierCandidateCount ?? 1),
+          minOwnSamplesForNoBackoff:
+            Number(p.__detail?.minOwnSamplesForNoBackoff ?? 100),
+          ownSampleCount:
+            Number(p.__detail?.ownSampleCount ?? 0),
+          adjacentSampleCount:
+            Number(p.__detail?.adjacentSampleCount ?? 0),
+          adjacentViewerTiers:
+            p.__detail?.adjacentViewerTiers ?? [],
           playerBoost:
             Number(p.__detail?.playerBoost ?? 1),
           rankBoost:
@@ -8980,6 +9154,18 @@ function saveCandidateEvent() {
             Boolean(p.__detail?.historicalMatched),
           historicalBackoff:
             Boolean(p.__detail?.historicalBackoff),
+          tierProbability:
+            Number(p.__detail?.tierProbability ?? 0),
+          tierCandidateCount:
+            Number(p.__detail?.tierCandidateCount ?? 1),
+          minOwnSamplesForNoBackoff:
+            Number(p.__detail?.minOwnSamplesForNoBackoff ?? 100),
+          ownSampleCount:
+            Number(p.__detail?.ownSampleCount ?? 0),
+          adjacentSampleCount:
+            Number(p.__detail?.adjacentSampleCount ?? 0),
+          adjacentViewerTiers:
+            p.__detail?.adjacentViewerTiers ?? [],
           playerBoost:
             Number(p.__detail?.playerBoost ?? 1),
           rankBoost:
@@ -9945,6 +10131,16 @@ document.addEventListener(
           log(
             `自分ランク変更：${selectedMyRank}`
           );
+
+          if (
+            isCurrentView(
+              STATE.MATCHING
+            )
+          ) {
+            buildMatchingCandidates();
+            renderMatchingHeader();
+            renderMatchingTable();
+          }
 
         }
       );
