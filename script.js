@@ -4521,10 +4521,65 @@ function getHistoricalDistribution(
       0
     );
 
+  const prideProbabilityTotal =
+    probList.reduce(
+      (sum, item) =>
+        String(item.opponentTier ?? "")
+          .startsWith("PRIDE_")
+            ? sum + Number(item.prob ?? 0)
+            : sum,
+      0
+    );
+
   return {
     probList,
-    total
+    total,
+    prideProbabilityTotal
   };
+}
+
+function getHistoricalPrideWeightedAverageProbability(
+  distribution,
+  tierCounts
+) {
+
+  const prideCandidateCount =
+    getHistoricalTierCandidateCount(
+      tierCounts,
+      "PRIDE_A"
+    );
+
+  if (prideCandidateCount <= 0) {
+    return 0;
+  }
+
+  const weightedProbability =
+    distribution.probList.reduce(
+      (sum, item) => {
+
+        const opponentTier =
+          String(item.opponentTier ?? "");
+
+        if (!opponentTier.startsWith("PRIDE_")) {
+          return sum;
+        }
+
+        const bandCount =
+          Number(
+            tierCounts?.[opponentTier] ?? 0
+          );
+
+        return sum +
+          Math.max(0, bandCount) *
+          Number(item.prob ?? 0);
+      },
+      0
+    );
+
+  return weightedProbability > 0
+    ? weightedProbability /
+      prideCandidateCount
+    : 0;
 }
 
 function getDistributionCellScore(
@@ -4532,7 +4587,8 @@ function getDistributionCellScore(
   opponentTier,
   area,
   supportSize,
-  tierCandidateCount
+  tierCandidateCount,
+  tierCounts
 ) {
 
   /*
@@ -4565,11 +4621,35 @@ function getDistributionCellScore(
       ? hit.prob
       : backoffScore;
 
+  const isPrideTier =
+    String(opponentTier ?? "")
+      .startsWith("PRIDE_");
+
+  const prideWeightedAverageProbability =
+    isPrideTier
+      ? getHistoricalPrideWeightedAverageProbability(
+          distribution,
+          tierCounts
+        )
+      : 0;
+
+  const pooledTierProbability =
+    isPrideTier &&
+    distribution.prideProbabilityTotal > 0 &&
+    prideWeightedAverageProbability > 0
+      ? (
+          distribution.prideProbabilityTotal *
+          tierProbability /
+          prideWeightedAverageProbability
+        )
+      : tierProbability;
+
   return {
     score:
-      tierProbability /
+      pooledTierProbability /
       tierCandidateCount,
     tierProbability,
+    pooledTierProbability,
     tierCandidateCount,
     matched: Boolean(hit)
   };
@@ -4733,7 +4813,8 @@ function getHistoricalScoreDetail(
           opponentTier,
           area,
           supportSize,
-          tierCandidateCount
+          tierCandidateCount,
+          tierCounts
         )
       : null;
 
@@ -4749,7 +4830,8 @@ function getHistoricalScoreDetail(
           opponentTier,
           area,
           supportSize,
-          tierCandidateCount
+          tierCandidateCount,
+          tierCounts
         )
       })
     ) ?? [];
@@ -4825,6 +4907,31 @@ function getHistoricalScoreDetail(
               0
             )
         : ownCell?.tierProbability ?? 1.0,
+    pooledTierProbability:
+      ownDistributionIsReliable
+        ? ownCell?.pooledTierProbability ?? 1.0
+        : adjacentDistribution
+        ? ownCell
+          ? ownCell.pooledTierProbability *
+              ownReliability +
+            adjacentCells.reduce(
+              (sum, cell) =>
+                sum +
+                cell.pooledTierProbability *
+                cell.total /
+                adjacentDistribution.total,
+              0
+            ) *
+              (1 - ownReliability)
+          : adjacentCells.reduce(
+              (sum, cell) =>
+                sum +
+                cell.pooledTierProbability *
+                cell.total /
+                adjacentDistribution.total,
+              0
+            )
+        : ownCell?.pooledTierProbability ?? 1.0,
     tierCandidateCount,
     minOwnSamplesForNoBackoff,
     ownReliability,
@@ -4968,6 +5075,8 @@ function calcMatchingScoreDetail(
             Boolean(historical.backoff),
         tierProbability:
             Number(historical.tierProbability ?? historical.score),
+        pooledTierProbability:
+            Number(historical.pooledTierProbability ?? historical.score),
         tierCandidateCount:
             Number(historical.tierCandidateCount ?? 1),
         minOwnSamplesForNoBackoff:
@@ -5073,6 +5182,219 @@ function getCandidateSelectionScore(player) {
    player.__effectiveWeight ??
    player.__weight ??
    0
+ );
+}
+
+function getCandidateSelectionGroupKey(player) {
+
+ const opponentTier =
+   mapRankKeyToTierKey(
+     player?.__detail?.opponentTier ??
+     player?.__rankKey
+   );
+
+ if (!opponentTier) {
+   return null;
+ }
+
+ return String(opponentTier)
+   .startsWith("PRIDE_")
+     ? HISTORICAL_PRIDE_POOL_KEY
+     : opponentTier;
+}
+
+function getHistoricalSelectionGroupProbability(
+ groupKey
+) {
+
+ const viewerTier =
+   mapRankKeyToTierKey(
+     State.myRankKey
+   );
+
+ const distribution =
+   getHistoricalDistribution(
+     viewerTier
+   );
+
+ if (
+   groupKey ===
+   HISTORICAL_PRIDE_POOL_KEY
+ ) {
+   return Number(
+     distribution.prideProbabilityTotal ?? 0
+   );
+ }
+
+ return distribution.probList.reduce(
+   (sum, item) =>
+     item.opponentTier === groupKey
+       ? sum + Number(item.prob ?? 0)
+       : sum,
+   0
+ );
+}
+
+function buildHistoricalGroupSlotPlan(
+ groupedCandidates,
+ slotCount
+) {
+
+ const groups =
+   Object.entries(groupedCandidates)
+     .filter(
+       ([, players]) =>
+         players.length > 0
+     )
+     .map(([groupKey, players]) => ({
+       groupKey,
+       players,
+       probability:
+         getHistoricalSelectionGroupProbability(
+           groupKey
+         )
+     }));
+
+ const probabilityTotal =
+   groups.reduce(
+     (sum, group) =>
+       sum + Math.max(
+         0,
+         Number(group.probability ?? 0)
+       ),
+     0
+   );
+
+ if (
+   probabilityTotal <= 0 ||
+   slotCount <= 0
+ ) {
+   return null;
+ }
+
+ const plan =
+   groups.map(group => {
+
+     const exact =
+       slotCount *
+       Math.max(
+         0,
+         Number(group.probability ?? 0)
+       ) /
+       probabilityTotal;
+
+     const slots =
+       Math.min(
+         group.players.length,
+         Math.floor(exact)
+       );
+
+     return {
+       ...group,
+       exact,
+       slots,
+       remainder:
+         exact - Math.floor(exact)
+     };
+   });
+
+ let assigned =
+   plan.reduce(
+     (sum, group) =>
+       sum + group.slots,
+     0
+   );
+
+ while (assigned < slotCount) {
+
+   const next =
+     plan
+       .filter(
+         group =>
+           group.slots <
+           group.players.length
+       )
+       .sort(
+         (a, b) =>
+           b.remainder - a.remainder ||
+           b.probability - a.probability
+       )[0];
+
+   if (!next) {
+     break;
+   }
+
+   next.slots++;
+   next.remainder = 0;
+   assigned++;
+ }
+
+ return plan;
+}
+
+function selectNormalCandidatesByHistoricalGroups(
+ rankedByScore,
+ slotCount
+) {
+
+ const groupedCandidates = {};
+
+ rankedByScore.forEach(player => {
+
+   const groupKey =
+     getCandidateSelectionGroupKey(
+       player
+     );
+
+   if (!groupKey) {
+     return;
+   }
+
+   if (!groupedCandidates[groupKey]) {
+     groupedCandidates[groupKey] = [];
+   }
+
+   groupedCandidates[groupKey].push(player);
+ });
+
+ const slotPlan =
+   buildHistoricalGroupSlotPlan(
+     groupedCandidates,
+     slotCount
+   );
+
+ if (!slotPlan) {
+   return rankedByScore.slice(
+     0,
+     slotCount
+   );
+ }
+
+ const selectedSet =
+   new Set();
+
+ slotPlan.forEach(group => {
+
+   group.players
+     .slice(0, group.slots)
+     .forEach(player => {
+       selectedSet.add(player);
+     });
+ });
+
+ for (const player of rankedByScore) {
+
+   if (
+     selectedSet.size >= slotCount
+   ) {
+     break;
+   }
+
+   selectedSet.add(player);
+ }
+
+ return rankedByScore.filter(
+   player => selectedSet.has(player)
  );
 }
 
@@ -5267,8 +5589,8 @@ function buildMatchingCandidates() {
     );
 
   const normalSelected =
-    rankedByScore.slice(
-      0,
+    selectNormalCandidatesByHistoricalGroups(
+      rankedByScore,
       NORMAL_SLOT_COUNT
     );
 
@@ -8262,6 +8584,8 @@ function saveCopyEventUnified(
         Boolean(detail.historicalBackoff),
       tierProbability:
         Number(detail.tierProbability ?? 0),
+      pooledTierProbability:
+        Number(detail.pooledTierProbability ?? 0),
       tierCandidateCount:
         Number(detail.tierCandidateCount ?? 1),
       minOwnSamplesForNoBackoff:
@@ -8382,6 +8706,8 @@ function buildCopyCandidateSnapshot() {
             Boolean(p.__detail?.historicalBackoff),
           tierProbability:
             Number(p.__detail?.tierProbability ?? 0),
+          pooledTierProbability:
+            Number(p.__detail?.pooledTierProbability ?? 0),
           tierCandidateCount:
             Number(p.__detail?.tierCandidateCount ?? 1),
           minOwnSamplesForNoBackoff:
@@ -9161,6 +9487,8 @@ function saveCandidateEvent() {
             Boolean(p.__detail?.historicalBackoff),
           tierProbability:
             Number(p.__detail?.tierProbability ?? 0),
+          pooledTierProbability:
+            Number(p.__detail?.pooledTierProbability ?? 0),
           tierCandidateCount:
             Number(p.__detail?.tierCandidateCount ?? 1),
           minOwnSamplesForNoBackoff:
@@ -9301,6 +9629,8 @@ function saveCandidateEvent() {
             Boolean(p.__detail?.historicalBackoff),
           tierProbability:
             Number(p.__detail?.tierProbability ?? 0),
+          pooledTierProbability:
+            Number(p.__detail?.pooledTierProbability ?? 0),
           tierCandidateCount:
             Number(p.__detail?.tierCandidateCount ?? 1),
           minOwnSamplesForNoBackoff:
