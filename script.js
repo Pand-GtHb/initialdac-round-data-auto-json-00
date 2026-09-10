@@ -28,8 +28,103 @@ const LOG_STORAGE_KEYS = {
 };
 
 const LOG_STORAGE_LIMITS = {
-  copyEvents: 200
+  copyEvents: 200,
+  /*
+   * 【2026-09 ログ量対策】candidateEvents（IndexedDB）は
+   * 従来、件数上限・自動整理が無く無制限に蓄積されていた。
+   * copyEvents 1件あたり平均 candidateEvents 約2.5件が
+   * 記録される実測値から、100戦分の履歴を保持できる
+   * 余裕を見て上限を設定する。
+   */
+  candidateEvents: 300
 };
+
+/*
+ * ログ量削減設定【2026-09 改善：ログ軽量化】
+ *
+ * candidateEvents.allCandidates は、実績相手が表示Top10圏外
+ * だった場合でも後から global score rank を特定できるよう
+ * スコア対象の全候補を保存する目的で追加されたが、
+ * 1候補あたりの scoreBreakdown 情報量が大きく、
+ * 1日の分析JSON（viewer_analysis_*.json）が数MB～十数MBに
+ * 肥大化する主因になっていた。
+ *
+ * includeAllCandidates:
+ *   false にすると allCandidates 自体を記録しない
+ *   （最も軽量。ただしTop10圏外だった実績相手の
+ *   global rank 検証はできなくなる）
+ *
+ * ※ allCandidates の軽量化自体は、【2026-09 ログ量対策②】として
+ *   下記 ALL_CANDIDATES_COLUMNS ＋ buildAllCandidateRow による
+ *   配列化（列固定フォーマット）で行うため、旧来の
+ *   allCandidatesSlimBreakdown フラグは廃止した。
+ */
+const LOG_DETAIL_CONFIG = {
+  includeAllCandidates: true
+};
+
+
+/*
+ * 【2026-09 ログ量対策②】allCandidates 配列化フォーマット
+ *
+ * 従来は候補1件ごとに { globalScoreRank: ..., name: ..., ... }
+ * というキー名付きオブジェクトで保存しており、候補数が
+ * 100～300件規模になるとキー名の重複だけでファイルサイズの
+ * 大きな割合を占めていた。
+ *
+ * ここでは同じ情報を「列の並び順を固定した配列（行）」として
+ * 保存し、列名は candidateEvent 1件につき1回だけ
+ * allCandidatesColumns として記録する（自己記述的で、
+ * 後から列の意味が分かるようにする）。
+ *
+ * 追加項目（2026-09 予測精度改善策の検証用）:
+ *   isPinkManaged     : historicalScore/リアルタイムブーストの
+ *                        適用条件検証用
+ *   historicalBackoff : historicalScoreがバックオフ値かどうか
+ *                        （historicalScoreの信頼性検証用）
+ *   decay             : Phase周期減衰。これが無いと
+ *                        「実際の周期ズレ」と「経過周期数による
+ *                        減衰」を区別できず、Matchingボタンの
+ *                        最適タイミング分析ができなかったため追加。
+ *
+ * 除外した項目（イベント側へ統合）:
+ *   ownSampleCount / adjacentSampleCount / minOwnSamplesForNoBackoff は
+ *   同一candidateEvent内で全候補共通値（viewerTierのみに依存し
+ *   opponentTierに依存しないことを実データで確認済み）のため、
+ *   候補ごとの重複記録をやめ、candidateEventレコード側に
+ *   1回だけ記録する。
+ */
+const ALL_CANDIDATES_COLUMNS = [
+  "globalScoreRank",
+  "name",
+  "shopname",
+  "rankKey",
+  "area",
+  "score",
+  "wasDisplayed",
+  "displayRank",
+  "isPhaseRescue",
+  "rescueReason",
+  "isPinkManaged",
+  "historicalScore",
+  "historicalBackoff",
+  "tierProbability",
+  "playerBoost",
+  "rankBoost",
+  "realtimeBoost",
+  "phaseError",
+  "signedPhaseError",
+  "peakDirection",
+  "phaseBucket",
+  "phaseScore",
+  "decay",
+  "finalPhaseScore",
+  "effectivePhaseScore",
+  "phaseSampleCount",
+  "phaseTrust",
+  "phaseAdjustValue"
+];
+
 
 const MAX_LOG_LINES = 100;
 
@@ -3697,6 +3792,208 @@ function getCurrentCycle(
   return isCopiedPlayer(player)
     ? calcPinkCycle(player)
     : calcYellowCycle(player);
+}
+
+/* =========================================================
+ [7030] Cycle Learning:seedPhaseAdjustFromCopyHistory【State】【永続化】
+ ※【2026-09 改善：Phaseバイアス収束の高速化】
+
+ calcYellowCycle / calcPinkCycle は EMA
+ （yellow: alpha=0.05／pink: alpha=0.1）で
+ State.phaseAdjust を少しずつ真値へ近づけるが、
+ localStorageが空の状態（初回起動・ブラウザデータ削除後・
+ 別端末）では0から再学習が始まり、実績ログ解析で
+ 確認された系統的なズレ
+ （実際にコピーされた相手は周期予測のピークより
+ やや早いタイミングに偏る＝signedPhaseErrorが
+ 負に偏る傾向。1周期あたり数秒〜十数秒程度）を
+ 補正しきるまでに数十件規模のサンプル蓄積を要してしまう。
+
+ 起動時、IndexedDBに蓄積済みの copyEvents（実績ログ）から
+ signedPhaseError を経過周期数（cycleCountAtCopy）で
+ 正規化した「1周期あたりのズレ」の中央値を求め、
+ ローカルの学習がまだ十分に進んでいない場合に限り、
+ その値を State.phaseAdjust.yellow / .pink の初期値として
+ 適用する（十分学習済みなら上書きしない）。
+
+ ※ calcYellowCycle/calcPinkCycle 側の学習ロジック・
+ 　 EMA・クランプ・信頼度計算には一切手を加えない。
+ 　 あくまで「初期値の種（シード）」を与えるだけであり、
+ 　 以降の学習は従来どおり進む。
+========================================================= */
+async function seedPhaseAdjustFromCopyHistory() {
+
+  if (!logDB) {
+    return;
+  }
+
+  try {
+
+    const tx =
+      logDB.transaction(
+        [LOG_STORE.copyEvents],
+        "readonly"
+      );
+
+    const store =
+      tx.objectStore(
+        LOG_STORE.copyEvents
+      );
+
+    const records =
+      await new Promise(
+        (resolve, reject) => {
+          const req = store.getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = reject;
+        }
+      );
+
+    if (
+      !Array.isArray(records) ||
+      records.length === 0
+    ) {
+      return;
+    }
+
+    const yellowCfg =
+      State.scoringConfig?.phase?.yellow ?? {};
+
+    const pinkCfg =
+      State.scoringConfig?.phase?.pink ?? {};
+
+    const yellowMinSamples =
+      Number(yellowCfg.minSamples ?? 8);
+
+    const pinkMinSamples =
+      Number(pinkCfg.minSamples ?? 8);
+
+    /*
+     * すでにローカルで十分サンプルが蓄積・学習済みの場合は
+     * ログからの再シードで学習結果を後退させないよう上書きしない。
+     */
+    const yellowAlreadyLearned =
+      (State.yellowSamples?.length ?? 0) >= yellowMinSamples;
+
+    const pinkAlreadyLearned =
+      (State.phaseDiag?.pink?.sampleCount ?? 0) >= pinkMinSamples;
+
+    const yellowPerCycleErrors = [];
+    const pinkPerCycleErrors = [];
+
+    for (const rec of records) {
+
+      const sb = rec?.scoreBreakdown;
+
+      const signedPhaseError =
+        Number(sb?.signedPhaseError);
+
+      if (!Number.isFinite(signedPhaseError)) {
+        continue;
+      }
+
+      const cycleCount =
+        Math.max(
+          1,
+          Number(rec.cycleCountAtCopy) || 1
+        );
+
+      const perCycle =
+        signedPhaseError / cycleCount;
+
+      if (!Number.isFinite(perCycle)) {
+        continue;
+      }
+
+      if (rec.isPinkManaged || rec.isPink) {
+        pinkPerCycleErrors.push(perCycle);
+      } else {
+        yellowPerCycleErrors.push(perCycle);
+      }
+
+    }
+
+    const median = values => {
+
+      if (!values.length) {
+        return null;
+      }
+
+      const sorted =
+        [...values].sort((a, b) => a - b);
+
+      const mid =
+        Math.floor(sorted.length / 2);
+
+      return (sorted.length % 2)
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2;
+
+    };
+
+    /*
+     * 3件未満（外れ値1件で全体が偏るリスクが高い）は
+     * シードを見送る。
+     */
+    const MIN_SEED_SAMPLES = 3;
+
+    let seeded = false;
+
+    if (
+      !yellowAlreadyLearned &&
+      yellowPerCycleErrors.length >= MIN_SEED_SAMPLES
+    ) {
+
+      const m = median(yellowPerCycleErrors);
+
+      const maxShift =
+        Number(yellowCfg.maxShiftSec ?? 45);
+
+      State.phaseAdjust.yellow =
+        clamp(m, -maxShift, maxShift);
+
+      seeded = true;
+
+      log(
+        `[phase] Yellow位相バイアスを実績ログから初期化：${Math.round(State.phaseAdjust.yellow)}秒（サンプル${yellowPerCycleErrors.length}件）`
+      );
+
+    }
+
+    if (
+      !pinkAlreadyLearned &&
+      pinkPerCycleErrors.length >= MIN_SEED_SAMPLES
+    ) {
+
+      const m = median(pinkPerCycleErrors);
+
+      const maxShift =
+        Number(pinkCfg.maxShiftSec ?? 45);
+
+      State.phaseAdjust.pink =
+        clamp(m, -maxShift, maxShift);
+
+      seeded = true;
+
+      log(
+        `[phase] Pink位相バイアスを実績ログから初期化：${Math.round(State.phaseAdjust.pink)}秒（サンプル${pinkPerCycleErrors.length}件）`
+      );
+
+    }
+
+    if (seeded) {
+      savePinkStateToStorage();
+    }
+
+  } catch (e) {
+
+    console.warn(
+      "[phase] seedPhaseAdjustFromCopyHistory failed:",
+      e
+    );
+
+  }
+
 }
 
 /* =========================================================
@@ -8354,6 +8651,177 @@ async function exportTodayViewerLogsAsJSON() {
  ################################################################# */
 
 /* =========================================================
+ [12990] Log Use Case:buildScoreBreakdownLog【ログ軽量化】
+========================================================= */
+/*
+ * copyEvents / candidateEvents（candidates・allCandidates）・
+ * candidateSnapshot で重複していた scoreBreakdown 組み立てを
+ * 1箇所へ集約する。
+ *
+ * slim=false（既定）:
+ *   従来どおりの全項目（バックオフ診断用の詳細項目を含む）。
+ *   Top10表示分（copyEvents本体・candidates・
+ *   candidateSnapshot）は情報量が小さいため、こちらを使う。
+ *
+ * slim=true:
+ *   Phase傾向分析（signedPhaseError・phaseBucket・
+ *   phaseScore系）に必要な項目のみへ絞った軽量版。
+ *   allCandidates（候補全件・件数が多くログ肥大化の主因）で
+ *   使用する。
+ */
+function buildScoreBreakdownLog(
+  detail,
+  slim = false
+) {
+
+  detail = detail || {};
+
+  if (slim) {
+
+    return {
+      historicalScore:
+        Number(detail.historicalScore ?? 0),
+      tierProbability:
+        Number(detail.tierProbability ?? 0),
+      playerBoost:
+        Number(detail.playerBoost ?? 1),
+      rankBoost:
+        Number(detail.rankBoost ?? 1),
+      realtimeBoost:
+        Number(detail.realtimeBoost ?? 1),
+      phaseError:
+        Number(detail.phaseError ?? 0),
+      signedPhaseError:
+        Number(detail.signedPhaseError ?? 0),
+      peakDirection:
+        detail.peakDirection ?? "unknown",
+      phaseBucket:
+        detail.phaseBucket ?? "unknown",
+      phaseScore:
+        Number(detail.phaseScore ?? 0),
+      finalPhaseScore:
+        Number(detail.finalPhaseScore ?? 0),
+      effectivePhaseScore:
+        Number(detail.effectivePhaseScore ?? 0),
+      phaseSampleCount:
+        Number(detail.phaseSampleCount ?? 0),
+      phaseTrust:
+        Number(detail.phaseTrust ?? 1),
+      phaseAdjustValue:
+        Number(detail.phaseAdjustValue ?? 0)
+    };
+
+  }
+
+  return {
+    historicalScore:
+      Number(detail.historicalScore ?? 0),
+    historicalMatched:
+      Boolean(detail.historicalMatched),
+    historicalBackoff:
+      Boolean(detail.historicalBackoff),
+    tierProbability:
+      Number(detail.tierProbability ?? 0),
+    pooledTierProbability:
+      Number(detail.pooledTierProbability ?? 0),
+    tierCandidateCount:
+      Number(detail.tierCandidateCount ?? 1),
+    minOwnSamplesForNoBackoff:
+      Number(detail.minOwnSamplesForNoBackoff ?? 100),
+    ownSampleCount:
+      Number(detail.ownSampleCount ?? 0),
+    adjacentSampleCount:
+      Number(detail.adjacentSampleCount ?? 0),
+    adjacentViewerTiers:
+      detail.adjacentViewerTiers ?? [],
+    playerBoost:
+      Number(detail.playerBoost ?? 1),
+    rankBoost:
+      Number(detail.rankBoost ?? 1),
+    realtimeBoost:
+      Number(detail.realtimeBoost ?? 1),
+    phaseError:
+      Number(detail.phaseError ?? 0),
+    signedPhaseError:
+      Number(detail.signedPhaseError ?? 0),
+    phasePos:
+      Number(detail.phasePos ?? 0),
+    peakDirection:
+      detail.peakDirection ?? "unknown",
+    phaseBucket:
+      detail.phaseBucket ?? "unknown",
+    diffSec:
+      Number(detail.diffSec ?? 0),
+    phaseScore:
+      Number(detail.phaseScore ?? 0),
+    decay:
+      Number(detail.decay ?? 0),
+    finalPhaseScore:
+      Number(detail.finalPhaseScore ?? 0),
+    effectivePhaseScore:
+      Number(detail.effectivePhaseScore ?? 0),
+    phaseWeight:
+      Number(detail.phaseWeight ?? 0),
+    phaseSampleCount:
+      Number(detail.phaseSampleCount ?? 0),
+    phaseTrust:
+      Number(detail.phaseTrust ?? 1),
+    phaseAdjustValue:
+      Number(detail.phaseAdjustValue ?? 0)
+  };
+
+}
+
+/* =========================================================
+ [12995] Log Use Case:buildAllCandidateRow【ログ軽量化】
+========================================================= */
+/*
+ * allCandidates 用の行データ（配列）を構築する。
+ * 列の並びは ALL_CANDIDATES_COLUMNS と必ず一致させること。
+ */
+function buildAllCandidateRow(
+  p
+) {
+
+  const d =
+    p.__detail || {};
+
+  return [
+    p.__scoreRank ?? null,
+    p.name,
+    p.shopname ?? "",
+    p.__rankKey ?? null,
+    String(p.area ?? ""),
+    Number(
+      (p.__score ?? 0).toFixed(6)
+    ),
+    p.displayRank ? 1 : 0,
+    p.displayRank ?? null,
+    p.__phaseRescue ? 1 : 0,
+    p.__rescueReason ?? null,
+    d.isPinkManaged ? 1 : 0,
+    Number(d.historicalScore ?? 0),
+    d.historicalBackoff ? 1 : 0,
+    Number(d.tierProbability ?? 0),
+    Number(d.playerBoost ?? 1),
+    Number(d.rankBoost ?? 1),
+    Number(d.realtimeBoost ?? 1),
+    Number(d.phaseError ?? 0),
+    Number(d.signedPhaseError ?? 0),
+    d.peakDirection ?? "unknown",
+    d.phaseBucket ?? "unknown",
+    Number(d.phaseScore ?? 0),
+    Number(d.decay ?? 0),
+    Number(d.finalPhaseScore ?? 0),
+    Number(d.effectivePhaseScore ?? 0),
+    Number(d.phaseSampleCount ?? 0),
+    Number(d.phaseTrust ?? 1),
+    Number(d.phaseAdjustValue ?? 0)
+  ];
+
+}
+
+/* =========================================================
  [13000] Copy Use Case:saveCopyEventUnified【State】【永続化】（旧 [9200]）
 ========================================================= */
 function saveCopyEventUnified(
@@ -8575,60 +9043,11 @@ function saveCopyEventUnified(
           )
         : null,
 
-    scoreBreakdown: {
-      historicalScore:
-        Number(detail.historicalScore ?? 0),
-      historicalMatched:
-        Boolean(detail.historicalMatched),
-      historicalBackoff:
-        Boolean(detail.historicalBackoff),
-      tierProbability:
-        Number(detail.tierProbability ?? 0),
-      pooledTierProbability:
-        Number(detail.pooledTierProbability ?? 0),
-      tierCandidateCount:
-        Number(detail.tierCandidateCount ?? 1),
-      minOwnSamplesForNoBackoff:
-        Number(detail.minOwnSamplesForNoBackoff ?? 100),
-      ownSampleCount:
-        Number(detail.ownSampleCount ?? 0),
-      adjacentSampleCount:
-        Number(detail.adjacentSampleCount ?? 0),
-      adjacentViewerTiers:
-        detail.adjacentViewerTiers ?? [],
-      playerBoost:
-        Number(detail.playerBoost ?? 1),
-      rankBoost:
-        Number(detail.rankBoost ?? 1),
-      realtimeBoost:
-        Number(detail.realtimeBoost ?? 1),
-      phaseError:
-        Number(detail.phaseError ?? 0),
-      signedPhaseError:
-        Number(detail.signedPhaseError ?? 0),
-      phasePos:
-        Number(detail.phasePos ?? 0),
-      peakDirection:
-        detail.peakDirection ?? "unknown",
-      phaseBucket:
-        detail.phaseBucket ?? "unknown",
-      diffSec:
-        Number(detail.diffSec ?? 0),
-      phaseScore:
-        Number(detail.phaseScore ?? 0),
-      decay:
-        Number(detail.decay ?? 0),
-      finalPhaseScore:
-        Number(detail.finalPhaseScore ?? 0),
-      effectivePhaseScore:
-        Number(detail.effectivePhaseScore ?? 0),
-      phaseSampleCount:
-        Number(detail.phaseSampleCount ?? 0),
-      phaseTrust:
-        Number(detail.phaseTrust ?? 1),
-      phaseAdjustValue:
-        Number(detail.phaseAdjustValue ?? 0)
-    },
+    scoreBreakdown:
+      buildScoreBreakdownLog(
+        detail,
+        false
+      ),
 
     viewerTier:
       detail.viewerTier ?? null,
@@ -8697,60 +9116,11 @@ function buildCopyCandidateSnapshot() {
         score: Number(
           (p.__score ?? 0).toFixed(6)
         ),
-        scoreBreakdown: {
-          historicalScore:
-            Number(p.__detail?.historicalScore ?? 0),
-          historicalMatched:
-            Boolean(p.__detail?.historicalMatched),
-          historicalBackoff:
-            Boolean(p.__detail?.historicalBackoff),
-          tierProbability:
-            Number(p.__detail?.tierProbability ?? 0),
-          pooledTierProbability:
-            Number(p.__detail?.pooledTierProbability ?? 0),
-          tierCandidateCount:
-            Number(p.__detail?.tierCandidateCount ?? 1),
-          minOwnSamplesForNoBackoff:
-            Number(p.__detail?.minOwnSamplesForNoBackoff ?? 100),
-          ownSampleCount:
-            Number(p.__detail?.ownSampleCount ?? 0),
-          adjacentSampleCount:
-            Number(p.__detail?.adjacentSampleCount ?? 0),
-          adjacentViewerTiers:
-            p.__detail?.adjacentViewerTiers ?? [],
-          playerBoost:
-            Number(p.__detail?.playerBoost ?? 1),
-          rankBoost:
-            Number(p.__detail?.rankBoost ?? 1),
-          realtimeBoost:
-            Number(p.__detail?.realtimeBoost ?? 1),
-          phaseError:
-            Number(p.__detail?.phaseError ?? 0),
-          signedPhaseError:
-            Number(p.__detail?.signedPhaseError ?? 0),
-          phasePos:
-            Number(p.__detail?.phasePos ?? 0),
-          peakDirection:
-            p.__detail?.peakDirection ?? "unknown",
-          phaseBucket:
-            p.__detail?.phaseBucket ?? "unknown",
-          diffSec:
-            Number(p.__detail?.diffSec ?? 0),
-          phaseScore:
-            Number(p.__detail?.phaseScore ?? 0),
-          decay:
-            Number(p.__detail?.decay ?? 0),
-          finalPhaseScore:
-            Number(p.__detail?.finalPhaseScore ?? 0),
-          effectivePhaseScore:
-            Number(p.__detail?.effectivePhaseScore ?? 0),
-          phaseSampleCount:
-            Number(p.__detail?.phaseSampleCount ?? 0),
-          phaseTrust:
-            Number(p.__detail?.phaseTrust ?? 1),
-          phaseAdjustValue:
-            Number(p.__detail?.phaseAdjustValue ?? 0)
-        },
+        scoreBreakdown:
+          buildScoreBreakdownLog(
+            p.__detail,
+            false
+          ),
         isYellow:
           Boolean(p.__detail?.isYellow),
         isPink:
@@ -9152,6 +9522,79 @@ function undoLastCopiedInfo() {
 }
 
 /* =========================================================
+ [13005] Log Use Case:pruneCandidateEventsStore【永続化】【ログ量対策】
+========================================================= */
+/*
+ * candidateEvents（IndexedDB）は copyEvents（localStorage）と異なり
+ * 保存時に古いレコードを自動整理する仕組みがなく、無制限に
+ * 蓄積され続けていた。ここで LOG_STORAGE_LIMITS.candidateEvents
+ * を超えた分（最も古いもの）を削除する。
+ *
+ * candidateEvents の id は Date.now() の数値（時刻順）で
+ * 発行されているため、キーの昇順ソート＝時系列順となる。
+ */
+function pruneCandidateEventsStore(
+  limit = 300
+) {
+
+  if (!logDB) {
+    return;
+  }
+
+  const tx =
+    logDB.transaction(
+      LOG_STORE.candidateEvents,
+      "readwrite"
+    );
+
+  const store =
+    tx.objectStore(
+      LOG_STORE.candidateEvents
+    );
+
+  const req =
+    store.getAllKeys();
+
+  req.onsuccess =
+    () => {
+
+      const keys =
+        req.result || [];
+
+      if (keys.length <= limit) {
+        return;
+      }
+
+      const sorted =
+        [...keys].sort(
+          (a, b) => a - b
+        );
+
+      const toDelete =
+        sorted.slice(
+          0,
+          sorted.length - limit
+        );
+
+      for (const key of toDelete) {
+        store.delete(key);
+      }
+
+    };
+
+  req.onerror =
+    (e) => {
+
+      console.error(
+        "[LOG] pruneCandidateEventsStore failed",
+        e
+      );
+
+    };
+
+}
+
+/* =========================================================
  [13100] Candidate Event Log:saveCandidateEvent【State】【永続化】（旧 [9500]）
 ========================================================= */
 function saveCandidateEvent() {
@@ -9433,6 +9876,33 @@ function saveCandidateEvent() {
     eligibleCount:
       State.matchingRankedAll.length,
 
+    /*
+     * 【2026-09 ログ拡充】ownSampleCount等は同一candidateEvent内
+     * では全候補共通値（viewerTierのみに依存し、opponentTierには
+     * 依存しないことを実データで確認済み）のため、候補ごとに
+     * 重複させずイベント側へ1回だけ記録する。
+     */
+    ownSampleCount:
+      Number(
+        State.matchingRankedAll[0]
+          ?.__detail
+          ?.ownSampleCount ?? 0
+      ),
+
+    adjacentSampleCount:
+      Number(
+        State.matchingRankedAll[0]
+          ?.__detail
+          ?.adjacentSampleCount ?? 0
+      ),
+
+    minOwnSamplesForNoBackoff:
+      Number(
+        State.matchingRankedAll[0]
+          ?.__detail
+          ?.minOwnSamplesForNoBackoff ?? 100
+      ),
+
     viewerTier:
       mapRankKeyToTierKey(
         State.myRankKey
@@ -9478,62 +9948,11 @@ function saveCandidateEvent() {
               .toFixed(6)
           ),
 
-        scoreBreakdown: {
-          historicalScore:
-            Number(p.__detail?.historicalScore ?? 0),
-          historicalMatched:
-            Boolean(p.__detail?.historicalMatched),
-          historicalBackoff:
-            Boolean(p.__detail?.historicalBackoff),
-          tierProbability:
-            Number(p.__detail?.tierProbability ?? 0),
-          pooledTierProbability:
-            Number(p.__detail?.pooledTierProbability ?? 0),
-          tierCandidateCount:
-            Number(p.__detail?.tierCandidateCount ?? 1),
-          minOwnSamplesForNoBackoff:
-            Number(p.__detail?.minOwnSamplesForNoBackoff ?? 100),
-          ownSampleCount:
-            Number(p.__detail?.ownSampleCount ?? 0),
-          adjacentSampleCount:
-            Number(p.__detail?.adjacentSampleCount ?? 0),
-          adjacentViewerTiers:
-            p.__detail?.adjacentViewerTiers ?? [],
-          playerBoost:
-            Number(p.__detail?.playerBoost ?? 1),
-          rankBoost:
-            Number(p.__detail?.rankBoost ?? 1),
-          realtimeBoost:
-            Number(p.__detail?.realtimeBoost ?? 1),
-          phaseError:
-            Number(p.__detail?.phaseError ?? 0),
-          signedPhaseError:
-            Number(p.__detail?.signedPhaseError ?? 0),
-          phasePos:
-            Number(p.__detail?.phasePos ?? 0),
-          peakDirection:
-            p.__detail?.peakDirection ?? "unknown",
-          phaseBucket:
-            p.__detail?.phaseBucket ?? "unknown",
-          diffSec:
-            Number(p.__detail?.diffSec ?? 0),
-          phaseScore:
-            Number(p.__detail?.phaseScore ?? 0),
-          decay:
-            Number(p.__detail?.decay ?? 0),
-          finalPhaseScore:
-            Number(p.__detail?.finalPhaseScore ?? 0),
-          effectivePhaseScore:
-            Number(p.__detail?.effectivePhaseScore ?? 0),
-          phaseWeight:
-            Number(p.__detail?.phaseWeight ?? 0),
-          phaseSampleCount:
-            Number(p.__detail?.phaseSampleCount ?? 0),
-          phaseTrust:
-            Number(p.__detail?.phaseTrust ?? 1),
-          phaseAdjustValue:
-            Number(p.__detail?.phaseAdjustValue ?? 0)
-        },
+        scoreBreakdown:
+          buildScoreBreakdownLog(
+            p.__detail,
+            false
+          ),
 
         isYellow:
           Boolean(p.__detail?.isYellow),
@@ -9575,105 +9994,27 @@ function saveCandidateEvent() {
      * 特定できない問題があった。
      *
      * ここでは matchingRankedAll（スコア対象の全候補、
-     * スコア順）をそのまま保存する。1候補あたりの情報量を
-     * 抑えるため、表示用 candidates で重複するUI補助情報
-     * （viewerTier等の描画専用フィールド）は除き、
-     * 識別情報・グローバル順位・選出可否・主要な
-     * scoreBreakdownのみを保持する。
+     * スコア順）をそのまま保存する。
+     *
+     * 【2026-09 ログ量対策②】1候補あたりの情報量を抑えるため、
+     * キー名付きオブジェクトではなく列固定の配列（行）として
+     * 保存する。列の意味は allCandidatesColumns
+     * （＝ALL_CANDIDATES_COLUMNS）を参照。
      *
      * candidateEvents ストア自体のレコード数（イベント件数）は
      * 従来どおり putLog による1イベント1レコードのままで、
-     * 既存の件数上限・容量対策（LOG_STORAGE_LIMITS等）には
-     * 影響しない。1レコード内で全候補を欠落させないことのみ
-     * 変更する。
+     * LOG_STORAGE_LIMITS.candidateEvents による件数上限・
+     * 自動整理（pruneCandidateEventsStore）で管理する。
      */
+    allCandidatesColumns:
+      ALL_CANDIDATES_COLUMNS,
+
     allCandidates:
-      State.matchingRankedAll.map(p => ({
-
-        globalScoreRank:
-          p.__scoreRank ?? null,
-
-        name:
-          p.name,
-
-        shopname:
-          p.shopname ?? "",
-
-        rankKey:
-          p.__rankKey ?? null,
-
-        area:
-          String(p.area ?? ""),
-
-        score:
-          Number(
-            (p.__score ?? 0)
-              .toFixed(6)
-          ),
-
-        wasDisplayed:
-          Boolean(p.displayRank),
-        displayRank:
-          p.displayRank ?? null,
-        isPhaseRescue:
-          Boolean(p.__phaseRescue),
-        rescueReason:
-          p.__rescueReason ?? null,
-
-        scoreBreakdown: {
-          historicalScore:
-            Number(p.__detail?.historicalScore ?? 0),
-          historicalMatched:
-            Boolean(p.__detail?.historicalMatched),
-          historicalBackoff:
-            Boolean(p.__detail?.historicalBackoff),
-          tierProbability:
-            Number(p.__detail?.tierProbability ?? 0),
-          pooledTierProbability:
-            Number(p.__detail?.pooledTierProbability ?? 0),
-          tierCandidateCount:
-            Number(p.__detail?.tierCandidateCount ?? 1),
-          minOwnSamplesForNoBackoff:
-            Number(p.__detail?.minOwnSamplesForNoBackoff ?? 100),
-          ownSampleCount:
-            Number(p.__detail?.ownSampleCount ?? 0),
-          adjacentSampleCount:
-            Number(p.__detail?.adjacentSampleCount ?? 0),
-          adjacentViewerTiers:
-            p.__detail?.adjacentViewerTiers ?? [],
-          playerBoost:
-            Number(p.__detail?.playerBoost ?? 1),
-          rankBoost:
-            Number(p.__detail?.rankBoost ?? 1),
-          realtimeBoost:
-            Number(p.__detail?.realtimeBoost ?? 1),
-          phaseError:
-            Number(p.__detail?.phaseError ?? 0),
-          signedPhaseError:
-            Number(p.__detail?.signedPhaseError ?? 0),
-          phasePos:
-            Number(p.__detail?.phasePos ?? 0),
-          peakDirection:
-            p.__detail?.peakDirection ?? "unknown",
-          phaseBucket:
-            p.__detail?.phaseBucket ?? "unknown",
-          diffSec:
-            Number(p.__detail?.diffSec ?? 0),
-          phaseScore:
-            Number(p.__detail?.phaseScore ?? 0),
-          decay:
-            Number(p.__detail?.decay ?? 0),
-          finalPhaseScore:
-            Number(p.__detail?.finalPhaseScore ?? 0),
-          effectivePhaseScore:
-            Number(p.__detail?.effectivePhaseScore ?? 0),
-          phaseWeight:
-            Number(p.__detail?.phaseWeight ?? 0),
-          phaseTrust:
-            Number(p.__detail?.phaseTrust ?? 1)
-        }
-
-      }))
+      LOG_DETAIL_CONFIG.includeAllCandidates
+        ? State.matchingRankedAll.map(
+            buildAllCandidateRow
+          )
+        : []
   };
 
   State.lastCandidateEventId =
@@ -9682,6 +10023,10 @@ function saveCandidateEvent() {
   logEvent(
     "candidate",
     record
+  );
+
+  pruneCandidateEventsStore(
+    LOG_STORAGE_LIMITS.candidateEvents
   );
 }
 
@@ -10222,6 +10567,8 @@ async function init() {
       scoringConfigJson
     );
 
+    await seedPhaseAdjustFromCopyHistory();
+
     applyRoundDataJson(
       roundDataJson,
       {
@@ -10249,6 +10596,8 @@ async function init() {
     await loadJointModel();
 
     await loadScoringConfig();
+
+    await seedPhaseAdjustFromCopyHistory();
 
     try {
         const roundDataJson = await fetchRoundDataJson();
