@@ -2,11 +2,13 @@
   "meta": {
     "version": "scoring_config_v14_phasescore_20260902",
     "createdAt": "2026-08-30T20:17:00+09:00",
-    "modifiedAt": "2026-09-10T21:03:00+09:00",
-    "description": "YellowはHistoricalScore×FinalPhaseScore、PinkはRealtimeBoostを加えたPhaseScore採用版（Yellow周期学習の過学習抑制のためmaxShiftSec/alpha/minSamplesを見直し）"
+    "modifiedAt": "2026-09-10T21:45:00+09:00",
+    "description": "YellowはHistoricalScore×FinalPhaseScore、PinkはRealtimeBoostを加えたPhaseScore採用版（Yellow周期学習の過学習抑制のためmaxShiftSec/alpha/minSamplesを見直し）。2026-09-10：実マッチ相手vs候補プール比較分析の結果、Phase系スコアが最も予測力が高いにも関わらず合成式で希釈されていたため、phase.weightを明示追加（0.35相当→0.65）。"
   },
 
   "phase": {
+    "weight": 0.65,
+
     "yellow": {
       "baseCycleSec": 345,
       "alpha": 0.12,
