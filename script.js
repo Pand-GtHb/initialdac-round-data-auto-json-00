@@ -4467,6 +4467,7 @@ function getPlayerCycleCount(player, nowMs = Date.now()) {
  [8005] Historical Score:Adjacent Tier Pooling【State】
 ========================================================= */
 const HISTORICAL_RELIABILITY_K = 100;
+const HISTORICAL_PRIDE_POOL_KEY = "__PRIDE__";
 
 function getHistoricalMinOwnSamplesForNoBackoff() {
 
@@ -4487,9 +4488,15 @@ function getHistoricalTierCandidateCount(
   opponentTier
 ) {
 
+  const countKey =
+    String(opponentTier ?? "")
+      .startsWith("PRIDE_")
+        ? HISTORICAL_PRIDE_POOL_KEY
+        : opponentTier;
+
   const count =
     Number(
-      tierCounts?.[opponentTier] ?? 1
+      tierCounts?.[countKey] ?? 1
     );
 
   return Number.isFinite(count) &&
@@ -5177,9 +5184,15 @@ function buildMatchingCandidates() {
       return;
     }
 
-    tierCounts[opponentTier] =
+    const countKey =
+      String(opponentTier)
+        .startsWith("PRIDE_")
+          ? HISTORICAL_PRIDE_POOL_KEY
+          : opponentTier;
+
+    tierCounts[countKey] =
       Number(
-        tierCounts[opponentTier] ?? 0
+        tierCounts[countKey] ?? 0
       ) + 1;
   });
 
