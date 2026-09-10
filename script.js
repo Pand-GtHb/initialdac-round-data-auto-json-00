@@ -712,6 +712,72 @@ function computePhaseMetrics(
   };
 }
 
+function buildPhaseDirectionDetail(
+  diffSec,
+  cycleSec,
+  phaseError
+) {
+
+  const safeDiffSec =
+    Number(diffSec);
+
+  const safeCycleSec =
+    Number(cycleSec);
+
+  const safePhaseError =
+    Number(phaseError);
+
+  if (
+    !Number.isFinite(safeDiffSec) ||
+    safeDiffSec < 0 ||
+    !Number.isFinite(safeCycleSec) ||
+    safeCycleSec <= 0 ||
+    !Number.isFinite(safePhaseError)
+  ) {
+    return {
+      diffSec: 0,
+      phasePos: 0,
+      peakDirection: "unknown",
+      signedPhaseError: 0,
+      phaseBucket: "unknown"
+    };
+  }
+
+  const phasePos =
+    safeDiffSec % safeCycleSec;
+
+  const peakDirection =
+    phasePos < safeCycleSec / 2
+      ? "past"
+      : "upcoming";
+
+  const signedPhaseError =
+    peakDirection === "past"
+      ? safePhaseError
+      : -safePhaseError;
+
+  const absError =
+    Math.abs(signedPhaseError);
+
+  const bucketRange =
+    absError < 30
+      ? "0_30"
+      : absError < 60
+      ? "30_60"
+      : absError < 120
+      ? "60_120"
+      : "120_plus";
+
+  return {
+    diffSec: safeDiffSec,
+    phasePos,
+    peakDirection,
+    signedPhaseError,
+    phaseBucket:
+      `${peakDirection}_${bucketRange}`
+  };
+}
+
 /* =========================================================
  [2510] Phase Metrics:getPhaseWindowHalfWidthSec（旧 [6152a]）
 ========================================================= */
@@ -3946,20 +4012,25 @@ function getPlayerPhaseDetail(
   *   引き続き絶対値の phaseError / finalPhaseScore を用いるため、
   *   本判定を追加しても既存の候補選出ロジックには影響しない。
   */
- const phasePos =
-   diffSec % cycleSec;
-
- const peakDirection =
-   phasePos < cycleSec / 2
-     ? "past"
-     : "upcoming";
+ const directionDetail =
+   buildPhaseDirectionDetail(
+     diffSec,
+     cycleSec,
+     metrics.phaseError
+   );
 
  return {
    mode,
    cycleSec,
    cycleCount: metrics.cycleCount,
    phaseError: metrics.phaseError,
-   peakDirection
+   diffSec: directionDetail.diffSec,
+   phasePos: directionDetail.phasePos,
+   peakDirection: directionDetail.peakDirection,
+   signedPhaseError:
+     directionDetail.signedPhaseError,
+   phaseBucket:
+     directionDetail.phaseBucket
  };
 }
 
@@ -4229,10 +4300,12 @@ function computePhaseContext(player, nowMs = Date.now()) {
   const isPinkManaged = isCopiedPlayer(player);
   let metrics = null;
   let cycleSec = 0;
+  let diffSec = 0;
 
   if (isPinkManaged) {
    metrics = computePhaseSignal(player, "pink", nowMs);
    cycleSec = Number(metrics?.cycleSec ?? 0);
+   diffSec = Number(metrics?.diffSec ?? 0);
   } else {
    const anchor =
      parseDateJST(player?.updateDate)?.getTime();
@@ -4245,10 +4318,15 @@ function computePhaseContext(player, nowMs = Date.now()) {
          ?.yellowLambda ?? 0.03
      );
 
+   diffSec =
+     anchor
+       ? (nowMs - anchor) / 1000
+       : 0;
+
    metrics =
      anchor && cycleSec
        ? computePhaseMetrics(
-          (nowMs - anchor) / 1000,
+           diffSec,
            cycleSec,
            lambda
          )
@@ -4293,6 +4371,13 @@ function computePhaseContext(player, nowMs = Date.now()) {
    !isPinkManaged &&
    finalPhaseScore > yellowThreshold;
 
+  const directionDetail =
+   buildPhaseDirectionDetail(
+     diffSec,
+     cycleSec,
+     phaseError
+   );
+
   const phaseDiag =
    isPinkManaged
      ? State.phaseDiag?.pink
@@ -4304,6 +4389,13 @@ function computePhaseContext(player, nowMs = Date.now()) {
    isYellowPhase,
    cycleCount: Number(metrics?.cycleCount ?? 0),
    cycleSec,
+   diffSec: directionDetail.diffSec,
+   phasePos: directionDetail.phasePos,
+   peakDirection: directionDetail.peakDirection,
+   signedPhaseError:
+     directionDetail.signedPhaseError,
+   phaseBucket:
+     directionDetail.phaseBucket,
    phaseError,
    phaseScore,
    decay,
@@ -4888,6 +4980,16 @@ function calcMatchingScoreDetail(
         realtimeBoost,
 
         phaseError: phaseCtx?.phaseError ?? 0,
+        signedPhaseError:
+            phaseCtx?.signedPhaseError ?? 0,
+        phasePos:
+            phaseCtx?.phasePos ?? 0,
+        peakDirection:
+            phaseCtx?.peakDirection ?? "unknown",
+        phaseBucket:
+            phaseCtx?.phaseBucket ?? "unknown",
+        diffSec:
+            phaseCtx?.diffSec ?? 0,
         phaseScore: phaseCtx?.phaseScore ?? 0,
         cycleCount: phaseCtx?.cycleCount ?? 0,
         cycleSec: phaseCtx?.cycleSec ?? 0,
@@ -8165,6 +8267,16 @@ function saveCopyEventUnified(
         Number(detail.realtimeBoost ?? 1),
       phaseError:
         Number(detail.phaseError ?? 0),
+      signedPhaseError:
+        Number(detail.signedPhaseError ?? 0),
+      phasePos:
+        Number(detail.phasePos ?? 0),
+      peakDirection:
+        detail.peakDirection ?? "unknown",
+      phaseBucket:
+        detail.phaseBucket ?? "unknown",
+      diffSec:
+        Number(detail.diffSec ?? 0),
       phaseScore:
         Number(detail.phaseScore ?? 0),
       decay:
@@ -8275,6 +8387,16 @@ function buildCopyCandidateSnapshot() {
             Number(p.__detail?.realtimeBoost ?? 1),
           phaseError:
             Number(p.__detail?.phaseError ?? 0),
+          signedPhaseError:
+            Number(p.__detail?.signedPhaseError ?? 0),
+          phasePos:
+            Number(p.__detail?.phasePos ?? 0),
+          peakDirection:
+            p.__detail?.peakDirection ?? "unknown",
+          phaseBucket:
+            p.__detail?.phaseBucket ?? "unknown",
+          diffSec:
+            Number(p.__detail?.diffSec ?? 0),
           phaseScore:
             Number(p.__detail?.phaseScore ?? 0),
           decay:
@@ -9044,6 +9166,16 @@ function saveCandidateEvent() {
             Number(p.__detail?.realtimeBoost ?? 1),
           phaseError:
             Number(p.__detail?.phaseError ?? 0),
+          signedPhaseError:
+            Number(p.__detail?.signedPhaseError ?? 0),
+          phasePos:
+            Number(p.__detail?.phasePos ?? 0),
+          peakDirection:
+            p.__detail?.peakDirection ?? "unknown",
+          phaseBucket:
+            p.__detail?.phaseBucket ?? "unknown",
+          diffSec:
+            Number(p.__detail?.diffSec ?? 0),
           phaseScore:
             Number(p.__detail?.phaseScore ?? 0),
           decay:
@@ -9174,6 +9306,16 @@ function saveCandidateEvent() {
             Number(p.__detail?.realtimeBoost ?? 1),
           phaseError:
             Number(p.__detail?.phaseError ?? 0),
+          signedPhaseError:
+            Number(p.__detail?.signedPhaseError ?? 0),
+          phasePos:
+            Number(p.__detail?.phasePos ?? 0),
+          peakDirection:
+            p.__detail?.peakDirection ?? "unknown",
+          phaseBucket:
+            p.__detail?.phaseBucket ?? "unknown",
+          diffSec:
+            Number(p.__detail?.diffSec ?? 0),
           phaseScore:
             Number(p.__detail?.phaseScore ?? 0),
           decay:
