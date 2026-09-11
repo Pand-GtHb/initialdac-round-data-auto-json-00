@@ -215,7 +215,7 @@ jobs:
               cp "$LOCAL_INTEGRATED" integrated_data.json
               cp "$LOCAL_LATEST" latest_update.json
               git add integrated_data.json latest_update.json
-              if ! git diff --cached --quiet; then
+              if ! git diff --cached --quiet -- integrated_data.json latest_update.json; then
                 git commit --amend --no-edit
               fi
 
