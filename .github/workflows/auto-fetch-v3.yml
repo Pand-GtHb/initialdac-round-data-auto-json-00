@@ -160,14 +160,29 @@ jobs:
           mv integrated_data.min.json integrated_data.json
           echo "✓ Minify succeeded (${MINIFIED_SIZE} bytes)"
 
-      # ▼ ⑥ latest_update.json（JST）生成
-      # 注意：ここまでの全ステップが成功した直後に生成されるため、
-      # タイムスタンプは integrated_data.json が完全に検証されたことを示す
-      - name: Generate latest_update.json
+      # ▼ ⑥ latest_update.json（integrated_data.json の generatedAt から生成）
+      - name: Extract generatedAt and generate latest_update.json
         run: |
-          NOW_JST=$(TZ=Asia/Tokyo date +"%Y-%m-%d %H:%M:%S")
-          echo "{\"lastUpdated\":\"${NOW_JST}\"}" > latest_update.json
-          echo "✓ Generated latest_update.json: $NOW_JST"
+          # integrated_data.json から generatedAt を抽出
+          GENERATED_AT=$(jq -r '.generatedAt // empty' integrated_data.json 2>/dev/null)
+          
+          if [ -z "$GENERATED_AT" ]; then
+            echo "✗ ERROR: Cannot extract generatedAt from integrated_data.json"
+            exit 1
+          fi
+          
+          # 日時フォーマット例：
+          # 入力: "2026/09/11 08:46:02" (integrated_data.json形式)
+          # 出力: "2026-09-11 08:46:02" (ISO8601互換形式)
+          # または入力がすでに正しい形式なら、そのまま使用
+          
+          # フォーマット変換（スラッシュ → ハイフン）
+          FORMATTED_TIME=$(echo "$GENERATED_AT" | sed 's/\//\-/g')
+          
+          echo "{\"lastUpdated\":\"${FORMATTED_TIME}\"}" > latest_update.json
+          echo "✓ Generated latest_update.json from integrated_data.json"
+          echo "  Source (generatedAt): $GENERATED_AT"
+          echo "  Output (lastUpdated): $FORMATTED_TIME"
 
       # ▼ ⑦ Commit & Push（エラー検知付き）
       - name: Commit & Push with error handling
