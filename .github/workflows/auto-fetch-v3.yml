@@ -201,20 +201,34 @@ jobs:
           git commit -m "Auto update integrated_data.json & latest_update.json (round ${{ steps.round.outputs.round }})"
 
           # リトライ付き push（競合は自動更新側を優先して解消）
+          LOCAL_INTEGRATED=$(mktemp /tmp/integrated_data.XXXXXX.json)
+          LOCAL_LATEST=$(mktemp /tmp/latest_update.XXXXXX.json)
+          cp integrated_data.json "$LOCAL_INTEGRATED"
+          cp latest_update.json "$LOCAL_LATEST"
+
           PUSH_SUCCESS=false
           for i in 1 2 3; do
             echo "Attempt $i/3: fetch + merge(-X ours) + push"
             git rebase --abort 2>/dev/null || true
             git merge --abort 2>/dev/null || true
-            if git fetch origin main 2>&1 && git merge --no-edit -X ours origin/main 2>&1 && git push origin main 2>&1; then
-              echo "✓ Push succeeded"
-              PUSH_SUCCESS=true
-              break
-            else
-              if [ $i -lt 3 ]; then
-                echo "⚠ Push failed. Retrying in 5 seconds..."
-                sleep 5
+            if git fetch origin main 2>&1 && git merge --no-edit -X ours origin/main 2>&1; then
+              cp "$LOCAL_INTEGRATED" integrated_data.json
+              cp "$LOCAL_LATEST" latest_update.json
+              git add integrated_data.json latest_update.json
+              if ! git diff --cached --quiet; then
+                git commit --amend --no-edit
               fi
+
+              if git push origin main 2>&1; then
+                echo "✓ Push succeeded"
+                PUSH_SUCCESS=true
+                break
+              fi
+            fi
+
+            if [ $i -lt 3 ]; then
+              echo "⚠ Push failed. Retrying in 5 seconds..."
+              sleep 5
             fi
           done
 
