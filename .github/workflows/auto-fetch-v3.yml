@@ -213,17 +213,42 @@ jobs:
               CHERRY_PICK_OK=true
               if ! git diff --quiet HEAD "$LOCAL_COMMIT" -- integrated_data.json latest_update.json; then
                 if ! git cherry-pick "$LOCAL_COMMIT" 2>&1; then
+                  STAGE_INTEGRATED=false
+                  STAGE_LATEST=false
+                  DELETE_INTEGRATED=false
+                  DELETE_LATEST=false
+
                   if git cat-file -e "$LOCAL_COMMIT:integrated_data.json" 2>/dev/null; then
                     git show "$LOCAL_COMMIT:integrated_data.json" > integrated_data.json
+                    STAGE_INTEGRATED=true
                   else
-                    rm -f integrated_data.json
+                    if git cat-file -e "$LOCAL_COMMIT^:integrated_data.json" 2>/dev/null; then
+                      rm -f integrated_data.json
+                      DELETE_INTEGRATED=true
+                    fi
                   fi
                   if git cat-file -e "$LOCAL_COMMIT:latest_update.json" 2>/dev/null; then
                     git show "$LOCAL_COMMIT:latest_update.json" > latest_update.json
+                    STAGE_LATEST=true
                   else
-                    rm -f latest_update.json
+                    if git cat-file -e "$LOCAL_COMMIT^:latest_update.json" 2>/dev/null; then
+                      rm -f latest_update.json
+                      DELETE_LATEST=true
+                    fi
                   fi
-                  git add -A integrated_data.json latest_update.json
+
+                  if [ "$STAGE_INTEGRATED" = true ]; then
+                    git add integrated_data.json
+                  elif [ "$DELETE_INTEGRATED" = true ]; then
+                    git rm -f integrated_data.json 2>/dev/null || true
+                  fi
+
+                  if [ "$STAGE_LATEST" = true ]; then
+                    git add latest_update.json
+                  elif [ "$DELETE_LATEST" = true ]; then
+                    git rm -f latest_update.json 2>/dev/null || true
+                  fi
+
                   if ! git cherry-pick --continue 2>&1; then
                     CHERRY_PICK_OK=false
                   fi
