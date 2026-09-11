@@ -203,9 +203,10 @@ jobs:
           # リトライ付き push（競合は自動更新側を優先して解消）
           PUSH_SUCCESS=false
           for i in 1 2 3; do
-            echo "Attempt $i/3: fetch + rebase(-X ours) + push"
+            echo "Attempt $i/3: fetch + merge(-X ours) + push"
             git rebase --abort 2>/dev/null || true
-            if git fetch origin main 2>&1 && git rebase -X ours origin/main 2>&1 && git push origin main 2>&1; then
+            git merge --abort 2>/dev/null || true
+            if git fetch origin main 2>&1 && git merge --no-edit -X ours origin/main 2>&1 && git push origin main 2>&1; then
               echo "✓ Push succeeded"
               PUSH_SUCCESS=true
               break
