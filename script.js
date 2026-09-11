@@ -120,6 +120,7 @@ const ALL_CANDIDATES_COLUMNS = [
   "decay",
   "finalPhaseScore",
   "effectivePhaseScore",
+  "phaseWeight",
   "phaseSampleCount",
   "phaseTrust",
   "phaseAdjustValue"
@@ -5331,11 +5332,31 @@ function calcMatchingScoreDetail(
             1
         );
 
-    const phaseWeight =
+    const defaultPhaseWeight =
         clamp(
             Number(
                 State.scoringConfig
                     ?.phase?.weight ?? 0.35
+            ),
+            0,
+            1
+        );
+
+    /*
+     * Pink管理対象はRealtimeBoostでも優遇されるため、
+     * Phase不一致時の残留を抑える専用weightを設定可能にする。
+     * 未設定時は従来どおり共通weightへフォールバックする。
+     */
+    const phaseWeight =
+        clamp(
+            Number(
+                isPinkManaged
+                    ? State.scoringConfig
+                        ?.phase?.pink?.weight ??
+                      defaultPhaseWeight
+                    : State.scoringConfig
+                        ?.phase?.yellow?.weight ??
+                      defaultPhaseWeight
             ),
             0,
             1
@@ -8814,6 +8835,7 @@ function buildAllCandidateRow(
     Number(d.decay ?? 0),
     Number(d.finalPhaseScore ?? 0),
     Number(d.effectivePhaseScore ?? 0),
+    Number(d.phaseWeight ?? 0),
     Number(d.phaseSampleCount ?? 0),
     Number(d.phaseTrust ?? 1),
     Number(d.phaseAdjustValue ?? 0)
@@ -9807,7 +9829,7 @@ function saveCandidateEvent() {
     t: now,
 
     logSchemaVersion:
-      "phase_score_v3",
+      "phase_score_v4",
 
     e: "candidate",
 
