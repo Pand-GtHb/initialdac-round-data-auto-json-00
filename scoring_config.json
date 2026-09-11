@@ -1,13 +1,13 @@
 {
   "meta": {
-    "version": "scoring_config_v14_phasescore_20260902",
+    "version": "scoring_config_v15_phasescore_20260912",
     "createdAt": "2026-08-30T20:17:00+09:00",
-    "modifiedAt": "2026-09-10T21:45:00+09:00",
-    "description": "YellowはHistoricalScore×FinalPhaseScore、PinkはRealtimeBoostを加えたPhaseScore採用版（Yellow周期学習の過学習抑制のためmaxShiftSec/alpha/minSamplesを見直し）。2026-09-10：実マッチ相手vs候補プール比較分析の結果、Phase系スコアが最も予測力が高いにも関わらず合成式で希釈されていたため、phase.weightを明示追加（0.35相当→0.65）。"
+    "modifiedAt": "2026-09-12T07:26:00+09:00",
+    "description": "YellowはHistoricalScore×FinalPhaseScore、PinkはRealtimeBoostを加えたPhaseScore採用版。2026-09-12：9月10日・11日の実マッチ31件でPhase影響を再検証し、共通weightを0.80へ強化。PinkはRealtimeBoostとの二重優遇でPhase不一致候補が残るため専用weight=1.00を追加。"
   },
 
   "phase": {
-    "weight": 0.65,
+    "weight": 0.80,
 
     "yellow": {
       "baseCycleSec": 345,
@@ -17,6 +17,7 @@
     },
 
     "pink": {
+      "weight": 1.00,
       "baseCycleSec": 345,
       "alpha": 0.18,
       "maxShiftSec": 45,
