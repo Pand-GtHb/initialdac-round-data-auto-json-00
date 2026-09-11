@@ -200,26 +200,26 @@ jobs:
 
           git commit -m "Auto update integrated_data.json & latest_update.json (round ${{ steps.round.outputs.round }})"
 
-          # リトライ付き push（競合は自動更新側を優先して解消）
-          LOCAL_INTEGRATED=$(mktemp /tmp/integrated_data.XXXXXX.json)
-          LOCAL_LATEST=$(mktemp /tmp/latest_update.XXXXXX.json)
-          cp integrated_data.json "$LOCAL_INTEGRATED"
-          cp latest_update.json "$LOCAL_LATEST"
-
+          # リトライ付き push（最新 main に現在生成したコミットを再適用）
+          LOCAL_COMMIT=$(git rev-parse HEAD)
           PUSH_SUCCESS=false
           for i in 1 2 3; do
-            echo "Attempt $i/3: fetch + merge(-X ours) + push"
+            echo "Attempt $i/3: fetch + reset + cherry-pick + push"
             git rebase --abort 2>/dev/null || true
             git merge --abort 2>/dev/null || true
-            if git fetch origin main 2>&1 && git merge --no-edit -X ours origin/main 2>&1; then
-              cp "$LOCAL_INTEGRATED" integrated_data.json
-              cp "$LOCAL_LATEST" latest_update.json
-              git add integrated_data.json latest_update.json
-              if ! git diff --cached --quiet -- integrated_data.json latest_update.json; then
-                git commit --amend --no-edit
+            git cherry-pick --abort 2>/dev/null || true
+
+            if git fetch origin main 2>&1 && git reset --hard origin/main 2>&1; then
+              CHERRY_PICK_OK=true
+              if ! git diff --quiet HEAD "$LOCAL_COMMIT" -- integrated_data.json latest_update.json; then
+                if ! git cherry-pick -X theirs "$LOCAL_COMMIT" 2>&1; then
+                  CHERRY_PICK_OK=false
+                fi
+              else
+                echo "ℹ Artifacts are already up to date on origin/main"
               fi
 
-              if git push origin main 2>&1; then
+              if [ "$CHERRY_PICK_OK" = true ] && git push origin main 2>&1; then
                 echo "✓ Push succeeded"
                 PUSH_SUCCESS=true
                 break
