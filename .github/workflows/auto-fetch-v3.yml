@@ -251,6 +251,7 @@ jobs:
 
                   if ! git cherry-pick --continue 2>&1; then
                     CHERRY_PICK_OK=false
+                    git cherry-pick --abort 2>/dev/null || true
                   fi
                 fi
               else
