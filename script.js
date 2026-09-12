@@ -7431,8 +7431,8 @@ function buildPrideFilters() {
 ========================================================= */
 function buildSummaryModeNavHTML(activeMode) {
   const modes = [
-    { key: "rank", label: "[RankSummary]" },
-    { key: "area", label: "[AreaSummary]" }
+    { key: "rank", label: "RankSummary" },
+    { key: "area", label: "AreaSummary" }
   ];
 
   return `
@@ -7447,6 +7447,137 @@ function buildSummaryModeNavHTML(activeMode) {
       `).join("")}
     </div>
   `;
+}
+
+function ensureAreaSummaryStyles() {
+  if (document.getElementById("area-summary-view-styles")) {
+    return;
+  }
+
+  const style = document.createElement("style");
+  style.id = "area-summary-view-styles";
+  style.textContent = `
+    .area-summary-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .area-summary-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      margin: 8px 0 12px;
+      padding: 8px 10px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+
+    .area-summary-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      white-space: nowrap;
+      color: #334155;
+    }
+
+    .area-summary-legend-swatch {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      border: 1px solid rgba(15, 23, 42, 0.18);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.24);
+    }
+
+    .area-summary-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .area-summary-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 250px;
+      flex: 0 0 250px;
+    }
+
+    .area-summary-name {
+      font-weight: 600;
+      color: #0f172a;
+      cursor: pointer;
+    }
+
+    .area-summary-total {
+      font-size: 12px;
+      color: #475569;
+      white-space: nowrap;
+    }
+
+    .area-summary-bar-area {
+      display: flex;
+      align-items: center;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .area-summary-bar {
+      display: flex;
+      align-items: stretch;
+      height: 22px;
+      min-width: 40px;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #f1f5f9;
+      border: 1px solid #dfe7f0;
+      box-shadow: inset 0 1px 1px rgba(15, 23, 42, 0.05);
+    }
+
+    .area-segment {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-width: 0;
+      color: rgba(255,255,255,0.96);
+      text-shadow: 0 1px 1px rgba(15,23,42,0.22);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .area-segment.empty {
+      background: repeating-linear-gradient(
+        135deg,
+        #f8fafc 0,
+        #f8fafc 5px,
+        #edf2f7 5px,
+        #edf2f7 10px
+      );
+    }
+
+    @media (max-width: 700px) {
+      .area-summary-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .area-summary-head {
+        min-width: 0;
+        width: 100%;
+        flex-basis: auto;
+      }
+    }
+  `;
+
+  document.head.appendChild(style);
 }
 
 function bindSummaryModeButtons(root) {
@@ -7534,9 +7665,22 @@ function getRankColor(rankKey) {
   return colors[rankKey] || "#999";
 }
 
+function getRankLegendStyle(rankKey) {
+  const base = getRankColor(rankKey);
+  const stroke = base.match(/rgba?\(([^)]+)\)/);
+  const strokeColor = stroke ? `rgb(${stroke[1].split(",").slice(0, 3).join(", ")})` : "#666";
+  const pridePattern = String(rankKey).startsWith("P_")
+    ? `background: linear-gradient(135deg, ${base} 0%, ${base} 50%, rgba(255,255,255,0.18) 50%, rgba(255,255,255,0.18) 100%);`
+    : `background: ${base};`;
+
+  return `${pridePattern} border:1px solid ${strokeColor};`;
+}
+
 function renderAreaSummary() {
   const area = document.getElementById("summaryArea");
   if (!area) return;
+
+  ensureAreaSummaryStyles();
 
   const rows = getAreaSummaryRows();
   const total = rows.reduce((sum, row) => sum + row.total, 0);
@@ -7547,6 +7691,14 @@ function renderAreaSummary() {
   const rubyPercent = total ? Math.round((rubyTotal / total) * 100) : 0;
   const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;
 
+  const maxAreaTotal = Math.max(1, ...rows.map(r => r.total));
+  const legendHTML = RANKS.map(rank => `
+    <span class="area-summary-legend-item">
+      <span class="area-summary-legend-swatch" style="${getRankLegendStyle(rank.key)}"></span>
+      ${rank.label}
+    </span>
+  `).join("");
+
   area.innerHTML = `
     ${buildSummaryModeNavHTML("area")}
     <h3>
@@ -7555,17 +7707,24 @@ function renderAreaSummary() {
       PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
     </h3>
 
+    <div class="area-summary-legend">${legendHTML}</div>
+
     <div class="area-summary-list">
       ${rows.map(row => {
         const segments = RANKS.map(rank => {
           const count = row.counts[rank.key] || 0;
           if (!count) return "";
           const pct = row.total ? (count / row.total) * 100 : 0;
+          const widthRatio = row.total ? (count / maxAreaTotal) * 100 : 0;
+          const prideStyle = String(rank.key).startsWith("P_")
+            ? `background: linear-gradient(135deg, ${getRankColor(rank.key)} 0%, ${getRankColor(rank.key)} 50%, rgba(255,255,255,0.18) 50%, rgba(255,255,255,0.18) 100%);`
+            : `background: ${getRankColor(rank.key)};`;
+
           return `
             <div
               class="area-segment"
               title="${rank.label}: ${count}人"
-              style="width:${pct}%; background:${getRankColor(rank.key)};"
+              style="width:${widthRatio}%; ${prideStyle}"
             >${pct > 18 ? count : ""}</div>
           `;
         }).join("");
@@ -7576,8 +7735,10 @@ function renderAreaSummary() {
               <span class="area-summary-name clickable" data-area="${row.areaNo}">No.${row.areaNo} ${row.areaName}</span>
               <span class="area-summary-total">（${fmt(row.total)}人）</span>
             </div>
-            <div class="area-summary-bar">
-              ${segments || `<div class="area-segment empty" style="width:100%;"></div>`}
+            <div class="area-summary-bar-area">
+              <div class="area-summary-bar" style="width:${Math.max(40, (row.total / maxAreaTotal) * 100)}%;">
+                ${segments || `<div class="area-segment empty" style="width:100%;"></div>`}
+              </div>
             </div>
           </div>
         `;
@@ -7805,8 +7966,8 @@ function renderDetailTable(
 
   area.innerHTML = `
     <div class="summary-mode-nav">
-      <button type="button" class="summary-mode-btn${State.summaryMode === "rank" ? " active" : ""}" data-summary-mode="rank" ${State.summaryMode === "rank" ? "disabled" : ""}>[RankSummary]</button>
-      <button type="button" class="summary-mode-btn${State.summaryMode === "area" ? " active" : ""}" data-summary-mode="area" ${State.summaryMode === "area" ? "disabled" : ""}>[AreaSummary]</button>
+      <button type="button" class="summary-mode-btn${State.summaryMode === "rank" ? " active" : ""}" data-summary-mode="rank" ${State.summaryMode === "rank" ? "disabled" : ""}>RankSummary</button>
+      <button type="button" class="summary-mode-btn${State.summaryMode === "area" ? " active" : ""}" data-summary-mode="area" ${State.summaryMode === "area" ? "disabled" : ""}>AreaSummary</button>
     </div>
 
     ${buildPhaseCycleMonitorHTML()}
@@ -7889,8 +8050,8 @@ function renderAreaDetailTable(areaNo) {
 
   area.innerHTML = `
     <div class="summary-mode-nav">
-      <button type="button" class="summary-mode-btn${State.summaryMode === "rank" ? " active" : ""}" data-summary-mode="rank" ${State.summaryMode === "rank" ? "disabled" : ""}>[RankSummary]</button>
-      <button type="button" class="summary-mode-btn${State.summaryMode === "area" ? " active" : ""}" data-summary-mode="area" ${State.summaryMode === "area" ? "disabled" : ""}>[AreaSummary]</button>
+      <button type="button" class="summary-mode-btn${State.summaryMode === "rank" ? " active" : ""}" data-summary-mode="rank" ${State.summaryMode === "rank" ? "disabled" : ""}>RankSummary</button>
+      <button type="button" class="summary-mode-btn${State.summaryMode === "area" ? " active" : ""}" data-summary-mode="area" ${State.summaryMode === "area" ? "disabled" : ""}>AreaSummary</button>
     </div>
 
     ${buildPhaseCycleMonitorHTML()}
@@ -8083,14 +8244,12 @@ function renderMatchingHeader() {
     return;
   }
 
-  headerEl.innerHTML = `
-    <div class="summary-mode-nav">
-      <button type="button" class="summary-mode-btn${State.summaryMode === "rank" ? " active" : ""}" data-summary-mode="rank" ${State.summaryMode === "rank" ? "disabled" : ""}>[RankSummary]</button>
-      <button type="button" class="summary-mode-btn${State.summaryMode === "area" ? " active" : ""}" data-summary-mode="area" ${State.summaryMode === "area" ? "disabled" : ""}>[AreaSummary]</button>
-    </div>
-  `;
-
-  bindSummaryModeButtons(headerEl);
+  /*
+   * ランクアイコン：人数の表示は
+   * マッチング候補テーブル側（PhaseグラフとTableの間）に統合したため、
+   * 従来のこの位置（matchingHeader要素）は空にする。
+   */
+  headerEl.innerHTML = "";
 }
 
 /* =========================================================
@@ -8106,6 +8265,7 @@ function renderMatchingTable() {
   if (!area) return;
 
   area.innerHTML = `
+    ${buildSummaryModeNavHTML(State.summaryMode)}
     ${buildPhaseCycleMonitorHTML()}
 
     <div
@@ -8137,6 +8297,8 @@ function renderMatchingTable() {
 
     </div>
   `;
+
+  bindSummaryModeButtons(area);
 
   renderMatchingRows(
     State.matchingList
