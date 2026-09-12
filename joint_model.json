@@ -1,73 +1,77 @@
 {
-  "meta": {
-    "version": "joint_model.json",
-    "generatedAt": "2026-09-07T00:08:56.712Z",
-    "generatorNote": "地域軸なし(2軸: 自ランク×相手ランク)。ラウンド重み付けあり。areaは常に'ALL'",
-    "sourceRows": 942,
-    "totalWeightedMatches": 596.75,
-    "trainingStart": "2026/7/10",
-    "trainingEnd": "2026/9/6",
-    "roundsIncluded": [
-      "シーズン6R5th",
-      "シーズン6R6th",
-      "シーズン6R7th"
-    ],
-    "roundWeightsApplied": {
-      "シーズン6R5th": 0.5,
-      "シーズン6R6th": 0.75,
-      "シーズン6R7th": 1
-    },
-    "excludedRows": {
-      "unsupportedOwnRank": 0,
-      "unsupportedOpponentRank": 7
-    }
-  },
-  "viewerTiers": {
-    "R7": {
-      "total": 351.25,
-      "opponents": {
-        "R4_ALL": 21.25,
-        "R7_ALL": 52.75,
-        "R1_ALL": 6.5,
-        "R3_ALL": 15.75,
-        "PRIDE_C_ALL": 6,
-        "R6_ALL": 65.5,
-        "R8_ALL": 35.75,
-        "PRIDE_F_ALL": 28,
-        "PRIDE_E_ALL": 11.5,
-        "R5_ALL": 24.25,
-        "PRIDE_A_ALL": 13.5,
-        "R2_ALL": 11.75,
-        "PRIDE_B_ALL": 19.25,
-        "PRIDE_D_ALL": 39.5
-      }
-    },
-    "R8": {
-      "total": 2,
-      "opponents": {
-        "PRIDE_D_ALL": 0.5,
-        "R7_ALL": 0.5,
-        "PRIDE_F_ALL": 1
-      }
-    },
-    "R6": {
-      "total": 243.5,
-      "opponents": {
-        "R6_ALL": 67.25,
-        "R2_ALL": 10.25,
-        "R7_ALL": 53,
-        "R3_ALL": 19.25,
-        "R8_ALL": 4.25,
-        "R4_ALL": 30,
-        "PRIDE_F_ALL": 1.25,
-        "PRIDE_B_ALL": 1.25,
-        "PRIDE_D_ALL": 2.75,
-        "PRIDE_E_ALL": 2.75,
-        "PRIDE_C_ALL": 0.5,
-        "R1_ALL": 13.5,
-        "R5_ALL": 36.5,
-        "PRIDE_A_ALL": 1
-      }
-    }
-  }
+    "meta":  {
+                 "version":  "joint_model.json",
+                 "generatedAt":  "2026-09-12T11:39:33.427Z",
+                 "generatorNote":  "地域軸なし(2軸: 自ランク×相手ランク)。ラウンド重み付けあり。areaは常に'ALL'",
+                 "sourceRows":  1021,
+                 "totalWeightedMatches":  682.75,
+                 "trainingStart":  "2026/7/10",
+                 "trainingEnd":  "2026/9/12",
+                 "roundsIncluded":  [
+                                        "シーズン6R5th",
+                                        "シーズン6R6th",
+                                        "シーズン6R7th"
+                                    ],
+                 "roundWeightsApplied":  {
+                                             "シーズン6R5th":  0.5,
+                                             "シーズン6R6th":  0.75,
+                                             "シーズン6R7th":  1
+                                         },
+                 "excludedRows":  {
+                                      "unsupportedOwnRank":  0,
+                                      "unsupportedOpponentRank":  7
+                                  }
+             },
+    "viewerTiers":  {
+                        "R7":  {
+                                   "total":  398.25,
+                                   "opponents":  {
+                                                     "R4_ALL":  25.25,
+                                                     "R7_ALL":  57.75,
+                                                     "R1_ALL":  7.5,
+                                                     "R3_ALL":  16.75,
+                                                     "PRIDE_C_ALL":  7,
+                                                     "R6_ALL":  72.5,
+                                                     "R8_ALL":  38.75,
+                                                     "PRIDE_F_ALL":  37,
+                                                     "PRIDE_E_ALL":  14.5,
+                                                     "R5_ALL":  27.25,
+                                                     "PRIDE_A_ALL":  15.5,
+                                                     "R2_ALL":  13.75,
+                                                     "PRIDE_B_ALL":  20.25,
+                                                     "PRIDE_D_ALL":  44.5
+                                                 }
+                               },
+                        "R8":  {
+                                   "total":  7,
+                                   "opponents":  {
+                                                     "PRIDE_D_ALL":  3.5,
+                                                     "R7_ALL":  0.5,
+                                                     "PRIDE_F_ALL":  1,
+                                                     "R5_ALL":  1,
+                                                     "R6_ALL":  1
+                                                 }
+                               },
+                        "R6":  {
+                                   "total":  277.5,
+                                   "opponents":  {
+                                                     "R6_ALL":  73.25,
+                                                     "R2_ALL":  11.25,
+                                                     "R7_ALL":  64,
+                                                     "R3_ALL":  21.25,
+                                                     "R8_ALL":  4.25,
+                                                     "R4_ALL":  36,
+                                                     "PRIDE_F_ALL":  3.25,
+                                                     "PRIDE_B_ALL":  2.25,
+                                                     "PRIDE_D_ALL":  2.75,
+                                                     "PRIDE_E_ALL":  2.75,
+                                                     "PRIDE_C_ALL":  0.5,
+                                                     "R1_ALL":  13.5,
+                                                     "R5_ALL":  40.5,
+                                                     "PRIDE_A_ALL":  1,
+                                                     "PRIDE_G_ALL":  1
+                                                 }
+                               }
+                    }
 }
+
