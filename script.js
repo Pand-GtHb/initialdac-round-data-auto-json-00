@@ -7444,16 +7444,18 @@ function buildSummaryModeNavHTML(activeMode) {
     { key: "area", label: "AreaSummary" }
   ];
 
-  const bothActive = activeMode === "both";
-
+  /*
+   * どの画面からも RankSummary / AreaSummary
+   * 両方に常時遷移できるようにするため、
+   * ボタンは常に有効（非活性にしない）。
+   */
   return `
     <div class="summary-mode-nav">
       ${modes.map(mode => `
         <button
           type="button"
-          class="summary-mode-btn${bothActive || activeMode === mode.key ? " active" : ""}"
+          class="summary-mode-btn active"
           data-summary-mode="${mode.key}"
-          ${bothActive || activeMode === mode.key ? "" : "disabled"}
         >${mode.label}</button>
       `).join("")}
     </div>
@@ -7570,11 +7572,7 @@ function ensureAreaSummaryStyles() {
       align-items: stretch;
       height: 22px;
       min-width: 40px;
-      border-radius: 0;
       overflow: hidden;
-      background: #f1f5f9;
-      border: none;
-      box-shadow: inset 0 1px 1px rgba(15, 23, 42, 0.05);
       margin: 0;
     }
 
@@ -7589,6 +7587,11 @@ function ensureAreaSummaryStyles() {
       font-size: 11px;
       font-weight: 700;
       line-height: 1;
+    }
+
+    .area-segment.pride {
+      color: #111827;
+      text-shadow: 0 1px 1px rgba(255,255,255,0.55);
     }
 
     .area-segment.empty {
@@ -7624,6 +7627,16 @@ function bindSummaryModeButtons(root) {
   root.querySelectorAll("[data-summary-mode]").forEach(btn => {
     btn.addEventListener("click", () => {
       const mode = btn.dataset.summaryMode;
+
+      State.searchText = "";
+
+      const searchInput =
+        document.getElementById("searchInput");
+
+      if (searchInput) {
+        searchInput.value = "";
+      }
+
       if (mode === "area") {
         showAreaSummary(true);
       } else {
@@ -7764,13 +7777,12 @@ function renderAreaSummary() {
           if (!count) return;
 
           const pct = row.total ? (count / row.total) * 100 : 0;
-          const widthRatio = row.total ? (count / maxAreaTotal) * 100 : 0;
 
           segments.push(`
             <div
-              class="area-segment"
+              class="area-segment${String(rank.key).startsWith("P_") ? " pride" : ""}"
               title="${rank.label}: ${count}人"
-              style="width:${widthRatio}%; ${getRankFillStyle(rank.key)}"
+              style="width:${pct}%; ${getRankFillStyle(rank.key)}"
             >${pct > 18 ? count : ""}</div>
           `);
         });
@@ -8013,10 +8025,7 @@ function renderDetailTable(
     );
 
   area.innerHTML = `
-    <div class="summary-mode-nav">
-      <button type="button" class="summary-mode-btn${State.summaryMode === "rank" ? " active" : ""}" data-summary-mode="rank" ${State.summaryMode === "rank" ? "disabled" : ""}>RankSummary</button>
-      <button type="button" class="summary-mode-btn${State.summaryMode === "area" ? " active" : ""}" data-summary-mode="area" ${State.summaryMode === "area" ? "disabled" : ""}>AreaSummary</button>
-    </div>
+    ${buildSummaryModeNavHTML()}
 
     ${buildPhaseCycleMonitorHTML()}
 
@@ -8097,10 +8106,7 @@ function renderAreaDetailTable(areaNo) {
   });
 
   area.innerHTML = `
-    <div class="summary-mode-nav">
-      <button type="button" class="summary-mode-btn${State.summaryMode === "rank" ? " active" : ""}" data-summary-mode="rank" ${State.summaryMode === "rank" ? "disabled" : ""}>RankSummary</button>
-      <button type="button" class="summary-mode-btn${State.summaryMode === "area" ? " active" : ""}" data-summary-mode="area" ${State.summaryMode === "area" ? "disabled" : ""}>AreaSummary</button>
-    </div>
+    ${buildSummaryModeNavHTML()}
 
     ${buildPhaseCycleMonitorHTML()}
 
@@ -11248,16 +11254,6 @@ document.addEventListener(
         "allCsvBtn"
       );
 
-    const backBtn =
-      document.getElementById(
-        "backBtn"
-      );
-
-    const detailAreaSummaryBtn =
-      document.getElementById(
-        "detailAreaSummaryBtn"
-      );
-
     const matchingBtn =
       document.getElementById(
         "matchingBtn"
@@ -11442,31 +11438,6 @@ document.addEventListener(
         }
       );
 
-    }
-
-    /* =====================================
-     * Summary Back
-     * ===================================== */
-
-    if (
-      backBtn &&
-      searchInput
-    ) {
-      backBtn.onclick =
-        () => {
-          State.searchText = "";
-          searchInput.value = "";
-          showSummaryUI(true, State.summaryMode || "rank");
-        };
-    }
-
-    if (detailAreaSummaryBtn) {
-      detailAreaSummaryBtn.onclick =
-        () => {
-          State.searchText = "";
-          searchInput.value = "";
-          showAreaSummary(true);
-        };
     }
 
     /* =====================================
