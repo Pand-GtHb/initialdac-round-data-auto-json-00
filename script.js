@@ -7454,7 +7454,7 @@ function buildSummaryModeNavHTML(activeMode) {
       ${modes.map(mode => `
         <button
           type="button"
-          class="summary-mode-btn active"
+          class="summary-mode-btn"
           data-summary-mode="${mode.key}"
         >${mode.label}</button>
       `).join("")}
@@ -7719,12 +7719,19 @@ function getRankColor(rankKey) {
 /*
  * PRIDE帯は「透過」ではなく斜線パターンで
  * RUBY帯（単色塗り）と区別する。
+ * さらに、隣り合うPRIDE帯（P_A→P_B→…）で斜線の向きを
+ * 交互（45deg / -45deg）に変えることで、隣接する帯同士の
+ * 境界がわかりやすくなるようにする。
  */
+const PRIDE_ORDER = ["P_A", "P_B", "P_C", "P_D", "P_E", "P_F", "P_G"];
+
 function getRankFillStyle(rankKey) {
   const base = getRankColor(rankKey);
 
   if (String(rankKey).startsWith("P_")) {
-    return `background: repeating-linear-gradient(45deg, ${base} 0px, ${base} 3px, rgba(255,255,255,0.6) 3px, rgba(255,255,255,0.6) 6px);`;
+    const idx = PRIDE_ORDER.indexOf(rankKey);
+    const angle = idx % 2 === 0 ? 45 : -45;
+    return `background: repeating-linear-gradient(${angle}deg, ${base} 0px, ${base} 3px, rgba(255,255,255,0.6) 3px, rgba(255,255,255,0.6) 6px);`;
   }
 
   return `background: ${base};`;
