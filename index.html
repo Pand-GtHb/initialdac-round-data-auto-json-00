@@ -297,6 +297,109 @@ td.center { text-align:center; }
     border-radius: 4px;
 }
 
+.summary-mode-nav {
+    display: flex;
+    gap: 8px;
+    margin: 6px 0 10px;
+    flex-wrap: wrap;
+}
+
+.summary-mode-btn {
+    padding: 6px 12px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    background: #f3f7fb;
+    color: #1b1b1b;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.summary-mode-btn.active,
+.summary-mode-btn:disabled {
+    background: #dfe6ee;
+    color: #555;
+    cursor: default;
+    opacity: 0.7;
+}
+
+.area-summary-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.area-summary-row {
+    display: block;
+    border: 1px solid #d7d7d7;
+    background: rgba(255,255,255,0.8);
+    border-radius: 6px;
+    padding: 8px;
+}
+
+.area-summary-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.area-summary-name {
+    font-weight: bold;
+    color: #0078d4;
+    cursor: pointer;
+}
+
+.area-summary-total {
+    font-size: 12px;
+    color: #555;
+}
+
+.area-summary-bar {
+    display: flex;
+    width: 100%;
+    height: 20px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #ececec;
+    border: 1px solid #d0d0d0;
+}
+
+.area-segment {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: #111;
+    font-weight: bold;
+    height: 100%;
+    min-width: 0;
+    text-shadow: 0 0 1px rgba(255,255,255,0.6);
+}
+
+.area-segment.empty {
+    background: #e5e7eb;
+}
+
+.area-rank-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 12px;
+}
+
+.area-rank-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #f4f4f4;
+    border: 1px solid #d0d0d0;
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
 /* ---------------------------------------------------------
    ★ script.js が生成する RUBY/PRIDE の行
 --------------------------------------------------------- */
@@ -455,13 +558,15 @@ td.center { text-align:center; }
 </div>
 
 <div id="detailView">
-  <button id="backBtn">◀◀◀SUMMARY</button>
+  <div class="summary-mode-nav">
+    <button id="backBtn" type="button" class="summary-mode-btn">[RankSummary]</button>
+    <button id="detailAreaSummaryBtn" type="button" class="summary-mode-btn">[AreaSummary]</button>
+  </div>
 
   <div id="detailArea" class="mt10"></div>
 </div>
 
 <div id="matchingView">
-  <button id="matchingBackBtn">◀◀◀SUMMARY</button>
   <div id="matchingHeader" class="mt10"></div>
   <div id="matchingArea" class="mt10"></div>
 </div>
