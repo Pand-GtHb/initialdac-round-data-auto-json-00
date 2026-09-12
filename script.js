@@ -106,6 +106,8 @@ const ALL_CANDIDATES_COLUMNS = [
   "isPhaseRescue",
   "rescueReason",
   "isPinkManaged",
+  "pinkPhaseMatched",
+  "pinkMismatchBoostFactor",
   "historicalScore",
   "historicalBackoff",
   "tierProbability",
@@ -126,6 +128,9 @@ const ALL_CANDIDATES_COLUMNS = [
   "phaseAdjustValue"
 ];
 
+const LOG_TOP_CANDIDATE_LIMIT = 60;
+const MAX_YELLOW_PHASE_WEIGHT = 0.55;
+const PINK_MISMATCH_BOOST_FACTOR = 0.5;
 
 const MAX_LOG_LINES = 100;
 
@@ -243,6 +248,7 @@ const State = {
   currentDetailIcon: "",
   matchingList: [],
   matchingRankedAll: [],
+  matchingScoredAll: [],
   matchingTierCounts: {},
   myStar: 7,
   myRankKey: "R7",
@@ -5362,10 +5368,31 @@ function calcMatchingScoreDetail(
             1
         );
 
+    const pinkPhaseMatched =
+        !isPinkManaged ||
+        Boolean(phaseCtx?.isPinkPhase);
+
+    /*
+     * Pink管理対象でもPhase不一致だけで除外しない。
+     * 履歴・modelのスコアは残し、コピー履歴由来のRealtimeBoostだけを
+     * 減衰させることで、Phaseが外れていても有力な相手を候補に残す。
+     */
+    const pinkMismatchBoostFactor =
+        isPinkManaged && !pinkPhaseMatched
+            ? PINK_MISMATCH_BOOST_FACTOR
+            : 1;
+
+    const appliedPhaseWeight = isPinkManaged
+        ? phaseWeight
+        : Math.min(
+            phaseWeight,
+            MAX_YELLOW_PHASE_WEIGHT
+        );
+
     const effectivePhaseScore =
         clamp(
             1 -
-                phaseWeight *
+                appliedPhaseWeight *
                 phaseTrust *
                 (1 - finalPhaseScore),
             0,
@@ -5376,6 +5403,7 @@ function calcMatchingScoreDetail(
         historicalScore *
         playerBoost *
         rankBoost *
+        pinkMismatchBoostFactor *
         effectivePhaseScore;
 
     const safeScore =
@@ -5430,9 +5458,11 @@ function calcMatchingScoreDetail(
         decay: phaseCtx?.decay ?? 0,
         finalPhaseScore,
         effectivePhaseScore,
-        phaseWeight,
+        phaseWeight: appliedPhaseWeight,
         isYellow: Boolean(phaseCtx?.isYellowPhase),
         isPink: Boolean(phaseCtx?.isPinkPhase),
+        pinkPhaseMatched,
+        pinkMismatchBoostFactor,
         yellowThreshold: phaseCtx?.yellowThreshold ?? 0,
         pinkThreshold: phaseCtx?.pinkThreshold ?? 0,
 
@@ -5691,6 +5721,20 @@ function selectNormalCandidatesByHistoricalGroups(
  const selectedSet =
    new Set();
 
+ /*
+  * Historical group配分だけで選ぶと、全体スコア上位の相手が
+  * グループ枠の都合で候補外になる。上位スコアは一定数保証し、
+  * 残りを従来どおりhistorical groupの分布で埋める。
+  */
+ rankedByScore
+   .slice(
+     0,
+     Math.min(4, slotCount)
+   )
+   .forEach(player => {
+     selectedSet.add(player);
+   });
+
  slotPlan.forEach(group => {
 
    group.players
@@ -5711,9 +5755,9 @@ function selectNormalCandidatesByHistoricalGroups(
    selectedSet.add(player);
  }
 
- return rankedByScore.filter(
-   player => selectedSet.has(player)
- );
+ return rankedByScore
+   .filter(player => selectedSet.has(player))
+   .slice(0, slotCount);
 }
 
 /* =========================================================
@@ -5850,6 +5894,9 @@ function buildMatchingCandidates() {
         tierCounts
       )
     );
+
+  State.matchingScoredAll =
+    scoredAll;
 
   const scoreEligible =
     scoredAll.filter(
@@ -8821,6 +8868,8 @@ function buildAllCandidateRow(
     p.__phaseRescue ? 1 : 0,
     p.__rescueReason ?? null,
     d.isPinkManaged ? 1 : 0,
+    d.pinkPhaseMatched ? 1 : 0,
+    Number(d.pinkMismatchBoostFactor ?? 1),
     Number(d.historicalScore ?? 0),
     d.historicalBackoff ? 1 : 0,
     Number(d.tierProbability ?? 0),
@@ -8841,6 +8890,16 @@ function buildAllCandidateRow(
     Number(d.phaseAdjustValue ?? 0)
   ];
 
+}
+
+function shouldLogCandidateRow(
+  player,
+  index
+) {
+  return (
+    index < LOG_TOP_CANDIDATE_LIMIT ||
+    Boolean(player?.__detail?.isPinkManaged)
+  );
 }
 
 /* =========================================================
@@ -9898,6 +9957,25 @@ function saveCandidateEvent() {
     eligibleCount:
       State.matchingRankedAll.length,
 
+    scoredCandidateCount:
+      State.matchingScoredAll.length,
+
+    pinkPhaseMismatchCount:
+      State.matchingScoredAll.filter(
+        p =>
+          p.__detail?.isPinkManaged &&
+          !p.__detail?.pinkPhaseMatched
+      ).length,
+
+    loggedCandidateLimit:
+      LOG_TOP_CANDIDATE_LIMIT,
+
+    yellowPhaseWeightCap:
+      MAX_YELLOW_PHASE_WEIGHT,
+
+    pinkMismatchBoostFactor:
+      PINK_MISMATCH_BOOST_FACTOR,
+
     /*
      * 【2026-09 ログ拡充】ownSampleCount等は同一candidateEvent内
      * では全候補共通値（viewerTierのみに依存し、opponentTierには
@@ -10015,8 +10093,9 @@ function saveCandidateEvent() {
      * 「予測時点でのglobal score rank」「表示選出の有無」を
      * 特定できない問題があった。
      *
-     * ここでは matchingRankedAll（スコア対象の全候補、
-     * スコア順）をそのまま保存する。
+     * ここでは matchingScoredAll（スコア計算対象）から、
+     * スコア上位とPink管理対象を保存する。Pink周期不一致で
+     * 選外になった相手も分析できる一方、全候補の重複保存は避ける。
      *
      * 【2026-09 ログ量対策②】1候補あたりの情報量を抑えるため、
      * キー名付きオブジェクトではなく列固定の配列（行）として
@@ -10033,9 +10112,14 @@ function saveCandidateEvent() {
 
     allCandidates:
       LOG_DETAIL_CONFIG.includeAllCandidates
-        ? State.matchingRankedAll.map(
-            buildAllCandidateRow
-          )
+        ? [...State.matchingScoredAll]
+            .sort(
+              (a, b) =>
+                getCandidateSelectionScore(b) -
+                getCandidateSelectionScore(a)
+            )
+            .filter(shouldLogCandidateRow)
+            .map(buildAllCandidateRow)
         : []
   };
 
