@@ -7479,6 +7479,21 @@ function ensureAreaSummaryStyles() {
       background: #fff;
     }
 
+    .summary-mode-btn.active {
+      background: #dfe6ee;
+      border-color: #a9b7c7;
+      color: #2a2f36;
+      box-shadow: inset 0 0 0 1px rgba(42, 47, 54, 0.08);
+    }
+
+    .summary-mode-btn:disabled {
+      background: #edf2f7;
+      border-color: #d4dbe5;
+      color: #5d6775;
+      cursor: default;
+      opacity: 0.8;
+    }
+
     .area-summary-legend {
       display: flex;
       flex-wrap: wrap;
@@ -7528,7 +7543,6 @@ function ensureAreaSummaryStyles() {
       min-width: 250px;
       flex: 0 0 250px;
       padding: 4px 10px;
-      background: #f8fafc;
       border-right: 1px solid #e2e8f0;
     }
 
@@ -7562,13 +7576,6 @@ function ensureAreaSummaryStyles() {
       border: none;
       box-shadow: inset 0 1px 1px rgba(15, 23, 42, 0.05);
       margin: 0;
-    }
-
-    .area-band-divider {
-      width: 2px;
-      background: linear-gradient(180deg, rgba(51,65,85,0.16), rgba(51,65,85,0.26), rgba(51,65,85,0.16));
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.28);
-      flex: 0 0 2px;
     }
 
     .area-segment {
@@ -7684,27 +7691,35 @@ function getRankColor(rankKey) {
     R6: "#14b8a6",
     R7: "#3b82f6",
     R8: "#8b5cf6",
-    P_A: "rgba(34, 197, 94, 0.7)",
-    P_B: "rgba(16, 185, 129, 0.72)",
-    P_C: "rgba(6, 182, 212, 0.72)",
-    P_D: "rgba(59, 130, 246, 0.72)",
-    P_E: "rgba(99, 102, 241, 0.72)",
-    P_F: "rgba(168, 85, 247, 0.72)",
-    P_G: "rgba(236, 72, 153, 0.72)"
+    P_A: "#22c55e",
+    P_B: "#10b981",
+    P_C: "#06b6d4",
+    P_D: "#3b82f6",
+    P_E: "#6366f1",
+    P_F: "#a855f7",
+    P_G: "#ec4899"
   };
 
   return colors[rankKey] || "#999";
 }
 
+/*
+ * PRIDE帯は「透過」ではなく斜線パターンで
+ * RUBY帯（単色塗り）と区別する。
+ */
+function getRankFillStyle(rankKey) {
+  const base = getRankColor(rankKey);
+
+  if (String(rankKey).startsWith("P_")) {
+    return `background: repeating-linear-gradient(45deg, ${base} 0px, ${base} 6px, rgba(255,255,255,0.6) 6px, rgba(255,255,255,0.6) 12px);`;
+  }
+
+  return `background: ${base};`;
+}
+
 function getRankLegendStyle(rankKey) {
   const base = getRankColor(rankKey);
-  const stroke = base.match(/rgba?\(([^)]+)\)/);
-  const strokeColor = stroke ? `rgb(${stroke[1].split(",").slice(0, 3).join(", ")})` : "#666";
-  const pridePattern = String(rankKey).startsWith("P_")
-    ? `background: linear-gradient(135deg, ${base} 0%, ${base} 50%, rgba(255,255,255,0.18) 50%, rgba(255,255,255,0.18) 100%);`
-    : `background: ${base};`;
-
-  return `${pridePattern} border:1px solid ${strokeColor};`;
+  return `${getRankFillStyle(rankKey)} border:1px solid ${base};`;
 }
 
 function renderAreaSummary() {
@@ -7743,29 +7758,21 @@ function renderAreaSummary() {
     <div class="area-summary-list">
       ${rows.map(row => {
         const segments = [];
-        const hasPride = RANKS.some(rank => rank.type === "pride" && (row.counts[rank.key] || 0) > 0);
 
-        RANKS.forEach((rank, index) => {
+        RANKS.forEach(rank => {
           const count = row.counts[rank.key] || 0;
           if (!count) return;
 
           const pct = row.total ? (count / row.total) * 100 : 0;
           const widthRatio = row.total ? (count / maxAreaTotal) * 100 : 0;
-          const prideStyle = String(rank.key).startsWith("P_")
-            ? `background: linear-gradient(135deg, ${getRankColor(rank.key)} 0%, ${getRankColor(rank.key)} 50%, rgba(255,255,255,0.18) 50%, rgba(255,255,255,0.18) 100%);`
-            : `background: ${getRankColor(rank.key)};`;
 
           segments.push(`
             <div
               class="area-segment"
               title="${rank.label}: ${count}人"
-              style="width:${widthRatio}%; ${prideStyle}"
+              style="width:${widthRatio}%; ${getRankFillStyle(rank.key)}"
             >${pct > 18 ? count : ""}</div>
           `);
-
-          if (rank.key === "R8" && hasPride) {
-            segments.push(`<div class="area-band-divider" title="RUBY / PRIDE 境界"></div>`);
-          }
         });
 
         const barContent = segments.length ? segments.join("") : `<div class="area-segment empty" style="width:100%;"></div>`;
