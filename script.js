@@ -6595,7 +6595,8 @@ function buildPhaseCycleWindowHTML(
   halfWidthSec,
   filterFromMs,
   filterToMs,
-  colorRgb,
+  colorBg,
+  borderColor,
   textColor,
   referenceMs,
   phaseOffsetPct,
@@ -6719,11 +6720,13 @@ function buildPhaseCycleWindowHTML(
         width:${widthPct}%;
         top:0;
         bottom:0;
-        background:rgb(${colorRgb});
+        background:${colorBg};
+        border:1px solid ${borderColor};
         border-radius:3px;
         display:flex;
         align-items:center;
         justify-content:center;
+        box-sizing:border-box;
       "
       title="${n}周期前：${centerClockFull} 頃（許容 ±${Math.round(halfWidthSec)}秒）"
     >
@@ -6852,10 +6855,15 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
    * .match-row-yellow { background-color:#FFFFCC }
    * .match-row-pink   { background-color:#FFE4EC }
    */
-  const colorRgb =
+  const colorBg =
     isPink
-      ? "255,228,236"
-      : "255,255,204";
+      ? "rgba(255, 228, 236, 0.58)"
+      : "rgba(255, 255, 204, 0.58)";
+
+  const borderColor =
+    isPink
+      ? "rgba(173, 20, 87, 0.52)"
+      : "rgba(102, 92, 0, 0.4)";
 
   const textColor =
     isPink
@@ -6880,7 +6888,8 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
           ),
           filterFromMs,
           filterToMs,
-          colorRgb,
+          colorBg,
+          borderColor,
           textColor,
           phaseReferenceMs,
           phaseOffsetPct,
@@ -7435,14 +7444,16 @@ function buildSummaryModeNavHTML(activeMode) {
     { key: "area", label: "AreaSummary" }
   ];
 
+  const bothActive = activeMode === "both";
+
   return `
     <div class="summary-mode-nav">
       ${modes.map(mode => `
         <button
           type="button"
-          class="summary-mode-btn${activeMode === mode.key ? " active" : ""}"
+          class="summary-mode-btn${bothActive || activeMode === mode.key ? " active" : ""}"
           data-summary-mode="${mode.key}"
-          ${activeMode === mode.key ? "disabled" : ""}
+          ${bothActive || activeMode === mode.key ? "" : "disabled"}
         >${mode.label}</button>
       `).join("")}
     </div>
@@ -7460,8 +7471,12 @@ function ensureAreaSummaryStyles() {
     .area-summary-list {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 0;
       margin-top: 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 0;
+      overflow: hidden;
+      background: #fff;
     }
 
     .area-summary-legend {
@@ -7495,9 +7510,14 @@ function ensureAreaSummaryStyles() {
 
     .area-summary-row {
       display: flex;
-      align-items: center;
-      gap: 12px;
+      align-items: stretch;
+      gap: 0;
       min-width: 0;
+      border-top: 1px solid #edf2f7;
+    }
+
+    .area-summary-row:first-child {
+      border-top: none;
     }
 
     .area-summary-head {
@@ -7507,6 +7527,9 @@ function ensureAreaSummaryStyles() {
       gap: 8px;
       min-width: 250px;
       flex: 0 0 250px;
+      padding: 4px 10px;
+      background: #f8fafc;
+      border-right: 1px solid #e2e8f0;
     }
 
     .area-summary-name {
@@ -7533,11 +7556,19 @@ function ensureAreaSummaryStyles() {
       align-items: stretch;
       height: 22px;
       min-width: 40px;
-      border-radius: 6px;
+      border-radius: 0;
       overflow: hidden;
       background: #f1f5f9;
-      border: 1px solid #dfe7f0;
+      border: none;
       box-shadow: inset 0 1px 1px rgba(15, 23, 42, 0.05);
+      margin: 0;
+    }
+
+    .area-band-divider {
+      width: 2px;
+      background: linear-gradient(180deg, rgba(51,65,85,0.16), rgba(51,65,85,0.26), rgba(51,65,85,0.16));
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.28);
+      flex: 0 0 2px;
     }
 
     .area-segment {
@@ -7711,23 +7742,33 @@ function renderAreaSummary() {
 
     <div class="area-summary-list">
       ${rows.map(row => {
-        const segments = RANKS.map(rank => {
+        const segments = [];
+        const hasPride = RANKS.some(rank => rank.type === "pride" && (row.counts[rank.key] || 0) > 0);
+
+        RANKS.forEach((rank, index) => {
           const count = row.counts[rank.key] || 0;
-          if (!count) return "";
+          if (!count) return;
+
           const pct = row.total ? (count / row.total) * 100 : 0;
           const widthRatio = row.total ? (count / maxAreaTotal) * 100 : 0;
           const prideStyle = String(rank.key).startsWith("P_")
             ? `background: linear-gradient(135deg, ${getRankColor(rank.key)} 0%, ${getRankColor(rank.key)} 50%, rgba(255,255,255,0.18) 50%, rgba(255,255,255,0.18) 100%);`
             : `background: ${getRankColor(rank.key)};`;
 
-          return `
+          segments.push(`
             <div
               class="area-segment"
               title="${rank.label}: ${count}人"
               style="width:${widthRatio}%; ${prideStyle}"
             >${pct > 18 ? count : ""}</div>
-          `;
-        }).join("");
+          `);
+
+          if (rank.key === "R8" && hasPride) {
+            segments.push(`<div class="area-band-divider" title="RUBY / PRIDE 境界"></div>`);
+          }
+        });
+
+        const barContent = segments.length ? segments.join("") : `<div class="area-segment empty" style="width:100%;"></div>`;
 
         return `
           <div class="area-summary-row">
@@ -7737,7 +7778,7 @@ function renderAreaSummary() {
             </div>
             <div class="area-summary-bar-area">
               <div class="area-summary-bar" style="width:${Math.max(40, (row.total / maxAreaTotal) * 100)}%;">
-                ${segments || `<div class="area-segment empty" style="width:100%;"></div>`}
+                ${barContent}
               </div>
             </div>
           </div>
@@ -8265,7 +8306,7 @@ function renderMatchingTable() {
   if (!area) return;
 
   area.innerHTML = `
-    ${buildSummaryModeNavHTML(State.summaryMode)}
+    ${buildSummaryModeNavHTML("both")}
     ${buildPhaseCycleMonitorHTML()}
 
     <div
