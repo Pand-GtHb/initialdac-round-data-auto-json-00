@@ -7724,7 +7724,7 @@ function getRankFillStyle(rankKey) {
   const base = getRankColor(rankKey);
 
   if (String(rankKey).startsWith("P_")) {
-    return `background: repeating-linear-gradient(45deg, ${base} 0px, ${base} 6px, rgba(255,255,255,0.6) 6px, rgba(255,255,255,0.6) 12px);`;
+    return `background: repeating-linear-gradient(45deg, ${base} 0px, ${base} 3px, rgba(255,255,255,0.6) 3px, rgba(255,255,255,0.6) 6px);`;
   }
 
   return `background: ${base};`;
@@ -7776,18 +7776,21 @@ function renderAreaSummary() {
           const count = row.counts[rank.key] || 0;
           if (!count) return;
 
-          const pct = row.total ? (count / row.total) * 100 : 0;
+          // 全エリア共通のスケール（maxAreaTotal基準）で幅を算出することで、
+          // 「1人」の幅がエリアごとにばらつかないようにする。
+          const pctOfRow = row.total ? (count / row.total) * 100 : 0;
+          const pctOfScale = (count / maxAreaTotal) * 100;
 
           segments.push(`
             <div
               class="area-segment${String(rank.key).startsWith("P_") ? " pride" : ""}"
               title="${rank.label}: ${count}人"
-              style="width:${pct}%; ${getRankFillStyle(rank.key)}"
-            >${pct > 18 ? count : ""}</div>
+              style="width:${pctOfScale}%; ${getRankFillStyle(rank.key)}"
+            >${pctOfRow > 18 ? count : ""}</div>
           `);
         });
 
-        const barContent = segments.length ? segments.join("") : `<div class="area-segment empty" style="width:100%;"></div>`;
+        const barContent = segments.length ? segments.join("") : "";
 
         return `
           <div class="area-summary-row">
@@ -7796,7 +7799,7 @@ function renderAreaSummary() {
               <span class="area-summary-total">（${fmt(row.total)}人）</span>
             </div>
             <div class="area-summary-bar-area">
-              <div class="area-summary-bar" style="width:${Math.max(40, (row.total / maxAreaTotal) * 100)}%;">
+              <div class="area-summary-bar" style="width:100%;">
                 ${barContent}
               </div>
             </div>
