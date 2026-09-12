@@ -15,7 +15,8 @@ const BASE_URL =
 const STATE = {
   SUMMARY: "summary",
   DETAIL: "detail",
-  MATCHING: "matching"
+  MATCHING: "matching",
+  AREA_SUMMARY: "area_summary"
 };
 
 /* =========================================================
@@ -236,13 +237,16 @@ const State = {
   all: [],
   filtered: [],
   summary: [],
+  areaSummary: [],
   detailOriginal: [],
   generatedAt: "",
   latestRound: null,
   latestUpdateAt: "",
   searchText: "",
   currentView: STATE.SUMMARY,
+  summaryMode: "rank",
   currentIsRubyBand: true,
+  currentDetailType: "rank",
   currentDetailKey: "",
   currentDetailLabel: "",
   currentDetailIcon: "",
@@ -7425,7 +7429,185 @@ function buildPrideFilters() {
 /* =========================================================
  [11300] Summary Renderer:renderSummary【DOM】【State】（旧 [5410]）
 ========================================================= */
+function buildSummaryModeNavHTML(activeMode) {
+  const modes = [
+    { key: "rank", label: "[RankSummary]" },
+    { key: "area", label: "[AreaSummary]" }
+  ];
+
+  return `
+    <div class="summary-mode-nav">
+      ${modes.map(mode => `
+        <button
+          type="button"
+          class="summary-mode-btn${activeMode === mode.key ? " active" : ""}"
+          data-summary-mode="${mode.key}"
+          ${activeMode === mode.key ? "disabled" : ""}
+        >${mode.label}</button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function bindSummaryModeButtons(root) {
+  if (!root) return;
+
+  root.querySelectorAll("[data-summary-mode]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.summaryMode;
+      if (mode === "area") {
+        showAreaSummary(true);
+      } else {
+        showSummaryUI(true, "rank");
+      }
+    });
+  });
+}
+
+function getAreaSummaryRows() {
+  const areaSet = new Set();
+  const searchNorm = normalize(State.searchText || "");
+
+  const basePlayers = (State.filtered || []).filter(p => {
+    if (!searchNorm) return true;
+    return (p.normalizedName || "").includes(searchNorm);
+  });
+
+  for (let areaNo = 0; areaNo <= 62; areaNo++) {
+    areaSet.add(String(areaNo));
+  }
+
+  const rows = [];
+
+  for (let areaNo = 0; areaNo <= 62; areaNo++) {
+    const areaKey = String(areaNo);
+    const areaName = AreaList[areaKey] || `Area ${areaNo}`;
+    const counts = {};
+
+    RANKS.forEach(rank => {
+      counts[rank.key] = 0;
+    });
+
+    const list = basePlayers.filter(p => String(p.area ?? "") === areaKey);
+
+    list.forEach(player => {
+      const rankKey = getPlayerRankKey(player);
+      if (rankKey && Object.prototype.hasOwnProperty.call(counts, rankKey)) {
+        counts[rankKey] += 1;
+      }
+    });
+
+    const total = Object.values(counts).reduce((sum, v) => sum + v, 0);
+
+    rows.push({
+      areaNo,
+      areaKey,
+      areaName,
+      total,
+      counts,
+      list
+    });
+  }
+
+  return rows;
+}
+
+function getRankColor(rankKey) {
+  const colors = {
+    R1: "#dc2626",
+    R2: "#f97316",
+    R3: "#facc15",
+    R4: "#84cc16",
+    R5: "#22c55e",
+    R6: "#14b8a6",
+    R7: "#3b82f6",
+    R8: "#8b5cf6",
+    P_A: "rgba(34, 197, 94, 0.7)",
+    P_B: "rgba(16, 185, 129, 0.72)",
+    P_C: "rgba(6, 182, 212, 0.72)",
+    P_D: "rgba(59, 130, 246, 0.72)",
+    P_E: "rgba(99, 102, 241, 0.72)",
+    P_F: "rgba(168, 85, 247, 0.72)",
+    P_G: "rgba(236, 72, 153, 0.72)"
+  };
+
+  return colors[rankKey] || "#999";
+}
+
+function renderAreaSummary() {
+  const area = document.getElementById("summaryArea");
+  if (!area) return;
+
+  const rows = getAreaSummaryRows();
+  const total = rows.reduce((sum, row) => sum + row.total, 0);
+  const rubyTotal = rows.reduce((sum, row) => {
+    return sum + RANKS.filter(rank => rank.type === "ruby").reduce((inner, rank) => inner + (row.counts[rank.key] || 0), 0);
+  }, 0);
+  const prideTotal = total - rubyTotal;
+  const rubyPercent = total ? Math.round((rubyTotal / total) * 100) : 0;
+  const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;
+
+  area.innerHTML = `
+    ${buildSummaryModeNavHTML("area")}
+    <h3>
+      合計 ${fmt(total)}人：
+      RUBY帯 ${fmt(rubyTotal)}人＝${rubyPercent}% ＋
+      PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
+    </h3>
+
+    <div class="area-summary-list">
+      ${rows.map(row => {
+        const segments = RANKS.map(rank => {
+          const count = row.counts[rank.key] || 0;
+          if (!count) return "";
+          const pct = row.total ? (count / row.total) * 100 : 0;
+          return `
+            <div
+              class="area-segment"
+              title="${rank.label}: ${count}人"
+              style="width:${pct}%; background:${getRankColor(rank.key)};"
+            >${pct > 18 ? count : ""}</div>
+          `;
+        }).join("");
+
+        return `
+          <div class="area-summary-row">
+            <div class="area-summary-head">
+              <span class="area-summary-name clickable" data-area="${row.areaNo}">No.${row.areaNo} ${row.areaName}</span>
+              <span class="area-summary-total">（${fmt(row.total)}人）</span>
+            </div>
+            <div class="area-summary-bar">
+              ${segments || `<div class="area-segment empty" style="width:100%;"></div>`}
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+
+  bindSummaryModeButtons(area);
+
+  area.querySelectorAll(".area-summary-name").forEach(el => {
+    el.addEventListener("click", () => {
+      const areaNo = Number(el.dataset.area);
+      if (!Number.isNaN(areaNo)) {
+        showAreaDetail(areaNo);
+      }
+    });
+  });
+
+  State.currentDetailKey = "";
+  State.currentDetailLabel = "";
+  State.currentDetailIcon = "";
+  setCurrentView(STATE.SUMMARY);
+  switchDisplayView(STATE.SUMMARY);
+}
+
 function renderSummary() {
+  if (State.summaryMode === "area") {
+    renderAreaSummary();
+    return;
+  }
 
   const area =
     document.getElementById(
@@ -7480,6 +7662,7 @@ function renderSummary() {
       : 0;
 
   area.innerHTML = `
+    ${buildSummaryModeNavHTML("rank")}
     <h3>
       合計 ${fmt(total)}人：
       RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋
@@ -7565,6 +7748,8 @@ function renderSummary() {
     </div>
   `;
 
+  bindSummaryModeButtons(area);
+
   document
     .querySelectorAll(
       "#summaryArea .clickable"
@@ -7583,6 +7768,7 @@ function renderSummary() {
               "R"
             );
 
+          State.currentDetailType = "rank";
           showDetail(
             key
           );
@@ -7591,18 +7777,10 @@ function renderSummary() {
     });
 
   State.currentDetailKey = "";
-
   State.currentDetailLabel = "";
-
   State.currentDetailIcon = "";
-
-  setCurrentView(
-    STATE.SUMMARY
-  );
-
-  switchDisplayView(
-    STATE.SUMMARY
-  );
+  setCurrentView(STATE.SUMMARY);
+  switchDisplayView(STATE.SUMMARY);
 }
 
 /* =========================================================
@@ -7626,6 +7804,11 @@ function renderDetailTable(
     );
 
   area.innerHTML = `
+    <div class="summary-mode-nav">
+      <button type="button" class="summary-mode-btn${State.summaryMode === "rank" ? " active" : ""}" data-summary-mode="rank" ${State.summaryMode === "rank" ? "disabled" : ""}>[RankSummary]</button>
+      <button type="button" class="summary-mode-btn${State.summaryMode === "area" ? " active" : ""}" data-summary-mode="area" ${State.summaryMode === "area" ? "disabled" : ""}>[AreaSummary]</button>
+    </div>
+
     ${buildPhaseCycleMonitorHTML()}
 
     <div class="rank-nav-box">
@@ -7677,6 +7860,7 @@ function renderDetailTable(
     </div>
   `;
 
+  bindSummaryModeButtons(area);
   setupRankNavigation(
     State.currentDetailKey
   );
@@ -7685,6 +7869,74 @@ function renderDetailTable(
     list,
     isRubyBand
   );
+}
+
+function renderAreaDetailTable(areaNo) {
+  const area = document.getElementById("detailArea");
+  if (!area) return;
+
+  const areaKey = String(areaNo);
+  const areaName = AreaList[areaKey] || `Area ${areaNo}`;
+  const list = (State.searchText ? applyPlayerFilter(State.searchText, true) : (State.detailOriginal || []).slice()).filter(p => String(p.area ?? "") === areaKey);
+  const counts = {};
+  RANKS.forEach(rank => counts[rank.key] = 0);
+  list.forEach(player => {
+    const rankKey = getPlayerRankKey(player);
+    if (rankKey && Object.prototype.hasOwnProperty.call(counts, rankKey)) {
+      counts[rankKey] += 1;
+    }
+  });
+
+  area.innerHTML = `
+    <div class="summary-mode-nav">
+      <button type="button" class="summary-mode-btn${State.summaryMode === "rank" ? " active" : ""}" data-summary-mode="rank" ${State.summaryMode === "rank" ? "disabled" : ""}>[RankSummary]</button>
+      <button type="button" class="summary-mode-btn${State.summaryMode === "area" ? " active" : ""}" data-summary-mode="area" ${State.summaryMode === "area" ? "disabled" : ""}>[AreaSummary]</button>
+    </div>
+
+    ${buildPhaseCycleMonitorHTML()}
+
+    <div class="rank-nav-box">
+        <button id="prevAreaBtn" class="rank-nav-btn">　◀◀◀　</button>
+        <button id="nextAreaBtn" class="rank-nav-btn">　▶▶▶　</button>
+    </div>
+
+    <h3>
+      <span>エリアNo.${areaNo} ${areaName}</span>
+      <span style="margin-left:16px;">（${fmt(list.length)}人）</span>
+    </h3>
+
+    <div class="area-rank-breakdown">
+      ${RANKS.map(rank => {
+        const count = counts[rank.key] || 0;
+        if (!count) return "";
+        return `
+          <span class="area-rank-badge" title="${rank.label}: ${count}人">
+            <img src="${rank.icon}" width="20">${rank.label}：${count}人
+          </span>
+        `;
+      }).join(" ")}
+    </div>
+
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>★・PRIDE</th>
+            <th>プレイヤー名</th>
+            <th>RP</th>
+            <th>店舗名</th>
+            <th>Last Update</th>
+            <th>称号</th>
+          </tr>
+        </thead>
+        <tbody id="detailTableBody"></tbody>
+      </table>
+    </div>
+  `;
+
+  bindSummaryModeButtons(area);
+  setupAreaNavigation(areaNo);
+  renderPlayerRowsToBody("detailTableBody", list);
 }
 
 /* =========================================================
@@ -7831,12 +8083,14 @@ function renderMatchingHeader() {
     return;
   }
 
-  /*
-   * ランクアイコン：人数の表示は
-   * マッチング候補テーブル側（PhaseグラフとTableの間）に統合したため、
-   * 従来のこの位置（matchingHeader要素）は空にする。
-   */
-  headerEl.innerHTML = "";
+  headerEl.innerHTML = `
+    <div class="summary-mode-nav">
+      <button type="button" class="summary-mode-btn${State.summaryMode === "rank" ? " active" : ""}" data-summary-mode="rank" ${State.summaryMode === "rank" ? "disabled" : ""}>[RankSummary]</button>
+      <button type="button" class="summary-mode-btn${State.summaryMode === "area" ? " active" : ""}" data-summary-mode="area" ${State.summaryMode === "area" ? "disabled" : ""}>[AreaSummary]</button>
+    </div>
+  `;
+
+  bindSummaryModeButtons(headerEl);
 }
 
 /* =========================================================
@@ -10115,9 +10369,10 @@ function saveCandidateEvent() {
  [13200] Navigation Use Case:showSummaryUI【State】【DOM】（旧 [5500]）
 ========================================================= */
 function showSummaryUI(
-  push = true
+  push = true,
+  mode = "rank"
 ) {
-
+  State.summaryMode = mode;
   renderSummary();
 
   setCurrentView(
@@ -10129,10 +10384,36 @@ function showSummaryUI(
   );
 
   if (push) {
-
     history.pushState(
       {
-        page: STATE.SUMMARY
+        page: STATE.SUMMARY,
+        summaryMode: mode
+      },
+      "",
+      ""
+    );
+  }
+}
+
+function showAreaSummary(
+  push = true
+) {
+  State.summaryMode = "area";
+  renderSummary();
+
+  setCurrentView(
+    STATE.SUMMARY
+  );
+
+  switchDisplayView(
+    STATE.SUMMARY
+  );
+
+  if (push) {
+    history.pushState(
+      {
+        page: STATE.SUMMARY,
+        summaryMode: "area"
       },
       "",
       ""
@@ -10174,12 +10455,7 @@ function showDetail(
       ? rankInfo.icon
       : "";
 
-  /*
-   * 【2026-09 レイアウト変更】
-   * ランク上下ボタンをPhaseグラフの下（detailArea内）に
-   * 動的生成するようにしたため、setupRankNavigation は
-   * renderDetailTable内でDOM生成後に呼び出す。
-   */
+  State.currentDetailType = "rank";
 
   if (!row) {
 
@@ -10208,7 +10484,8 @@ function showDetail(
           page: STATE.DETAIL,
           key,
           label: bandLabel,
-          icon: bandIcon
+          icon: bandIcon,
+          detailType: "rank"
         },
         "",
         ""
@@ -10264,7 +10541,8 @@ function showDetail(
         page: STATE.DETAIL,
         key,
         label: bandLabel,
-        icon: bandIcon
+        icon: bandIcon,
+        detailType: "rank"
       },
       "",
       ""
@@ -10280,6 +10558,41 @@ function showDetail(
   switchDisplayView(
     STATE.DETAIL
   );
+}
+
+function showAreaDetail(
+  areaNo,
+  push = true
+) {
+  const areaKey = String(areaNo);
+  const areaName = AreaList[areaKey] || `Area ${areaNo}`;
+  const list = (State.filtered || []).filter(p => String(p.area ?? "") === areaKey);
+
+  State.currentDetailType = "area";
+  State.currentIsRubyBand = false;
+  State.currentDetailKey = areaKey;
+  State.currentDetailLabel = areaName;
+  State.currentDetailIcon = "";
+  State.detailOriginal = list.slice().sort((a, b) => parseDateJST(b.updateDate) - parseDateJST(a.updateDate));
+
+  setCurrentView(STATE.DETAIL);
+
+  if (push) {
+    history.pushState(
+      {
+        page: STATE.DETAIL,
+        key: areaKey,
+        label: areaName,
+        icon: "",
+        detailType: "area"
+      },
+      "",
+      ""
+    );
+  }
+
+  renderAreaDetailTable(areaNo);
+  switchDisplayView(STATE.DETAIL);
 }
 
 /* =========================================================
@@ -10321,7 +10634,7 @@ function showMatchingCandidates(
 function backToSummaryFromMatching(
   push = true
 ) {
-
+  State.summaryMode = State.summaryMode === "area" ? "area" : "rank";
   renderSummary();
 
   setCurrentView(
@@ -10333,10 +10646,10 @@ function backToSummaryFromMatching(
   );
 
   if (push) {
-
     history.pushState(
       {
-        page: STATE.SUMMARY
+        page: STATE.SUMMARY,
+        summaryMode: State.summaryMode
       },
       "",
       ""
@@ -10382,6 +10695,10 @@ function setupRankNavigation(
       "nextRankBtn"
     );
 
+  if (!prevBtn || !nextBtn) {
+    return;
+  }
+
   prevBtn.disabled =
     !prev;
 
@@ -10397,6 +10714,22 @@ function setupRankNavigation(
     () =>
       next &&
       showDetail(next);
+}
+
+function setupAreaNavigation(areaNo) {
+  const prev = Number(areaNo) > 0 ? Number(areaNo) - 1 : null;
+  const next = Number(areaNo) < 62 ? Number(areaNo) + 1 : null;
+
+  const prevBtn = document.getElementById("prevAreaBtn");
+  const nextBtn = document.getElementById("nextAreaBtn");
+
+  if (!prevBtn || !nextBtn) return;
+
+  prevBtn.disabled = !prev;
+  nextBtn.disabled = !next;
+
+  prevBtn.onclick = () => prev !== null && showAreaDetail(prev);
+  nextBtn.onclick = () => next !== null && showAreaDetail(next);
 }
 
 /* =========================================================
@@ -10437,105 +10770,54 @@ window.addEventListener(
       state.page ===
       STATE.DETAIL
     ) {
-
       const key =
         state.key ||
         State.currentDetailKey;
 
       if (!key) {
-
         clearSearch();
-
-        const input =
-          document.getElementById(
-            "searchInput"
-          );
-
-        if (input) {
-          input.value = "";
-        }
-
-        showSummaryUI(
-          false
-        );
-
+        const input = document.getElementById("searchInput");
+        if (input) input.value = "";
+        showSummaryUI(false, state.summaryMode || "rank");
         return;
       }
 
-      if (
-        State.searchText
-      ) {
-
+      if (State.searchText) {
         clearSearch();
-
-        const input =
-          document.getElementById(
-            "searchInput"
-          );
-
-        if (input) {
-          input.value = "";
-        }
+        const input = document.getElementById("searchInput");
+        if (input) input.value = "";
       }
 
-      showDetail(
-        key,
-        false
-      );
+      if (state.detailType === "area" || State.currentDetailType === "area") {
+        showAreaDetail(Number(key), false);
+      } else {
+        showDetail(key, false);
+      }
 
       return;
     }
-
-    /* =====================================
-     * MATCHING
-     * ===================================== */
 
     if (
       state.page ===
       STATE.MATCHING
     ) {
-
-      if (
-        State.searchText
-      ) {
-
+      if (State.searchText) {
         clearSearch();
-
-        const input =
-          document.getElementById(
-            "searchInput"
-          );
-
-        if (input) {
-          input.value = "";
-        }
+        const input = document.getElementById("searchInput");
+        if (input) input.value = "";
       }
 
-      showMatchingCandidates(
-        false
-      );
-
+      showMatchingCandidates(false);
       return;
     }
 
-    /* =====================================
-     * SUMMARY
-     * ===================================== */
-
     clearSearch();
 
-    const input =
-      document.getElementById(
-        "searchInput"
-      );
+    const input = document.getElementById("searchInput");
+    if (input) input.value = "";
 
-    if (input) {
-      input.value = "";
-    }
-
-    showSummaryUI(
-      false
-    );
+    State.summaryMode = state.summaryMode === "area" ? "area" : "rank";
+    showSummaryUI(false, State.summaryMode);
   }
 );
 
@@ -10716,13 +10998,13 @@ document.addEventListener(
      * ===================================== */
 
     history.replaceState(
-      { page: STATE.SUMMARY },
+      { page: STATE.SUMMARY, summaryMode: "rank" },
       "",
       ""
     );
 
     history.pushState(
-      { page: STATE.SUMMARY },
+      { page: STATE.SUMMARY, summaryMode: "rank" },
       "",
       ""
     );
@@ -10759,6 +11041,11 @@ document.addEventListener(
     const backBtn =
       document.getElementById(
         "backBtn"
+      );
+
+    const detailAreaSummaryBtn =
+      document.getElementById(
+        "detailAreaSummaryBtn"
       );
 
     const matchingBtn =
@@ -10910,7 +11197,6 @@ document.addEventListener(
               STATE.SUMMARY
             )
           ) {
-
             renderSummary();
 
           } else if (
@@ -10918,17 +11204,18 @@ document.addEventListener(
               STATE.DETAIL
             )
           ) {
-
-            applyPlayerFilter(
-              State.searchText,
-              State.currentIsRubyBand
-            );
-
-            renderDetailTable(
-              State.currentIsRubyBand,
-              State.currentDetailLabel || "",
-              State.currentDetailIcon || ""
-            );
+            if (State.currentDetailType === "area") {
+              const areaNo = Number(State.currentDetailKey);
+              if (!Number.isNaN(areaNo)) {
+                renderAreaDetailTable(areaNo);
+              }
+            } else {
+              renderDetailTable(
+                State.currentIsRubyBand,
+                State.currentDetailLabel || "",
+                State.currentDetailIcon || ""
+              );
+            }
 
           } else if (
             isCurrentView(
@@ -10955,20 +11242,21 @@ document.addEventListener(
       backBtn &&
       searchInput
     ) {
-
       backBtn.onclick =
         () => {
-
           State.searchText = "";
-
           searchInput.value = "";
-
-          showSummaryUI(
-            true
-          );
-
+          showSummaryUI(true, State.summaryMode || "rank");
         };
+    }
 
+    if (detailAreaSummaryBtn) {
+      detailAreaSummaryBtn.onclick =
+        () => {
+          State.searchText = "";
+          searchInput.value = "";
+          showAreaSummary(true);
+        };
     }
 
     /* =====================================
