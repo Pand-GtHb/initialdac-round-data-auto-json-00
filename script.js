@@ -253,7 +253,7 @@ const State = {
   myStar: 7,
   myRankKey: "R7",
   recentClicks: [],
-  recentClickIndex: null,
+  recentClickSet: null,
   jointModel: null,
   playerActivity: {},
   rankActivity: {},
@@ -1101,7 +1101,6 @@ function normalizeJointModel(json) {
 
   const byViewerTier = {};
   const opponentTierSet = new Set();
-  const areaSet = new Set();
 
   for (const viewerTier in viewerTiers) {
 
@@ -1119,15 +1118,11 @@ function normalizeJointModel(json) {
         ) || 1;
 
     const probList = [];
+    const opponentTierMap = {};
+    let prideProbabilityTotal = 0;
 
     for (const key in opponents) {
 
-      /*
-       * key = "<opponentTier>_<area>"
-       * opponentTier は R1..R8 または PRIDE_A..PRIDE_G
-       * （PRIDE_* はアンダースコアを含むため
-       *   最後の "_" で area を切り分ける）
-       */
       const lastSep =
         key.lastIndexOf("_");
 
@@ -1143,52 +1138,44 @@ function normalizeJointModel(json) {
         opponentTier
       );
 
-      areaSet.add(
-        area
-      );
-
       const count =
         Number(opponents[key] ?? 0);
+
+      const prob =
+        count / total;
 
       probList.push({
         opponentTier,
         area,
         count,
-        prob: count / total
+        prob
       });
+
+      opponentTierMap[opponentTier] =
+        (opponentTierMap[opponentTier] || 0) + prob;
+
+      if (opponentTier.startsWith("PRIDE_")) {
+        prideProbabilityTotal += prob;
+      }
     }
 
-    byViewerTier[viewerTier] = probList;
+    byViewerTier[viewerTier] = {
+      probList,
+      opponentTierMap,
+      total,
+      prideProbabilityTotal
+    };
   }
 
-  /*
-   * 2026-09 joint_model 地域軸廃止対応:
-   * area="ALL" を含むモデルでは ALL を
-   * ワイルドカードとして扱うため、
-   * 実際のマッチング粒度は opponentTier のみ。
-   * この場合に地域数を掛けると support が
-   * 過大評価され backoff スコアが実態より
-   * 小さくなりすぎる。
-   * 旧地域別モデル（ALL を含まない）では
-   * 従来通り opponentTier × area の
-   * 組み合わせ数を supportSize とする。
-   */
-  const usesAreaWildcard =
-    areaSet.has("ALL");
-
   const historicalSupportSize =
-    usesAreaWildcard
-      ? opponentTierSet.size
-      : opponentTierSet.size *
-        areaSet.size;
+    opponentTierSet.size;
 
   return {
     byViewerTier,
-    usesAreaWildcard,
+    usesAreaWildcard: true,
     historicalOpponentTierCount:
       opponentTierSet.size,
-    historicalAreaCount:
-      areaSet.size,
+    historicalAreaCount: 1,
     historicalSupportSize
   };
 }
@@ -3291,47 +3278,23 @@ function getRankBoost(rankKey) {
  [6400] Recent Clicks:rebuildRecentClickIndex【State】（旧 [7105] 内）
 ========================================================= */
 function rebuildRecentClickIndex() {
- const index = {
-   byName: new Map(),
-   byNameArea: new Map(),
-   byNameRank: new Map()
- };
+  const set = new Set();
 
- for (const r of State.recentClicks) {
-   if (!r) {
-     continue;
-   }
+  for (const r of State.recentClicks) {
+    if (!r) continue;
 
-   const key =
-     normalizePlayerName(
-       r.name ?? ""
-     );
+    const nameKey =
+      normalizePlayerName(r.name ?? "");
 
-   if (!key) {
-     continue;
-   }
+    if (!nameKey) continue;
 
-   const byName =
-     index.byName.get(key) || [];
-   byName.push(r);
-   index.byName.set(key, byName);
+    const dateKey =
+      String(r.updateDate ?? "");
 
-   const areaKey =
-     `${key}@@${String(r.area ?? "")}`;
-   const byArea =
-     index.byNameArea.get(areaKey) || [];
-   byArea.push(r);
-   index.byNameArea.set(areaKey, byArea);
+    set.add(`${nameKey}|${dateKey}`);
+  }
 
-   const rankKey =
-     `${key}@@${String(r.rankKey ?? "")}`;
-   const byRank =
-     index.byNameRank.get(rankKey) || [];
-   byRank.push(r);
-   index.byNameRank.set(rankKey, byRank);
- }
-
- State.recentClickIndex = index;
+  State.recentClickSet = set;
 }
 
 /* =========================================================
@@ -3339,28 +3302,20 @@ function rebuildRecentClickIndex() {
 ========================================================= */
 function hasSamePlayerRecentClick(player) {
 
-  if (!player || !State.recentClicks.length) {
-   return false;
+  if (!player || !State.recentClicks?.length) {
+    return false;
   }
 
   const targetName =
-   normalizePlayerName(player.name);
+    normalizePlayerName(player.name);
 
   const targetUpdateDate =
-   String(player.updateDate ?? "");
+    String(player.updateDate ?? "");
 
-  return State.recentClicks.some(r => {
+  const lookupKey =
+    `${targetName}|${targetUpdateDate}`;
 
-   if (
-     normalizePlayerName(r.name) !==
-     targetName
-   ) {
-     return false;
-   }
-
-   return String(r.updateDate ?? "") ===
-     targetUpdateDate;
-   });
+  return State.recentClickSet?.has(lookupKey) ?? false;
 }
 
 
@@ -3679,7 +3634,8 @@ function calcPinkCycle(
         );
 
       if (isFinite(folded)) {
-        foldedList.push(folded);
+        const cycleCount = Math.max(1, Math.round(interval / base));
+        foldedList.push(folded / cycleCount);
       }
     }
   }
@@ -4813,33 +4769,51 @@ function getHistoricalDistribution(
   viewerTier
 ) {
 
-  const probList =
+  const entry =
     State.jointModel?.byViewerTier?.[
       viewerTier
-    ] ?? [];
+    ];
 
-  const total =
-    probList.reduce(
-      (sum, item) =>
-        sum + Number(item.count ?? 0),
-      0
-    );
+  if (!entry) {
+    return {
+      probList: [],
+      opponentTierMap: {},
+      total: 0,
+      prideProbabilityTotal: 0
+    };
+  }
 
-  const prideProbabilityTotal =
-    probList.reduce(
-      (sum, item) =>
-        String(item.opponentTier ?? "")
-          .startsWith("PRIDE_")
+  if (Array.isArray(entry)) {
+    const total =
+      entry.reduce(
+        (sum, item) => sum + Number(item.count ?? 0),
+        0
+      );
+
+    const prideProbabilityTotal =
+      entry.reduce(
+        (sum, item) =>
+          String(item.opponentTier ?? "").startsWith("PRIDE_")
             ? sum + Number(item.prob ?? 0)
             : sum,
-      0
-    );
+        0
+      );
 
-  return {
-    probList,
-    total,
-    prideProbabilityTotal
-  };
+    const opponentTierMap = {};
+    entry.forEach(item => {
+      opponentTierMap[item.opponentTier] =
+        (opponentTierMap[item.opponentTier] || 0) + item.prob;
+    });
+
+    return {
+      probList: entry,
+      opponentTierMap,
+      total,
+      prideProbabilityTotal
+    };
+  }
+
+  return entry;
 }
 
 function getHistoricalPrideWeightedAverageProbability(
@@ -4858,7 +4832,7 @@ function getHistoricalPrideWeightedAverageProbability(
   }
 
   const weightedProbability =
-    distribution.probList.reduce(
+    (distribution.probList || []).reduce(
       (sum, item) => {
 
         const opponentTier =
@@ -4895,21 +4869,15 @@ function getDistributionCellScore(
   tierCounts
 ) {
 
-  /*
-   * area === "ALL" のセルは「地域を区別しない集計」であることを示す
-   * ワイルドカードとして扱う（2026-09 joint_model地域軸廃止対応）。
-   * 実際の候補地域(area)がどの都道府県コードであっても一致とみなす。
-   */
-  const hit =
-    distribution.probList.find(
-      item =>
-        item.opponentTier ===
-          String(opponentTier) &&
-        (
-          item.area === "ALL" ||
-          item.area === String(area)
-        )
-    );
+  const oppKey = String(opponentTier ?? "");
+
+  const hitProb = distribution.opponentTierMap
+    ? distribution.opponentTierMap[oppKey]
+    : distribution.probList?.find(
+        item => item.opponentTier === oppKey
+      )?.prob;
+
+  const matched = hitProb !== undefined;
 
   const backoffScore =
     distribution.total > 0 &&
@@ -4921,13 +4889,12 @@ function getDistributionCellScore(
       : 0.0001;
 
   const tierProbability =
-    hit
-      ? hit.prob
+    matched
+      ? hitProb
       : backoffScore;
 
   const isPrideTier =
-    String(opponentTier ?? "")
-      .startsWith("PRIDE_");
+    oppKey.startsWith("PRIDE_");
 
   const prideWeightedAverageProbability =
     isPrideTier
@@ -4955,7 +4922,7 @@ function getDistributionCellScore(
     tierProbability,
     pooledTierProbability,
     tierCandidateCount,
-    matched: Boolean(hit)
+    matched
   };
 }
 
@@ -5037,11 +5004,48 @@ function getAdjacentTierDistribution(
 /* =========================================================
  [8010] Historical Score:getHistoricalScoreDetail【State】（旧 [6810] 内）
 ========================================================= */
+function buildViewerHistoricalContext(viewerRankKey) {
+  if (!viewerRankKey || !State.jointModel) {
+    return null;
+  }
+
+  const viewerTier =
+    mapRankKeyToTierKey(viewerRankKey);
+
+  const ownDistribution =
+    getHistoricalDistribution(viewerTier);
+
+  const minOwnSamplesForNoBackoff =
+    getHistoricalMinOwnSamplesForNoBackoff();
+
+  const ownDistributionIsReliable =
+    ownDistribution.total > 0 &&
+    ownDistribution.total >= minOwnSamplesForNoBackoff;
+
+  const adjacentDistribution =
+    ownDistributionIsReliable
+      ? null
+      : getAdjacentTierDistribution(viewerTier);
+
+  const supportSize =
+    Number(State.jointModel.historicalSupportSize ?? 0);
+
+  return {
+    viewerTier,
+    ownDistribution,
+    minOwnSamplesForNoBackoff,
+    ownDistributionIsReliable,
+    adjacentDistribution,
+    supportSize
+  };
+}
+
 function getHistoricalScoreDetail(
   viewerRankKey,
   opponentRankKey,
   area,
-  tierCounts = State.matchingTierCounts
+  tierCounts = State.matchingTierCounts,
+  viewerContext = null
 ) {
 
   if (
@@ -5057,8 +5061,19 @@ function getHistoricalScoreDetail(
     };
   }
 
-  const viewerTier =
-    mapRankKeyToTierKey(viewerRankKey);
+  const ctx =
+    viewerContext ||
+    buildViewerHistoricalContext(viewerRankKey);
+
+  if (!ctx) {
+    return {
+      score: 1.0,
+      matched: false,
+      backoff: false,
+      viewerTier: null,
+      opponentTier: null
+    };
+  }
 
   const opponentTier =
     mapRankKeyToTierKey(opponentRankKey);
@@ -5069,29 +5084,9 @@ function getHistoricalScoreDetail(
       opponentTier
     );
 
-  const ownDistribution =
-    getHistoricalDistribution(
-      viewerTier
-    );
-
-  const minOwnSamplesForNoBackoff =
-    getHistoricalMinOwnSamplesForNoBackoff();
-
-  const ownDistributionIsReliable =
-    ownDistribution.total > 0 &&
-    ownDistribution.total >=
-      minOwnSamplesForNoBackoff;
-
-  const adjacentDistribution =
-    ownDistributionIsReliable
-      ? null
-      : getAdjacentTierDistribution(
-          viewerTier
-        );
-
   if (
-    ownDistribution.total <= 0 &&
-    !adjacentDistribution
+    ctx.ownDistribution.total <= 0 &&
+    !ctx.adjacentDistribution
   ) {
     return {
       score: 1.0,
@@ -5099,31 +5094,26 @@ function getHistoricalScoreDetail(
       backoff: false,
       tierProbability: 1.0,
       tierCandidateCount,
-      minOwnSamplesForNoBackoff,
-      viewerTier,
+      minOwnSamplesForNoBackoff: ctx.minOwnSamplesForNoBackoff,
+      viewerTier: ctx.viewerTier,
       opponentTier
     };
   }
 
-  const supportSize =
-    Number(
-      State.jointModel.historicalSupportSize ?? 0
-    );
-
   const ownCell =
-    ownDistribution.total > 0
+    ctx.ownDistribution.total > 0
       ? getDistributionCellScore(
-          ownDistribution,
+          ctx.ownDistribution,
           opponentTier,
           area,
-          supportSize,
+          ctx.supportSize,
           tierCandidateCount,
           tierCounts
         )
       : null;
 
   const adjacentCells =
-    adjacentDistribution?.distributions.map(
+    ctx.adjacentDistribution?.distributions.map(
       distribution => ({
         viewerTier:
           distribution.viewerTier,
@@ -5133,7 +5123,7 @@ function getHistoricalScoreDetail(
           distribution,
           opponentTier,
           area,
-          supportSize,
+          ctx.supportSize,
           tierCandidateCount,
           tierCounts
         )
@@ -5141,13 +5131,13 @@ function getHistoricalScoreDetail(
     ) ?? [];
 
   const adjacentScore =
-    adjacentDistribution
+    ctx.adjacentDistribution
       ? adjacentCells.reduce(
           (sum, cell) =>
             sum +
             cell.score *
             cell.total /
-            adjacentDistribution.total,
+            ctx.adjacentDistribution.total,
           0
         )
       : 0;
@@ -5158,18 +5148,18 @@ function getHistoricalScoreDetail(
     );
 
   const ownReliability =
-    ownDistributionIsReliable
+    ctx.ownDistributionIsReliable
       ? 1
-      : ownDistribution.total > 0
-      ? ownDistribution.total /
+      : ctx.ownDistribution.total > 0
+      ? ctx.ownDistribution.total /
         (
-          ownDistribution.total +
+          ctx.ownDistribution.total +
           HISTORICAL_RELIABILITY_K
         )
       : 0;
 
   const score =
-    adjacentDistribution
+    ctx.adjacentDistribution
       ? ownCell
         ? ownCell.score *
             ownReliability +
@@ -5187,9 +5177,9 @@ function getHistoricalScoreDetail(
       !ownCell?.matched &&
       !adjacentMatched,
     tierProbability:
-      ownDistributionIsReliable
+      ctx.ownDistributionIsReliable
         ? ownCell?.tierProbability ?? 1.0
-        : adjacentDistribution
+        : ctx.adjacentDistribution
         ? ownCell
           ? ownCell.tierProbability *
               ownReliability +
@@ -5198,7 +5188,7 @@ function getHistoricalScoreDetail(
                 sum +
                 cell.tierProbability *
                 cell.total /
-                adjacentDistribution.total,
+                ctx.adjacentDistribution.total,
               0
             ) *
               (1 - ownReliability)
@@ -5207,14 +5197,14 @@ function getHistoricalScoreDetail(
                 sum +
                 cell.tierProbability *
                 cell.total /
-                adjacentDistribution.total,
+                ctx.adjacentDistribution.total,
               0
             )
         : ownCell?.tierProbability ?? 1.0,
     pooledTierProbability:
-      ownDistributionIsReliable
+      ctx.ownDistributionIsReliable
         ? ownCell?.pooledTierProbability ?? 1.0
-        : adjacentDistribution
+        : ctx.adjacentDistribution
         ? ownCell
           ? ownCell.pooledTierProbability *
               ownReliability +
@@ -5223,7 +5213,7 @@ function getHistoricalScoreDetail(
                 sum +
                 cell.pooledTierProbability *
                 cell.total /
-                adjacentDistribution.total,
+                ctx.adjacentDistribution.total,
               0
             ) *
               (1 - ownReliability)
@@ -5232,22 +5222,22 @@ function getHistoricalScoreDetail(
                 sum +
                 cell.pooledTierProbability *
                 cell.total /
-                adjacentDistribution.total,
+                ctx.adjacentDistribution.total,
               0
             )
         : ownCell?.pooledTierProbability ?? 1.0,
     tierCandidateCount,
-    minOwnSamplesForNoBackoff,
+    minOwnSamplesForNoBackoff: ctx.minOwnSamplesForNoBackoff,
     ownReliability,
     ownSampleCount:
-      ownDistribution.total,
+      ctx.ownDistribution.total,
     adjacentSampleCount:
-      adjacentDistribution?.total ?? 0,
+      ctx.adjacentDistribution?.total ?? 0,
     adjacentViewerTiers:
       adjacentCells.map(
         cell => cell.viewerTier
       ),
-    viewerTier,
+    viewerTier: ctx.viewerTier,
     opponentTier
   };
 }
@@ -5257,7 +5247,8 @@ function getHistoricalScoreDetail(
 ========================================================= */
 function calcMatchingScoreDetail(
     player,
-    tierCounts = State.matchingTierCounts
+    tierCounts = State.matchingTierCounts,
+    viewerContext = null
 ) {
     if (!player || !player.updateDate) {
         return { score: 0 };
@@ -5282,7 +5273,8 @@ function calcMatchingScoreDetail(
             viewerRankKey,
             rankKey,
             player.area,
-            tierCounts
+            tierCounts,
+            viewerContext
         );
 
     const historicalScore =
@@ -5483,12 +5475,14 @@ function calcMatchingScoreDetail(
 ========================================================= */
 function buildCandidateScore(
     player,
-    tierCounts = State.matchingTierCounts
+    tierCounts = State.matchingTierCounts,
+    viewerContext = null
 ) {
     const detail =
         calcMatchingScoreDetail(
             player,
-            tierCounts
+            tierCounts,
+            viewerContext
         );
 
     const score =
@@ -5887,11 +5881,17 @@ function buildMatchingCandidates() {
    * STEP3〜6: 候補集合確定後に履歴スコアを
    * 個人priorへ変換し、Realtime/Phaseと合成する。
    * ===================================== */
+  const viewerContext =
+    buildViewerHistoricalContext(
+      State.myRankKey
+    );
+
   const scoredAll =
     afterCooldown.map(p =>
       buildCandidateScore(
         p,
-        tierCounts
+        tierCounts,
+        viewerContext
       )
     );
 
@@ -5903,12 +5903,15 @@ function buildMatchingCandidates() {
       p => getCandidateSelectionScore(p) > 0
     );
 
-  State.matchingRankedAll =
+  const rankedByScore =
     [...scoreEligible].sort(
       (a, b) =>
         getCandidateSelectionScore(b) -
         getCandidateSelectionScore(a)
     );
+
+  State.matchingRankedAll =
+    rankedByScore;
 
   State.matchingRankedAll.forEach(
     (p, i) => {
@@ -5919,39 +5922,11 @@ function buildMatchingCandidates() {
   /* =====================================
    * STEP7: Score順に並べる
    * STEP8: 上位10人を表示
-   *
-   * 二段階選出（Phase救済枠）
-   * ------------------------------------
-   * 通常スコア順だけでは、FinalPhaseScore
-   * （周期ピーク近傍＝的中確度が高い状態）
-   * が高くても、HistoricalScoreが低いために
-   * Top10圏外へ落ちる相手が発生する
-   * （例：phaseError極小でも29位落選）。
-   *
-   * このため、通常スコア上位
-   * NORMAL_SLOT_COUNT人を確保したうえで、
-   * 残り枠 PHASE_RESCUE_SLOT_COUNT人分は、
-   * 通常選出から漏れた候補のうち
-   * FinalPhaseScoreが高い順に追加する。
-   *
-   * 【2026-09 改善4】救済枠を2枠→1枠へ縮小
-   * 救済枠自体が例外的補完のため、位相の重み低下（改善2）と
-   * 合わせて枠を絞る。1枠のみのため、既知の履歴セル
-   * （historicalMatched）を優先し、次点で未観測セル
-   * （historicalBackoff）、それでも埋まらなければ
-   * FinalPhaseScore最上位から1名を採用する。
    * ===================================== */
   const NORMAL_SLOT_COUNT = 9;
   const PHASE_RESCUE_SLOT_COUNT = 1;
   const MATCHED_RESCUE_SLOT_COUNT = 1;
   const BACKOFF_RESCUE_SLOT_COUNT = 1;
-
-  const rankedByScore =
-    [...scoreEligible].sort(
-      (a, b) =>
-        getCandidateSelectionScore(b) -
-        getCandidateSelectionScore(a)
-    );
 
   const normalSelected =
     selectNormalCandidatesByHistoricalGroups(
