@@ -4912,27 +4912,14 @@ function getDistributionCellScore(
       ? hitProb
       : backoffScore;
 
-  const isPrideTier =
-    oppKey.startsWith("PRIDE_");
-
-  const prideWeightedAverageProbability =
-    isPrideTier
-      ? getHistoricalPrideWeightedAverageProbability(
-          distribution,
-          tierCounts
-        )
-      : 0;
-
-  const pooledTierProbability =
-    isPrideTier &&
-    distribution.prideProbabilityTotal > 0 &&
-    prideWeightedAverageProbability > 0
-      ? (
-          distribution.prideProbabilityTotal *
-          tierProbability /
-          prideWeightedAverageProbability
-        )
-      : tierProbability;
+  /*
+   * 【2026-09 修正】実績対戦分布の直接利用
+   * historical_matchup_distribution.json には自ランクに応じた
+   * 各相手ランク（R1〜R8、PRIDE_A〜G）の対戦確率（tierProbability）が
+   * 直接記録されているため、倍率が膨れ上がる旧Pooling処理を廃止し、
+   * モデル記載の対戦比率（tierProbability）をそのまま素直に使用する。
+   */
+  const pooledTierProbability = tierProbability;
 
   /*
    * 【2026-09 候補人数補正調整】
