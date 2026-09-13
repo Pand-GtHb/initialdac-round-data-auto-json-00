@@ -1,0 +1,131 @@
+{
+    "meta":  {
+                 "version":  "historical_matchup_distribution.json",
+                 "generatedAt":  "2026-09-13T13:51:29.838Z",
+                 "generatorNote":  "自分ランク(ルビーR1-R8)×相手ランク(ルビーR1-R8 / PRIDE帯A-G)の対戦回数の実績集計。重み付け等の加工は一切行わない生データ。サファイアは稀少のため除外。",
+                 "sourceCsv":  "モデル用データ-Season6.csv",
+                 "sourceRows":  2441,
+                 "includedRows":  2430,
+                 "totalMatches":  2430,
+                 "trainingStart":  "2026/4/9",
+                 "trainingEnd":  "2026/9/13",
+                 "roundsIncluded":  [
+                                        "シーズン6Rオープン",
+                                        "シーズン6R2nd",
+                                        "シーズン6R3rd",
+                                        "シーズン6R4th",
+                                        "シーズン6R5th",
+                                        "シーズン6R6th",
+                                        "シーズン6R7th"
+                                    ],
+                 "prideBands":  {
+                                    "A":  {
+                                              "min":  1,
+                                              "max":  99,
+                                              "label":  "PRIDE A=～99"
+                                          },
+                                    "B":  {
+                                              "min":  100,
+                                              "max":  499,
+                                              "label":  "PRIDE B=  100～"
+                                          },
+                                    "C":  {
+                                              "min":  500,
+                                              "max":  999,
+                                              "label":  "PRIDE C=  500～"
+                                          },
+                                    "D":  {
+                                              "min":  1000,
+                                              "max":  4999,
+                                              "label":  "PRIDE D= 1000～"
+                                          },
+                                    "E":  {
+                                              "min":  5000,
+                                              "max":  9999,
+                                              "label":  "PRIDE E= 5000～"
+                                          },
+                                    "F":  {
+                                              "min":  10000,
+                                              "max":  49999,
+                                              "label":  "PRIDE F=10000～"
+                                          },
+                                    "G":  {
+                                              "min":  50000,
+                                              "max":  null,
+                                              "label":  "PRIDE G=50000～"
+                                          }
+                                },
+                 "excludedRows":  {
+                                      "unsupportedOwnRank":  0,
+                                      "opponentSapphire":  11,
+                                      "unsupportedOpponentRank":  0
+                                  }
+             },
+    "viewerTiers":  {
+                        "R5":  {
+                                   "total":  47,
+                                   "opponents":  {
+                                                     "R1_ALL":  1,
+                                                     "R3_ALL":  7,
+                                                     "R4_ALL":  5,
+                                                     "R5_ALL":  5,
+                                                     "R6_ALL":  10,
+                                                     "R7_ALL":  18,
+                                                     "R8_ALL":  1
+                                                 }
+                               },
+                        "R6":  {
+                                   "total":  1165,
+                                   "opponents":  {
+                                                     "R1_ALL":  60,
+                                                     "R2_ALL":  64,
+                                                     "R3_ALL":  107,
+                                                     "R4_ALL":  154,
+                                                     "R5_ALL":  164,
+                                                     "R6_ALL":  291,
+                                                     "R7_ALL":  275,
+                                                     "R8_ALL":  13,
+                                                     "PRIDE_A_ALL":  3,
+                                                     "PRIDE_B_ALL":  6,
+                                                     "PRIDE_C_ALL":  3,
+                                                     "PRIDE_D_ALL":  10,
+                                                     "PRIDE_E_ALL":  6,
+                                                     "PRIDE_F_ALL":  8,
+                                                     "PRIDE_G_ALL":  1
+                                                 }
+                               },
+                        "R7":  {
+                                   "total":  1196,
+                                   "opponents":  {
+                                                     "R1_ALL":  23,
+                                                     "R2_ALL":  43,
+                                                     "R3_ALL":  69,
+                                                     "R4_ALL":  67,
+                                                     "R5_ALL":  99,
+                                                     "R6_ALL":  197,
+                                                     "R7_ALL":  194,
+                                                     "R8_ALL":  115,
+                                                     "PRIDE_A_ALL":  47,
+                                                     "PRIDE_B_ALL":  48,
+                                                     "PRIDE_C_ALL":  24,
+                                                     "PRIDE_D_ALL":  128,
+                                                     "PRIDE_E_ALL":  45,
+                                                     "PRIDE_F_ALL":  97
+                                                 }
+                               },
+                        "R8":  {
+                                   "total":  22,
+                                   "opponents":  {
+                                                     "R4_ALL":  2,
+                                                     "R5_ALL":  1,
+                                                     "R6_ALL":  1,
+                                                     "R7_ALL":  3,
+                                                     "R8_ALL":  2,
+                                                     "PRIDE_A_ALL":  2,
+                                                     "PRIDE_D_ALL":  6,
+                                                     "PRIDE_F_ALL":  4,
+                                                     "PRIDE_G_ALL":  1
+                                                 }
+                               }
+                    }
+}
