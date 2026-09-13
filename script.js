@@ -4907,19 +4907,27 @@ function getDistributionCellScore(
         )
       : 0.0001;
 
+  const isPrideTier =
+    oppKey.startsWith("PRIDE_");
+
   const tierProbability =
     matched
       ? hitProb
       : backoffScore;
 
   /*
-   * 【2026-09 修正】実績対戦分布の直接利用
-   * historical_matchup_distribution.json には自ランクに応じた
-   * 各相手ランク（R1〜R8、PRIDE_A〜G）の対戦確率（tierProbability）が
-   * 直接記録されているため、倍率が膨れ上がる旧Pooling処理を廃止し、
-   * モデル記載の対戦比率（tierProbability）をそのまま素直に使用する。
+   * 【2026-09 修正】PRIDE一括確率プールの適用
+   * PRIDEはモデル上でPRIDE_A〜Gなどの各バンドに細分化されているが、
+   * Viewer候補の集計人数（tierCandidateCount）はPRIDE全体（__PRIDE__）で
+   * ひとまとめにカウントされる。
+   * そのため、バンド個別の小さな確率ではなく、モデル内のPRIDE全対戦確率の合計
+   * （prideProbabilityTotal：例 ★7で34.8%、★8で64.3%）をPRIDE全体の確率として
+   * ひとまとめに適用することで、実績分布に完全に沿ったスコア付けを行う。
    */
-  const pooledTierProbability = tierProbability;
+  const pooledTierProbability =
+    isPrideTier && Number(distribution.prideProbabilityTotal ?? 0) > 0
+      ? distribution.prideProbabilityTotal
+      : tierProbability;
 
   /*
    * 【2026-09 候補人数補正調整】
