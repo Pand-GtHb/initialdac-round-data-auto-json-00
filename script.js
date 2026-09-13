@@ -4761,10 +4761,7 @@ function getHistoricalTierCandidateCount(
 ) {
 
   const countKey =
-    String(opponentTier ?? "")
-      .startsWith("PRIDE_")
-        ? HISTORICAL_PRIDE_POOL_KEY
-        : opponentTier;
+    String(opponentTier ?? "");
 
   const count =
     Number(
@@ -4916,18 +4913,15 @@ function getDistributionCellScore(
       : backoffScore;
 
   /*
-   * 【2026-09 修正】PRIDE一括確率プールの適用
-   * PRIDEはモデル上でPRIDE_A〜Gなどの各バンドに細分化されているが、
-   * Viewer候補の集計人数（tierCandidateCount）はPRIDE全体（__PRIDE__）で
-   * ひとまとめにカウントされる。
-   * そのため、バンド個別の小さな確率ではなく、モデル内のPRIDE全対戦確率の合計
-   * （prideProbabilityTotal：例 ★7で34.8%、★8で64.3%）をPRIDE全体の確率として
-   * ひとまとめに適用することで、実績分布に完全に沿ったスコア付けを行う。
+   * 【2026-09 修正】バンド別モデル確率と個別人数補正の適用
+   * historical_matchup_distribution.json には自ランクに応じた
+   * 各相手ランク（R1〜R8、PRIDE_A〜G）の対戦確率（hitProb / tierProbability）が
+   * バンド別に正確に記録されている。
+   * 各バンドの対戦確率を、該当バンドの候補人数（tierCandidateCount）に
+   * 応じた補正（count^-alpha）で減衰させてスコアを算出することで、
+   * PRIDE全体が独占することなく、実績確率通りの自然な構成で各ランク・PRIDEが選出される。
    */
-  const pooledTierProbability =
-    isPrideTier && Number(distribution.prideProbabilityTotal ?? 0) > 0
-      ? distribution.prideProbabilityTotal
-      : tierProbability;
+  const pooledTierProbability = tierProbability;
 
   /*
    * 【2026-09 候補人数補正調整】
