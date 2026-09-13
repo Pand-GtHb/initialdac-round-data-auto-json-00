@@ -7570,7 +7570,7 @@ function ensureAreaSummaryStyles() {
     .area-summary-bar {
       display: flex;
       align-items: stretch;
-      height: 22px;
+      height: 26px;
       min-width: 40px;
       overflow: hidden;
       margin: 0;
@@ -7582,11 +7582,13 @@ function ensureAreaSummaryStyles() {
       justify-content: center;
       height: 100%;
       min-width: 0;
+      overflow: hidden;
       color: rgba(255,255,255,0.96);
       text-shadow: 0 1px 1px rgba(15,23,42,0.22);
-      font-size: 11px;
+      font-size: 13px;
       font-weight: 700;
       line-height: 1;
+      white-space: nowrap;
     }
 
     .area-segment.pride {
@@ -7808,7 +7810,7 @@ function renderAreaSummary() {
               class="area-segment${String(rank.key).startsWith("P_") ? " pride" : ""}"
               title="${rank.label}: ${count}人"
               style="width:${pctOfScale}%; ${getRankFillStyle(rank.key)}"
-            >${pctOfRow > 18 ? `<b>${getRankShortLabel(rank.key)}=${count}</b>` : ""}</div>
+            >${pctOfRow > 22 ? `<b>${getRankShortLabel(rank.key)}=${count}</b>` : ""}</div>
           `);
         });
 
