@@ -4843,7 +4843,7 @@ function getHistoricalPrideWeightedAverageProbability(
     return 0;
   }
 
-  const weightedProbability =
+  let weightedProbability =
     (distribution.probList || []).reduce(
       (sum, item) => {
 
@@ -4865,6 +4865,13 @@ function getHistoricalPrideWeightedAverageProbability(
       },
       0
     );
+
+  if (
+    weightedProbability <= 0 &&
+    Number(distribution.prideProbabilityTotal ?? 0) > 0
+  ) {
+    return distribution.prideProbabilityTotal / prideCandidateCount;
+  }
 
   return weightedProbability > 0
     ? weightedProbability /
@@ -5849,15 +5856,19 @@ function buildMatchingCandidates() {
       return;
     }
 
-    const countKey =
+    if (
       String(opponentTier)
         .startsWith("PRIDE_")
-          ? HISTORICAL_PRIDE_POOL_KEY
-          : opponentTier;
+    ) {
+      tierCounts[HISTORICAL_PRIDE_POOL_KEY] =
+        Number(
+          tierCounts[HISTORICAL_PRIDE_POOL_KEY] ?? 0
+        ) + 1;
+    }
 
-    tierCounts[countKey] =
+    tierCounts[opponentTier] =
       Number(
-        tierCounts[countKey] ?? 0
+        tierCounts[opponentTier] ?? 0
       ) + 1;
   });
 
