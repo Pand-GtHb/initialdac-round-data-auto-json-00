@@ -7582,13 +7582,24 @@ function ensureAreaSummaryStyles() {
       justify-content: center;
       height: 100%;
       min-width: 0;
-      overflow: hidden;
+      position: relative;
+      overflow: visible;
       color: rgba(255,255,255,0.96);
       text-shadow: 0 1px 1px rgba(15,23,42,0.22);
       font-size: 13px;
       font-weight: 700;
       line-height: 1;
       white-space: nowrap;
+    }
+
+    .area-segment:hover {
+      z-index: 5;
+    }
+
+    .area-segment-label {
+      position: relative;
+      z-index: 1;
+      pointer-events: none;
     }
 
     .area-segment.pride {
@@ -7802,7 +7813,6 @@ function renderAreaSummary() {
 
           // 全エリア共通のスケール（maxAreaTotal基準）で幅を算出することで、
           // 「1人」の幅がエリアごとにばらつかないようにする。
-          const pctOfRow = row.total ? (count / row.total) * 100 : 0;
           const pctOfScale = (count / maxAreaTotal) * 100;
 
           segments.push(`
@@ -7810,7 +7820,7 @@ function renderAreaSummary() {
               class="area-segment${String(rank.key).startsWith("P_") ? " pride" : ""}"
               title="${rank.label}: ${count}人"
               style="width:${pctOfScale}%; ${getRankFillStyle(rank.key)}"
-            >${pctOfRow > 22 ? `<b>${getRankShortLabel(rank.key)}=${count}</b>` : ""}</div>
+            ><span class="area-segment-label"><b>${getRankShortLabel(rank.key)}=${count}</b></span></div>
           `);
         });
 
