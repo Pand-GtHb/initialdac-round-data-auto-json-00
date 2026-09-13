@@ -7733,7 +7733,9 @@ function getRankFillStyle(rankKey) {
   if (String(rankKey).startsWith("P_")) {
     const idx = PRIDE_ORDER.indexOf(rankKey);
     const angle = idx % 2 === 0 ? 45 : -45;
-    return `background: repeating-linear-gradient(${angle}deg, ${base} 0px, ${base} 5px, rgba(255,255,255,0.6) 5px, rgba(255,255,255,0.6) 10px);`;
+    // 線（縞）自体を細くすることで、地の色（ランク識別）と
+    // 中央の文字表記の両方が判別しやすくなるようにする。
+    return `background: repeating-linear-gradient(${angle}deg, ${base} 0px, ${base} 8px, rgba(255,255,255,0.6) 8px, rgba(255,255,255,0.6) 10px);`;
   }
 
   return `background: ${base};`;
