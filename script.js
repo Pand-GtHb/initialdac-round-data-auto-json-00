@@ -258,7 +258,7 @@ const State = {
   myRankKey: "R7",
   recentClicks: [],
   recentClickSet: null,
-  jointModel: null,
+  historicalMatchupDistribution: null,
   playerActivity: {},
   rankActivity: {},
   viewerLastCopiedAt: null,
@@ -1089,9 +1089,9 @@ function buildPlayerIdentityKey(player) {
 }
 
 /* =========================================================
- [3100] Joint Model Normalizer:normalizeJointModel（旧 [6800]）
+ [3100] Historical Matchup Normalizer:normalizeHistoricalMatchupDistribution（旧 [6800]）
 ========================================================= */
-function normalizeJointModel(json) {
+function normalizeHistoricalMatchupDistribution(json) {
 
   const viewerTiers =
     json?.viewerTiers;
@@ -1293,19 +1293,19 @@ function applyLatestUpdateJson(
 }
 
 /* =========================================================
- [3230] Data Applier:applyJointModelJson【State】（旧 [3420]）
+ [3230] Data Applier:applyHistoricalMatchupDistributionJson【State】（旧 [3420]）
 ========================================================= */
-function applyJointModelJson(
+function applyHistoricalMatchupDistributionJson(
   json
 ) {
 
-  State.jointModel =
-    normalizeJointModel(
+  State.historicalMatchupDistribution =
+    normalizeHistoricalMatchupDistribution(
       json
     );
 
   log(
-    "joint_model.json 読み込み完了"
+    "historical_matchup_distribution.json 読み込み完了"
   );
 }
 
@@ -2141,12 +2141,12 @@ async function fetchLatestUpdateJson() {
 }
 
 /* =========================================================
- [5130] Endpoint Fetcher:fetchJointModelJson（旧 [3410]）
+ [5130] Endpoint Fetcher:fetchHistoricalMatchupDistributionJson（旧 [3410]）
 ========================================================= */
-async function fetchJointModelJson() {
+async function fetchHistoricalMatchupDistributionJson() {
 
   return fetchJSON(
-    "joint_model.json"
+    "historical_matchup_distribution.json"
   );
 }
 
@@ -2246,29 +2246,29 @@ async function loadLatestUpdate() {
 }
 
 /* =========================================================
- [5230] Data Loader:loadJointModel【State】（旧 [3400]）
+ [5230] Data Loader:loadHistoricalMatchupDistribution【State】（旧 [3400]）
 ========================================================= */
-async function loadJointModel() {
+async function loadHistoricalMatchupDistribution() {
 
   log(
-    "joint_model.json 取得準備中"
+    "historical_matchup_distribution.json 取得準備中"
   );
 
   try {
 
     const json =
-      await fetchJointModelJson();
+      await fetchHistoricalMatchupDistributionJson();
 
-    applyJointModelJson(
+    applyHistoricalMatchupDistributionJson(
       json
     );
 
   } catch (e) {
 
-    State.jointModel = null;
+    State.historicalMatchupDistribution = null;
 
     logWarn(
-      "joint_model.json 未取得：" +
+      "historical_matchup_distribution.json 未取得：" +
       e.message
     );
   }
@@ -4357,12 +4357,19 @@ function showPlayerPhaseDetailDialog(
  closeButton.style.cssText =
    "display:block;margin:16px 0 0 auto;padding:8px 14px;border:1px solid #999;border-radius:5px;background:#f5f5f5;font-size:16px;cursor:pointer;";
 
- detail.textContent =
-   buildPlayerPhaseSummaryText(
-     player
-   );
+ const updateDetail = () => {
+   detail.textContent =
+     buildPlayerPhaseSummaryText(
+       player,
+       Date.now()
+     );
+ };
+
+ updateDetail();
+ const timerId = setInterval(updateDetail, 1000);
 
  const close = () => {
+   clearInterval(timerId);
    overlay.remove();
  };
 
@@ -4732,6 +4739,7 @@ function getPlayerCycleCount(player, nowMs = Date.now()) {
 ========================================================= */
 const HISTORICAL_RELIABILITY_K = 100;
 const HISTORICAL_PRIDE_POOL_KEY = "__PRIDE__";
+const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
 
 function getHistoricalMinOwnSamplesForNoBackoff() {
 
@@ -4774,7 +4782,7 @@ function getHistoricalDistribution(
 ) {
 
   const entry =
-    State.jointModel?.byViewerTier?.[
+    State.historicalMatchupDistribution?.byViewerTier?.[
       viewerTier
     ];
 
@@ -4919,13 +4927,37 @@ function getDistributionCellScore(
         )
       : tierProbability;
 
+  /*
+   * 【2026-09 候補人数補正調整】
+   * 従来: pooledTierProbability / tierCandidateCount (alpha = 1.0相当)
+   * 変更: 候補人数(count)による減衰を過度に強くしすぎないよう
+   *       count^-alpha (alpha = 0.25〜0.5, デフォルト0.35) へ緩和。
+   */
+  const candidateCountAlpha =
+    clamp(
+      Number(
+        State.scoringConfig?.historical?.candidateCountAlpha ??
+        HISTORICAL_CANDIDATE_COUNT_ALPHA ??
+        0.35
+      ),
+      0.0,
+      1.0
+    );
+
+  const countFactor =
+    Math.pow(
+      Math.max(1, tierCandidateCount),
+      candidateCountAlpha
+    );
+
   return {
     score:
       pooledTierProbability /
-      tierCandidateCount,
+      countFactor,
     tierProbability,
     pooledTierProbability,
     tierCandidateCount,
+    candidateCountAlpha,
     matched
   };
 }
@@ -4943,7 +4975,7 @@ function getAdjacentTierDistribution(
 
   const availableRanks =
     Object.keys(
-      State.jointModel?.byViewerTier ?? {}
+      State.historicalMatchupDistribution?.byViewerTier ?? {}
     )
       .filter(
         tier => /^R[1-8]$/.test(tier)
@@ -5009,7 +5041,7 @@ function getAdjacentTierDistribution(
  [8010] Historical Score:getHistoricalScoreDetail【State】（旧 [6810] 内）
 ========================================================= */
 function buildViewerHistoricalContext(viewerRankKey) {
-  if (!viewerRankKey || !State.jointModel) {
+  if (!viewerRankKey || !State.historicalMatchupDistribution) {
     return null;
   }
 
@@ -5032,7 +5064,7 @@ function buildViewerHistoricalContext(viewerRankKey) {
       : getAdjacentTierDistribution(viewerTier);
 
   const supportSize =
-    Number(State.jointModel.historicalSupportSize ?? 0);
+    Number(State.historicalMatchupDistribution.historicalSupportSize ?? 0);
 
   return {
     viewerTier,
@@ -5054,7 +5086,7 @@ function getHistoricalScoreDetail(
 
   if (
     !viewerRankKey ||
-    !State.jointModel
+    !State.historicalMatchupDistribution
   ) {
     return {
       score: 1.0,
@@ -5678,84 +5710,35 @@ function buildHistoricalGroupSlotPlan(
  return plan;
 }
 
+/*
+ * 【2026-09 改善】通常候補選出（二重分布適用の解消）
+ *
+ * 従来は historicalScore で分布を用いた後に、slotPlan（グループ枠配分）でも
+ * 再度同じ分布を適用していたため、総合スコア順上位のプレイヤーが
+ * グループ枠超過によって候補から漏れる現象が発生していた。
+ *
+ * 改善後：
+ * 経験的条件付きランク分布はスコア算出（historicalScore）にのみ使用し、
+ * 通常候補9人は総合スコア（rankedByScore）順に直接上位9人を選出する。
+ */
+function selectNormalCandidatesByScore(
+ rankedByScore,
+ slotCount = 9
+) {
+ if (!Array.isArray(rankedByScore)) {
+   return [];
+ }
+ return rankedByScore.slice(0, slotCount);
+}
+
 function selectNormalCandidatesByHistoricalGroups(
  rankedByScore,
  slotCount
 ) {
-
- const groupedCandidates = {};
-
- rankedByScore.forEach(player => {
-
-   const groupKey =
-     getCandidateSelectionGroupKey(
-       player
-     );
-
-   if (!groupKey) {
-     return;
-   }
-
-   if (!groupedCandidates[groupKey]) {
-     groupedCandidates[groupKey] = [];
-   }
-
-   groupedCandidates[groupKey].push(player);
- });
-
- const slotPlan =
-   buildHistoricalGroupSlotPlan(
-     groupedCandidates,
-     slotCount
-   );
-
- if (!slotPlan) {
-   return rankedByScore.slice(
-     0,
-     slotCount
-   );
- }
-
- const selectedSet =
-   new Set();
-
- /*
-  * Historical group配分だけで選ぶと、全体スコア上位の相手が
-  * グループ枠の都合で候補外になる。上位スコアは一定数保証し、
-  * 残りを従来どおりhistorical groupの分布で埋める。
-  */
- rankedByScore
-   .slice(
-     0,
-     Math.min(4, slotCount)
-   )
-   .forEach(player => {
-     selectedSet.add(player);
-   });
-
- slotPlan.forEach(group => {
-
-   group.players
-     .slice(0, group.slots)
-     .forEach(player => {
-       selectedSet.add(player);
-     });
- });
-
- for (const player of rankedByScore) {
-
-   if (
-     selectedSet.size >= slotCount
-   ) {
-     break;
-   }
-
-   selectedSet.add(player);
- }
-
- return rankedByScore
-   .filter(player => selectedSet.has(player))
-   .slice(0, slotCount);
+ return selectNormalCandidatesByScore(
+   rankedByScore,
+   slotCount
+ );
 }
 
 /* =========================================================
@@ -5933,7 +5916,7 @@ function buildMatchingCandidates() {
   const BACKOFF_RESCUE_SLOT_COUNT = 1;
 
   const normalSelected =
-    selectNormalCandidatesByHistoricalGroups(
+    selectNormalCandidatesByScore(
       rankedByScore,
       NORMAL_SLOT_COUNT
     );
@@ -7100,9 +7083,6 @@ function buildPlayerRowHTML(
       ? " phase-rescue"
       : "";
 
-  const phaseSummary =
-    buildPlayerPhaseSummaryText(p);
-
   return `
     <tr
       class="${rowStateClass}${phaseRescueClass}"
@@ -7171,15 +7151,6 @@ function buildPlayerRowHTML(
           "
           title="タップしてPhaseを表示"
         >${p.updateDate}</button>
-        <div
-          style="
-            margin-top:3px;
-            font-size:11px;
-            line-height:1.35;
-            color:#555;
-            white-space:nowrap;
-          "
-        >${phaseSummary}</div>
       </td>
 
       <td class="center">
@@ -11153,14 +11124,14 @@ async function init() {
       areaJson,
       latestRoundJson,
       latestUpdateJson,
-      jointModelJson,
+      historicalMatchupDistributionJson,
       scoringConfigJson,
       roundDataJson
     ] = await Promise.all([
       fetchAreaListJson(),
       fetchLatestRoundJson(),
       fetchLatestUpdateJson(),
-      fetchJointModelJson(),
+      fetchHistoricalMatchupDistributionJson(),
       fetchScoringConfigJson(),
       fetchRoundDataJson()
     ]);
@@ -11175,8 +11146,8 @@ async function init() {
       latestUpdateJson
     );
 
-    applyJointModelJson(
-      jointModelJson
+    applyHistoricalMatchupDistributionJson(
+      historicalMatchupDistributionJson
     );
 
     applyScoringConfigJson(
@@ -11209,7 +11180,7 @@ async function init() {
 
     await loadLatestUpdate();
 
-    await loadJointModel();
+    await loadHistoricalMatchupDistribution();
 
     await loadScoringConfig();
 
