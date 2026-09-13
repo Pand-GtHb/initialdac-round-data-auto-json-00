@@ -4738,7 +4738,6 @@ function getPlayerCycleCount(player, nowMs = Date.now()) {
  [8005] Historical Score:Adjacent Tier Pooling【State】
 ========================================================= */
 const HISTORICAL_RELIABILITY_K = 100;
-const HISTORICAL_PRIDE_POOL_KEY = "__PRIDE__";
 const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
 
 function getHistoricalMinOwnSamplesForNoBackoff() {
@@ -4823,57 +4822,6 @@ function getHistoricalDistribution(
   }
 
   return entry;
-}
-
-function getHistoricalPrideWeightedAverageProbability(
-  distribution,
-  tierCounts
-) {
-
-  const prideCandidateCount =
-    getHistoricalTierCandidateCount(
-      tierCounts,
-      "PRIDE_A"
-    );
-
-  if (prideCandidateCount <= 0) {
-    return 0;
-  }
-
-  let weightedProbability =
-    (distribution.probList || []).reduce(
-      (sum, item) => {
-
-        const opponentTier =
-          String(item.opponentTier ?? "");
-
-        if (!opponentTier.startsWith("PRIDE_")) {
-          return sum;
-        }
-
-        const bandCount =
-          Number(
-            tierCounts?.[opponentTier] ?? 0
-          );
-
-        return sum +
-          Math.max(0, bandCount) *
-          Number(item.prob ?? 0);
-      },
-      0
-    );
-
-  if (
-    weightedProbability <= 0 &&
-    Number(distribution.prideProbabilityTotal ?? 0) > 0
-  ) {
-    return distribution.prideProbabilityTotal / prideCandidateCount;
-  }
-
-  return weightedProbability > 0
-    ? weightedProbability /
-      prideCandidateCount
-    : 0;
 }
 
 function getDistributionCellScore(
@@ -5559,153 +5507,6 @@ function getCandidateSelectionScore(player) {
  );
 }
 
-function getCandidateSelectionGroupKey(player) {
-
- const opponentTier =
-   mapRankKeyToTierKey(
-     player?.__detail?.opponentTier ??
-     player?.__rankKey
-   );
-
- if (!opponentTier) {
-   return null;
- }
-
- return String(opponentTier)
-   .startsWith("PRIDE_")
-     ? HISTORICAL_PRIDE_POOL_KEY
-     : opponentTier;
-}
-
-function getHistoricalSelectionGroupProbability(
- groupKey
-) {
-
- const viewerTier =
-   mapRankKeyToTierKey(
-     State.myRankKey
-   );
-
- const distribution =
-   getHistoricalDistribution(
-     viewerTier
-   );
-
- if (
-   groupKey ===
-   HISTORICAL_PRIDE_POOL_KEY
- ) {
-   return Number(
-     distribution.prideProbabilityTotal ?? 0
-   );
- }
-
- return distribution.probList.reduce(
-   (sum, item) =>
-     item.opponentTier === groupKey
-       ? sum + Number(item.prob ?? 0)
-       : sum,
-   0
- );
-}
-
-function buildHistoricalGroupSlotPlan(
- groupedCandidates,
- slotCount
-) {
-
- const groups =
-   Object.entries(groupedCandidates)
-     .filter(
-       ([, players]) =>
-         players.length > 0
-     )
-     .map(([groupKey, players]) => ({
-       groupKey,
-       players,
-       probability:
-         getHistoricalSelectionGroupProbability(
-           groupKey
-         )
-     }));
-
- const probabilityTotal =
-   groups.reduce(
-     (sum, group) =>
-       sum + Math.max(
-         0,
-         Number(group.probability ?? 0)
-       ),
-     0
-   );
-
- if (
-   probabilityTotal <= 0 ||
-   slotCount <= 0
- ) {
-   return null;
- }
-
- const plan =
-   groups.map(group => {
-
-     const exact =
-       slotCount *
-       Math.max(
-         0,
-         Number(group.probability ?? 0)
-       ) /
-       probabilityTotal;
-
-     const slots =
-       Math.min(
-         group.players.length,
-         Math.floor(exact)
-       );
-
-     return {
-       ...group,
-       exact,
-       slots,
-       remainder:
-         exact - Math.floor(exact)
-     };
-   });
-
- let assigned =
-   plan.reduce(
-     (sum, group) =>
-       sum + group.slots,
-     0
-   );
-
- while (assigned < slotCount) {
-
-   const next =
-     plan
-       .filter(
-         group =>
-           group.slots <
-           group.players.length
-       )
-       .sort(
-         (a, b) =>
-           b.remainder - a.remainder ||
-           b.probability - a.probability
-       )[0];
-
-   if (!next) {
-     break;
-   }
-
-   next.slots++;
-   next.remainder = 0;
-   assigned++;
- }
-
- return plan;
-}
-
 /*
  * 【2026-09 改善】通常候補選出（二重分布適用の解消）
  *
@@ -5725,16 +5526,6 @@ function selectNormalCandidatesByScore(
    return [];
  }
  return rankedByScore.slice(0, slotCount);
-}
-
-function selectNormalCandidatesByHistoricalGroups(
- rankedByScore,
- slotCount
-) {
- return selectNormalCandidatesByScore(
-   rankedByScore,
-   slotCount
- );
 }
 
 /* =========================================================
