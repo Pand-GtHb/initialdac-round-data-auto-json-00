@@ -5636,16 +5636,6 @@ function buildMatchingCandidates() {
       return;
     }
 
-    if (
-      String(opponentTier)
-        .startsWith("PRIDE_")
-    ) {
-      tierCounts[HISTORICAL_PRIDE_POOL_KEY] =
-        Number(
-          tierCounts[HISTORICAL_PRIDE_POOL_KEY] ?? 0
-        ) + 1;
-    }
-
     tierCounts[opponentTier] =
       Number(
         tierCounts[opponentTier] ?? 0
