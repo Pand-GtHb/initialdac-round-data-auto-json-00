@@ -115,6 +115,13 @@ const ALL_CANDIDATES_COLUMNS = [
   "playerBoost",
   "rankBoost",
   "realtimeBoost",
+  "slotScore",
+  "slotBucket",
+  "prideBandPriorWeight",
+  "areaBucketCount",
+  "areaTotalCount",
+  "areaDensity",
+  "areaBoost",
   "phaseError",
   "signedPhaseError",
   "peakDirection",
@@ -132,6 +139,10 @@ const ALL_CANDIDATES_COLUMNS = [
 const LOG_TOP_CANDIDATE_LIMIT = 60;
 const MAX_YELLOW_PHASE_WEIGHT = 0.55;
 const PINK_MISMATCH_BOOST_FACTOR = 0.5;
+const DEFAULT_PHASE_ERROR_SCALE_SEC = 90;
+const DEFAULT_AREA_BOOST_WEIGHT = 0.25;
+const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
+const DEFAULT_PRIDE_BAND_PRIOR_EXPONENT = 0.5;
 
 const MAX_LOG_LINES = 100;
 
@@ -256,6 +267,7 @@ const State = {
   matchingRankedAll: [],
   matchingScoredAll: [],
   matchingTierCounts: {},
+  matchingSlotPlan: [],
   myStar: 7,
   myRankKey: "R7",
   recentClicks: [],
@@ -747,7 +759,8 @@ function computeSampleTrust(
 function computePhaseMetrics(
   diffSec,
   cycleSec,
-  lambda
+  lambda,
+  phaseErrorScaleSec = DEFAULT_PHASE_ERROR_SCALE_SEC
 ) {
 
   const safeCycleSec =
@@ -760,6 +773,12 @@ function computePhaseMetrics(
     Number.isFinite(Number(lambda))
       ? Number(lambda)
       : 0.03;
+
+  const safePhaseErrorScaleSec =
+    Number.isFinite(Number(phaseErrorScaleSec)) &&
+    Number(phaseErrorScaleSec) > 0
+      ? Number(phaseErrorScaleSec)
+      : DEFAULT_PHASE_ERROR_SCALE_SEC;
 
   if (
     !isFinite(safeCycleSec) ||
@@ -786,15 +805,12 @@ function computePhaseMetrics(
     );
 
   const phaseScore =
-    Math.max(
-      0,
-      Math.min(
-        1,
-        1 -
-        (
-          phaseError /
-          (safeCycleSec / 2)
-        )
+    Math.exp(
+      -0.5 *
+      Math.pow(
+        phaseError /
+        safePhaseErrorScaleSec,
+        2
       )
     );
 
@@ -893,7 +909,8 @@ function getPhaseWindowHalfWidthSec(
   cycleSec,
   cycleCount,
   threshold,
-  lambda
+  lambda,
+  phaseErrorScaleSec = DEFAULT_PHASE_ERROR_SCALE_SEC
 ) {
   const decay =
     Math.exp(
@@ -913,11 +930,53 @@ function getPhaseWindowHalfWidthSec(
     return 0;
   }
 
+  if (requiredPhaseScore <= 0) {
+    return Math.max(
+      0,
+      Number(cycleSec) / 2
+    );
+  }
+
+  const safePhaseErrorScaleSec =
+    Number.isFinite(Number(phaseErrorScaleSec)) &&
+    Number(phaseErrorScaleSec) > 0
+      ? Number(phaseErrorScaleSec)
+      : DEFAULT_PHASE_ERROR_SCALE_SEC;
+
   return Math.max(
     0,
-    (1 - requiredPhaseScore) *
-    (cycleSec / 2)
+    Math.min(
+      cycleSec / 2,
+      safePhaseErrorScaleSec *
+      Math.sqrt(
+        -2 *
+        Math.log(requiredPhaseScore)
+      )
+    )
   );
+}
+
+function getPhaseErrorScaleSec(
+  mode = "yellow"
+) {
+  const config =
+    State.scoringConfig?.phaseError ?? {};
+
+  const value =
+    Number(
+      config[
+        mode === "pink"
+          ? "pinkScaleSec"
+          : "yellowScaleSec"
+      ] ??
+      config.scaleSec ??
+      DEFAULT_PHASE_ERROR_SCALE_SEC
+    );
+
+  return Number.isFinite(value) &&
+    value > 0
+      ? value
+      : DEFAULT_PHASE_ERROR_SCALE_SEC;
 }
 
 /* =========================================================
@@ -3274,10 +3333,9 @@ function getRankBoost(rankKey) {
 }
 
 /*
- * 【2026-09 削除】getAreaBoost は廃止した。
- * Pink管理対象の母数が少なく areaActivity が playerActivity の
- * 劣化コピーになり、realtimeBoost が二乗効果で歪む問題があったため。
- * State.areaActivity の記録・永続化処理もあわせて削除した。
+ * コピー履歴から作る旧Realtime Area Boostは廃止済み。
+ * 現在のアクティブ人数から作るArea Boostは、Matching Calculation層で
+ * 通常枠内スコアにだけ適用する。
  */
 
 /* =========================================================
@@ -4164,7 +4222,8 @@ function computePhaseSignal(player, mode = "pink", nowMs = Date.now()) {
    computePhaseMetrics(
      diffSec,
      cycleSec,
-     lambda
+     lambda,
+     getPhaseErrorScaleSec(mode)
    );
 
  const threshold =
@@ -4264,7 +4323,8 @@ function getPlayerPhaseDetail(
    computePhaseMetrics(
      diffSec,
      cycleSec,
-     lambda
+     lambda,
+     getPhaseErrorScaleSec(mode)
    );
 
  /*
@@ -4441,7 +4501,8 @@ function getYellowPhaseScore(player, nowMs = Date.now()) {
   return computePhaseMetrics(
     diffSec,
     cycleSec,
-    lambda
+    lambda,
+    getPhaseErrorScaleSec("yellow")
   ).finalPhaseScore;
 }
 
@@ -4601,7 +4662,8 @@ function computePhaseContext(player, nowMs = Date.now()) {
        ? computePhaseMetrics(
            diffSec,
            cycleSec,
-           lambda
+           lambda,
+           getPhaseErrorScaleSec("yellow")
          )
        : null;
   }
@@ -5224,6 +5286,727 @@ function getHistoricalScoreDetail(
   };
 }
 
+function getMatchingSlotBucketKey(
+  rankKey
+) {
+  const key =
+    String(rankKey ?? "");
+
+  if (/^R[1-8]$/.test(key)) {
+    return key;
+  }
+
+  if (key.startsWith("P_")) {
+    return "PRIDE";
+  }
+
+  return null;
+}
+
+function buildAreaDensityContext(
+  players
+) {
+  const overallByArea = {};
+  const bucketByArea = {};
+  const bucketTotals = {};
+  let overallTotal = 0;
+
+  for (const player of players ?? []) {
+    const rankKey =
+      getPlayerRankKey(player);
+
+    const bucket =
+      getMatchingSlotBucketKey(
+        rankKey
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    const area =
+      String(player.area ?? "");
+
+    overallByArea[area] =
+      Number(
+        overallByArea[area] ?? 0
+      ) + 1;
+
+    if (!bucketByArea[bucket]) {
+      bucketByArea[bucket] = {};
+    }
+    bucketByArea[bucket][area] =
+      Number(
+        bucketByArea[bucket][area] ?? 0
+      ) + 1;
+
+    bucketTotals[bucket] =
+      Number(
+        bucketTotals[bucket] ?? 0
+      ) + 1;
+
+    overallTotal++;
+  }
+
+  const maxOverallAreaCount =
+    Math.max(
+      1,
+      ...Object.values(
+        overallByArea
+      ).map(Number)
+    );
+
+  const maxBucketAreaCounts = {};
+
+  for (
+    const bucket of
+    Object.keys(bucketByArea)
+  ) {
+    maxBucketAreaCounts[bucket] =
+      Math.max(
+        1,
+        ...Object.values(
+          bucketByArea[bucket]
+        ).map(Number)
+      );
+  }
+
+  return {
+    overallByArea,
+    bucketByArea,
+    bucketTotals,
+    overallTotal,
+    maxOverallAreaCount,
+    maxBucketAreaCounts
+  };
+}
+
+function getAreaBoostDetail(
+  player,
+  context
+) {
+  const config =
+    State.scoringConfig
+      ?.candidateSelection
+      ?.areaBoost ?? {};
+
+  const enabled =
+    config.enabled !== false;
+
+  const configuredWeight =
+    Number(
+      config.weight ??
+      DEFAULT_AREA_BOOST_WEIGHT
+    );
+
+  const weight =
+    enabled
+      ? Number.isFinite(
+          configuredWeight
+        )
+        ? clamp(
+            configuredWeight,
+            0,
+            1
+          )
+        : DEFAULT_AREA_BOOST_WEIGHT
+      : 0;
+
+  const configuredSmoothingSampleSize =
+    Number(
+      config.smoothingSampleSize ??
+      DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE
+    );
+
+  const smoothingSampleSize =
+    Number.isFinite(
+      configuredSmoothingSampleSize
+    )
+      ? Math.max(
+          0,
+          configuredSmoothingSampleSize
+        )
+      : DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE;
+
+  const area =
+    String(player?.area ?? "");
+
+  const bucket =
+    getMatchingSlotBucketKey(
+      getPlayerRankKey(player)
+    );
+
+  const areaTotalCount =
+    Number(
+      context
+        ?.overallByArea
+        ?.[area] ?? 0
+    );
+
+  const areaBucketCount =
+    Number(
+      context
+        ?.bucketByArea
+        ?.[bucket]
+        ?.[area] ?? 0
+    );
+
+  const bucketTotal =
+    Number(
+      context
+        ?.bucketTotals
+        ?.[bucket] ?? 0
+    );
+
+  const bucketDensity =
+    Math.sqrt(
+      areaBucketCount /
+      Math.max(
+        1,
+        Number(
+          context
+            ?.maxBucketAreaCounts
+            ?.[bucket] ?? 1
+        )
+      )
+    );
+
+  const totalDensity =
+    Math.sqrt(
+      areaTotalCount /
+      Math.max(
+        1,
+        Number(
+          context
+            ?.maxOverallAreaCount ?? 1
+        )
+      )
+    );
+
+  const bucketTrust =
+    bucketTotal > 0
+      ? bucketTotal /
+        (
+          bucketTotal +
+          smoothingSampleSize
+        )
+      : 0;
+
+  const areaDensity =
+    clamp(
+      bucketTrust *
+      bucketDensity +
+      (1 - bucketTrust) *
+      totalDensity,
+      0,
+      1
+    );
+
+  return {
+    areaBucketCount,
+    areaTotalCount,
+    bucketTotal,
+    bucketTrust,
+    areaDensity,
+    areaBoost:
+      1 +
+      weight *
+      areaDensity
+  };
+}
+
+function applyCandidateSlotScores(
+  candidates,
+  areaContext
+) {
+  const prideCandidates =
+    (candidates ?? []).filter(
+      player =>
+        getMatchingSlotBucketKey(
+          player.__rankKey
+        ) === "PRIDE"
+    );
+
+  const maxPrideBandProbability =
+    Math.max(
+      0,
+      ...prideCandidates.map(
+        player => {
+          const probability =
+            Number(
+            player.__detail
+              ?.tierProbability ?? 0
+            );
+
+          return Number.isFinite(
+            probability
+          )
+            ? probability
+            : 0;
+        }
+      )
+    );
+
+  const configuredPrideBandPriorExponent =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.slotAllocation
+        ?.prideBandPriorExponent ??
+      DEFAULT_PRIDE_BAND_PRIOR_EXPONENT
+    );
+
+  const prideBandPriorExponent =
+    Number.isFinite(
+      configuredPrideBandPriorExponent
+    )
+      ? clamp(
+          configuredPrideBandPriorExponent,
+          0,
+          1
+        )
+      : DEFAULT_PRIDE_BAND_PRIOR_EXPONENT;
+
+  for (const player of candidates ?? []) {
+    const detail =
+      player.__detail ?? {};
+
+    const areaDetail =
+      getAreaBoostDetail(
+        player,
+        areaContext
+      );
+
+    const isPride =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      ) === "PRIDE";
+
+    const prideBandProbability =
+      Number(
+        detail.tierProbability ?? 0
+      );
+
+    const prideBandPriorWeight =
+      isPride &&
+      maxPrideBandProbability > 0
+        ? Math.pow(
+            prideBandProbability /
+            maxPrideBandProbability,
+            prideBandPriorExponent
+          )
+        : 1;
+
+    const slotScore =
+      Number(
+        detail.realtimeBoost ?? 1
+      ) *
+      Number(
+        detail.pinkMismatchBoostFactor ?? 1
+      ) *
+      Number(
+        detail.effectivePhaseScore ?? 0
+      ) *
+      areaDetail.areaBoost *
+      prideBandPriorWeight;
+
+    detail.slotBucket =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      );
+    detail.prideBandPriorWeight =
+      prideBandPriorWeight;
+    detail.areaBucketCount =
+      areaDetail.areaBucketCount;
+    detail.areaTotalCount =
+      areaDetail.areaTotalCount;
+    detail.areaBucketTotal =
+      areaDetail.bucketTotal;
+    detail.areaBucketTrust =
+      areaDetail.bucketTrust;
+    detail.areaDensity =
+      areaDetail.areaDensity;
+    detail.areaBoost =
+      areaDetail.areaBoost;
+    detail.slotScore =
+      Number.isFinite(slotScore) &&
+      slotScore > 0
+        ? slotScore
+        : 0;
+
+    player.__slotScore =
+      detail.slotScore;
+  }
+}
+
+function getCandidateSlotScore(
+  player
+) {
+  return Number(
+    player?.__slotScore ??
+    player?.__detail?.slotScore ??
+    0
+  );
+}
+
+function buildMatchingSlotPlan(
+  candidates,
+  slotCount
+) {
+  const bucketOrder = [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "PRIDE"
+  ];
+
+  const capacities = {};
+  const tierProbabilities = {};
+
+  for (const player of candidates ?? []) {
+    const bucket =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      );
+
+    const tier =
+      String(
+        player.__detail
+          ?.opponentTier ?? ""
+      );
+
+    if (!bucket || !tier) {
+      continue;
+    }
+
+    capacities[bucket] =
+      Number(
+        capacities[bucket] ?? 0
+      ) + 1;
+
+    const probability =
+      Number(
+        player.__detail
+          ?.tierProbability ?? 0
+      );
+
+    if (
+      Number.isFinite(probability) &&
+      probability > 0
+    ) {
+      tierProbabilities[tier] =
+        Math.max(
+          Number(
+            tierProbabilities[tier] ?? 0
+          ),
+          probability
+        );
+    }
+  }
+
+  const probabilities = {};
+
+  for (
+    const [tier, probability] of
+    Object.entries(tierProbabilities)
+  ) {
+    const bucket =
+      tier.startsWith("PRIDE_")
+        ? "PRIDE"
+        : tier;
+
+    probabilities[bucket] =
+      Number(
+        probabilities[bucket] ?? 0
+      ) +
+      Number(probability);
+  }
+
+  const entries =
+    bucketOrder
+      .map((bucket, order) => ({
+        bucket,
+        order,
+        probability:
+          Number(
+            probabilities[bucket] ?? 0
+          ),
+        capacity:
+          Number(
+            capacities[bucket] ?? 0
+          ),
+        rawQuota: 0,
+        slots: 0
+      }))
+      .filter(
+        entry =>
+          entry.capacity > 0 &&
+          entry.probability > 0
+      );
+
+  const totalProbability =
+    entries.reduce(
+      (sum, entry) =>
+        sum + entry.probability,
+      0
+    );
+
+  if (
+    totalProbability <= 0 ||
+    entries.length === 0
+  ) {
+    return [];
+  }
+
+  const targetSlotCount =
+    Math.min(
+      Math.floor(
+        Math.max(
+          0,
+          Number(slotCount) || 0
+        )
+      ),
+      entries.reduce(
+        (sum, entry) =>
+          sum + entry.capacity,
+        0
+      )
+    );
+
+  for (const entry of entries) {
+    entry.rawQuota =
+      targetSlotCount *
+      entry.probability /
+      totalProbability;
+
+    entry.slots =
+      Math.min(
+        entry.capacity,
+        Math.floor(entry.rawQuota)
+      );
+  }
+
+  let remaining =
+    targetSlotCount -
+    entries.reduce(
+      (sum, entry) =>
+        sum + entry.slots,
+      0
+    );
+
+  while (remaining > 0) {
+    const available =
+      entries
+        .filter(
+          entry =>
+            entry.slots <
+            entry.capacity
+        )
+        .sort(
+          (a, b) =>
+            (
+              b.rawQuota -
+              b.slots
+            ) -
+            (
+              a.rawQuota -
+              a.slots
+            ) ||
+            b.probability -
+            a.probability ||
+            a.order -
+            b.order
+        );
+
+    if (available.length === 0) {
+      break;
+    }
+
+    available[0].slots++;
+    remaining--;
+  }
+
+  return entries.map(entry => ({
+    bucket: entry.bucket,
+    probability:
+      entry.probability /
+      totalProbability,
+    rawQuota:
+      entry.rawQuota,
+    slots:
+      entry.slots,
+    capacity:
+      entry.capacity
+  }));
+}
+
+function selectPrideSlotCandidates(
+  candidates,
+  slotCount
+) {
+  const ranked =
+    [...(candidates ?? [])]
+      .sort(
+        (a, b) =>
+          getCandidateSlotScore(b) -
+          getCandidateSlotScore(a)
+      );
+
+  const selected = [];
+  const selectedBands = new Set();
+
+  for (const player of ranked) {
+    if (
+      selected.length >= slotCount
+    ) {
+      break;
+    }
+
+    if (
+      selectedBands.has(
+        player.__rankKey
+      )
+    ) {
+      continue;
+    }
+
+    selected.push(player);
+    selectedBands.add(
+      player.__rankKey
+    );
+  }
+
+  if (selected.length < slotCount) {
+    for (const player of ranked) {
+      if (
+        selected.length >= slotCount
+      ) {
+        break;
+      }
+
+      if (!selected.includes(player)) {
+        selected.push(player);
+      }
+    }
+  }
+
+  return selected;
+}
+
+function selectNormalCandidatesBySlots(
+  candidates,
+  slotCount = 9
+) {
+  if (!Array.isArray(candidates)) {
+    State.matchingSlotPlan = [];
+    return [];
+  }
+
+  const plan =
+    buildMatchingSlotPlan(
+      candidates,
+      slotCount
+    );
+
+  if (plan.length === 0) {
+    State.matchingSlotPlan = [];
+    return [...candidates]
+      .sort(
+        (a, b) =>
+          getCandidateSlotScore(b) -
+          getCandidateSlotScore(a)
+      )
+      .slice(0, slotCount);
+  }
+
+  const selected = [];
+
+  for (const entry of plan) {
+    if (entry.slots <= 0) {
+      continue;
+    }
+
+    const pool =
+      candidates.filter(
+        player =>
+          getMatchingSlotBucketKey(
+            player.__rankKey
+          ) === entry.bucket
+      );
+
+    const bucketSelected =
+      entry.bucket === "PRIDE"
+        ? selectPrideSlotCandidates(
+            pool,
+            entry.slots
+          )
+        : [...pool]
+            .sort(
+              (a, b) =>
+                getCandidateSlotScore(b) -
+                getCandidateSlotScore(a)
+            )
+            .slice(
+              0,
+              entry.slots
+            );
+
+    for (const player of bucketSelected) {
+      player.__slotBucket =
+        entry.bucket;
+      selected.push(player);
+    }
+  }
+
+  const targetCount =
+    Math.min(
+      slotCount,
+      candidates.length
+    );
+
+  if (selected.length < targetCount) {
+    const fallback =
+      [...candidates]
+        .filter(
+          player =>
+            !selected.includes(player)
+        )
+        .sort(
+          (a, b) =>
+            getCandidateSlotScore(b) -
+            getCandidateSlotScore(a)
+        )
+        .slice(
+          0,
+          targetCount -
+          selected.length
+        );
+
+    for (const player of fallback) {
+      player.__slotBucket =
+        getMatchingSlotBucketKey(
+          player.__rankKey
+        );
+      player.__slotFallback = true;
+      selected.push(player);
+    }
+  }
+
+  State.matchingSlotPlan =
+    plan;
+
+  return selected.sort(
+    (a, b) =>
+      getCandidateSlotScore(b) -
+      getCandidateSlotScore(a)
+  );
+}
+
 /* =========================================================
  [8210] Matching Score:calcMatchingScoreDetail【State】（旧 [7410]）
 ========================================================= */
@@ -5266,13 +6049,10 @@ function calcMatchingScoreDetail(
         Boolean(phaseCtx?.isPinkManaged);
 
     /*
-     * 【2026-09 realtimeBoost是正】
-     * 以前は areaBoost (player.area 単位の直近活動カウント) も
-     * 掛け合わせていたが、Pink管理対象の母数が少ないため
-     * areaActivity の実体がほぼ playerActivity と同一になり、
-     * 「個人の活動シグナル」を実質二乗で効かせてしまう歪みが
-     * 生じていた（実地ログ検証で67件中62件が同値と確認）。
-     * そのためエリア単位のリアルタイムブーストは廃止する。
+     * コピー履歴由来の旧areaActivityは、playerActivityとの
+     * 二重計上を避けるため引き続き使用しない。現在の
+     * integrated_data.jsonに基づくArea Boostは、この総合スコア
+     * ではなく通常枠内のslotScoreで別途適用する。
      */
     const playerBoost =
         isPinkManaged
@@ -5509,27 +6289,6 @@ function getCandidateSelectionScore(player) {
  );
 }
 
-/*
- * 【2026-09 改善】通常候補選出（二重分布適用の解消）
- *
- * 従来は historicalScore で分布を用いた後に、slotPlan（グループ枠配分）でも
- * 再度同じ分布を適用していたため、総合スコア順上位のプレイヤーが
- * グループ枠超過によって候補から漏れる現象が発生していた。
- *
- * 改善後：
- * 経験的条件付きランク分布はスコア算出（historicalScore）にのみ使用し、
- * 通常候補9人は総合スコア（rankedByScore）順に直接上位9人を選出する。
- */
-function selectNormalCandidatesByScore(
- rankedByScore,
- slotCount = 9
-) {
- if (!Array.isArray(rankedByScore)) {
-   return [];
- }
- return rankedByScore.slice(0, slotCount);
-}
-
 /* =========================================================
  [8310] Candidate Builder:buildMatchingCandidates【State】【DOM】（旧 [7700]）
 ========================================================= */
@@ -5665,12 +6424,24 @@ function buildMatchingCandidates() {
       )
     );
 
+  const areaDensityContext =
+    buildAreaDensityContext(
+      State.filtered
+    );
+
+  applyCandidateSlotScores(
+    scoredAll,
+    areaDensityContext
+  );
+
   State.matchingScoredAll =
     scoredAll;
 
   const scoreEligible =
     scoredAll.filter(
-      p => getCandidateSelectionScore(p) > 0
+      p =>
+        getCandidateSelectionScore(p) > 0 &&
+        getCandidateSlotScore(p) > 0
     );
 
   const rankedByScore =
@@ -5690,17 +6461,53 @@ function buildMatchingCandidates() {
   );
 
   /* =====================================
-   * STEP7: Score順に並べる
-   * STEP8: 上位10人を表示
+   * STEP7: 履歴分布を通常9枠へ配分
+   * STEP8: 枠内スコア順＋Phase救済を表示
    * ===================================== */
-  const NORMAL_SLOT_COUNT = 9;
-  const PHASE_RESCUE_SLOT_COUNT = 1;
+  const configuredNormalSlotCount =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.normalSlotCount ?? 9
+    );
+
+  const NORMAL_SLOT_COUNT =
+    Number.isFinite(
+      configuredNormalSlotCount
+    )
+      ? Math.max(
+          1,
+          Math.floor(
+            configuredNormalSlotCount
+          )
+        )
+      : 9;
+
+  const configuredPhaseRescueSlotCount =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.phaseRescueSlotCount ?? 1
+    );
+
+  const PHASE_RESCUE_SLOT_COUNT =
+    Number.isFinite(
+      configuredPhaseRescueSlotCount
+    )
+      ? Math.max(
+          0,
+          Math.floor(
+            configuredPhaseRescueSlotCount
+          )
+        )
+      : 1;
+
   const MATCHED_RESCUE_SLOT_COUNT = 1;
   const BACKOFF_RESCUE_SLOT_COUNT = 1;
 
   const normalSelected =
-    selectNormalCandidatesByScore(
-      rankedByScore,
+    selectNormalCandidatesBySlots(
+      scoreEligible,
       NORMAL_SLOT_COUNT
     );
 
@@ -5813,6 +6620,10 @@ function buildMatchingCandidates() {
   log(
     `候補生成: Base=${base.length} / Selected=${selected.length}` +
     `（通常${normalSelected.length}＋Phase救済${phaseRescueSelected.length}）` +
+    ` Slot=${State.matchingSlotPlan
+      .filter(entry => entry.slots > 0)
+      .map(entry => `${entry.bucket}:${entry.slots}`)
+      .join(",") || "fallback"}` +
     `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
   );
 
@@ -6650,7 +7461,8 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
             cycleSec,
             n,
             threshold,
-            lambda
+            lambda,
+            getPhaseErrorScaleSec(mode)
           ),
           filterFromMs,
           filterToMs,
@@ -9140,6 +9952,16 @@ function buildScoreBreakdownLog(
         Number(detail.rankBoost ?? 1),
       realtimeBoost:
         Number(detail.realtimeBoost ?? 1),
+      slotScore:
+        Number(detail.slotScore ?? 0),
+      slotBucket:
+        detail.slotBucket ?? null,
+      prideBandPriorWeight:
+        Number(detail.prideBandPriorWeight ?? 1),
+      areaDensity:
+        Number(detail.areaDensity ?? 0),
+      areaBoost:
+        Number(detail.areaBoost ?? 1),
       phaseError:
         Number(detail.phaseError ?? 0),
       signedPhaseError:
@@ -9191,6 +10013,24 @@ function buildScoreBreakdownLog(
       Number(detail.rankBoost ?? 1),
     realtimeBoost:
       Number(detail.realtimeBoost ?? 1),
+    slotScore:
+      Number(detail.slotScore ?? 0),
+    slotBucket:
+      detail.slotBucket ?? null,
+    prideBandPriorWeight:
+      Number(detail.prideBandPriorWeight ?? 1),
+    areaBucketCount:
+      Number(detail.areaBucketCount ?? 0),
+    areaTotalCount:
+      Number(detail.areaTotalCount ?? 0),
+    areaBucketTotal:
+      Number(detail.areaBucketTotal ?? 0),
+    areaBucketTrust:
+      Number(detail.areaBucketTrust ?? 0),
+    areaDensity:
+      Number(detail.areaDensity ?? 0),
+    areaBoost:
+      Number(detail.areaBoost ?? 1),
     phaseError:
       Number(detail.phaseError ?? 0),
     signedPhaseError:
@@ -9259,6 +10099,13 @@ function buildAllCandidateRow(
     Number(d.playerBoost ?? 1),
     Number(d.rankBoost ?? 1),
     Number(d.realtimeBoost ?? 1),
+    Number(d.slotScore ?? 0),
+    d.slotBucket ?? null,
+    Number(d.prideBandPriorWeight ?? 1),
+    Number(d.areaBucketCount ?? 0),
+    Number(d.areaTotalCount ?? 0),
+    Number(d.areaDensity ?? 0),
+    Number(d.areaBoost ?? 1),
     Number(d.phaseError ?? 0),
     Number(d.signedPhaseError ?? 0),
     d.peakDirection ?? "unknown",
@@ -9580,6 +10427,13 @@ function buildCopyCandidateSnapshot() {
         score: Number(
           (p.__score ?? 0).toFixed(6)
         ),
+        slotScore: Number(
+          (p.__slotScore ?? 0).toFixed(6)
+        ),
+        slotBucket:
+          p.__slotBucket ??
+          p.__detail?.slotBucket ??
+          null,
         scoreBreakdown:
           buildScoreBreakdownLog(
             p.__detail,
@@ -10271,7 +11125,7 @@ function saveCandidateEvent() {
     t: now,
 
     logSchemaVersion:
-      "phase_score_v4",
+      "slot_area_v1",
 
     e: "candidate",
 
@@ -10342,6 +11196,34 @@ function saveCandidateEvent() {
 
     scoredCandidateCount:
       State.matchingScoredAll.length,
+
+    slotPlan:
+      State.matchingSlotPlan.map(
+        entry => ({
+          bucket: entry.bucket,
+          probability:
+            Number(
+              entry.probability.toFixed(6)
+            ),
+          rawQuota:
+            Number(
+              entry.rawQuota.toFixed(6)
+            ),
+          slots: entry.slots,
+          capacity: entry.capacity
+        })
+      ),
+
+    phaseErrorScaleSec: {
+      yellow:
+        getPhaseErrorScaleSec(
+          "yellow"
+        ),
+      pink:
+        getPhaseErrorScaleSec(
+          "pink"
+        )
+    },
 
     pinkPhaseMismatchCount:
       State.matchingScoredAll.filter(
@@ -10430,6 +11312,17 @@ function saveCandidateEvent() {
             (p.__score ?? 0)
               .toFixed(6)
           ),
+
+        slotScore:
+          Number(
+            (p.__slotScore ?? 0)
+              .toFixed(6)
+          ),
+
+        slotBucket:
+          p.__slotBucket ??
+          p.__detail?.slotBucket ??
+          null,
 
         scoreBreakdown:
           buildScoreBreakdownLog(
