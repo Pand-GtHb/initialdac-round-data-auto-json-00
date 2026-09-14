@@ -245,6 +245,8 @@ const State = {
   searchText: "",
   currentView: STATE.SUMMARY,
   summaryMode: "rank",
+  areaSortKey: "areaNo",
+  areaSortDir: "asc",
   currentIsRubyBand: true,
   currentDetailType: "rank",
   currentDetailKey: "",
@@ -7289,6 +7291,47 @@ function ensureAreaSummaryStyles() {
       border-top: none;
     }
 
+    .area-summary-header-row {
+      display: flex;
+      align-items: stretch;
+      background: #f1f5f9;
+      border-bottom: 1px solid #cbd5e1;
+      font-size: 12px;
+      font-weight: 700;
+      color: #334155;
+    }
+
+    .area-summary-header-row + .area-summary-row {
+      border-top: none;
+    }
+
+    .area-sort-th {
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+      padding: 2px 0;
+    }
+
+    .area-sort-th:hover {
+      color: #0f172a;
+      text-decoration: underline;
+    }
+
+    .area-sort-mark {
+      margin-left: 4px;
+      font-size: 10px;
+    }
+
+    .area-sort-mark.idle {
+      opacity: 0.35;
+      font-weight: 400;
+    }
+
+    .area-summary-header-label {
+      padding-left: 10px;
+      color: #64748b;
+    }
+
     .area-summary-head {
       display: flex;
       align-items: center;
@@ -7380,6 +7423,14 @@ function ensureAreaSummaryStyles() {
         width: 100%;
         flex-basis: auto;
       }
+
+      .area-summary-header-row {
+        flex-direction: column;
+      }
+
+      .area-summary-header-row .area-summary-bar-area {
+        display: none;
+      }
     }
   `;
 
@@ -7459,6 +7510,102 @@ function getAreaSummaryRows() {
   return rows;
 }
 
+/*
+ * Areaサマリの並び替え。
+ * 集計（getAreaSummaryRows）とは分離し、描画直前にのみ適用する。
+ * 同値の場合は areaNo 昇順で安定させる。
+ */
+function sortAreaSummaryRows(rows) {
+  const key =
+    State.areaSortKey === "total"
+      ? "total"
+      : "areaNo";
+
+  const sign =
+    State.areaSortDir === "desc"
+      ? -1
+      : 1;
+
+  return [...rows].sort((a, b) => {
+    const diff = a[key] - b[key];
+
+    if (diff === 0) {
+      return a.areaNo - b.areaNo;
+    }
+
+    return diff * sign;
+  });
+}
+
+function buildAreaSummaryHeaderHTML() {
+  const mark = key => {
+    if (State.areaSortKey !== key) {
+      return `<span class="area-sort-mark idle">⇅</span>`;
+    }
+
+    return `<span class="area-sort-mark">${
+      State.areaSortDir === "asc" ? "▲" : "▼"
+    }</span>`;
+  };
+
+  return `
+    <div class="area-summary-header-row">
+      <div class="area-summary-head">
+        <span
+          class="area-sort-th"
+          data-area-sort="areaNo"
+          role="button"
+          tabindex="0"
+        >エリアNo.${mark("areaNo")}</span>
+        <span
+          class="area-sort-th"
+          data-area-sort="total"
+          role="button"
+          tabindex="0"
+        >人数${mark("total")}</span>
+      </div>
+      <div class="area-summary-bar-area">
+        <span class="area-summary-header-label">ランク構成</span>
+      </div>
+    </div>
+  `;
+}
+
+function bindAreaSortHeader(root) {
+  if (!root) return;
+
+  root.querySelectorAll(".area-sort-th").forEach(th => {
+
+    const apply = () => {
+      const key = th.dataset.areaSort;
+      if (!key) return;
+
+      if (State.areaSortKey === key) {
+        State.areaSortDir =
+          State.areaSortDir === "asc" ? "desc" : "asc";
+      } else {
+        State.areaSortKey = key;
+        /*
+         * 人数は「多い順」を見たい場面が多いため降順を既定とする。
+         */
+        State.areaSortDir =
+          key === "total" ? "desc" : "asc";
+      }
+
+      renderAreaSummary();
+    };
+
+    th.addEventListener("click", apply);
+
+    th.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        apply();
+      }
+    });
+  });
+}
+
 function getRankColor(rankKey) {
   const colors = {
     R1: "#dc2626",
@@ -7528,7 +7675,7 @@ function renderAreaSummary() {
 
   ensureAreaSummaryStyles();
 
-  const rows = getAreaSummaryRows();
+  const rows = sortAreaSummaryRows(getAreaSummaryRows());
   const total = rows.reduce((sum, row) => sum + row.total, 0);
   const rubyTotal = rows.reduce((sum, row) => {
     return sum + RANKS.filter(rank => rank.type === "ruby").reduce((inner, rank) => inner + (row.counts[rank.key] || 0), 0);
@@ -7556,6 +7703,7 @@ function renderAreaSummary() {
     <div class="area-summary-legend">${legendHTML}</div>
 
     <div class="area-summary-list">
+      ${buildAreaSummaryHeaderHTML()}
       ${rows.map(row => {
         const segments = [];
 
@@ -7596,6 +7744,7 @@ function renderAreaSummary() {
   `;
 
   bindSummaryModeButtons(area);
+  bindAreaSortHeader(area);
 
   area.querySelectorAll(".area-summary-name").forEach(el => {
     el.addEventListener("click", () => {
