@@ -117,6 +117,7 @@ const ALL_CANDIDATES_COLUMNS = [
   "realtimeBoost",
   "slotScore",
   "slotBucket",
+  "slotRank",
   "prideBandPriorWeight",
   "areaBucketCount",
   "areaTotalCount",
@@ -4916,9 +4917,6 @@ function getDistributionCellScore(
         )
       : 0.0001;
 
-  const isPrideTier =
-    oppKey.startsWith("PRIDE_");
-
   const tierProbability =
     matched
       ? hitProb
@@ -5309,7 +5307,6 @@ function buildAreaDensityContext(
   const overallByArea = {};
   const bucketByArea = {};
   const bucketTotals = {};
-  let overallTotal = 0;
 
   for (const player of players ?? []) {
     const rankKey =
@@ -5344,8 +5341,6 @@ function buildAreaDensityContext(
       Number(
         bucketTotals[bucket] ?? 0
       ) + 1;
-
-    overallTotal++;
   }
 
   const maxOverallAreaCount =
@@ -5375,7 +5370,6 @@ function buildAreaDensityContext(
     overallByArea,
     bucketByArea,
     bucketTotals,
-    overallTotal,
     maxOverallAreaCount,
     maxBucketAreaCounts
   };
@@ -5517,10 +5511,11 @@ function getAreaBoostDetail(
 
 function applyCandidateSlotScores(
   candidates,
-  areaContext
+  areaContext,
+  prideReferenceCandidates = candidates
 ) {
   const prideCandidates =
-    (candidates ?? []).filter(
+    (prideReferenceCandidates ?? []).filter(
       player =>
         getMatchingSlotBucketKey(
           player.__rankKey
@@ -5649,9 +5644,123 @@ function getCandidateSlotScore(
   );
 }
 
+function assignCandidateSlotRanks(
+  candidates
+) {
+  const buckets = {};
+
+  for (const player of candidates ?? []) {
+    const bucket =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    if (!buckets[bucket]) {
+      buckets[bucket] = [];
+    }
+
+    buckets[bucket].push(player);
+  }
+
+  for (
+    const players of
+    Object.values(buckets)
+  ) {
+    players
+      .sort(
+        (a, b) =>
+          getCandidateSlotScore(b) -
+          getCandidateSlotScore(a)
+      )
+      .forEach(
+        (player, index) => {
+          const slotRank =
+            index + 1;
+
+          player.__slotRank =
+            slotRank;
+
+          if (player.__detail) {
+            player.__detail.slotRank =
+              slotRank;
+          }
+        }
+      );
+  }
+}
+
+function buildMatchingSlotBucketProbabilities(
+  viewerContext,
+  tierCounts,
+  enabledRankKeys
+) {
+  if (!viewerContext) {
+    return {};
+  }
+
+  const enabled =
+    new Set(
+      enabledRankKeys ?? []
+    );
+
+  const probabilities = {};
+
+  for (const rank of RANKS) {
+    if (
+      enabled.size > 0 &&
+      !enabled.has(rank.key)
+    ) {
+      continue;
+    }
+
+    const detail =
+      getHistoricalScoreDetail(
+        State.myRankKey,
+        rank.key,
+        "",
+        tierCounts,
+        viewerContext
+      );
+
+    const probability =
+      Number(
+        detail.tierProbability ?? 0
+      );
+
+    if (
+      !Number.isFinite(probability) ||
+      probability <= 0
+    ) {
+      continue;
+    }
+
+    const bucket =
+      getMatchingSlotBucketKey(
+        rank.key
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    probabilities[bucket] =
+      Number(
+        probabilities[bucket] ?? 0
+      ) +
+      probability;
+  }
+
+  return probabilities;
+}
+
 function buildMatchingSlotPlan(
   candidates,
-  slotCount
+  slotCount,
+  bucketProbabilities
 ) {
   const bucketOrder = [
     "R1",
@@ -5666,7 +5775,6 @@ function buildMatchingSlotPlan(
   ];
 
   const capacities = {};
-  const tierProbabilities = {};
 
   for (const player of candidates ?? []) {
     const bucket =
@@ -5674,13 +5782,7 @@ function buildMatchingSlotPlan(
         player.__rankKey
       );
 
-    const tier =
-      String(
-        player.__detail
-          ?.opponentTier ?? ""
-      );
-
-    if (!bucket || !tier) {
+    if (!bucket) {
       continue;
     }
 
@@ -5688,43 +5790,6 @@ function buildMatchingSlotPlan(
       Number(
         capacities[bucket] ?? 0
       ) + 1;
-
-    const probability =
-      Number(
-        player.__detail
-          ?.tierProbability ?? 0
-      );
-
-    if (
-      Number.isFinite(probability) &&
-      probability > 0
-    ) {
-      tierProbabilities[tier] =
-        Math.max(
-          Number(
-            tierProbabilities[tier] ?? 0
-          ),
-          probability
-        );
-    }
-  }
-
-  const probabilities = {};
-
-  for (
-    const [tier, probability] of
-    Object.entries(tierProbabilities)
-  ) {
-    const bucket =
-      tier.startsWith("PRIDE_")
-        ? "PRIDE"
-        : tier;
-
-    probabilities[bucket] =
-      Number(
-        probabilities[bucket] ?? 0
-      ) +
-      Number(probability);
   }
 
   const entries =
@@ -5734,7 +5799,8 @@ function buildMatchingSlotPlan(
         order,
         probability:
           Number(
-            probabilities[bucket] ?? 0
+            bucketProbabilities
+              ?.[bucket] ?? 0
           ),
         capacity:
           Number(
@@ -5900,7 +5966,8 @@ function selectPrideSlotCandidates(
 
 function selectNormalCandidatesBySlots(
   candidates,
-  slotCount = 9
+  slotCount = 9,
+  bucketProbabilities = {}
 ) {
   if (!Array.isArray(candidates)) {
     State.matchingSlotPlan = [];
@@ -5910,7 +5977,8 @@ function selectNormalCandidatesBySlots(
   const plan =
     buildMatchingSlotPlan(
       candidates,
-      slotCount
+      slotCount,
+      bucketProbabilities
     );
 
   if (plan.length === 0) {
@@ -5992,7 +6060,6 @@ function selectNormalCandidatesBySlots(
         getMatchingSlotBucketKey(
           player.__rankKey
         );
-      player.__slotFallback = true;
       selected.push(player);
     }
   }
@@ -6434,6 +6501,10 @@ function buildMatchingCandidates() {
     areaDensityContext
   );
 
+  assignCandidateSlotRanks(
+    scoredAll
+  );
+
   State.matchingScoredAll =
     scoredAll;
 
@@ -6505,10 +6576,25 @@ function buildMatchingCandidates() {
   const MATCHED_RESCUE_SLOT_COUNT = 1;
   const BACKOFF_RESCUE_SLOT_COUNT = 1;
 
+  const enabledRankKeys = [
+    ...selectedStars.map(
+      star => `R${star}`
+    ),
+    ...selectedPrides
+  ];
+
+  const slotBucketProbabilities =
+    buildMatchingSlotBucketProbabilities(
+      viewerContext,
+      tierCounts,
+      enabledRankKeys
+    );
+
   const normalSelected =
     selectNormalCandidatesBySlots(
       scoreEligible,
-      NORMAL_SLOT_COUNT
+      NORMAL_SLOT_COUNT,
+      slotBucketProbabilities
     );
 
   const normalSelectedKeys =
@@ -9956,6 +10042,9 @@ function buildScoreBreakdownLog(
         Number(detail.slotScore ?? 0),
       slotBucket:
         detail.slotBucket ?? null,
+      slotRank:
+        Number(detail.slotRank ?? 0) ||
+        null,
       prideBandPriorWeight:
         Number(detail.prideBandPriorWeight ?? 1),
       areaDensity:
@@ -10017,6 +10106,9 @@ function buildScoreBreakdownLog(
       Number(detail.slotScore ?? 0),
     slotBucket:
       detail.slotBucket ?? null,
+    slotRank:
+      Number(detail.slotRank ?? 0) ||
+      null,
     prideBandPriorWeight:
       Number(detail.prideBandPriorWeight ?? 1),
     areaBucketCount:
@@ -10101,6 +10193,7 @@ function buildAllCandidateRow(
     Number(d.realtimeBoost ?? 1),
     Number(d.slotScore ?? 0),
     d.slotBucket ?? null,
+    Number(d.slotRank ?? 0) || null,
     Number(d.prideBandPriorWeight ?? 1),
     Number(d.areaBucketCount ?? 0),
     Number(d.areaTotalCount ?? 0),
@@ -10126,8 +10219,17 @@ function shouldLogCandidateRow(
   player,
   index
 ) {
+  const slotRank =
+    Number(
+      player?.__slotRank ?? 0
+    );
+
   return (
     index < LOG_TOP_CANDIDATE_LIMIT ||
+    (
+      slotRank > 0 &&
+      slotRank <= 10
+    ) ||
     Boolean(player?.__detail?.isPinkManaged)
   );
 }
@@ -10171,7 +10273,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "phase_score_v2",
+        "slot_area_v1",
 
       dk:
         buildDailyKey(),
@@ -10183,6 +10285,15 @@ function saveCopyEventUnified(
         shopName,
 
       score:
+        null,
+
+      slotScore:
+        null,
+
+      slotBucket:
+        null,
+
+      slotRankAtPrediction:
         null,
 
       scoreRank:
@@ -10227,13 +10338,42 @@ function saveCopyEventUnified(
 
   }
 
-  const detail =
-    calcMatchingScoreDetail(
-      player
+  const scoredPlayer =
+    buildCandidateScore(
+      player,
+      State.matchingTierCounts,
+      buildViewerHistoricalContext(
+        State.myRankKey
+      )
     );
+
+  applyCandidateSlotScores(
+    [scoredPlayer],
+    buildAreaDensityContext(
+      State.filtered
+    ),
+    [
+      ...State.matchingScoredAll,
+      scoredPlayer
+    ]
+  );
+
+  const detail =
+    scoredPlayer.__detail;
 
   const rankedAll =
     State.matchingRankedAll ?? [];
+
+  const scoredAtPrediction =
+    State.matchingScoredAll.find(
+      candidate =>
+        buildPlayerIdentityKey(
+          candidate
+        ) ===
+        buildPlayerIdentityKey(
+          player
+        )
+    ) ?? null;
 
   const displayedCandidates =
     State.matchingList ?? [];
@@ -10319,7 +10459,7 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "phase_score_v2",
+      "slot_area_v1",
 
     dk:
       buildDailyKey(),
@@ -10332,6 +10472,18 @@ function saveCopyEventUnified(
 
     score:
       Number(detail.score ?? 0),
+
+    slotScore:
+      Number(
+        detail.slotScore ?? 0
+      ),
+
+    slotBucket:
+      detail.slotBucket ?? null,
+
+    slotRankAtPrediction:
+      scoredAtPrediction
+        ?.__slotRank ?? null,
 
     scoreRank:
       candidateRank > 0
@@ -10434,6 +10586,8 @@ function buildCopyCandidateSnapshot() {
           p.__slotBucket ??
           p.__detail?.slotBucket ??
           null,
+        slotRank:
+          p.__slotRank ?? null,
         scoreBreakdown:
           buildScoreBreakdownLog(
             p.__detail,
@@ -11323,6 +11477,9 @@ function saveCandidateEvent() {
           p.__slotBucket ??
           p.__detail?.slotBucket ??
           null,
+
+        slotRank:
+          p.__slotRank ?? null,
 
         scoreBreakdown:
           buildScoreBreakdownLog(
