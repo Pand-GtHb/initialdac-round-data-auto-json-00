@@ -1252,6 +1252,7 @@ function normalizeHistoricalMatchupDistribution(json) {
 function applyAreaListJson(json) {
 
   AreaList = {};
+  AreaIsoAlpha3 = {};
 
   if (
     json?.areas &&
@@ -1263,6 +1264,12 @@ function applyAreaListJson(json) {
       AreaList[
         String(a.area)
       ] = a.areaName;
+
+      if (a.isoAlpha3) {
+        AreaIsoAlpha3[
+          String(a.area)
+        ] = String(a.isoAlpha3).toUpperCase();
+      }
 
     });
   }
@@ -1429,9 +1436,7 @@ function applyRoundDataJson(
         normalize(p.name),
 
       areaName:
-        AreaList[
-          String(p.area)
-        ] || ""
+        getAreaDisplayName(p.area)
     }));
 
   State.filtered =
@@ -2237,6 +2242,15 @@ async function fetchRoundDataJson() {
 ========================================================= */
 let AreaList = {};
 
+let AreaIsoAlpha3 = {};
+
+function getAreaDisplayName(area) {
+  const areaKey = String(area ?? "");
+  return AreaIsoAlpha3[areaKey] ||
+    AreaList[areaKey] ||
+    areaKey;
+}
+
 async function loadAreaList() {
 
   try {
@@ -2254,6 +2268,7 @@ async function loadAreaList() {
     );
 
     AreaList = {};
+    AreaIsoAlpha3 = {};
   }
 }
 
@@ -7698,6 +7713,9 @@ function buildPlayerRowHTML(
       fullShop
     );
 
+  const areaName =
+    getAreaDisplayName(p.area);
+
   const isPinkManaged =
     isCopiedPlayer(p);
 
@@ -7801,6 +7819,10 @@ function buildPlayerRowHTML(
 
       <td class="right">
         ${fmt(p.point)}
+      </td>
+
+      <td class="center">
+        ${areaName}
       </td>
 
       <td
@@ -8900,6 +8922,7 @@ function renderDetailTable(
             <th>★・PRIDE</th>
             <th>プレイヤー名</th>
             <th>RP</th>
+            <th>エリア</th>
             <th>店舗名</th>
             <th>Last Update</th>
             <th>称号</th>
@@ -8975,6 +8998,7 @@ function renderAreaDetailTable(areaNo) {
             <th>★・PRIDE</th>
             <th>プレイヤー名</th>
             <th>RP</th>
+            <th>エリア</th>
             <th>店舗名</th>
             <th>Last Update</th>
             <th>称号</th>
@@ -9175,6 +9199,7 @@ function renderMatchingTable() {
             <th>★・PRIDE</th>
             <th>プレイヤー名</th>
             <th>RP</th>
+            <th>エリア</th>
             <th>店舗名</th>
             <th>Last Update</th>
                         <th>称号</th>
