@@ -259,7 +259,6 @@ const State = {
   summaryMode: "rank",
   areaSortKey: "total",
   areaSortDir: "desc",
-  currentIsRubyBand: true,
   currentDetailType: "rank",
   currentDetailKey: "",
   currentDetailLabel: "",
@@ -8843,11 +8842,6 @@ function renderSummary() {
           const key =
             tr.dataset.key;
 
-          State.currentIsRubyBand =
-            key.startsWith(
-              "R"
-            );
-
           State.currentDetailType = "rank";
           showDetail(
             key
@@ -8866,11 +8860,7 @@ function renderSummary() {
 /* =========================================================
  [11400] Detail Renderer:renderDetailTable【DOM】【State】（旧 [6200]）
 ========================================================= */
-function renderDetailTable(
-  isRubyBand,
-  bandLabel,
-  bandIcon
-) {
+function renderDetailTable() {
 
   const area =
     document.getElementById(
@@ -8930,9 +8920,9 @@ function renderDetailTable(
     State.currentDetailKey
   );
 
-  renderDetailRows(
-    list,
-    isRubyBand
+  renderPlayerRowsToBody(
+    "detailTableBody",
+    list
   );
 }
 
@@ -8945,15 +8935,6 @@ function renderAreaDetailTable(areaNo) {
   const list = (State.searchText ? applyPlayerFilter(State.searchText, true) : (State.detailOriginal || []).slice())
     .filter(p => String(p.area ?? "") === areaKey)
     .filter(isPlayerIncludedInRankFilters);
-  const counts = {};
-  RANKS.forEach(rank => counts[rank.key] = 0);
-  list.forEach(player => {
-    const rankKey = getPlayerRankKey(player);
-    if (rankKey && Object.prototype.hasOwnProperty.call(counts, rankKey)) {
-      counts[rankKey] += 1;
-    }
-  });
-
   area.innerHTML = `
     ${buildSummaryModeNavHTML()}
 
@@ -8997,19 +8978,6 @@ function renderAreaDetailTable(areaNo) {
   bindSummaryModeButtons(area);
   setupAreaNavigation(areaNo);
   renderPlayerRowsToBody("detailTableBody", list);
-}
-
-/* =========================================================
- [11410] Detail Renderer:renderDetailRows【DOM】（旧 [6300]）
-========================================================= */
-function renderDetailRows(
-  list,
-  isRubyBand
-) {
-  renderPlayerRowsToBody(
-    "detailTableBody",
-    list
-  );
 }
 
 /* =========================================================
@@ -9531,11 +9499,7 @@ function copyToClipboard(
       )
     ) {
 
-      renderDetailTable(
-        State.currentIsRubyBand,
-        State.currentDetailLabel,
-        State.currentDetailIcon
-      );
+      renderDetailTable();
 
     } else {
 
@@ -11650,11 +11614,6 @@ function showDetail(
   const rankInfo =
     getRankInfo(key);
 
-  const isRubyBand =
-    rankInfo
-      ? rankInfo.type === "ruby"
-      : key.startsWith("R");
-
   const bandLabel =
     rankInfo
       ? rankInfo.label
@@ -11678,9 +11637,6 @@ function showDetail(
     setCurrentView(
       STATE.DETAIL
     );
-
-    State.currentIsRubyBand =
-      isRubyBand;
 
     State.currentDetailKey =
       key;
@@ -11706,11 +11662,7 @@ function showDetail(
       );
     }
 
-    renderDetailTable(
-      isRubyBand,
-      bandLabel,
-      bandIcon
-    );
+    renderDetailTable();
 
     switchDisplayView(
       STATE.DETAIL
@@ -11736,9 +11688,6 @@ function showDetail(
     STATE.DETAIL
   );
 
-  State.currentIsRubyBand =
-    isRubyBand;
-
   State.currentDetailKey =
     key;
 
@@ -11763,11 +11712,7 @@ function showDetail(
     );
   }
 
-  renderDetailTable(
-    isRubyBand,
-    bandLabel,
-    bandIcon
-  );
+  renderDetailTable();
 
   switchDisplayView(
     STATE.DETAIL
@@ -11783,7 +11728,6 @@ function showAreaDetail(
   const list = (State.filtered || []).filter(p => String(p.area ?? "") === areaKey);
 
   State.currentDetailType = "area";
-  State.currentIsRubyBand = false;
   State.currentDetailKey = areaKey;
   State.currentDetailLabel = areaName;
   State.currentDetailIcon = "";
@@ -12431,11 +12375,7 @@ document.addEventListener(
                 renderAreaDetailTable(areaNo);
               }
             } else {
-              renderDetailTable(
-                State.currentIsRubyBand,
-                State.currentDetailLabel || "",
-                State.currentDetailIcon || ""
-              );
+              renderDetailTable();
             }
 
           } else if (
