@@ -8907,18 +8907,7 @@ function renderDetailTable(
         ${bandLabel}
       </span>
 
-      <span style="margin-left:16px;">
-        （${fmt(list.length)}人）
-      </span>
-
     </h3>
-
-    <div
-      class="rank-count-badges"
-      style="display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px;"
-    >
-      ${buildRankCountBadgesHTML(list)}
-    </div>
 
     <div style="overflow-x:auto;">
 
