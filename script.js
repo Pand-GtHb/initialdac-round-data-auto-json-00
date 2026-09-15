@@ -7689,9 +7689,6 @@ function buildPhaseCycleMonitorHTML(nowMs = Date.now()) {
 function buildPlayerRowHTML(
   p
 ) {
-  const rankKey =
-    getPlayerRankKey(p);
-
   const titleUrl =
     p.mytitleId
       ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
@@ -7785,11 +7782,6 @@ function buildPlayerRowHTML(
       ? " phase-rescue"
       : "";
 
-  const rankCellStyle =
-    rankKey
-      ? `${getRankFillStyle(rankKey)} border:1px solid ${getRankColor(rankKey)};`
-      : "";
-
   return `
     <tr
       class="${rowStateClass}${phaseRescueClass}"
@@ -7799,7 +7791,6 @@ function buildPlayerRowHTML(
     >
       <td
         class="center clickable"
-        style="${rankCellStyle}"
         onclick="copyToClipboard(
           '${copyValue}',
           '${safeName}',
@@ -8995,7 +8986,11 @@ function renderAreaDetailTable(areaNo) {
         const count = counts[rank.key] || 0;
         if (!count) return "";
         return `
-          <span class="area-rank-badge" title="${rank.label}: ${count}人">
+          <span
+            class="area-rank-badge"
+            title="${rank.label}: ${count}人"
+            style="${getRankLegendStyle(rank.key)}"
+          >
             <img src="${rank.icon}" width="20">${rank.label}：${count}人
           </span>
         `;
