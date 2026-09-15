@@ -8893,25 +8893,12 @@ function renderDetailTable(
         <button id="nextRankBtn" class="rank-nav-btn">　▶▶▶　</button>
     </div>
 
-    <h3>
-
-      <span style="margin-right:8px;">
-        ${
-          bandIcon
-            ? `<img src="${bandIcon}" width="32">`
-            : ""
-        }
-      </span>
-
-      <span>
-        ${bandLabel}
-      </span>
-
-      <span style="margin-left:16px;">
-        （${fmt(list.length)}人）
-      </span>
-
-    </h3>
+    <div
+      class="rank-count-badges"
+      style="display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px;"
+    >
+      ${buildRankCountBadgesHTML(list)}
+    </div>
 
     <div style="overflow-x:auto;">
 
