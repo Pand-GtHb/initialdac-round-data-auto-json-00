@@ -8907,6 +8907,10 @@ function renderDetailTable(
         ${bandLabel}
       </span>
 
+      <span style="margin-left:16px;">
+        （${fmt(list.length)}人）
+      </span>
+
     </h3>
 
     <div style="overflow-x:auto;">
