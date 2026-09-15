@@ -8257,8 +8257,8 @@ function ensureAreaSummaryStyles() {
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      min-width: 250px;
-      flex: 0 0 250px;
+      min-width: 210px;
+      flex: 0 0 210px;
       padding: 4px 10px;
       border-right: 1px solid #e2e8f0;
     }
@@ -8399,7 +8399,7 @@ function getAreaSummaryRows() {
 
   for (let areaNo = 0; areaNo <= 62; areaNo++) {
     const areaKey = String(areaNo);
-    const areaName = AreaList[areaKey] || `Area ${areaNo}`;
+    const areaName = getAreaDisplayName(areaKey);
     const counts = {};
 
     RANKS.forEach(rank => {
