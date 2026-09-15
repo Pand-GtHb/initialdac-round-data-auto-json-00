@@ -7689,6 +7689,9 @@ function buildPhaseCycleMonitorHTML(nowMs = Date.now()) {
 function buildPlayerRowHTML(
   p
 ) {
+  const rankKey =
+    getPlayerRankKey(p);
+
   const titleUrl =
     p.mytitleId
       ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
@@ -7782,6 +7785,11 @@ function buildPlayerRowHTML(
       ? " phase-rescue"
       : "";
 
+  const rankCellStyle =
+    rankKey
+      ? `${getRankFillStyle(rankKey)} border:1px solid ${getRankColor(rankKey)};`
+      : "";
+
   return `
     <tr
       class="${rowStateClass}${phaseRescueClass}"
@@ -7791,6 +7799,7 @@ function buildPlayerRowHTML(
     >
       <td
         class="center clickable"
+        style="${rankCellStyle}"
         onclick="copyToClipboard(
           '${copyValue}',
           '${safeName}',
@@ -8953,8 +8962,10 @@ function renderAreaDetailTable(areaNo) {
   if (!area) return;
 
   const areaKey = String(areaNo);
-  const areaName = AreaList[areaKey] || `Area ${areaNo}`;
-  const list = (State.searchText ? applyPlayerFilter(State.searchText, true) : (State.detailOriginal || []).slice()).filter(p => String(p.area ?? "") === areaKey);
+  const areaName = getAreaDisplayName(areaKey);
+  const list = (State.searchText ? applyPlayerFilter(State.searchText, true) : (State.detailOriginal || []).slice())
+    .filter(p => String(p.area ?? "") === areaKey)
+    .filter(isPlayerIncludedInRankFilters);
   const counts = {};
   RANKS.forEach(rank => counts[rank.key] = 0);
   list.forEach(player => {
@@ -11794,7 +11805,7 @@ function showAreaDetail(
   push = true
 ) {
   const areaKey = String(areaNo);
-  const areaName = AreaList[areaKey] || `Area ${areaNo}`;
+  const areaName = getAreaDisplayName(areaKey);
   const list = (State.filtered || []).filter(p => String(p.area ?? "") === areaKey);
 
   State.currentDetailType = "area";
@@ -12098,6 +12109,23 @@ function readSelectedPrides() {
     .map(
       x => x.value
     );
+}
+
+function isPlayerIncludedInRankFilters(player) {
+  const rankKey =
+    getPlayerRankKey(player);
+
+  if (!rankKey) {
+    return false;
+  }
+
+  if (rankKey.startsWith("R")) {
+    return readSelectedStars().includes(
+      Number(player.starCnt)
+    );
+  }
+
+  return readSelectedPrides().includes(rankKey);
 }
 
 /* #################################################################
