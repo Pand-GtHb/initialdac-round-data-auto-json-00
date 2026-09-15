@@ -7870,6 +7870,46 @@ function buildPlayerRowHTML(
 /* =========================================================
  [10500] Matching Header Template:buildMatchingRankCountsHTML【State】（旧 [7800]）
 ========================================================= */
+function buildRankCountBadgesHTML(list) {
+  const counts = {};
+
+  RANKS.forEach(rank => {
+    counts[rank.key] = 0;
+  });
+
+  (list || []).forEach(player => {
+    const rankKey =
+      player.__rankKey || getPlayerRankKey(player);
+
+    if (rankKey && Object.prototype.hasOwnProperty.call(counts, rankKey)) {
+      counts[rankKey] += 1;
+    }
+  });
+
+  return RANKS
+    .filter(rank => counts[rank.key] > 0)
+    .map(rank => `
+      <span
+        class="rank-count-badge"
+        title="${rank.label}: ${counts[rank.key]}人"
+        style="
+          display:inline-flex;
+          align-items:center;
+          gap:4px;
+          background:rgba(255,255,255,0.92);
+          border:1px solid rgba(148,163,184,0.45);
+          border-radius:999px;
+          padding:4px 10px;
+          white-space:nowrap;
+        "
+      >
+        <img src="${rank.icon}" width="20">
+        ${rank.label}：${fmt(counts[rank.key])}人
+      </span>
+    `)
+    .join("");
+}
+
 function buildMatchingRankCountsHTML() {
 
   if (
@@ -7878,46 +7918,7 @@ function buildMatchingRankCountsHTML() {
     return "<span>マッチング候補は現在 0人です。</span>";
   }
 
-  const counts = {};
-
-  State.matchingList.forEach(
-    p => {
-
-      const key =
-        p.__rankKey;
-
-      counts[key] =
-        (counts[key] || 0) + 1;
-
-    }
-  );
-
-  const parts =
-    RANKS
-      .filter(
-        r => counts[r.key]
-      )
-      .map(r => {
-
-        const cnt =
-          counts[r.key];
-
-        return `
-          <span
-            style="
-              margin-right:12px;
-              white-space:nowrap;
-            "
-          >
-            <img src="${r.icon}" width="24" style="vertical-align:middle; margin-right:4px;">
-
-            ${r.label}：${fmt(cnt)}人
-
-          </span>
-        `;
-      });
-
-  return parts.join("");
+  return buildRankCountBadgesHTML(State.matchingList);
 }
 
 
@@ -8912,6 +8913,13 @@ function renderDetailTable(
 
     </h3>
 
+    <div
+      class="rank-count-badges"
+      style="display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px;"
+    >
+      ${buildRankCountBadgesHTML(list)}
+    </div>
+
     <div style="overflow-x:auto;">
 
       <table>
@@ -8981,20 +8989,11 @@ function renderAreaDetailTable(areaNo) {
       <span style="margin-left:16px;">（${fmt(list.length)}人）</span>
     </h3>
 
-    <div class="area-rank-breakdown">
-      ${RANKS.map(rank => {
-        const count = counts[rank.key] || 0;
-        if (!count) return "";
-        return `
-          <span
-            class="area-rank-badge"
-            title="${rank.label}: ${count}人"
-            style="${getRankLegendStyle(rank.key)}"
-          >
-            <img src="${rank.icon}" width="20">${rank.label}：${count}人
-          </span>
-        `;
-      }).join(" ")}
+    <div
+      class="rank-count-badges"
+      style="display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px;"
+    >
+      ${buildRankCountBadgesHTML(list)}
     </div>
 
     <div style="overflow-x:auto;">
@@ -9191,7 +9190,7 @@ function renderMatchingTable() {
     <div
       id="matchingRankCounts"
       class="mt10"
-      style="margin-bottom:10px;"
+      style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;"
     >
       ${buildMatchingRankCountsHTML()}
     </div>
