@@ -123,6 +123,16 @@ const ALL_CANDIDATES_COLUMNS = [
   "areaTotalCount",
   "areaDensity",
   "areaBoost",
+  "recentAreaMatchCount5",
+  "recentAreaMatchCount10",
+  "recentAreaMatchCount20",
+  "loggedAreaMatchCount",
+  "loggedAreaMatchSampleCount",
+  "loggedAreaMatchRate",
+  "recentAreaMatchDensity5",
+  "recentAreaCounterfactualBoost5",
+  "recentAreaCounterfactualSlotScore",
+  "recentAreaCounterfactualSlotRank",
   "phaseError",
   "signedPhaseError",
   "peakDirection",
@@ -143,6 +153,7 @@ const PINK_MISMATCH_BOOST_FACTOR = 0.5;
 const DEFAULT_PHASE_ERROR_SCALE_SEC = 90;
 const DEFAULT_AREA_BOOST_WEIGHT = 0.25;
 const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
+const DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT = 0.1;
 const DEFAULT_PRIDE_BAND_PRIOR_EXPONENT = 0.5;
 
 const MAX_LOG_LINES = 100;
@@ -268,6 +279,7 @@ const State = {
   matchingScoredAll: [],
   matchingTierCounts: {},
   matchingSlotPlan: [],
+  copyAreaHistory: [],
   myStar: 7,
   myRankKey: "R7",
   recentClicks: [],
@@ -4038,6 +4050,154 @@ async function seedPhaseAdjustFromCopyHistory() {
 
 }
 
+function normalizeCopyAreaHistory(
+  records
+) {
+  const result = [];
+
+  for (
+    const record of
+    [...(records ?? [])].sort(
+      (a, b) =>
+        Number(a?.t ?? 0) -
+        Number(b?.t ?? 0)
+    )
+  ) {
+    if (
+      record?.e !== "copy" ||
+      record?.unmatchedPlayer ||
+      String(record?.area ?? "") === ""
+    ) {
+      continue;
+    }
+
+    const previous =
+      result[result.length - 1];
+    const samePlayer =
+      previous &&
+      normalizePlayerName(
+        previous.name ?? ""
+      ) ===
+        normalizePlayerName(
+          record.n ?? ""
+        ) &&
+      normalizePlayerName(
+        previous.shopname ?? ""
+      ) ===
+        normalizePlayerName(
+          record.shopname ?? ""
+        );
+    const withinDuplicateGuard =
+      samePlayer &&
+      Number(record.t ?? 0) -
+        Number(previous.t ?? 0) <
+        15000;
+
+    if (withinDuplicateGuard) {
+      continue;
+    }
+
+    result.push({
+      t:
+        Number(record.t ?? 0),
+      name:
+        record.n ?? "",
+      shopname:
+        record.shopname ?? "",
+      area:
+        String(record.area)
+    });
+  }
+
+  return result.slice(
+    -LOG_STORAGE_LIMITS.copyEvents
+  );
+}
+
+async function loadCopyAreaHistory() {
+  if (!logDB) {
+    State.copyAreaHistory = [];
+    return;
+  }
+
+  const tx =
+    logDB.transaction(
+      [LOG_STORE.copyEvents],
+      "readonly"
+    );
+  const store =
+    tx.objectStore(
+      LOG_STORE.copyEvents
+    );
+  const records =
+    await new Promise(
+      (resolve, reject) => {
+        const req = store.getAll();
+        req.onsuccess = () =>
+          resolve(req.result || []);
+        req.onerror = reject;
+      }
+    );
+
+  State.copyAreaHistory =
+    normalizeCopyAreaHistory(records);
+}
+
+function appendCopyAreaHistory(
+  record
+) {
+  if (
+    record?.unmatchedPlayer ||
+    String(record?.area ?? "") === ""
+  ) {
+    return;
+  }
+
+  const nextRecord = {
+    t:
+      Number(record.t ?? Date.now()),
+    name:
+      record.n ?? "",
+    shopname:
+      record.shopname ?? "",
+    area:
+      String(record.area)
+  };
+  const previous =
+    State.copyAreaHistory[
+      State.copyAreaHistory.length - 1
+    ];
+  const isDuplicate =
+    previous &&
+    normalizePlayerName(
+      previous.name ?? ""
+    ) ===
+      normalizePlayerName(
+        nextRecord.name
+      ) &&
+    normalizePlayerName(
+      previous.shopname ?? ""
+    ) ===
+      normalizePlayerName(
+        nextRecord.shopname
+      ) &&
+    nextRecord.t -
+      Number(previous.t ?? 0) <
+      15000;
+
+  if (isDuplicate) {
+    return;
+  }
+
+  State.copyAreaHistory.push(
+    nextRecord
+  );
+  State.copyAreaHistory =
+    State.copyAreaHistory.slice(
+      -LOG_STORAGE_LIMITS.copyEvents
+    );
+}
+
 /* =========================================================
  [7100] Phase Distance:getRoundedDiffMinAndPhaseDistance（旧 [7200]）
 ========================================================= */
@@ -5648,6 +5808,166 @@ function applyCandidateSlotScores(
   }
 }
 
+function buildCopyAreaHistoryContext() {
+  const history =
+    (State.copyAreaHistory ?? [])
+      .filter(record =>
+        String(record?.area ?? "") !== ""
+      );
+
+  const buildCounts = records => {
+    const counts = {};
+
+    for (const record of records) {
+      const area =
+        String(record.area);
+
+      counts[area] =
+        Number(counts[area] ?? 0) + 1;
+    }
+
+    return counts;
+  };
+
+  const recent5 =
+    history.slice(-5);
+  const recent10 =
+    history.slice(-10);
+  const recent20 =
+    history.slice(-20);
+  const allCounts =
+    buildCounts(history);
+  const recent5Counts =
+    buildCounts(recent5);
+
+  return {
+    sampleCount:
+      history.length,
+    allCounts,
+    recent5Counts,
+    recent10Counts:
+      buildCounts(recent10),
+    recent20Counts:
+      buildCounts(recent20),
+    maxRecent5Count:
+      Math.max(
+        1,
+        ...Object.values(
+          recent5Counts
+        ).map(Number)
+      )
+  };
+}
+
+function applyCandidateAreaHistoryDiagnostics(
+  candidates
+) {
+  const context =
+    buildCopyAreaHistoryContext();
+
+  const configuredWeight =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.areaBoost
+        ?.diagnosticRecentWeight ??
+      DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT
+    );
+
+  const diagnosticWeight =
+    Number.isFinite(configuredWeight)
+      ? clamp(configuredWeight, 0, 1)
+      : DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT;
+
+  const buckets = {};
+
+  for (const player of candidates ?? []) {
+    const detail =
+      player.__detail ?? {};
+    const area =
+      String(player.area ?? "");
+    const recentCount5 =
+      Number(
+        context.recent5Counts[area] ?? 0
+      );
+    const recentDensity5 =
+      Math.sqrt(
+        recentCount5 /
+        context.maxRecent5Count
+      );
+    const counterfactualBoost =
+      1 +
+      diagnosticWeight *
+      recentDensity5;
+    const counterfactualSlotScore =
+      getCandidateSlotScore(player) *
+      counterfactualBoost;
+
+    detail.recentAreaMatchCount5 =
+      recentCount5;
+    detail.recentAreaMatchCount10 =
+      Number(
+        context.recent10Counts[area] ?? 0
+      );
+    detail.recentAreaMatchCount20 =
+      Number(
+        context.recent20Counts[area] ?? 0
+      );
+    detail.loggedAreaMatchCount =
+      Number(
+        context.allCounts[area] ?? 0
+      );
+    detail.loggedAreaMatchSampleCount =
+      context.sampleCount;
+    detail.loggedAreaMatchRate =
+      context.sampleCount > 0
+        ? detail.loggedAreaMatchCount /
+          context.sampleCount
+        : 0;
+    detail.recentAreaMatchDensity5 =
+      recentDensity5;
+    detail.recentAreaCounterfactualBoost5 =
+      counterfactualBoost;
+    detail.recentAreaCounterfactualSlotScore =
+      counterfactualSlotScore;
+
+    const bucket =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    if (!buckets[bucket]) {
+      buckets[bucket] = [];
+    }
+
+    buckets[bucket].push(player);
+  }
+
+  for (const players of Object.values(buckets)) {
+    players
+      .sort(
+        (a, b) =>
+          Number(
+            b.__detail
+              ?.recentAreaCounterfactualSlotScore ?? 0
+          ) -
+          Number(
+            a.__detail
+              ?.recentAreaCounterfactualSlotScore ?? 0
+          )
+      )
+      .forEach((player, index) => {
+        player.__detail
+          .recentAreaCounterfactualSlotRank =
+          index + 1;
+      });
+  }
+}
+
 function getCandidateSlotScore(
   player
 ) {
@@ -6513,6 +6833,10 @@ function buildMatchingCandidates() {
   applyCandidateSlotScores(
     scoredAll,
     areaDensityContext
+  );
+
+  applyCandidateAreaHistoryDiagnostics(
+    scoredAll
   );
 
   assignCandidateSlotRanks(
@@ -10025,6 +10349,27 @@ function buildScoreBreakdownLog(
         Number(detail.areaDensity ?? 0),
       areaBoost:
         Number(detail.areaBoost ?? 1),
+      recentAreaMatchCount5:
+        Number(detail.recentAreaMatchCount5 ?? 0),
+      recentAreaMatchCount10:
+        Number(detail.recentAreaMatchCount10 ?? 0),
+      recentAreaMatchCount20:
+        Number(detail.recentAreaMatchCount20 ?? 0),
+      loggedAreaMatchCount:
+        Number(detail.loggedAreaMatchCount ?? 0),
+      loggedAreaMatchSampleCount:
+        Number(detail.loggedAreaMatchSampleCount ?? 0),
+      loggedAreaMatchRate:
+        Number(detail.loggedAreaMatchRate ?? 0),
+      recentAreaMatchDensity5:
+        Number(detail.recentAreaMatchDensity5 ?? 0),
+      recentAreaCounterfactualBoost5:
+        Number(detail.recentAreaCounterfactualBoost5 ?? 1),
+      recentAreaCounterfactualSlotScore:
+        Number(detail.recentAreaCounterfactualSlotScore ?? 0),
+      recentAreaCounterfactualSlotRank:
+        Number(detail.recentAreaCounterfactualSlotRank ?? 0) ||
+        null,
       phaseError:
         Number(detail.phaseError ?? 0),
       signedPhaseError:
@@ -10097,6 +10442,27 @@ function buildScoreBreakdownLog(
       Number(detail.areaDensity ?? 0),
     areaBoost:
       Number(detail.areaBoost ?? 1),
+    recentAreaMatchCount5:
+      Number(detail.recentAreaMatchCount5 ?? 0),
+    recentAreaMatchCount10:
+      Number(detail.recentAreaMatchCount10 ?? 0),
+    recentAreaMatchCount20:
+      Number(detail.recentAreaMatchCount20 ?? 0),
+    loggedAreaMatchCount:
+      Number(detail.loggedAreaMatchCount ?? 0),
+    loggedAreaMatchSampleCount:
+      Number(detail.loggedAreaMatchSampleCount ?? 0),
+    loggedAreaMatchRate:
+      Number(detail.loggedAreaMatchRate ?? 0),
+    recentAreaMatchDensity5:
+      Number(detail.recentAreaMatchDensity5 ?? 0),
+    recentAreaCounterfactualBoost5:
+      Number(detail.recentAreaCounterfactualBoost5 ?? 1),
+    recentAreaCounterfactualSlotScore:
+      Number(detail.recentAreaCounterfactualSlotScore ?? 0),
+    recentAreaCounterfactualSlotRank:
+      Number(detail.recentAreaCounterfactualSlotRank ?? 0) ||
+      null,
     phaseError:
       Number(detail.phaseError ?? 0),
     signedPhaseError:
@@ -10173,6 +10539,16 @@ function buildAllCandidateRow(
     Number(d.areaTotalCount ?? 0),
     Number(d.areaDensity ?? 0),
     Number(d.areaBoost ?? 1),
+    Number(d.recentAreaMatchCount5 ?? 0),
+    Number(d.recentAreaMatchCount10 ?? 0),
+    Number(d.recentAreaMatchCount20 ?? 0),
+    Number(d.loggedAreaMatchCount ?? 0),
+    Number(d.loggedAreaMatchSampleCount ?? 0),
+    Number(d.loggedAreaMatchRate ?? 0),
+    Number(d.recentAreaMatchDensity5 ?? 0),
+    Number(d.recentAreaCounterfactualBoost5 ?? 1),
+    Number(d.recentAreaCounterfactualSlotScore ?? 0),
+    Number(d.recentAreaCounterfactualSlotRank ?? 0) || null,
     Number(d.phaseError ?? 0),
     Number(d.signedPhaseError ?? 0),
     d.peakDirection ?? "unknown",
@@ -10247,7 +10623,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v1",
+        "slot_area_v2",
 
       dk:
         buildDailyKey(),
@@ -10330,6 +10706,19 @@ function saveCopyEventUnified(
       ...State.matchingScoredAll,
       scoredPlayer
     ]
+  );
+
+  const diagnosticCandidates = [
+    ...State.matchingScoredAll.filter(
+      candidate =>
+        buildPlayerIdentityKey(candidate) !==
+        buildPlayerIdentityKey(scoredPlayer)
+    ),
+    scoredPlayer
+  ];
+
+  applyCandidateAreaHistoryDiagnostics(
+    diagnosticCandidates
   );
 
   const detail =
@@ -10433,7 +10822,7 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "slot_area_v1",
+      "slot_area_v2",
 
     dk:
       buildDailyKey(),
@@ -10531,6 +10920,8 @@ function saveCopyEventUnified(
     LOG_STORAGE_LIMITS.copyEvents,
     true
   );
+
+  appendCopyAreaHistory(record);
 
   return record;
 
@@ -11253,7 +11644,7 @@ function saveCandidateEvent() {
     t: now,
 
     logSchemaVersion:
-      "slot_area_v1",
+      "slot_area_v2",
 
     e: "candidate",
 
@@ -12105,6 +12496,8 @@ async function init() {
       scoringConfigJson
     );
 
+    await loadCopyAreaHistory();
+
     await seedPhaseAdjustFromCopyHistory();
 
     applyRoundDataJson(
@@ -12134,6 +12527,8 @@ async function init() {
     await loadHistoricalMatchupDistribution();
 
     await loadScoringConfig();
+
+    await loadCopyAreaHistory();
 
     await seedPhaseAdjustFromCopyHistory();
 
