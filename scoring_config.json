@@ -1,5 +1,55 @@
 {
   "meta": {
+    "version": "scoring_config_v18_bounded_realtime_20260917",
+    "createdAt": "2026-08-30T20:17:00+09:00",
+    "modifiedAt": "2026-09-17T07:38:47+09:00",
+    "description": "通常9枠を履歴マッチング比率で配分し、枠内ではRealtime・Phase・弱めたエリア密度を合成する。RealtimeBoostは個人とランクの信号を加算し、最大1.60に制限する。直近実績エリアとエリアPhase集中は検証ログのみで選出スコアには適用しない。"
+  },
+  "candidateSelection": {
+    "normalSlotCount": 9,
+    "phaseRescueSlotCount": 1,
+    "slotAllocation": {
+      "prideBandPriorExponent": 0.5
+    },
+    "areaBoost": {
+      "enabled": true,
+      "weight": 0.10,
+      "smoothingSampleSize": 30,
+      "diagnosticRecentWeight": 0.10,
+      "diagnosticPhaseWeight": 0.05
+    }
+  },
+  "phase": {
+    "weight": 0.80,
+    "yellow": {
+      "baseCycleSec": 345,
+      "alpha": 0.12,
+      "maxShiftSec": 30,
+      "minSamples": 8
+    },
+    "pink": {
+      "weight": 1.00,
+      "baseCycleSec": 345,
+      "alpha": 0.18,
+      "maxShiftSec": 45,
+      "minSamples": 8
+    }
+  },
+  "phaseError": {
+    "scaleSec": 90,
+    "yellowThreshold": 0.70,
+    "pinkThreshold": 0.55,
+    "yellowLambda": 0.03,
+    "pinkLambda": 0.03
+  },
+  "realtimeBoost": {
+    "decaySec": 3600,
+    "playerWeight": 0.35,
+    "rankWeight": 0.10,
+    "maxBonus": 0.60
+  }
+}{
+  "meta": {
     "version": "scoring_config_v17_slot_area_20260916",
     "createdAt": "2026-08-30T20:17:00+09:00",
     "modifiedAt": "2026-09-16T19:32:53+09:00",
