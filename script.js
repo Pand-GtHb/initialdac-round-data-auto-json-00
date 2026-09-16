@@ -115,9 +115,18 @@ const ALL_CANDIDATES_COLUMNS = [
   "playerBoost",
   "rankBoost",
   "realtimeBoost",
+  "playerActivitySignal",
+  "rankActivitySignal",
+  "playerRealtimeBonus",
+  "rankRealtimeBonus",
+  "realtimeBonusBeforeCap",
+  "realtimeBonusCap",
+  "legacyRealtimeBoost",
   "slotScore",
+  "legacySlotScore",
   "slotBucket",
   "slotRank",
+  "legacySlotRank",
   "prideBandPriorWeight",
   "areaBucketCount",
   "areaTotalCount",
@@ -133,6 +142,19 @@ const ALL_CANDIDATES_COLUMNS = [
   "recentAreaCounterfactualBoost5",
   "recentAreaCounterfactualSlotScore",
   "recentAreaCounterfactualSlotRank",
+  "areaBucketScoredCandidateCount",
+  "areaBucketPhaseMatchedCount",
+  "areaBucketPhaseMatchCount30",
+  "areaBucketPhaseMatchCount60",
+  "areaBucketPhaseScoreSum",
+  "areaBucketPeerPhaseMatchedCount",
+  "areaBucketPeerPhaseMatchCount30",
+  "areaBucketPeerPhaseScoreSum",
+  "areaBucketTop3BaseScoreSum",
+  "areaPhaseDensity30",
+  "areaPhaseCounterfactualBoost",
+  "areaPhaseCounterfactualSlotScore",
+  "areaPhaseCounterfactualSlotRank",
   "phaseError",
   "signedPhaseError",
   "peakDirection",
@@ -154,7 +176,11 @@ const DEFAULT_PHASE_ERROR_SCALE_SEC = 90;
 const DEFAULT_AREA_BOOST_WEIGHT = 0.25;
 const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
 const DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT = 0.1;
+const DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT = 0.05;
 const DEFAULT_PRIDE_BAND_PRIOR_EXPONENT = 0.5;
+const DEFAULT_REALTIME_PLAYER_WEIGHT = 0.35;
+const DEFAULT_REALTIME_RANK_WEIGHT = 0.1;
+const DEFAULT_REALTIME_MAX_BONUS = 0.6;
 
 const MAX_LOG_LINES = 100;
 
@@ -3280,16 +3306,13 @@ function getBoostDecayHalfLifeSec() {
   );
 }
 
-/* =========================================================
- [6320] Realtime Boost:computeBoostValue（旧 [7105] 内）
-========================================================= */
-function computeBoostValue(
+function computeActivitySignal(
   entry,
   nowMs = Date.now()
 ) {
 
   if (!entry) {
-    return 1.0;
+    return 0;
   }
 
   const count =
@@ -3303,7 +3326,7 @@ function computeBoostValue(
     !lastSeen ||
     !isFinite(lastSeen)
   ) {
-    return 1.0;
+    return 0;
   }
 
   const deltaSec =
@@ -3313,19 +3336,58 @@ function computeBoostValue(
     !isFinite(deltaSec) ||
     deltaSec < 0
   ) {
-    return 1.0;
+    return 0;
   }
 
   const T =
     getBoostDecayHalfLifeSec();
 
-  const magnitude =
-    1 + Math.log(1 + count);
-
   const decay =
     Math.exp(-deltaSec / T);
 
-  return magnitude * decay;
+  return Math.log(1 + count) *
+    decay;
+}
+
+function computeLegacyBoostValue(
+  entry,
+  nowMs = Date.now()
+) {
+  if (!entry) {
+    return 1;
+  }
+
+  const count =
+    Number(entry.count ?? 0);
+  const lastSeen =
+    Number(entry.lastSeen ?? 0);
+
+  if (
+    !count ||
+    !lastSeen ||
+    !isFinite(lastSeen)
+  ) {
+    return 1;
+  }
+
+  const deltaSec =
+    (nowMs - lastSeen) / 1000;
+
+  if (
+    !isFinite(deltaSec) ||
+    deltaSec < 0
+  ) {
+    return 1;
+  }
+
+  return (
+    1 +
+    Math.log(1 + count)
+  ) *
+    Math.exp(
+      -deltaSec /
+      getBoostDecayHalfLifeSec()
+    );
 }
 
 /* =========================================================
@@ -3340,11 +3402,12 @@ function getPlayerBoost(player) {
       player.name ?? ""
     );
 
-  return computeBoostValue(
+  return 1 +
+    computeActivitySignal(
     State.playerActivity[
       playerId
     ]
-  );
+    );
 }
 
 /* =========================================================
@@ -3352,11 +3415,12 @@ function getPlayerBoost(player) {
 ========================================================= */
 function getRankBoost(rankKey) {
 
-  return computeBoostValue(
+  return 1 +
+    computeActivitySignal(
     State.rankActivity[
       String(rankKey ?? "")
     ]
-  );
+    );
 }
 
 /*
@@ -5778,6 +5842,17 @@ function applyCandidateSlotScores(
       ) *
       areaDetail.areaBoost *
       prideBandPriorWeight;
+    const legacySlotScore =
+      slotScore /
+      Math.max(
+        Number(
+          detail.realtimeBoost ?? 1
+        ),
+        Number.EPSILON
+      ) *
+      Number(
+        detail.legacyRealtimeBoost ?? 1
+      );
 
     detail.slotBucket =
       getMatchingSlotBucketKey(
@@ -5801,6 +5876,13 @@ function applyCandidateSlotScores(
       Number.isFinite(slotScore) &&
       slotScore > 0
         ? slotScore
+        : 0;
+    detail.legacySlotScore =
+      Number.isFinite(
+        legacySlotScore
+      ) &&
+      legacySlotScore > 0
+        ? legacySlotScore
         : 0;
 
     player.__slotScore =
@@ -5968,6 +6050,241 @@ function applyCandidateAreaHistoryDiagnostics(
   }
 }
 
+function applyCandidateAreaPhaseDiagnostics(
+  candidates
+) {
+  const configuredWeight =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.areaBoost
+        ?.diagnosticPhaseWeight ??
+      DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT
+    );
+  const diagnosticWeight =
+    Number.isFinite(configuredWeight)
+      ? clamp(configuredWeight, 0, 1)
+      : DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT;
+  const groups = {};
+  const bucketPlayers = {};
+
+  for (const player of candidates ?? []) {
+    const detail =
+      player.__detail ?? {};
+    const bucket =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    const area =
+      String(player.area ?? "");
+    const groupKey =
+      `${bucket}\u0000${area}`;
+    const group =
+      groups[groupKey] ?? {
+        players: [],
+        phaseMatchedCount: 0,
+        phaseMatchCount30: 0,
+        phaseMatchCount60: 0,
+        phaseScoreSum: 0,
+        baseScores: []
+      };
+    const phaseError =
+      Number(
+        detail.phaseError ?? Infinity
+      );
+    const hasPhaseSignal =
+      Number(
+        detail.phaseScore ?? 0
+      ) > 0;
+    const phaseMatched =
+      Boolean(
+        detail.isYellow ||
+        detail.isPink
+      );
+    const baseSlotScore =
+      getCandidateSlotScore(player) /
+      Math.max(
+        Number(detail.areaBoost ?? 1),
+        Number.EPSILON
+      );
+
+    group.players.push(player);
+    group.phaseMatchedCount +=
+      phaseMatched ? 1 : 0;
+    group.phaseMatchCount30 +=
+      hasPhaseSignal &&
+      phaseError <= 30
+        ? 1
+        : 0;
+    group.phaseMatchCount60 +=
+      hasPhaseSignal &&
+      phaseError <= 60
+        ? 1
+        : 0;
+    group.phaseScoreSum +=
+      Number(
+        detail.finalPhaseScore ?? 0
+      );
+    group.baseScores.push(
+      baseSlotScore
+    );
+    groups[groupKey] = group;
+
+    if (!bucketPlayers[bucket]) {
+      bucketPlayers[bucket] = [];
+    }
+
+    bucketPlayers[bucket].push(player);
+  }
+
+  const maxPeerPhaseCount30 = {};
+
+  for (
+    const [groupKey, group] of
+    Object.entries(groups)
+  ) {
+    const bucket =
+      groupKey.split("\u0000")[0];
+
+    for (const player of group.players) {
+      const detail =
+        player.__detail;
+      const selfMatches30 =
+        Number(detail.phaseScore ?? 0) > 0 &&
+        Number(detail.phaseError ?? Infinity) <= 30
+          ? 1
+          : 0;
+      const peerCount30 =
+        Math.max(
+          0,
+          group.phaseMatchCount30 -
+            selfMatches30
+        );
+
+      maxPeerPhaseCount30[bucket] =
+        Math.max(
+          Number(
+            maxPeerPhaseCount30[bucket] ?? 0
+          ),
+          peerCount30
+        );
+    }
+  }
+
+  for (
+    const [groupKey, group] of
+    Object.entries(groups)
+  ) {
+    const bucket =
+      groupKey.split("\u0000")[0];
+    const top3BaseScoreSum =
+      [...group.baseScores]
+        .sort((a, b) => b - a)
+        .slice(0, 3)
+        .reduce(
+          (sum, value) =>
+            sum + value,
+          0
+        );
+
+    for (const player of group.players) {
+      const detail =
+        player.__detail;
+      const selfPhaseMatched =
+        detail.isYellow ||
+        detail.isPink
+          ? 1
+          : 0;
+      const selfMatches30 =
+        Number(detail.phaseScore ?? 0) > 0 &&
+        Number(detail.phaseError ?? Infinity) <= 30
+          ? 1
+          : 0;
+      const peerPhaseMatchCount30 =
+        Math.max(
+          0,
+          group.phaseMatchCount30 -
+            selfMatches30
+        );
+      const peerPhaseDensity30 =
+        maxPeerPhaseCount30[bucket] > 0
+          ? Math.sqrt(
+              peerPhaseMatchCount30 /
+              maxPeerPhaseCount30[bucket]
+            )
+          : 0;
+      const counterfactualBoost =
+        1 +
+        diagnosticWeight *
+        peerPhaseDensity30;
+
+      detail.areaBucketScoredCandidateCount =
+        group.players.length;
+      detail.areaBucketPhaseMatchedCount =
+        group.phaseMatchedCount;
+      detail.areaBucketPhaseMatchCount30 =
+        group.phaseMatchCount30;
+      detail.areaBucketPhaseMatchCount60 =
+        group.phaseMatchCount60;
+      detail.areaBucketPhaseScoreSum =
+        group.phaseScoreSum;
+      detail.areaBucketPeerPhaseMatchedCount =
+        Math.max(
+          0,
+          group.phaseMatchedCount -
+            selfPhaseMatched
+        );
+      detail.areaBucketPeerPhaseMatchCount30 =
+        peerPhaseMatchCount30;
+      detail.areaBucketPeerPhaseScoreSum =
+        Math.max(
+          0,
+          group.phaseScoreSum -
+            Number(
+              detail.finalPhaseScore ?? 0
+            )
+        );
+      detail.areaBucketTop3BaseScoreSum =
+        top3BaseScoreSum;
+      detail.areaPhaseDensity30 =
+        peerPhaseDensity30;
+      detail.areaPhaseCounterfactualBoost =
+        counterfactualBoost;
+      detail.areaPhaseCounterfactualSlotScore =
+        getCandidateSlotScore(player) *
+        counterfactualBoost;
+    }
+  }
+
+  for (
+    const players of
+    Object.values(bucketPlayers)
+  ) {
+    players
+      .sort(
+        (a, b) =>
+          Number(
+            b.__detail
+              ?.areaPhaseCounterfactualSlotScore ?? 0
+          ) -
+          Number(
+            a.__detail
+              ?.areaPhaseCounterfactualSlotScore ?? 0
+          )
+      )
+      .forEach((player, index) => {
+        player.__detail
+          .areaPhaseCounterfactualSlotRank =
+          index + 1;
+      });
+  }
+}
+
 function getCandidateSlotScore(
   player
 ) {
@@ -6024,6 +6341,56 @@ function assignCandidateSlotRanks(
           }
         }
       );
+  }
+
+  assignLegacyCandidateSlotRanks(
+    candidates
+  );
+}
+
+function assignLegacyCandidateSlotRanks(
+  candidates
+) {
+  const buckets = {};
+
+  for (const player of candidates ?? []) {
+    const bucket =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    if (!buckets[bucket]) {
+      buckets[bucket] = [];
+    }
+
+    buckets[bucket].push(player);
+  }
+
+  for (
+    const players of
+    Object.values(buckets)
+  ) {
+    players
+      .sort(
+        (a, b) =>
+          Number(
+            b.__detail
+              ?.legacySlotScore ?? 0
+          ) -
+          Number(
+            a.__detail
+              ?.legacySlotScore ?? 0
+          )
+      )
+      .forEach((player, index) => {
+        player.__detail
+          .legacySlotRank =
+          index + 1;
+      });
   }
 }
 
@@ -6449,25 +6816,98 @@ function calcMatchingScoreDetail(
     const isPinkManaged =
         Boolean(phaseCtx?.isPinkManaged);
 
-    /*
-     * コピー履歴由来の旧areaActivityは、playerActivityとの
-     * 二重計上を避けるため引き続き使用しない。現在の
-     * integrated_data.jsonに基づくArea Boostは、この総合スコア
-     * ではなく通常枠内のslotScoreで別途適用する。
-     */
-    const playerBoost =
+    const playerId =
+        normalizePlayerName(
+            player.name ?? ""
+        );
+    const playerActivityEntry =
+        State.playerActivity[
+            playerId
+        ];
+    const rankActivityEntry =
+        State.rankActivity[
+            String(rankKey ?? "")
+        ];
+    const playerActivitySignal =
         isPinkManaged
-            ? getPlayerBoost(player)
-            : 1.0;
-
-    const rankBoost =
+            ? computeActivitySignal(
+                playerActivityEntry
+              )
+            : 0;
+    const rankActivitySignal =
         isPinkManaged
-            ? getRankBoost(rankKey)
-            : 1.0;
-
+            ? computeActivitySignal(
+                rankActivityEntry
+              )
+            : 0;
+    const playerWeight =
+        clamp(
+            Number(
+                State.scoringConfig
+                    ?.realtimeBoost
+                    ?.playerWeight ??
+                DEFAULT_REALTIME_PLAYER_WEIGHT
+            ),
+            0,
+            1
+        );
+    const rankWeight =
+        clamp(
+            Number(
+                State.scoringConfig
+                    ?.realtimeBoost
+                    ?.rankWeight ??
+                DEFAULT_REALTIME_RANK_WEIGHT
+            ),
+            0,
+            1
+        );
+    const configuredMaxBonus =
+        Number(
+            State.scoringConfig
+                ?.realtimeBoost
+                ?.maxBonus ??
+            DEFAULT_REALTIME_MAX_BONUS
+        );
+    const realtimeBonusCap =
+        Number.isFinite(
+            configuredMaxBonus
+        )
+            ? Math.max(
+                0,
+                configuredMaxBonus
+              )
+            : DEFAULT_REALTIME_MAX_BONUS;
+    const playerRealtimeBonus =
+        playerWeight *
+        playerActivitySignal;
+    const rankRealtimeBonus =
+        rankWeight *
+        rankActivitySignal;
+    const realtimeBonusBeforeCap =
+        playerRealtimeBonus +
+        rankRealtimeBonus;
     const realtimeBoost =
-        playerBoost *
-        rankBoost;
+        1 +
+        Math.min(
+            realtimeBonusCap,
+            realtimeBonusBeforeCap
+        );
+    const playerBoost =
+        1 +
+        playerRealtimeBonus;
+    const rankBoost =
+        1 +
+        rankRealtimeBonus;
+    const legacyRealtimeBoost =
+        isPinkManaged
+            ? computeLegacyBoostValue(
+                playerActivityEntry
+              ) *
+              computeLegacyBoostValue(
+                rankActivityEntry
+              )
+            : 1;
 
     /*
      * 【2026-09 改善2】位相を主要スコアから補助要素へ弱める
@@ -6556,8 +6996,7 @@ function calcMatchingScoreDetail(
 
     const rawScore =
         historicalScore *
-        playerBoost *
-        rankBoost *
+        realtimeBoost *
         pinkMismatchBoostFactor *
         effectivePhaseScore;
 
@@ -6595,6 +7034,13 @@ function calcMatchingScoreDetail(
         playerBoost,
         rankBoost,
         realtimeBoost,
+        playerActivitySignal,
+        rankActivitySignal,
+        playerRealtimeBonus,
+        rankRealtimeBonus,
+        realtimeBonusBeforeCap,
+        realtimeBonusCap,
+        legacyRealtimeBoost,
 
         phaseError: phaseCtx?.phaseError ?? 0,
         signedPhaseError:
@@ -6836,6 +7282,10 @@ function buildMatchingCandidates() {
   );
 
   applyCandidateAreaHistoryDiagnostics(
+    scoredAll
+  );
+
+  applyCandidateAreaPhaseDiagnostics(
     scoredAll
   );
 
@@ -8494,6 +8944,23 @@ function ensureAreaSummaryStyles() {
       opacity: 0.8;
     }
 
+    .summary-mode-nav {
+      width: 100%;
+    }
+
+    .summary-mode-btn,
+    #analysisLogBtn {
+      box-sizing: border-box;
+      width: calc((100% - 16px) / 3);
+      flex: 0 0 calc((100% - 16px) / 3);
+      height: 48px;
+      padding: 12px 6px;
+      font-size: 15px;
+      font-weight: bold;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
     .area-summary-legend {
       display: flex;
       flex-wrap: wrap;
@@ -8709,6 +9176,7 @@ function bindSummaryModeButtons(root) {
 function getAreaSummaryRows() {
   const areaSet = new Set();
   const searchNorm = normalize(State.searchText || "");
+  const nowMs = Date.now();
 
   const basePlayers = (State.filtered || []).filter(p => {
     if (!searchNorm) return true;
@@ -8740,12 +9208,25 @@ function getAreaSummaryRows() {
     });
 
     const total = Object.values(counts).reduce((sum, v) => sum + v, 0);
+    const phaseMatchedTotal =
+      list.filter(player =>
+        isCopiedPlayer(player)
+          ? isMatchingCandidateByCopyPhase(
+              player,
+              nowMs
+            )
+          : isMatchingCandidateByPhase(
+              player,
+              nowMs
+            )
+      ).length;
 
     rows.push({
       areaNo,
       areaKey,
       areaName,
       total,
+      phaseMatchedTotal,
       counts,
       list
     });
@@ -8974,7 +9455,7 @@ function renderAreaSummary() {
           <div class="area-summary-row">
             <div class="area-summary-head">
               <span class="area-summary-name clickable" data-area="${row.areaNo}">No.${row.areaNo} ${row.areaName}</span>
-              <span class="area-summary-total">（${fmt(row.total)}人）</span>
+              <span class="area-summary-total">Phase ${fmt(row.phaseMatchedTotal)}／${fmt(row.total)}人</span>
             </div>
             <div class="area-summary-bar-area">
               <div class="area-summary-bar" style="width:100%;">
@@ -9007,6 +9488,8 @@ function renderAreaSummary() {
 }
 
 function renderSummary() {
+  ensureAreaSummaryStyles();
+
   if (State.summaryMode === "area") {
     renderAreaSummary();
     return;
@@ -10336,12 +10819,31 @@ function buildScoreBreakdownLog(
         Number(detail.rankBoost ?? 1),
       realtimeBoost:
         Number(detail.realtimeBoost ?? 1),
+      playerActivitySignal:
+        Number(detail.playerActivitySignal ?? 0),
+      rankActivitySignal:
+        Number(detail.rankActivitySignal ?? 0),
+      playerRealtimeBonus:
+        Number(detail.playerRealtimeBonus ?? 0),
+      rankRealtimeBonus:
+        Number(detail.rankRealtimeBonus ?? 0),
+      realtimeBonusBeforeCap:
+        Number(detail.realtimeBonusBeforeCap ?? 0),
+      realtimeBonusCap:
+        Number(detail.realtimeBonusCap ?? 0),
+      legacyRealtimeBoost:
+        Number(detail.legacyRealtimeBoost ?? 1),
       slotScore:
         Number(detail.slotScore ?? 0),
+      legacySlotScore:
+        Number(detail.legacySlotScore ?? 0),
       slotBucket:
         detail.slotBucket ?? null,
       slotRank:
         Number(detail.slotRank ?? 0) ||
+        null,
+      legacySlotRank:
+        Number(detail.legacySlotRank ?? 0) ||
         null,
       prideBandPriorWeight:
         Number(detail.prideBandPriorWeight ?? 1),
@@ -10369,6 +10871,33 @@ function buildScoreBreakdownLog(
         Number(detail.recentAreaCounterfactualSlotScore ?? 0),
       recentAreaCounterfactualSlotRank:
         Number(detail.recentAreaCounterfactualSlotRank ?? 0) ||
+        null,
+      areaBucketPhaseMatchedCount:
+        Number(detail.areaBucketPhaseMatchedCount ?? 0),
+      areaBucketScoredCandidateCount:
+        Number(detail.areaBucketScoredCandidateCount ?? 0),
+      areaBucketPhaseMatchCount30:
+        Number(detail.areaBucketPhaseMatchCount30 ?? 0),
+      areaBucketPhaseMatchCount60:
+        Number(detail.areaBucketPhaseMatchCount60 ?? 0),
+      areaBucketPhaseScoreSum:
+        Number(detail.areaBucketPhaseScoreSum ?? 0),
+      areaBucketPeerPhaseMatchedCount:
+        Number(detail.areaBucketPeerPhaseMatchedCount ?? 0),
+      areaBucketPeerPhaseMatchCount30:
+        Number(detail.areaBucketPeerPhaseMatchCount30 ?? 0),
+      areaBucketPeerPhaseScoreSum:
+        Number(detail.areaBucketPeerPhaseScoreSum ?? 0),
+      areaBucketTop3BaseScoreSum:
+        Number(detail.areaBucketTop3BaseScoreSum ?? 0),
+      areaPhaseDensity30:
+        Number(detail.areaPhaseDensity30 ?? 0),
+      areaPhaseCounterfactualBoost:
+        Number(detail.areaPhaseCounterfactualBoost ?? 1),
+      areaPhaseCounterfactualSlotScore:
+        Number(detail.areaPhaseCounterfactualSlotScore ?? 0),
+      areaPhaseCounterfactualSlotRank:
+        Number(detail.areaPhaseCounterfactualSlotRank ?? 0) ||
         null,
       phaseError:
         Number(detail.phaseError ?? 0),
@@ -10421,12 +10950,31 @@ function buildScoreBreakdownLog(
       Number(detail.rankBoost ?? 1),
     realtimeBoost:
       Number(detail.realtimeBoost ?? 1),
+    playerActivitySignal:
+      Number(detail.playerActivitySignal ?? 0),
+    rankActivitySignal:
+      Number(detail.rankActivitySignal ?? 0),
+    playerRealtimeBonus:
+      Number(detail.playerRealtimeBonus ?? 0),
+    rankRealtimeBonus:
+      Number(detail.rankRealtimeBonus ?? 0),
+    realtimeBonusBeforeCap:
+      Number(detail.realtimeBonusBeforeCap ?? 0),
+    realtimeBonusCap:
+      Number(detail.realtimeBonusCap ?? 0),
+    legacyRealtimeBoost:
+      Number(detail.legacyRealtimeBoost ?? 1),
     slotScore:
       Number(detail.slotScore ?? 0),
+    legacySlotScore:
+      Number(detail.legacySlotScore ?? 0),
     slotBucket:
       detail.slotBucket ?? null,
     slotRank:
       Number(detail.slotRank ?? 0) ||
+      null,
+    legacySlotRank:
+      Number(detail.legacySlotRank ?? 0) ||
       null,
     prideBandPriorWeight:
       Number(detail.prideBandPriorWeight ?? 1),
@@ -10462,6 +11010,33 @@ function buildScoreBreakdownLog(
       Number(detail.recentAreaCounterfactualSlotScore ?? 0),
     recentAreaCounterfactualSlotRank:
       Number(detail.recentAreaCounterfactualSlotRank ?? 0) ||
+      null,
+    areaBucketPhaseMatchedCount:
+      Number(detail.areaBucketPhaseMatchedCount ?? 0),
+    areaBucketScoredCandidateCount:
+      Number(detail.areaBucketScoredCandidateCount ?? 0),
+    areaBucketPhaseMatchCount30:
+      Number(detail.areaBucketPhaseMatchCount30 ?? 0),
+    areaBucketPhaseMatchCount60:
+      Number(detail.areaBucketPhaseMatchCount60 ?? 0),
+    areaBucketPhaseScoreSum:
+      Number(detail.areaBucketPhaseScoreSum ?? 0),
+    areaBucketPeerPhaseMatchedCount:
+      Number(detail.areaBucketPeerPhaseMatchedCount ?? 0),
+    areaBucketPeerPhaseMatchCount30:
+      Number(detail.areaBucketPeerPhaseMatchCount30 ?? 0),
+    areaBucketPeerPhaseScoreSum:
+      Number(detail.areaBucketPeerPhaseScoreSum ?? 0),
+    areaBucketTop3BaseScoreSum:
+      Number(detail.areaBucketTop3BaseScoreSum ?? 0),
+    areaPhaseDensity30:
+      Number(detail.areaPhaseDensity30 ?? 0),
+    areaPhaseCounterfactualBoost:
+      Number(detail.areaPhaseCounterfactualBoost ?? 1),
+    areaPhaseCounterfactualSlotScore:
+      Number(detail.areaPhaseCounterfactualSlotScore ?? 0),
+    areaPhaseCounterfactualSlotRank:
+      Number(detail.areaPhaseCounterfactualSlotRank ?? 0) ||
       null,
     phaseError:
       Number(detail.phaseError ?? 0),
@@ -10531,9 +11106,18 @@ function buildAllCandidateRow(
     Number(d.playerBoost ?? 1),
     Number(d.rankBoost ?? 1),
     Number(d.realtimeBoost ?? 1),
+    Number(d.playerActivitySignal ?? 0),
+    Number(d.rankActivitySignal ?? 0),
+    Number(d.playerRealtimeBonus ?? 0),
+    Number(d.rankRealtimeBonus ?? 0),
+    Number(d.realtimeBonusBeforeCap ?? 0),
+    Number(d.realtimeBonusCap ?? 0),
+    Number(d.legacyRealtimeBoost ?? 1),
     Number(d.slotScore ?? 0),
+    Number(d.legacySlotScore ?? 0),
     d.slotBucket ?? null,
     Number(d.slotRank ?? 0) || null,
+    Number(d.legacySlotRank ?? 0) || null,
     Number(d.prideBandPriorWeight ?? 1),
     Number(d.areaBucketCount ?? 0),
     Number(d.areaTotalCount ?? 0),
@@ -10549,6 +11133,19 @@ function buildAllCandidateRow(
     Number(d.recentAreaCounterfactualBoost5 ?? 1),
     Number(d.recentAreaCounterfactualSlotScore ?? 0),
     Number(d.recentAreaCounterfactualSlotRank ?? 0) || null,
+    Number(d.areaBucketScoredCandidateCount ?? 0),
+    Number(d.areaBucketPhaseMatchedCount ?? 0),
+    Number(d.areaBucketPhaseMatchCount30 ?? 0),
+    Number(d.areaBucketPhaseMatchCount60 ?? 0),
+    Number(d.areaBucketPhaseScoreSum ?? 0),
+    Number(d.areaBucketPeerPhaseMatchedCount ?? 0),
+    Number(d.areaBucketPeerPhaseMatchCount30 ?? 0),
+    Number(d.areaBucketPeerPhaseScoreSum ?? 0),
+    Number(d.areaBucketTop3BaseScoreSum ?? 0),
+    Number(d.areaPhaseDensity30 ?? 0),
+    Number(d.areaPhaseCounterfactualBoost ?? 1),
+    Number(d.areaPhaseCounterfactualSlotScore ?? 0),
+    Number(d.areaPhaseCounterfactualSlotRank ?? 0) || null,
     Number(d.phaseError ?? 0),
     Number(d.signedPhaseError ?? 0),
     d.peakDirection ?? "unknown",
@@ -10623,7 +11220,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v2",
+        "slot_area_v4",
 
       dk:
         buildDailyKey(),
@@ -10718,6 +11315,14 @@ function saveCopyEventUnified(
   ];
 
   applyCandidateAreaHistoryDiagnostics(
+    diagnosticCandidates
+  );
+
+  applyCandidateAreaPhaseDiagnostics(
+    diagnosticCandidates
+  );
+
+  assignLegacyCandidateSlotRanks(
     diagnosticCandidates
   );
 
@@ -10822,7 +11427,7 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "slot_area_v2",
+      "slot_area_v4",
 
     dk:
       buildDailyKey(),
@@ -11644,7 +12249,7 @@ function saveCandidateEvent() {
     t: now,
 
     logSchemaVersion:
-      "slot_area_v2",
+      "slot_area_v4",
 
     e: "candidate",
 
