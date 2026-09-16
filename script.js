@@ -9338,6 +9338,19 @@ function sortAreaSummaryRows(rows) {
   });
 }
 
+function getAreaNavigationAreaNos() {
+  if (State.areaSortKey !== "total") {
+    return Array.from(
+      { length: 63 },
+      (_, areaNo) => areaNo
+    );
+  }
+
+  return sortAreaSummaryRows(
+    getAreaSummaryRows()
+  ).map(row => row.areaNo);
+}
+
 function buildAreaSummaryHeaderHTML() {
   const mark = key => {
     if (State.areaSortKey !== key) {
@@ -12947,16 +12960,29 @@ function setupRankNavigation(
 }
 
 function setupAreaNavigation(areaNo) {
-  const prev = Number(areaNo) > 0 ? Number(areaNo) - 1 : null;
-  const next = Number(areaNo) < 62 ? Number(areaNo) + 1 : null;
+  const areaNos =
+    getAreaNavigationAreaNos();
+  const currentIndex =
+    areaNos.indexOf(
+      Number(areaNo)
+    );
+  const prev =
+    currentIndex > 0
+      ? areaNos[currentIndex - 1]
+      : null;
+  const next =
+    currentIndex >= 0 &&
+    currentIndex < areaNos.length - 1
+      ? areaNos[currentIndex + 1]
+      : null;
 
   const prevBtn = document.getElementById("prevAreaBtn");
   const nextBtn = document.getElementById("nextAreaBtn");
 
   if (!prevBtn || !nextBtn) return;
 
-  prevBtn.disabled = !prev;
-  nextBtn.disabled = !next;
+  prevBtn.disabled = prev === null;
+  nextBtn.disabled = next === null;
 
   prevBtn.onclick = () => prev !== null && showAreaDetail(prev);
   nextBtn.onclick = () => next !== null && showAreaDetail(next);
