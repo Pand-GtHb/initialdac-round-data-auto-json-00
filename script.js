@@ -8888,8 +8888,14 @@ function buildPrideFilters() {
 ========================================================= */
 function buildSummaryModeNavHTML(activeMode) {
   const modes = [
-    { key: "rank", label: "Rank" },
-    { key: "area", label: "Area" }
+    {
+      key: "rank",
+      label: "🏆 Rank"
+    },
+    {
+      key: "area",
+      label: "🗺️ Area"
+    }
   ];
 
   /*
@@ -8902,7 +8908,7 @@ function buildSummaryModeNavHTML(activeMode) {
       ${modes.map(mode => `
         <button
           type="button"
-          class="summary-mode-btn"
+          class="summary-mode-btn summary-mode-btn-${mode.key}${mode.key === activeMode ? " active" : ""}"
           data-summary-mode="${mode.key}"
         >${mode.label}</button>
       `).join("")}
@@ -8929,11 +8935,32 @@ function ensureAreaSummaryStyles() {
       background: #fff;
     }
 
+    .summary-mode-btn-rank,
+    .summary-mode-btn-rank.active {
+      background: #168a45;
+      border-color: #116f37;
+      color: #fff;
+    }
+
+    .summary-mode-btn-area,
+    .summary-mode-btn-area.active {
+      background: #7c3fb3;
+      border-color: #643191;
+      color: #fff;
+    }
+
+    .summary-mode-btn-rank:hover {
+      background: #116f37;
+    }
+
+    .summary-mode-btn-area:hover {
+      background: #643191;
+    }
+
     .summary-mode-btn.active {
-      background: #dfe6ee;
-      border-color: #a9b7c7;
-      color: #2a2f36;
-      box-shadow: inset 0 0 0 1px rgba(42, 47, 54, 0.08);
+      box-shadow:
+        inset 0 0 0 2px rgba(255, 255, 255, 0.5),
+        0 2px 4px rgba(0, 0, 0, 0.15);
     }
 
     .summary-mode-btn:disabled {
@@ -8946,6 +8973,8 @@ function ensureAreaSummaryStyles() {
 
     .summary-mode-nav {
       width: 100%;
+      margin-top: 8px;
+      margin-bottom: 0;
     }
 
     .summary-mode-btn,
@@ -8959,6 +8988,24 @@ function ensureAreaSummaryStyles() {
       font-weight: bold;
       border-radius: 6px;
       white-space: nowrap;
+    }
+
+    #searchRow {
+      align-items: stretch;
+    }
+
+    #myRankSelect,
+    #searchInput {
+      box-sizing: border-box;
+      height: 36px;
+    }
+
+    #logExportDate {
+      box-sizing: border-box;
+      height: 48px;
+      padding: 12px 8px !important;
+      font-size: 15px !important;
+      border-radius: 6px;
     }
 
     .area-summary-legend {
@@ -9171,6 +9218,35 @@ function bindSummaryModeButtons(root) {
       }
     });
   });
+
+  const nav =
+    root.querySelector(
+      ".summary-mode-nav"
+    );
+  const searchRow =
+    document.getElementById(
+      "searchRow"
+    );
+
+  if (
+    nav &&
+    searchRow?.parentNode
+  ) {
+    document
+      .querySelectorAll(
+        ".summary-mode-nav"
+      )
+      .forEach(otherNav => {
+        if (otherNav !== nav) {
+          otherNav.remove();
+        }
+      });
+
+    searchRow.parentNode.insertBefore(
+      nav,
+      searchRow
+    );
+  }
 }
 
 function getAreaSummaryRows() {
