@@ -9274,7 +9274,9 @@ function getAreaSummaryRows() {
       counts[rank.key] = 0;
     });
 
-    const list = basePlayers.filter(p => String(p.area ?? "") === areaKey);
+    const list = basePlayers
+      .filter(p => String(p.area ?? "") === areaKey)
+      .filter(player => Boolean(getPlayerRankKey(player)));
 
     list.forEach(player => {
       const rankKey = getPlayerRankKey(player);
