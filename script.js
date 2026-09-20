@@ -104,8 +104,10 @@ const ALL_CANDIDATES_COLUMNS = [
   "score",
   "wasDisplayed",
   "displayRank",
-  "isPhaseRescue",
-  "rescueReason",
+  "isCrossBucket",
+  "crossBucketRank",
+  "crossBucketScore",
+  "crossBucketSelectionReason",
   "isPinkManaged",
   "pinkPhaseMatched",
   "pinkMismatchBoostFactor",
@@ -188,8 +190,13 @@ const MAX_YELLOW_PHASE_WEIGHT = 0.55;
  * 上記の裏付けに基づき、cap/weightの引き下げと、
  * Phase不一致減衰の段階化（phaseErrorに応じた指数減衰）、
  * および最終表示枠でのPink管理対象占有数キャップを導入する。
- * 【枠数（NORMAL_SLOT_COUNT／PHASE_RESCUE_SLOT_COUNT）自体は
- *   意図的に変更しない】
+ * 【2026-09 改善8：Phase専用枠からバケット横断枠への置換】
+ * 2026/09/20ログの反実仮想検証では、Phase救済枠からの的中は0件。
+ * 一方で通常9枠のバケット内Phase補正を除くと的中が4件から2件へ
+ * 低下したため、バケット内Phase補正は維持し、Phase専用1枠だけを
+ * 個人推定マッチング確率によるバケット横断1枠へ置き換える。
+ * 通常枠を9から10へ増やすと最大剰余法の非単調性によりR4枠が
+ * 1から0へ減る事例があったため、通常9枠の配分は変更しない。
  *
  * 【2026-09 改善7：PRIDEバンド多様性の閾値緩和】
  * 実績11件（PRIDEバケツ）の反実仮想比較で、多様性ルールにより
@@ -221,6 +228,8 @@ const DEFAULT_REALTIME_PLAYER_WEIGHT = 0.35;
 const DEFAULT_REALTIME_RANK_WEIGHT = 0.03;
 const DEFAULT_REALTIME_MAX_BONUS = 0.25;
 const DEFAULT_MAX_PINK_MANAGED_SLOTS = 3;
+const NORMAL_SLOT_COUNT = 9;
+const CROSS_BUCKET_SLOT_COUNT = 1;
 const DEFAULT_SOFTMAX_BACKTEST_ENABLED = true;
 const DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE = 0.15;
 
@@ -347,6 +356,7 @@ const State = {
   matchingScoredAll: [],
   matchingTierCounts: {},
   matchingSlotPlan: [],
+  matchingCrossBucketDiagnostics: null,
   matchingPinkCapDiagnostics: null,
   matchingSoftmaxBacktestPreview: null,
   copyAreaHistory: [],
@@ -7279,6 +7289,126 @@ function getCandidateSelectionScore(player) {
  );
 }
 
+/*
+ * 【2026-09 改善8】バケット横断比較用の個人推定マッチング確率
+ *
+ * slotScoreはバケット自体の過去マッチング確率を含まないため、
+ * 異なるバケット間の比較には使用しない。過去の相手ランク確率を
+ * 予測時点の同Tier候補数で個人へ配分したうえで、Realtime・
+ * Phase・エリアの現在状態を掛け合わせた横断比較専用スコアとする。
+ */
+function getCandidateCrossBucketScore(
+  player
+) {
+
+  const detail =
+    player?.__detail ?? {};
+
+  const tierProbability =
+    Number(
+      detail.tierProbability ?? 0
+    );
+
+  const tierCandidateCount =
+    Math.max(
+      1,
+      Number(
+        detail.tierCandidateCount ?? 1
+      )
+    );
+
+  const score =
+    (
+      tierProbability /
+      tierCandidateCount
+    ) *
+    Number(
+      detail.realtimeBoost ?? 1
+    ) *
+    Number(
+      detail.pinkMismatchBoostFactor ?? 1
+    ) *
+    Number(
+      detail.effectivePhaseScore ?? 0
+    ) *
+    Number(
+      detail.areaBoost ?? 1
+    );
+
+  return (
+    Number.isFinite(score) &&
+    score > 0
+  )
+    ? score
+    : 0;
+}
+
+function assignCandidateCrossBucketRanks(
+  candidates
+) {
+
+  [...(candidates ?? [])]
+    .sort(
+      (a, b) =>
+        getCandidateCrossBucketScore(b) -
+        getCandidateCrossBucketScore(a)
+    )
+    .forEach((player, index) => {
+
+      const score =
+        getCandidateCrossBucketScore(
+          player
+        );
+
+      player.__crossBucketScore =
+        score;
+
+      player.__crossBucketRank =
+        index + 1;
+
+      if (player.__detail) {
+        player.__detail.crossBucketScore =
+          score;
+        player.__detail.crossBucketRank =
+          index + 1;
+      }
+    });
+}
+
+function selectCrossBucketCandidates(
+  candidates,
+  excludedCandidates,
+  slotCount
+) {
+
+  const excluded =
+    new Set(
+      excludedCandidates ?? []
+    );
+
+  return [...(candidates ?? [])]
+    .filter(
+      player =>
+        !excluded.has(player)
+    )
+    .sort(
+      (a, b) =>
+        getCandidateCrossBucketScore(b) -
+          getCandidateCrossBucketScore(a) ||
+        getCandidateSelectionScore(b) -
+          getCandidateSelectionScore(a)
+    )
+    .slice(
+      0,
+      Math.max(
+        0,
+        Math.floor(
+          Number(slotCount) || 0
+        )
+      )
+    );
+}
+
 /* =========================================================
  [8305] Candidate Builder:applyPinkManagedSlotCap（新規・2026-09改善6）
 ========================================================= */
@@ -7294,7 +7424,7 @@ function getCandidateSelectionScore(player) {
  * cap/weight調整（改善案#1・#2・#3）だけでは、ブーストが強く出た
  * 一部の周期でなお偏りが残りうるため、最終防衛線として
  * 「10枠中Pink管理対象は最大N枠まで」という機械的な上限を設ける。
- * 枠の総数（NORMAL_SLOT_COUNT＋PHASE_RESCUE_SLOT_COUNT）自体は
+ * 枠の総数（NORMAL_SLOT_COUNT＋CROSS_BUCKET_SLOT_COUNT）自体は
  * 変更しない：上限超過分だけを、まだ選出されていない候補の中から
  * スコア順に差し替える。
  */
@@ -7365,6 +7495,11 @@ function applyPinkManagedSlotCap(
     pinkManagedSlotsBeforeCap -
     maxPinkManagedSlots;
 
+  const droppedPink =
+    pinkEntries.filter(
+      p => !keptPink.has(p)
+    );
+
   const kept =
     selected.filter(
       p =>
@@ -7382,7 +7517,7 @@ function applyPinkManagedSlotCap(
       )
     );
 
-  const backfill =
+  const eligibleBackfill =
     rankedByScore
       .filter(p => {
 
@@ -7391,14 +7526,61 @@ function applyPinkManagedSlotCap(
           "|" +
           normalizePlayerName(p.shopname ?? "");
 
-        return !keptKeys.has(key);
-      })
+        return (
+          !keptKeys.has(key) &&
+          !Boolean(
+            p.__detail?.isPinkManaged
+          )
+        );
+      });
+
+  const crossBucketBackfillCount =
+    droppedPink.filter(
+      p => p.__crossBucket
+    ).length;
+
+  const crossBucketBackfill =
+    [...eligibleBackfill]
+      .sort(
+        (a, b) =>
+          getCandidateCrossBucketScore(b) -
+          getCandidateCrossBucketScore(a)
+      )
+      .slice(
+        0,
+        crossBucketBackfillCount
+      );
+
+  crossBucketBackfill.forEach(p => {
+    p.__crossBucket = true;
+    p.__crossBucketSelectionReason =
+      "pink-cap-backfill";
+  });
+
+  const crossBucketBackfillSet =
+    new Set(crossBucketBackfill);
+
+  const normalBackfill =
+    eligibleBackfill
+      .filter(
+        p =>
+          !crossBucketBackfillSet.has(p)
+      )
       .sort(
         (a, b) =>
           getCandidateSlotScore(b) -
           getCandidateSlotScore(a)
       )
-      .slice(0, droppedCount);
+      .slice(
+        0,
+        droppedCount -
+          crossBucketBackfill.length
+      );
+
+  const backfill = [
+    ...crossBucketBackfill,
+    ...normalBackfill
+  ];
 
   backfill.forEach(p => {
     p.__pinkCapBackfill = true;
@@ -7433,7 +7615,7 @@ function applyPinkManagedSlotCap(
  * バックテスト評価専用のプレビュー関数。
  * Plackett-Luce型（softmax重み付き・逐次非復元抽出）で
  * candidateCount件を確率的に選び、実際の枠配分ロジック（バケツ枠＋
- * PRIDE多様性＋Phase救済）との重複数・差分を candidateEvent ログへ
+ * PRIDE多様性＋バケット横断枠）との重複数・差分を candidateEvent ログへ
  * 記録することで、将来より多くの実績データが蓄積された際に
  * 温度パラメータ(temperature)や採用可否を事後評価できるようにする。
  *
@@ -7707,6 +7889,10 @@ function buildMatchingCandidates() {
     scoredAll
   );
 
+  assignCandidateCrossBucketRanks(
+    scoredAll
+  );
+
   State.matchingScoredAll =
     scoredAll;
 
@@ -7735,49 +7921,8 @@ function buildMatchingCandidates() {
 
   /* =====================================
    * STEP7: 履歴分布を通常9枠へ配分
-   * STEP8: 枠内スコア順＋Phase救済を表示
+   * STEP8: 個人推定確率によるバケット横断1枠を追加
    * ===================================== */
-  const configuredNormalSlotCount =
-    Number(
-      State.scoringConfig
-        ?.candidateSelection
-        ?.normalSlotCount ?? 9
-    );
-
-  const NORMAL_SLOT_COUNT =
-    Number.isFinite(
-      configuredNormalSlotCount
-    )
-      ? Math.max(
-          1,
-          Math.floor(
-            configuredNormalSlotCount
-          )
-        )
-      : 9;
-
-  const configuredPhaseRescueSlotCount =
-    Number(
-      State.scoringConfig
-        ?.candidateSelection
-        ?.phaseRescueSlotCount ?? 1
-    );
-
-  const PHASE_RESCUE_SLOT_COUNT =
-    Number.isFinite(
-      configuredPhaseRescueSlotCount
-    )
-      ? Math.max(
-          0,
-          Math.floor(
-            configuredPhaseRescueSlotCount
-          )
-        )
-      : 1;
-
-  const MATCHED_RESCUE_SLOT_COUNT = 1;
-  const BACKOFF_RESCUE_SLOT_COUNT = 1;
-
   const enabledRankKeys = [
     ...selectedStars.map(
       star => `R${star}`
@@ -7799,99 +7944,24 @@ function buildMatchingCandidates() {
       slotBucketProbabilities
     );
 
-  const normalSelectedKeys =
-    new Set(
-      normalSelected.map(
-        p =>
-          normalizePlayerName(p.name) +
-          "|" +
-          normalizePlayerName(p.shopname ?? "")
-      )
+  const crossBucketSelected =
+    selectCrossBucketCandidates(
+      scoreEligible,
+      normalSelected,
+      CROSS_BUCKET_SLOT_COUNT
     );
 
-  const phaseRescuePool =
-    rankedByScore.filter(p => {
-
-      const key =
-        normalizePlayerName(p.name) +
-        "|" +
-        normalizePlayerName(p.shopname ?? "");
-
-      if (normalSelectedKeys.has(key)) {
-        return false;
-      }
-
-      return true;
-    });
-
-  const rankedPhaseRescuePool =
-    [...phaseRescuePool].sort(
-      (a, b) =>
-        Number(b.__detail?.finalPhaseScore ?? 0) -
-        Number(a.__detail?.finalPhaseScore ?? 0)
-    );
-
-  const phaseRescueSelected = [];
-
-  const appendRescueCandidates = (
-    pool,
-    limit,
-    reason
-  ) => {
-
-    for (const player of pool) {
-
-      if (
-        phaseRescueSelected.length >=
-          PHASE_RESCUE_SLOT_COUNT ||
-        phaseRescueSelected.filter(
-          p => p.__rescueReason === reason
-        ).length >= limit ||
-        phaseRescueSelected.includes(player)
-      ) {
-        continue;
-      }
-
-      player.__rescueReason =
-        reason;
-
-      phaseRescueSelected.push(
-        player
-      );
-    }
-  };
-
-  appendRescueCandidates(
-    rankedPhaseRescuePool.filter(
-      p => p.__detail?.historicalMatched
-    ),
-    MATCHED_RESCUE_SLOT_COUNT,
-    "phase"
-  );
-
-  appendRescueCandidates(
-    rankedPhaseRescuePool.filter(
-      p => p.__detail?.historicalBackoff
-    ),
-    BACKOFF_RESCUE_SLOT_COUNT,
-    "historical-backoff"
-  );
-
-  appendRescueCandidates(
-    rankedPhaseRescuePool,
-    PHASE_RESCUE_SLOT_COUNT,
-    "phase"
-  );
-
-  phaseRescueSelected.forEach(
+  crossBucketSelected.forEach(
     p => {
-      p.__phaseRescue = true;
+      p.__crossBucket = true;
+      p.__crossBucketSelectionReason =
+        "individual-probability";
     }
   );
 
   const selected = [
     ...normalSelected,
-    ...phaseRescueSelected
+    ...crossBucketSelected
   ];
 
   /*
@@ -7928,6 +7998,39 @@ function buildMatchingCandidates() {
 
   const finalSelected =
     pinkCapResult.finalSelected;
+
+  State.matchingCrossBucketDiagnostics = {
+    crossBucketSlotCount:
+      CROSS_BUCKET_SLOT_COUNT,
+    selectedBeforePinkCap:
+      crossBucketSelected.map(
+        p => ({
+          name: p.name,
+          shopname: p.shopname ?? "",
+          bucket:
+            p.__detail?.slotBucket ?? null,
+          crossBucketRank:
+            p.__crossBucketRank ?? null,
+          crossBucketScore:
+            getCandidateCrossBucketScore(p)
+        })
+      ),
+    selectedAfterPinkCap:
+      finalSelected
+        .filter(p => p.__crossBucket)
+        .map(
+          p => ({
+            name: p.name,
+            shopname: p.shopname ?? "",
+            bucket:
+              p.__detail?.slotBucket ?? null,
+            crossBucketRank:
+              p.__crossBucketRank ?? null,
+            crossBucketScore:
+              getCandidateCrossBucketScore(p)
+          })
+        )
+  };
 
   State.matchingPinkCapDiagnostics = {
     maxPinkManagedSlots,
@@ -7974,7 +8077,7 @@ function buildMatchingCandidates() {
 
   log(
     `候補生成: Base=${base.length} / Selected=${finalSelected.length}` +
-    `（通常${normalSelected.length}＋Phase救済${phaseRescueSelected.length}` +
+    `（通常${normalSelected.length}＋バケット横断${crossBucketSelected.length}` +
     `／Pink上限${maxPinkManagedSlots}枠：${pinkCapResult.pinkManagedSlotsBeforeCap}→${pinkCapResult.pinkManagedSlotsAfterCap}）` +
     ` Slot=${State.matchingSlotPlan
       .filter(entry => entry.slots > 0)
@@ -9032,14 +9135,14 @@ function buildPlayerRowHTML(
           ? "pink-managed"
           : "";
 
-  const phaseRescueClass =
-    p.__phaseRescue
-      ? " phase-rescue"
+  const crossBucketClass =
+    p.__crossBucket
+      ? " cross-bucket"
       : "";
 
   return `
     <tr
-      class="${rowStateClass}${phaseRescueClass}"
+      class="${rowStateClass}${crossBucketClass}"
       data-updated="${p.updateDate}"
       data-name="${safeName}"
       data-shopname="${safeShop}"
@@ -9064,10 +9167,8 @@ function buildPlayerRowHTML(
         )"
       >
         ${p.name}${
-          p.__phaseRescue
-            ? p.__rescueReason === "historical-backoff"
-              ? ' <span style="background:#fff3cd;color:#7a5200;border-radius:3px;padding:0 4px;font-size:0.8em;" title="履歴補完救済枠：未観測のランク帯・地域から位相上位を選出">H↑</span>'
-              : ' <span style="background:#e0f2ff;color:#0b5da6;border-radius:3px;padding:0 4px;font-size:0.8em;" title="Phase救済枠：FinalPhaseScoreが高いため選出">P↑</span>'
+          p.__crossBucket
+            ? ' <span style="background:#e8f5e9;color:#246b2d;border-radius:3px;padding:0 4px;font-size:0.8em;" title="バケット横断枠：過去バケット確率を現在候補数で個人へ配分した推定確率により選出">X↑</span>'
             : ""
         }
       </td>
@@ -11429,6 +11530,11 @@ function buildScoreBreakdownLog(
       legacySlotRank:
         Number(detail.legacySlotRank ?? 0) ||
         null,
+      crossBucketRank:
+        Number(detail.crossBucketRank ?? 0) ||
+        null,
+      crossBucketScore:
+        Number(detail.crossBucketScore ?? 0),
       prideBandPriorWeight:
         Number(detail.prideBandPriorWeight ?? 1),
       areaDensity:
@@ -11560,6 +11666,11 @@ function buildScoreBreakdownLog(
     legacySlotRank:
       Number(detail.legacySlotRank ?? 0) ||
       null,
+    crossBucketRank:
+      Number(detail.crossBucketRank ?? 0) ||
+      null,
+    crossBucketScore:
+      Number(detail.crossBucketScore ?? 0),
     prideBandPriorWeight:
       Number(detail.prideBandPriorWeight ?? 1),
     areaBucketCount:
@@ -11679,8 +11790,10 @@ function buildAllCandidateRow(
     ),
     p.displayRank ? 1 : 0,
     p.displayRank ?? null,
-    p.__phaseRescue ? 1 : 0,
-    p.__rescueReason ?? null,
+    p.__crossBucket ? 1 : 0,
+    p.__crossBucketRank ?? null,
+    Number(p.__crossBucketScore ?? 0),
+    p.__crossBucketSelectionReason ?? null,
     d.isPinkManaged ? 1 : 0,
     d.pinkPhaseMatched ? 1 : 0,
     Number(d.pinkMismatchBoostFactor ?? 1),
@@ -11761,6 +11874,7 @@ function shouldLogCandidateRow(
       slotRank > 0 &&
       slotRank <= 10
     ) ||
+    Boolean(player?.__crossBucket) ||
     Boolean(player?.__detail?.isPinkManaged)
   );
 }
@@ -11804,7 +11918,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v5_hybrid",
+        "slot_area_v6_cross_bucket",
 
       dk:
         buildDailyKey(),
@@ -11826,6 +11940,15 @@ function saveCopyEventUnified(
 
       slotRankAtPrediction:
         null,
+
+      crossBucketRankAtPrediction:
+        null,
+
+      crossBucketScoreAtPrediction:
+        null,
+
+      wasSelectedByCrossBucket:
+        false,
 
       scoreRank:
         null,
@@ -12011,7 +12134,7 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "slot_area_v5_hybrid",
+      "slot_area_v6_cross_bucket",
 
     dk:
       buildDailyKey(),
@@ -12036,6 +12159,22 @@ function saveCopyEventUnified(
     slotRankAtPrediction:
       scoredAtPrediction
         ?.__slotRank ?? null,
+
+    crossBucketRankAtPrediction:
+      scoredAtPrediction
+        ?.__crossBucketRank ?? null,
+
+    crossBucketScoreAtPrediction:
+      scoredAtPrediction
+        ?.__crossBucketScore ?? null,
+
+    wasSelectedByCrossBucket:
+      displayedIndex >= 0 &&
+      Boolean(
+        displayedCandidates[
+          displayedIndex
+        ]?.__crossBucket
+      ),
 
     scoreRank:
       candidateRank > 0
@@ -12163,10 +12302,17 @@ function buildCopyCandidateSnapshot() {
           Number(p.__detail?.cycleSec ?? 0),
         encounterCount:
           getEncounterHistory(p)?.count ?? 0,
-        isPhaseRescue:
-          Boolean(p.__phaseRescue),
-        rescueReason:
-          p.__rescueReason ?? null
+        isCrossBucket:
+          Boolean(p.__crossBucket),
+        crossBucketRank:
+          p.__crossBucketRank ?? null,
+        crossBucketScore:
+          Number(
+            p.__crossBucketScore ?? 0
+          ),
+        crossBucketSelectionReason:
+          p.__crossBucketSelectionReason ??
+          null
       }));
 
   return {
@@ -12833,7 +12979,7 @@ function saveCandidateEvent() {
     t: now,
 
     logSchemaVersion:
-      "slot_area_v5_hybrid",
+      "slot_area_v6_cross_bucket",
 
     e: "candidate",
 
@@ -12921,6 +13067,21 @@ function saveCandidateEvent() {
           capacity: entry.capacity
         })
       ),
+
+    normalSlotCount:
+      State.matchingSlotPlan.reduce(
+        (sum, entry) =>
+          sum + Number(entry.slots ?? 0),
+        0
+      ),
+
+    crossBucketSelection:
+      State.matchingCrossBucketDiagnostics ?? {
+        crossBucketSlotCount:
+          CROSS_BUCKET_SLOT_COUNT,
+        selectedBeforePinkCap: [],
+        selectedAfterPinkCap: []
+      },
 
     phaseErrorScaleSec: {
       yellow:
@@ -13139,10 +13300,17 @@ function saveCandidateEvent() {
         cycleSec:
           Number(p.__detail?.cycleSec ?? 0),
 
-        isPhaseRescue:
-          Boolean(p.__phaseRescue),
-        rescueReason:
-          p.__rescueReason ?? null,
+        isCrossBucket:
+          Boolean(p.__crossBucket),
+        crossBucketRank:
+          p.__crossBucketRank ?? null,
+        crossBucketScore:
+          Number(
+            p.__crossBucketScore ?? 0
+          ),
+        crossBucketSelectionReason:
+          p.__crossBucketSelectionReason ??
+          null,
 
         encounterCount:
           getEncounterHistory(p)?.count ?? 0
