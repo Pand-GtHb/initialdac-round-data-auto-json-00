@@ -9519,6 +9519,21 @@ function ensureAreaSummaryStyles() {
       box-shadow: inset 0 0 0 1px rgba(255,255,255,0.24);
     }
 
+    /*
+     * 【表示修正】ランクサマリ／エリアサマリ共通の
+     * 「合計X人：RUBY帯Y人＝Z% ＋ PRIDE帯…」見出しの背景。
+     * ランク・エリア別バッジ（rank-count-badge）と同じ
+     * 半透明白ピル背景に揃えることで、写真背景の上でも
+     * 見出しの視認性を確保する。
+     */
+    .summary-total-badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.92);
+      border: 1px solid rgba(148,163,184,0.45);
+      border-radius: 999px;
+      padding: 10px 20px;
+    }
+
     .area-summary-row {
       display: flex;
       align-items: stretch;
@@ -9577,8 +9592,8 @@ function ensureAreaSummaryStyles() {
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      min-width: 210px;
-      flex: 0 0 210px;
+      min-width: 260px;
+      flex: 0 0 260px;
       padding: 4px 10px;
       border-right: 1px solid #e2e8f0;
     }
@@ -9587,12 +9602,9 @@ function ensureAreaSummaryStyles() {
       font-weight: 600;
       color: #0f172a;
       cursor: pointer;
-    }
-
-    .area-summary-total {
-      font-size: 12px;
-      color: #475569;
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .area-summary-bar-area {
@@ -9992,7 +10004,7 @@ function renderAreaSummary() {
 
   area.innerHTML = `
     ${buildSummaryModeNavHTML("area")}
-    <h3>
+    <h3 class="summary-total-badge">
       合計 ${fmt(total)}人：
       RUBY帯 ${fmt(rubyTotal)}人＝${rubyPercent}% ＋
       PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
@@ -10027,8 +10039,7 @@ function renderAreaSummary() {
         return `
           <div class="area-summary-row">
             <div class="area-summary-head">
-              <span class="area-summary-name clickable" data-area="${row.areaNo}">No.${row.areaNo} ${row.areaName}</span>
-              <span class="area-summary-total">Phase ${fmt(row.phaseMatchedTotal)}／${fmt(row.total)}人</span>
+              <span class="area-summary-name clickable" data-area="${row.areaNo}">No.${row.areaNo} ${row.areaName}：Phase ${fmt(row.phaseMatchedTotal)}／${fmt(row.total)}人</span>
             </div>
             <div class="area-summary-bar-area">
               <div class="area-summary-bar" style="width:100%;">
@@ -10122,7 +10133,7 @@ function renderSummary() {
 
   area.innerHTML = `
     ${buildSummaryModeNavHTML("rank")}
-    <h3>
+    <h3 class="summary-total-badge">
       合計 ${fmt(total)}人：
       RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋
       PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
