@@ -1,19 +1,21 @@
 {
   "meta": {
-    "version": "scoring_config_v18_bounded_realtime_20260917",
+    "version": "scoring_config_v19_pink_cap_softmax_backtest_20260920",
     "createdAt": "2026-08-30T20:17:00+09:00",
-    "modifiedAt": "2026-09-17T07:38:47+09:00",
-    "description": "通常9枠を履歴マッチング比率で配分し、枠内ではRealtime・Phase・弱めたエリア密度を合成する。RealtimeBoostは個人とランクの信号を加算し、最大1.60に制限する。直近実績エリアとエリアPhase集中は検証ログのみで選出スコアには適用しない。"
+    "modifiedAt": "2026-09-20T10:22:00+09:00",
+    "description": "通常9枠を履歴マッチング比率で配分し、枠内ではRealtime・Phase・弱めたエリア密度を合成する。RealtimeBoostは個人とランクの信号を加算し、最大1.25に制限する（v18の1.60から引き下げ）。Pink管理対象のPhase不一致時は一律0.5倍でなくphaseErrorに応じた連続減衰（floor 0.3）を適用する。最終表示枠でのPink管理対象占有数はmaxPinkManagedSlots(既定3)で上限を設ける。PRIDEバンド多様性は、同バンド上位者との相対スコア差がprideBandDiversityGapThreshold(既定8%)を超える場合のみ緩和し、僅差の場合は従来どおり多様性を優先する。直近実績エリアとエリアPhase集中は検証ログのみで選出スコアには適用しない。experimental.softmaxBacktestは本番選出に影響しないバックテスト専用プレビューで、将来のソフトマックス選択モデル移行検討（C-3ハイブリッド案）のためのログ収集用。枠数(normalSlotCount/phaseRescueSlotCount)は現状維持。"
   },
   "candidateSelection": {
     "normalSlotCount": 9,
     "phaseRescueSlotCount": 1,
+    "maxPinkManagedSlots": 3,
     "slotAllocation": {
-      "prideBandPriorExponent": 0.5
+      "prideBandPriorExponent": 0.5,
+      "prideBandDiversityGapThreshold": 0.08
     },
     "areaBoost": {
       "enabled": true,
-      "weight": 0.10,
+      "weight": 0.05,
       "smoothingSampleSize": 30,
       "diagnosticRecentWeight": 0.10,
       "diagnosticPhaseWeight": 0.05
@@ -45,7 +47,17 @@
   "realtimeBoost": {
     "decaySec": 3600,
     "playerWeight": 0.35,
-    "rankWeight": 0.10,
-    "maxBonus": 0.60
+    "rankWeight": 0.03,
+    "maxBonus": 0.25,
+    "pinkMismatch": {
+      "floor": 0.3,
+      "decaySec": 60
+    }
+  },
+  "experimental": {
+    "softmaxBacktest": {
+      "enabled": true,
+      "temperature": 0.15
+    }
   }
 }
