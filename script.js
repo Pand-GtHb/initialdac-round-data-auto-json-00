@@ -171,16 +171,58 @@ const ALL_CANDIDATES_COLUMNS = [
 
 const LOG_TOP_CANDIDATE_LIMIT = 60;
 const MAX_YELLOW_PHASE_WEIGHT = 0.55;
+
+/*
+ * 【2026-09 改善6：C-3ハイブリッド計画 フェーズA】
+ * Pinkリアルタイムブースト過大問題の実績分析
+ * （viewer_analysis_20260919.json, 母集団n=8,786・実績n=25）により、
+ * 以下が判明した：
+ *   ・Pink管理対象は母集団の7.18%しか存在しないのに、
+ *     最終表示10枠の21.00%を占有（母比2.92倍）。
+ *   ・realtimeBoostを1.0に固定（＝ブースト無効化）した反実仮想では
+ *     占有率が9.43%まで低下＝超過占有の大半はブースト自体が原因。
+ *   ・実績25件中、コピー時点で既にPink管理対象だったのは1件(4%)のみ、
+ *     かつそのケースも表示枠に入らなかった（PRIDE72位）。
+ *   ・Phase不一致(63.2%)時でも平均realtimeBoostは1.19倍と高いまま＝
+ *     旧来の一律0.5倍減衰(PINK_MISMATCH_BOOST_FACTOR)では不十分。
+ * 上記の裏付けに基づき、cap/weightの引き下げと、
+ * Phase不一致減衰の段階化（phaseErrorに応じた指数減衰）、
+ * および最終表示枠でのPink管理対象占有数キャップを導入する。
+ * 【枠数（NORMAL_SLOT_COUNT／PHASE_RESCUE_SLOT_COUNT）自体は
+ *   意図的に変更しない】
+ *
+ * 【2026-09 改善7：PRIDEバンド多様性の閾値緩和】
+ * 実績11件（PRIDEバケツ）の反実仮想比較で、多様性ルールにより
+ * 機会損失2件・恩恵0件という非対称な結果が確認された
+ * （東雲水夏だぁ・ＫＯＴＯＫＯの両名は、自身より明確にスコアが
+ * 低い別バンド候補に枠を譲る形で落選）。
+ * 「同バンド上位者とのスコア差が僅少な場合のみ多様性を適用しない」
+ * という閾値付き緩和（prideBandDiversityGapThreshold）を導入する。
+ *
+ * 【将来検討：ソフトマックス選択モデル（C-3ハイブリッドのフェーズB）】
+ * 上記フェーズAとは独立に、本番の表示選出（State.matchingList）には
+ * 一切影響を与えない「バックテスト用プレビュー」として、
+ * Plackett-Luce型のソフトマックス重み付き逐次サンプリングを
+ * candidateEvent ログにのみ記録する（computeSoftmaxBacktestPreview）。
+ * 温度パラメータ等の妥当性は現時点のデータ量（1日・実績25件）では
+ * 検証できないため、本番選出ロジックの置き換えは行わない。
+ */
 const PINK_MISMATCH_BOOST_FACTOR = 0.5;
+const DEFAULT_PINK_MISMATCH_FLOOR = 0.3;
+const DEFAULT_PINK_MISMATCH_DECAY_SEC = 60;
 const DEFAULT_PHASE_ERROR_SCALE_SEC = 90;
-const DEFAULT_AREA_BOOST_WEIGHT = 0.25;
+const DEFAULT_AREA_BOOST_WEIGHT = 0.05;
 const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
 const DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT = 0.1;
 const DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT = 0.05;
 const DEFAULT_PRIDE_BAND_PRIOR_EXPONENT = 0.5;
+const DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD = 0.08;
 const DEFAULT_REALTIME_PLAYER_WEIGHT = 0.35;
-const DEFAULT_REALTIME_RANK_WEIGHT = 0.1;
-const DEFAULT_REALTIME_MAX_BONUS = 0.6;
+const DEFAULT_REALTIME_RANK_WEIGHT = 0.03;
+const DEFAULT_REALTIME_MAX_BONUS = 0.25;
+const DEFAULT_MAX_PINK_MANAGED_SLOTS = 3;
+const DEFAULT_SOFTMAX_BACKTEST_ENABLED = true;
+const DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE = 0.15;
 
 const MAX_LOG_LINES = 100;
 
@@ -305,6 +347,8 @@ const State = {
   matchingScoredAll: [],
   matchingTierCounts: {},
   matchingSlotPlan: [],
+  matchingPinkCapDiagnostics: null,
+  matchingSoftmaxBacktestPreview: null,
   copyAreaHistory: [],
   myStar: 7,
   myRankKey: "R7",
@@ -6624,6 +6668,36 @@ function selectPrideSlotCandidates(
           getCandidateSlotScore(a)
       );
 
+  /*
+   * 【2026-09 改善7】PRIDEバンド多様性の閾値緩和
+   *
+   * 従来は「同一rankKey帯からは1名まで」を無条件に適用しており、
+   * 実績分析（n=11、PRIDEバケツ）で機会損失2件・恩恵0件という
+   * 非対称な結果が確認された（同バンド2位・3位相当のスコアの方が
+   * 別バンドの選出候補より明確に高いのに、多様性ルールだけで除外
+   * されていた）。
+   *
+   * ここでは、同バンド内で次点となった候補のスコアが、
+   * 「その時点で選出可能な最良の別バンド候補」に対して
+   * gapThreshold（既定8%）以内しか劣らない場合は、
+   * 多様性ルールを適用せず同バンド候補をそのまま採用する
+   * （＝スコア差が僅少な時だけ多様性を緩和し、
+   * 大きく劣る別バンド候補への"救済"は行わない）。
+   */
+  const configuredGapThreshold =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.slotAllocation
+        ?.prideBandDiversityGapThreshold ??
+      DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD
+    );
+
+  const gapThreshold =
+    Number.isFinite(configuredGapThreshold)
+      ? clamp(configuredGapThreshold, 0, 1)
+      : DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD;
+
   const selected = [];
   const selectedBands = new Set();
 
@@ -6639,7 +6713,36 @@ function selectPrideSlotCandidates(
         player.__rankKey
       )
     ) {
-      continue;
+      const ownScore =
+        getCandidateSlotScore(player);
+
+      const alt =
+        ranked.find(
+          candidate =>
+            !selected.includes(candidate) &&
+            !selectedBands.has(
+              candidate.__rankKey
+            )
+        );
+
+      const altScore =
+        alt
+          ? getCandidateSlotScore(alt)
+          : 0;
+
+      const relativeGap =
+        ownScore > 0
+          ? (ownScore - altScore) / ownScore
+          : 0;
+
+      /*
+       * 代替となる別バンド候補が存在しない、または
+       * 自分のスコアが別バンド候補よりgapThresholdを超えて
+       * 高い場合は、多様性より高スコアを優先し同バンドでも採用する。
+       */
+      if (alt && relativeGap <= gapThreshold) {
+        continue;
+      }
     }
 
     selected.push(player);
@@ -6968,13 +7071,53 @@ function calcMatchingScoreDetail(
         Boolean(phaseCtx?.isPinkPhase);
 
     /*
-     * Pink管理対象でもPhase不一致だけで除外しない。
-     * 履歴・modelのスコアは残し、コピー履歴由来のRealtimeBoostだけを
-     * 減衰させることで、Phaseが外れていても有力な相手を候補に残す。
+     * 【2026-09 改善6】Pink不一致減衰の段階化
+     *
+     * 旧来は一致/不一致の二値判定で PINK_MISMATCH_BOOST_FACTOR(0.5)を
+     * 一律適用していたため、ズレが極小でも極大でも同じ0.5倍にしか
+     * ならず、実績分析でも「Phase不一致(63.2%)時の平均realtimeBoostが
+     * 1.19倍とまだ高いまま」という不十分な減衰が確認された。
+     *
+     * ここでは phaseError（秒）の大きさに応じて
+     * exp(-phaseError / decaySec) で連続的に減衰させ、
+     * floor（下限）を下回らないようにする。
+     * phaseError が 0 に近い（＝一致）ほど 1 に近づき、
+     * ズレが大きいほど floor へ漸近する。
      */
+    const pinkMismatchFloor =
+        clamp(
+            Number(
+                State.scoringConfig
+                    ?.realtimeBoost
+                    ?.pinkMismatch
+                    ?.floor ??
+                DEFAULT_PINK_MISMATCH_FLOOR
+            ),
+            0,
+            1
+        );
+
+    const pinkMismatchDecaySec =
+        Math.max(
+            1,
+            Number(
+                State.scoringConfig
+                    ?.realtimeBoost
+                    ?.pinkMismatch
+                    ?.decaySec ??
+                DEFAULT_PINK_MISMATCH_DECAY_SEC
+            )
+        );
+
     const pinkMismatchBoostFactor =
-        isPinkManaged && !pinkPhaseMatched
-            ? PINK_MISMATCH_BOOST_FACTOR
+        isPinkManaged
+            ? Math.max(
+                pinkMismatchFloor,
+                Math.exp(
+                    -Number(phaseCtx?.phaseError ?? 0) /
+                    pinkMismatchDecaySec
+                )
+              )
             : 1;
 
     const appliedPhaseWeight = isPinkManaged
@@ -7134,6 +7277,277 @@ function getCandidateSelectionScore(player) {
    player.__weight ??
    0
  );
+}
+
+/* =========================================================
+ [8305] Candidate Builder:applyPinkManagedSlotCap（新規・2026-09改善6）
+========================================================= */
+/*
+ * 【2026-09 改善6】Pink管理対象の最終表示枠占有数キャップ
+ *
+ * 実績分析（母集団n=8,786・実績n=25）で、Pink管理対象は
+ * 母集団の7.18%しか存在しないのに最終表示10枠の21.00%を占有し
+ * （母比2.92倍）、しかもその占有が実際の的中にほぼ寄与していない
+ * （実績25件中コピー時点でPink管理対象だったのは1件のみ、かつ
+ * そのケースも表示枠に入らなかった）ことが確認された。
+ *
+ * cap/weight調整（改善案#1・#2・#3）だけでは、ブーストが強く出た
+ * 一部の周期でなお偏りが残りうるため、最終防衛線として
+ * 「10枠中Pink管理対象は最大N枠まで」という機械的な上限を設ける。
+ * 枠の総数（NORMAL_SLOT_COUNT＋PHASE_RESCUE_SLOT_COUNT）自体は
+ * 変更しない：上限超過分だけを、まだ選出されていない候補の中から
+ * スコア順に差し替える。
+ */
+function applyPinkManagedSlotCap(
+  selected,
+  rankedByScore,
+  maxPinkManagedSlots
+) {
+
+  if (
+    !Number.isFinite(maxPinkManagedSlots) ||
+    maxPinkManagedSlots < 0
+  ) {
+    return {
+      finalSelected: selected,
+      pinkManagedSlotsBeforeCap:
+        selected.filter(
+          p => Boolean(p.__detail?.isPinkManaged)
+        ).length,
+      pinkManagedSlotsAfterCap:
+        selected.filter(
+          p => Boolean(p.__detail?.isPinkManaged)
+        ).length,
+      pinkCapDroppedCount: 0
+    };
+  }
+
+  const pinkEntries =
+    selected.filter(
+      p => Boolean(p.__detail?.isPinkManaged)
+    );
+
+  const pinkManagedSlotsBeforeCap =
+    pinkEntries.length;
+
+  if (
+    pinkManagedSlotsBeforeCap <=
+    maxPinkManagedSlots
+  ) {
+    return {
+      finalSelected: selected,
+      pinkManagedSlotsBeforeCap,
+      pinkManagedSlotsAfterCap:
+        pinkManagedSlotsBeforeCap,
+      pinkCapDroppedCount: 0
+    };
+  }
+
+  /*
+   * 超過分＝スコアの低いPink管理対象から間引く。
+   */
+  const sortedPink =
+    [...pinkEntries].sort(
+      (a, b) =>
+        getCandidateSlotScore(b) -
+        getCandidateSlotScore(a)
+    );
+
+  const keptPink =
+    new Set(
+      sortedPink.slice(
+        0,
+        maxPinkManagedSlots
+      )
+    );
+
+  const droppedCount =
+    pinkManagedSlotsBeforeCap -
+    maxPinkManagedSlots;
+
+  const kept =
+    selected.filter(
+      p =>
+        !Boolean(p.__detail?.isPinkManaged) ||
+        keptPink.has(p)
+    );
+
+  const keptKeys =
+    new Set(
+      kept.map(
+        p =>
+          normalizePlayerName(p.name) +
+          "|" +
+          normalizePlayerName(p.shopname ?? "")
+      )
+    );
+
+  const backfill =
+    rankedByScore
+      .filter(p => {
+
+        const key =
+          normalizePlayerName(p.name) +
+          "|" +
+          normalizePlayerName(p.shopname ?? "");
+
+        return !keptKeys.has(key);
+      })
+      .sort(
+        (a, b) =>
+          getCandidateSlotScore(b) -
+          getCandidateSlotScore(a)
+      )
+      .slice(0, droppedCount);
+
+  backfill.forEach(p => {
+    p.__pinkCapBackfill = true;
+    p.__slotBucket =
+      p.__slotBucket ??
+      getMatchingSlotBucketKey(
+        p.__rankKey
+      );
+  });
+
+  const finalSelected = [
+    ...kept,
+    ...backfill
+  ];
+
+  return {
+    finalSelected,
+    pinkManagedSlotsBeforeCap,
+    pinkManagedSlotsAfterCap:
+      maxPinkManagedSlots,
+    pinkCapDroppedCount: droppedCount
+  };
+}
+
+/* =========================================================
+ [8307] Candidate Builder:computeSoftmaxBacktestPreview（新規・C-3ハイブリッド フェーズB）
+========================================================= */
+/*
+ * 【将来検討：ソフトマックス選択モデル】
+ *
+ * 本番の表示選出（State.matchingList）には一切影響を与えない、
+ * バックテスト評価専用のプレビュー関数。
+ * Plackett-Luce型（softmax重み付き・逐次非復元抽出）で
+ * candidateCount件を確率的に選び、実際の枠配分ロジック（バケツ枠＋
+ * PRIDE多様性＋Phase救済）との重複数・差分を candidateEvent ログへ
+ * 記録することで、将来より多くの実績データが蓄積された際に
+ * 温度パラメータ(temperature)や採用可否を事後評価できるようにする。
+ *
+ * 現時点（1日分・実績25件）では温度パラメータの妥当性を検証できる
+ * データ量が無いため、本関数の出力は診断ログにのみ使用し、
+ * 本番の候補表示には使用しない。
+ */
+function computeSoftmaxBacktestPreview(
+  pool,
+  slotCount,
+  temperature
+) {
+
+  const enabled =
+    Boolean(
+      State.scoringConfig
+        ?.experimental
+        ?.softmaxBacktest
+        ?.enabled ??
+      DEFAULT_SOFTMAX_BACKTEST_ENABLED
+    );
+
+  if (
+    !enabled ||
+    !Array.isArray(pool) ||
+    pool.length === 0 ||
+    slotCount <= 0
+  ) {
+    return {
+      enabled,
+      temperature,
+      previewCandidates: []
+    };
+  }
+
+  const items =
+    pool
+      .map(p => ({
+        player: p,
+        score: getCandidateSlotScore(p)
+      }))
+      .filter(x => x.score > 0);
+
+  const remaining = [...items];
+  const picked = [];
+
+  const effectiveSlotCount =
+    Math.min(
+      slotCount,
+      remaining.length
+    );
+
+  for (
+    let i = 0;
+    i < effectiveSlotCount;
+    i++
+  ) {
+
+    const maxScore =
+      Math.max(
+        ...remaining.map(x => x.score)
+      );
+
+    const weights =
+      remaining.map(x =>
+        Math.exp(
+          (x.score - maxScore) /
+          temperature
+        )
+      );
+
+    const totalWeight =
+      weights.reduce(
+        (sum, w) => sum + w,
+        0
+      );
+
+    let r =
+      Math.random() * totalWeight;
+
+    let idx = 0;
+
+    for (; idx < weights.length; idx++) {
+      r -= weights[idx];
+      if (r <= 0) {
+        break;
+      }
+    }
+
+    idx =
+      Math.min(
+        idx,
+        remaining.length - 1
+      );
+
+    picked.push(remaining[idx].player);
+    remaining.splice(idx, 1);
+  }
+
+  return {
+    enabled,
+    temperature,
+    previewCandidates:
+      picked.map(p => ({
+        name: p.name,
+        shopname: p.shopname ?? "",
+        slotScore:
+          Number(
+            getCandidateSlotScore(p).toFixed(6)
+          ),
+        isPinkManaged:
+          Boolean(p.__detail?.isPinkManaged)
+      }))
+  };
 }
 
 /* =========================================================
@@ -7480,7 +7894,74 @@ function buildMatchingCandidates() {
     ...phaseRescueSelected
   ];
 
-  selected.forEach(
+  /*
+   * 【2026-09 改善6】Pink管理対象の最終表示枠占有数キャップ適用
+   * 枠の総数は変えず、上限超過分だけをスコア順の次点候補と
+   * 差し替える。診断値は saveCandidateEvent() でログへ記録する。
+   */
+  const configuredMaxPinkManagedSlots =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.maxPinkManagedSlots ??
+      DEFAULT_MAX_PINK_MANAGED_SLOTS
+    );
+
+  const maxPinkManagedSlots =
+    Number.isFinite(
+      configuredMaxPinkManagedSlots
+    )
+      ? Math.max(
+          0,
+          Math.floor(
+            configuredMaxPinkManagedSlots
+          )
+        )
+      : DEFAULT_MAX_PINK_MANAGED_SLOTS;
+
+  const pinkCapResult =
+    applyPinkManagedSlotCap(
+      selected,
+      rankedByScore,
+      maxPinkManagedSlots
+    );
+
+  const finalSelected =
+    pinkCapResult.finalSelected;
+
+  State.matchingPinkCapDiagnostics = {
+    maxPinkManagedSlots,
+    pinkManagedSlotsBeforeCap:
+      pinkCapResult.pinkManagedSlotsBeforeCap,
+    pinkManagedSlotsAfterCap:
+      pinkCapResult.pinkManagedSlotsAfterCap,
+    pinkCapDroppedCount:
+      pinkCapResult.pinkCapDroppedCount
+  };
+
+  /*
+   * 【将来検討：ソフトマックス選択モデル（C-3ハイブリッド フェーズB）】
+   * 本番選出（finalSelected）には影響を与えない診断専用プレビュー。
+   * 温度パラメータは scoring_config.json
+   * experimental.softmaxBacktest.temperature で調整可能。
+   */
+  const softmaxTemperature =
+    Number(
+      State.scoringConfig
+        ?.experimental
+        ?.softmaxBacktest
+        ?.temperature ??
+      DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE
+    ) || DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE;
+
+  State.matchingSoftmaxBacktestPreview =
+    computeSoftmaxBacktestPreview(
+      rankedByScore,
+      finalSelected.length,
+      softmaxTemperature
+    );
+
+  finalSelected.forEach(
     (p, i) => {
 
       p.displayRank =
@@ -7489,11 +7970,12 @@ function buildMatchingCandidates() {
   );
 
   State.matchingList =
-    selected;
+    finalSelected;
 
   log(
-    `候補生成: Base=${base.length} / Selected=${selected.length}` +
-    `（通常${normalSelected.length}＋Phase救済${phaseRescueSelected.length}）` +
+    `候補生成: Base=${base.length} / Selected=${finalSelected.length}` +
+    `（通常${normalSelected.length}＋Phase救済${phaseRescueSelected.length}` +
+    `／Pink上限${maxPinkManagedSlots}枠：${pinkCapResult.pinkManagedSlotsBeforeCap}→${pinkCapResult.pinkManagedSlotsAfterCap}）` +
     ` Slot=${State.matchingSlotPlan
       .filter(entry => entry.slots > 0)
       .map(entry => `${entry.bucket}:${entry.slots}`)
@@ -11311,7 +11793,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v4",
+        "slot_area_v5_hybrid",
 
       dk:
         buildDailyKey(),
@@ -11518,7 +12000,7 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "slot_area_v4",
+      "slot_area_v5_hybrid",
 
     dk:
       buildDailyKey(),
@@ -12340,7 +12822,7 @@ function saveCandidateEvent() {
     t: now,
 
     logSchemaVersion:
-      "slot_area_v4",
+      "slot_area_v5_hybrid",
 
     e: "candidate",
 
@@ -12455,6 +12937,83 @@ function saveCandidateEvent() {
 
     pinkMismatchBoostFactor:
       PINK_MISMATCH_BOOST_FACTOR,
+
+    /*
+     * 【2026-09 改善6】Pink不一致減衰の段階化パラメータ
+     * （旧: 一律PINK_MISMATCH_BOOST_FACTOR固定 → 新: phaseErrorに
+     * 応じた exp(-phaseError/decaySec) 連続減衰、floor下限あり）
+     */
+    pinkMismatchFloor:
+      Number(
+        State.scoringConfig
+          ?.realtimeBoost
+          ?.pinkMismatch
+          ?.floor ??
+        DEFAULT_PINK_MISMATCH_FLOOR
+      ),
+
+    pinkMismatchDecaySec:
+      Number(
+        State.scoringConfig
+          ?.realtimeBoost
+          ?.pinkMismatch
+          ?.decaySec ??
+        DEFAULT_PINK_MISMATCH_DECAY_SEC
+      ),
+
+    /*
+     * 【2026-09 改善6】Pink管理対象の最終表示枠占有数キャップ診断
+     * buildMatchingCandidates() で適用した結果をそのまま記録する。
+     */
+    maxPinkManagedSlots:
+      Number(
+        State.matchingPinkCapDiagnostics
+          ?.maxPinkManagedSlots ??
+        DEFAULT_MAX_PINK_MANAGED_SLOTS
+      ),
+
+    pinkManagedSlotsBeforeCap:
+      Number(
+        State.matchingPinkCapDiagnostics
+          ?.pinkManagedSlotsBeforeCap ?? 0
+      ),
+
+    pinkManagedSlotsAfterCap:
+      Number(
+        State.matchingPinkCapDiagnostics
+          ?.pinkManagedSlotsAfterCap ?? 0
+      ),
+
+    pinkCapDroppedCount:
+      Number(
+        State.matchingPinkCapDiagnostics
+          ?.pinkCapDroppedCount ?? 0
+      ),
+
+    /*
+     * 【2026-09 改善7】PRIDEバンド多様性の閾値緩和パラメータ
+     */
+    prideBandDiversityGapThreshold:
+      Number(
+        State.scoringConfig
+          ?.candidateSelection
+          ?.slotAllocation
+          ?.prideBandDiversityGapThreshold ??
+        DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD
+      ),
+
+    /*
+     * 【将来検討：ソフトマックス選択モデル（C-3ハイブリッド フェーズB）】
+     * 本番選出には使用しないバックテスト専用プレビュー。
+     * previewCandidatesと実際のcandidates（本番選出）を後から
+     * 突き合わせることで、温度パラメータや採用可否を評価できる。
+     */
+    softmaxBacktest:
+      State.matchingSoftmaxBacktestPreview ?? {
+        enabled: false,
+        temperature: null,
+        previewCandidates: []
+      },
 
     /*
      * 【2026-09 ログ拡充】ownSampleCount等は同一candidateEvent内
