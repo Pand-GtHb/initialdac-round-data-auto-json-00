@@ -9122,11 +9122,27 @@ function buildPlayerRowHTML(
       );
 
   const copyValue =
-    isRuby
-      ? `★${"★".repeat(
-          p.starCnt - 1
-        )}\t${safeName}`
-      : `${p.pridePoint}\t${safeName}`;
+    [
+      isRuby
+        ? `★${"★".repeat(p.starCnt - 1)}`
+        : p.pridePoint,
+      p.name ?? "",
+      areaName,
+      fullShop
+    ]
+      .join("\t")
+      .replace(
+        /\\/g,
+        "\\\\"
+      )
+      .replace(
+        /'/g,
+        "\\'"
+      )
+      .replace(
+        /\r?\n/g,
+        " "
+      );
 
   const rowStateClass =
     isPinkPhase
@@ -9173,10 +9189,6 @@ function buildPlayerRowHTML(
         }
       </td>
 
-      <td class="right">
-        ${fmt(p.point)}
-      </td>
-
       <td class="center">
         ${areaName}
       </td>
@@ -9193,6 +9205,10 @@ function buildPlayerRowHTML(
         <div class="store-name">
           ${shortShop}
         </div>
+      </td>
+
+      <td class="right">
+        ${fmt(p.point)}
       </td>
       
       <td class="left phase-last-update">
@@ -10391,9 +10407,9 @@ function renderDetailTable() {
           <tr>
             <th>★・PRIDE</th>
             <th>プレイヤー名</th>
-            <th>RP</th>
             <th>エリア</th>
             <th>店舗名</th>
+            <th>RP</th>
             <th>Last Update</th>
             <th>称号</th>
           </tr>
@@ -10455,9 +10471,9 @@ function renderAreaDetailTable(areaNo) {
           <tr>
             <th>★・PRIDE</th>
             <th>プレイヤー名</th>
-            <th>RP</th>
             <th>エリア</th>
             <th>店舗名</th>
+            <th>RP</th>
             <th>Last Update</th>
             <th>称号</th>
           </tr>
@@ -10643,9 +10659,9 @@ function renderMatchingTable() {
           <tr>
             <th>★・PRIDE</th>
             <th>プレイヤー名</th>
-            <th>RP</th>
             <th>エリア</th>
             <th>店舗名</th>
+            <th>RP</th>
             <th>Last Update</th>
                         <th>称号</th>
           </tr>
