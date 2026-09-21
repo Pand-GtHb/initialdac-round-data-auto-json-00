@@ -224,6 +224,8 @@ const DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT = 0.1;
 const DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT = 0.05;
 const DEFAULT_PRIDE_BAND_PRIOR_EXPONENT = 0.5;
 const DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD = 0.08;
+const DEFAULT_PRIDE_BAND_INTERNAL_DISTRIBUTION_ENABLED = true;
+const DEFAULT_PRIDE_BAND_REALTIME_BOOST_ENABLED = true;
 const DEFAULT_REALTIME_PLAYER_WEIGHT = 0.35;
 const DEFAULT_REALTIME_RANK_WEIGHT = 0.03;
 const DEFAULT_REALTIME_MAX_BONUS = 0.25;
@@ -5842,6 +5844,15 @@ function applyCandidateSlotScores(
         ?.prideBandPriorExponent ??
       DEFAULT_PRIDE_BAND_PRIOR_EXPONENT
     );
+  const prideBandInternalDistributionEnabled =
+    Boolean(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.slotAllocation
+        ?.prideBandInternalDistribution
+        ?.enabled ??
+      DEFAULT_PRIDE_BAND_INTERNAL_DISTRIBUTION_ENABLED
+    );
 
   const prideBandPriorExponent =
     Number.isFinite(
@@ -5876,6 +5887,7 @@ function applyCandidateSlotScores(
 
     const prideBandPriorWeight =
       isPride &&
+      prideBandInternalDistributionEnabled &&
       maxPrideBandProbability > 0
         ? Math.pow(
             prideBandProbability /
@@ -5914,6 +5926,18 @@ function applyCandidateSlotScores(
       );
     detail.prideBandPriorWeight =
       prideBandPriorWeight;
+    detail.prideBandInternalDistributionEnabled =
+      isPride &&
+      prideBandInternalDistributionEnabled;
+    detail.prideBandRealtimeBoostEnabled =
+      isPride &&
+      Boolean(
+        State.scoringConfig
+          ?.realtimeBoost
+          ?.prideBand
+          ?.enabled ??
+        DEFAULT_PRIDE_BAND_REALTIME_BOOST_ENABLED
+      );
     detail.areaBucketCount =
       areaDetail.areaBucketCount;
     detail.areaTotalCount =
@@ -6941,6 +6965,10 @@ function calcMatchingScoreDetail(
         State.rankActivity[
             String(rankKey ?? "")
         ];
+    const isPrideCandidate =
+        getMatchingSlotBucketKey(
+            rankKey
+        ) === "PRIDE";
     const playerActivitySignal =
         isPinkManaged
             ? computeActivitySignal(
@@ -6948,7 +6976,19 @@ function calcMatchingScoreDetail(
               )
             : 0;
     const rankActivitySignal =
-        isPinkManaged
+        (
+            isPinkManaged ||
+            (
+                isPrideCandidate &&
+                (
+                    State.scoringConfig
+                        ?.realtimeBoost
+                        ?.prideBand
+                        ?.enabled ??
+                    DEFAULT_PRIDE_BAND_REALTIME_BOOST_ENABLED
+                )
+            )
+        )
             ? computeActivitySignal(
                 rankActivityEntry
               )
