@@ -3,8 +3,7 @@ name: Auto Integrate InitialDAC JSON (reduce + parallel fetch + update timestamp
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: auto-integrate
@@ -12,6 +11,8 @@ concurrency:
 
 jobs:
   fetch-and-merge:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
 
     steps:
@@ -230,3 +231,11 @@ jobs:
             git -C "$DATA_WORKTREE" status
             exit 1
           fi
+
+  deploy-pages:
+    needs: fetch-and-merge
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/deploy-pages.yml
