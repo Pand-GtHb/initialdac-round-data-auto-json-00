@@ -1,0 +1,63 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_run:
+    workflows:
+      - Auto Integrate InitialDAC JSON (reduce + parallel fetch + update timestamp)
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout viewer from main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          path: site
+
+      - name: Checkout generated JSON from data
+        uses: actions/checkout@v5
+        with:
+          ref: data
+          path: generated
+
+      - name: Assemble Pages site
+        run: |
+          cp generated/integrated_data.json site/integrated_data.json
+          cp generated/latest_update.json site/latest_update.json
+          rm -rf site/.git
+          touch site/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
