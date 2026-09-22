@@ -230,6 +230,8 @@ const DEFAULT_REALTIME_PLAYER_WEIGHT = 0.35;
 const DEFAULT_REALTIME_RANK_WEIGHT = 0.03;
 const DEFAULT_REALTIME_MAX_BONUS = 0.25;
 const DEFAULT_MAX_PINK_MANAGED_SLOTS = 3;
+const DEFAULT_FILTER_MINUTES = 30;
+const DEFAULT_MY_RANK_KEY = "R7";
 const NORMAL_SLOT_COUNT = 9;
 const CROSS_BUCKET_SLOT_COUNT = 1;
 const DEFAULT_SOFTMAX_BACKTEST_ENABLED = true;
@@ -363,7 +365,7 @@ const State = {
   matchingSoftmaxBacktestPreview: null,
   copyAreaHistory: [],
   myStar: 7,
-  myRankKey: "R7",
+  myRankKey: DEFAULT_MY_RANK_KEY,
   recentClicks: [],
   recentClickSet: null,
   historicalMatchupDistribution: null,
@@ -438,7 +440,11 @@ function syncMyRankSelection(
 ) {
 
   const selectedMyRank =
-    rankValue || "R7";
+    rankValue ||
+    State.scoringConfig
+      ?.viewerDefaults
+      ?.myRankKey ||
+    DEFAULT_MY_RANK_KEY;
 
   const num =
     Number(
@@ -1479,6 +1485,55 @@ function applyScoringConfigJson(
 ) {
 
   State.scoringConfig = json;
+
+  const viewerDefaults =
+    json?.viewerDefaults ?? {};
+
+  const filterMinutes =
+    Number(
+      viewerDefaults.filterMinutes ??
+      DEFAULT_FILTER_MINUTES
+    );
+
+  const filterSelect =
+    document.getElementById(
+      "rangeSelect"
+    );
+
+  if (
+    filterSelect &&
+    Number.isFinite(filterMinutes) &&
+    filterMinutes > 0 &&
+    [...filterSelect.options].some(
+      option =>
+        Number(option.value) === filterMinutes
+    )
+  ) {
+    filterSelect.value =
+      String(filterMinutes);
+  }
+
+  const myRankKey =
+    String(
+      viewerDefaults.myRankKey ??
+      DEFAULT_MY_RANK_KEY
+    );
+
+  const myRankSelect =
+    document.getElementById(
+      "myRankSelect"
+    );
+
+  if (
+    myRankSelect &&
+    [...myRankSelect.options].some(
+      option =>
+        option.value === myRankKey
+    )
+  ) {
+    myRankSelect.value =
+      myRankKey;
+  }
 
   log(
     "scoring_config.json 読み込み完了"
@@ -13890,8 +13945,23 @@ function readRangeMinutes() {
       "rangeSelect"
     );
 
+  const selected =
+    Number(
+      el?.value
+    );
+
+  if (
+    Number.isFinite(selected) &&
+    selected > 0
+  ) {
+    return selected;
+  }
+
   return Number(
-    el?.value
+    State.scoringConfig
+      ?.viewerDefaults
+      ?.filterMinutes ??
+    DEFAULT_FILTER_MINUTES
   );
 }
 /* =========================================================
