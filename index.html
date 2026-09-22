@@ -448,75 +448,78 @@ td.center { text-align:center; }
 
 <h2>Initial D THE ARCADE Data Viewer</h2>
 
-<!-- ★ ラウンド -->
-<div class="row3">
-  <div class="label">ROUND</div>
-  <div class="colon">：</div>
-  <div class="value">
-    <span id="latestRound">読み込み中…</span>
+<div id="viewer-filter-panel">
+
+  <!-- ★ ラウンド -->
+  <div class="row3">
+    <div class="label">ROUND</div>
+    <div class="colon">：</div>
+    <div class="value">
+      <span id="latestRound">読み込み中…</span>
     </div>
-</div>
-
-<!-- ★ 時間フィルタ -->
-<div class="row3">
-  <div class="label">FILTER</div>
-  <div class="colon">：</div>
-  <div class="value">
-     <select id="rangeSelect">
-        <option value="15">15 min</option>
-        <option value="30">30 min</option>
-
-        <option value="60">1 hour</option>
-      
-        <option value="120">2 hour</option>
-        <option value="180">3 hour</option>
-        </select>
-    </div>
-</div>
-
-<!-- ★ 表示開始 -->
-<div class="row3">
-  <div class="label">FROM</div>
-  <div class="colon">：</div>
-  <div class="value"><span id="filterStartTime">-</span></div>
-</div>
-
-<!-- ★ JSON更新 -->
-<div class="row3">
-  <div class="label">TO</div>
-  <div class="colon">：</div>
-  <div class="value"><span id="jsonUpdateTime">-</span></div>
-</div>
-
-<!-- ★ 省略セクション（RUBY/PRIDEフィルタ + サブ機能） -->
-<details class="mt10" style="display:block;">
-  <summary style="font-size: 12px; cursor: pointer; color: #555;">🛠️ サブ機能 (FLT/CSV)</summary>
-
-  <div style="margin-top: 6px;">
-
-    <!-- ★ RUBY -->
-    <div class="row3">
-      <div class="label">RUBY</div>
-      <div class="colon">：</div>
-      <div class="value"><div id="rubyFilters"></div></div>
-    </div>
-
-    <!-- ★ PRIDE -->
-    <div class="row3">
-      <div class="label">PRIDE</div>
-      <div class="colon">：</div>
-      <div class="value"><div id="prideFilters"></div></div>
-    </div>
-
-    <div style="margin-top: 4px;">
-      <button id="filterBtn" class="btn-sub">FLT</button>
-      <button id="summaryCsvBtn" class="btn-sub">SumCSV</button>
-      <button id="allCsvBtn" class="btn-sub">AllCSV</button>
-    </div>
-
   </div>
-</details>
 
+  <!-- ★ 時間フィルタ -->
+  <div class="row3">
+    <div class="label">FILTER</div>
+    <div class="colon">：</div>
+    <div class="value">
+       <select id="rangeSelect">
+          <option value="15">15 min</option>
+          <option value="30">30 min</option>
+
+          <option value="60">1 hour</option>
+        
+          <option value="120">2 hour</option>
+          <option value="180">3 hour</option>
+          </select>
+      </div>
+    </div>
+
+  <!-- ★ 表示開始 -->
+  <div class="row3">
+    <div class="label">FROM</div>
+    <div class="colon">：</div>
+    <div class="value"><span id="filterStartTime">-</span></div>
+  </div>
+
+  <!-- ★ JSON更新 -->
+  <div class="row3">
+    <div class="label">TO</div>
+    <div class="colon">：</div>
+    <div class="value"><span id="jsonUpdateTime">-</span></div>
+  </div>
+
+  <!-- ★ 省略セクション（RUBY/PRIDEフィルタ + サブ機能） -->
+  <details class="mt10" style="display:block;">
+    <summary style="font-size: 12px; cursor: pointer; color: #555;">🛠️ サブ機能 (FLT/CSV)</summary>
+
+    <div style="margin-top: 6px;">
+
+      <!-- ★ RUBY -->
+      <div class="row3">
+        <div class="label">RUBY</div>
+        <div class="colon">：</div>
+        <div class="value"><div id="rubyFilters"></div></div>
+      </div>
+
+      <!-- ★ PRIDE -->
+      <div class="row3">
+        <div class="label">PRIDE</div>
+        <div class="colon">：</div>
+        <div class="value"><div id="prideFilters"></div></div>
+      </div>
+
+      <div style="margin-top: 4px;">
+        <button id="filterBtn" class="btn-sub">FLT</button>
+        <button id="summaryCsvBtn" class="btn-sub">SumCSV</button>
+        <button id="allCsvBtn" class="btn-sub">AllCSV</button>
+      </div>
+
+    </div>
+  </details>
+
+</div>
 <div id="logBox"></div>
 
 <!-- 各種ボタン（スマホ最優先レイアウト） -->
