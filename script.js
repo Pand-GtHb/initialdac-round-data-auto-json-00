@@ -9746,6 +9746,20 @@ function ensureAreaSummaryStyles() {
       padding: 10px 20px;
     }
 
+    /*
+     * 【表示修正】ROUND〜PRIDEのViewer操作パネルを、
+     * summary-total-badgeと同じ背景でまとめる。
+     */
+    #viewer-filter-panel {
+      display: inline-block;
+      max-width: 100%;
+      box-sizing: border-box;
+      background: rgba(255,255,255,0.92);
+      border: 1px solid rgba(148,163,184,0.45);
+      border-radius: 999px;
+      padding: 10px 20px;
+    }
+
     .area-summary-row {
       display: flex;
       align-items: stretch;
