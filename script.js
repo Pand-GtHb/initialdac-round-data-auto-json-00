@@ -9756,7 +9756,7 @@ function ensureAreaSummaryStyles() {
       box-sizing: border-box;
       background: rgba(255,255,255,0.92);
       border: 1px solid rgba(148,163,184,0.45);
-      border-radius: 999px;
+      border-radius: 12px;
       padding: 10px 20px;
     }
 
