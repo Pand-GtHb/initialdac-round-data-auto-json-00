@@ -9645,6 +9645,27 @@ function ensureAreaSummaryStyles() {
       padding: 8px 2px;
     }
 
+    #matchingHeader {
+      box-sizing: border-box;
+      width: 100%;
+      margin: 12px 0;
+      padding: 10px 14px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    #matchingHeader.matching-header-matching {
+      background: rgba(233, 30, 99, 0.94);
+      border: 1px solid #c2185b;
+    }
+
+    #matchingHeader.matching-header-preview {
+      background: rgba(37, 99, 166, 0.94);
+      border: 1px solid #1d4f84;
+    }
+
     .matching-primary-row {
       display: grid !important;
       grid-template-columns:
@@ -10798,9 +10819,22 @@ function renderMatchingHeader() {
       ? "🔭 PREVIEW"
       : "⚔️ MATCHING";
 
+  const isPreview =
+    context.mode === "preview";
+
+  headerEl.classList.toggle(
+    "matching-header-preview",
+    isPreview
+  );
+
+  headerEl.classList.toggle(
+    "matching-header-matching",
+    !isPreview
+  );
+
   headerEl.textContent =
     `${modeLabel} — ${offsetSec > 0 ? `${offsetSec}秒後予測` : "NOW"}` +
-    ` ／ 予測ログ：${context.mode === "preview" ? "記録なし" : "記録あり"}`;
+    ` ／ 予測ログ：${isPreview ? "記録なし" : "記録あり"}`;
 }
 
 /* =========================================================
