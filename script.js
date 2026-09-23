@@ -15,8 +15,7 @@ const BASE_URL =
 const STATE = {
   SUMMARY: "summary",
   DETAIL: "detail",
-  MATCHING: "matching",
-  AREA_SUMMARY: "area_summary"
+  MATCHING: "matching"
 };
 
 /* =========================================================
@@ -123,12 +122,9 @@ const ALL_CANDIDATES_COLUMNS = [
   "rankRealtimeBonus",
   "realtimeBonusBeforeCap",
   "realtimeBonusCap",
-  "legacyRealtimeBoost",
   "slotScore",
-  "legacySlotScore",
   "slotBucket",
   "slotRank",
-  "legacySlotRank",
   "prideBandPriorWeight",
   "areaBucketCount",
   "areaTotalCount",
@@ -214,7 +210,6 @@ const MAX_YELLOW_PHASE_WEIGHT = 0.55;
  * 温度パラメータ等の妥当性は現時点のデータ量（1日・実績25件）では
  * 検証できないため、本番選出ロジックの置き換えは行わない。
  */
-const PINK_MISMATCH_BOOST_FACTOR = 0.5;
 const DEFAULT_PINK_MISMATCH_FLOOR = 0.3;
 const DEFAULT_PINK_MISMATCH_DECAY_SEC = 60;
 const DEFAULT_PHASE_ERROR_SCALE_SEC = 90;
@@ -249,7 +244,7 @@ const LOG_DB_NAME =
   "viewer_logs_db";
 
 const LOG_DB_VERSION =
-  2;
+  3;
 
 const LOG_STORE = {
 
@@ -258,9 +253,6 @@ const LOG_STORE = {
 
   copyEvents:
     "copyEvents",
-
-  cycleEvents:
-    "cycleEvents",
 
   candidateEvents:
     "candidateEvents"
@@ -341,7 +333,6 @@ const State = {
   all: [],
   filtered: [],
   summary: [],
-  areaSummary: [],
   detailOriginal: [],
   generatedAt: "",
   latestRound: null,
@@ -363,15 +354,21 @@ const State = {
   matchingCrossBucketDiagnostics: null,
   matchingPinkCapDiagnostics: null,
   matchingSoftmaxBacktestPreview: null,
+  matchingOffsetSec: 0,
+  previewOffsetSec: 0,
+  matchingContext: {
+    mode: "matching",
+    clickedAtMs: null,
+    evaluationTimeMs: null,
+    offsetSec: 0
+  },
   copyAreaHistory: [],
-  myStar: 7,
   myRankKey: DEFAULT_MY_RANK_KEY,
   recentClicks: [],
   recentClickSet: null,
   historicalMatchupDistribution: null,
   playerActivity: {},
   rankActivity: {},
-  viewerLastCopiedAt: null,
   scoringConfig: null,
   updateWatchTimer: null,
   // updateCheckRunning は削除 (常に checkUpdate を実行)
@@ -404,7 +401,7 @@ const State = {
     }
   },
 
-  lastCandidateEventId: null,
+  activeCandidateEventId: null,
 
   /* --- 新仕様追加（Fact） --- */
   pinkTargets: {},
@@ -456,13 +453,9 @@ function syncMyRankSelection(
     num >= 1 &&
     num <= 8
   ) {
-
-    State.myStar = num;
     State.myRankKey = `R${num}`;
 
   } else {
-
-    State.myStar = 6;
     State.myRankKey = selectedMyRank;
   }
 
@@ -493,28 +486,6 @@ function getNowLabelJa() {
       second: "2-digit"
     }
   );
-}
-
-/* =========================================================
- [2010] Date Utility:getTodayYMDJa（旧 [2010]）
-========================================================= */
-function getTodayYMDJa() {
-
-  const now = new Date();
-
-  const y = now.getFullYear();
-  const m = ("0" + (now.getMonth() + 1)).slice(-2);
-  const d = ("0" + now.getDate()).slice(-2);
-
-  return `${y}/${m}/${d}`;
-}
-
-/* =========================================================
- [2020] Date Utility:compactYMD（旧 [2020]）
-========================================================= */
-function compactYMD(ymd) {
-  return String(ymd || "")
-    .replace(/\//g, "");
 }
 
 /* =========================================================
@@ -1838,9 +1809,7 @@ function saveRealtimeActivityToStorage() {
         playerActivity:
           State.playerActivity,
         rankActivity:
-          State.rankActivity,
-        viewerLastCopiedAt:
-          State.viewerLastCopiedAt
+          State.rankActivity
       })
     );
 
@@ -1871,11 +1840,6 @@ function restoreRealtimeActivityFromStorage() {
 
     State.rankActivity =
       parsed?.rankActivity || {};
-
-    if (parsed?.viewerLastCopiedAt) {
-      State.viewerLastCopiedAt =
-        parsed.viewerLastCopiedAt;
-    }
 
   } catch (e) {
     /* storage unavailable or corrupt: ignore */
@@ -2043,19 +2007,13 @@ function initLogDB() {
           }
 
           if (
-            !db.objectStoreNames.contains(
-              LOG_STORE.cycleEvents
+            db.objectStoreNames.contains(
+              "cycleEvents"
             )
           ) {
-
-            db.createObjectStore(
-              LOG_STORE.cycleEvents,
-              {
-                keyPath: "id",
-                autoIncrement: true
-              }
+            db.deleteObjectStore(
+              "cycleEvents"
             );
-
           }
 
           if (
@@ -2080,6 +2038,15 @@ function initLogDB() {
 
           logDB =
             e.target.result;
+
+          pruneLogStore(
+            LOG_STORE.copyEvents,
+            LOG_STORAGE_LIMITS.copyEvents
+          );
+
+          pruneCandidateEventsStore(
+            LOG_STORAGE_LIMITS.candidateEvents
+          );
 
           console.log(
             "[LOG] IndexedDB ready"
@@ -2115,7 +2082,7 @@ function putLog(
 ) {
 
   if (!logDB) {
-    return;
+    return null;
   }
 
   const tx =
@@ -2130,6 +2097,8 @@ function putLog(
     );
 
   store.put(data);
+
+  return tx;
 }
 
 /* =========================================================
@@ -2174,10 +2143,20 @@ function logEvent(
     type === "top"
   ) {
 
-    putLog(
+    const tx =
+      putLog(
       LOG_STORE.copyEvents,
       record
     );
+
+    if (tx) {
+      tx.oncomplete =
+        () =>
+          pruneLogStore(
+            LOG_STORE.copyEvents,
+            LOG_STORAGE_LIMITS.copyEvents
+          );
+    }
 
     return;
 
@@ -2653,14 +2632,15 @@ async function reloadLatestDataPreferPrefetch() {
         "Reload 利用元:Fallback"
       );
 
-      try {
-          const roundDataJson = await fetchRoundDataJson();
-          applyRoundDataJson(roundDataJson, { resetReloadButton: true });
-          } catch (err) {
-          logError("integrated_data.json の取得に失敗：" + err.message);
-          State.all = [];
-          State.filtered = [];
-          }
+      const roundDataJson =
+        await fetchRoundDataJson();
+
+      applyRoundDataJson(
+        roundDataJson,
+        {
+          resetReloadButton: true
+        }
+      );
     }
 
     /* =====================================
@@ -2673,6 +2653,17 @@ async function reloadLatestDataPreferPrefetch() {
 
     renderSummary();
 
+    State.activeCandidateEventId =
+      null;
+
+    setCurrentView(
+      STATE.SUMMARY
+    );
+
+    switchDisplayView(
+      STATE.SUMMARY
+    );
+
     /* =====================================
      * 完了ログ
      * ===================================== */
@@ -2684,6 +2675,17 @@ async function reloadLatestDataPreferPrefetch() {
         "none"
       )
     );
+
+    return true;
+
+  } catch (e) {
+
+    logError(
+      "Reload失敗：既存データを保持します：" +
+      e.message
+    );
+
+    return false;
 
   } finally {
 
@@ -3458,80 +3460,6 @@ function computeActivitySignal(
 
   return Math.log(1 + count) *
     decay;
-}
-
-function computeLegacyBoostValue(
-  entry,
-  nowMs = Date.now()
-) {
-  if (!entry) {
-    return 1;
-  }
-
-  const count =
-    Number(entry.count ?? 0);
-  const lastSeen =
-    Number(entry.lastSeen ?? 0);
-
-  if (
-    !count ||
-    !lastSeen ||
-    !isFinite(lastSeen)
-  ) {
-    return 1;
-  }
-
-  const deltaSec =
-    (nowMs - lastSeen) / 1000;
-
-  if (
-    !isFinite(deltaSec) ||
-    deltaSec < 0
-  ) {
-    return 1;
-  }
-
-  return (
-    1 +
-    Math.log(1 + count)
-  ) *
-    Math.exp(
-      -deltaSec /
-      getBoostDecayHalfLifeSec()
-    );
-}
-
-/* =========================================================
- [6330] Realtime Boost:getPlayerBoost【State】（旧 [7110]）
-========================================================= */
-function getPlayerBoost(player) {
-
-  if (!player) return 1.0;
-
-  const playerId =
-    normalizePlayerName(
-      player.name ?? ""
-    );
-
-  return 1 +
-    computeActivitySignal(
-    State.playerActivity[
-      playerId
-    ]
-    );
-}
-
-/* =========================================================
- [6340] Realtime Boost:getRankBoost【State】（旧 [7120]）
-========================================================= */
-function getRankBoost(rankKey) {
-
-  return 1 +
-    computeActivitySignal(
-    State.rankActivity[
-      String(rankKey ?? "")
-    ]
-    );
 }
 
 /*
@@ -5111,7 +5039,11 @@ function getPlayerCycleCount(player, nowMs = Date.now()) {
   if (isCopiedPlayer(player)) {
 
     const signal =
-      computePhaseSignal(player, "pink");
+      computePhaseSignal(
+        player,
+        "pink",
+        nowMs
+      );
 
     return Math.round(
       (signal?.diffSec ?? 0) /
@@ -5963,18 +5895,6 @@ function applyCandidateSlotScores(
       ) *
       areaDetail.areaBoost *
       prideBandPriorWeight;
-    const legacySlotScore =
-      slotScore /
-      Math.max(
-        Number(
-          detail.realtimeBoost ?? 1
-        ),
-        Number.EPSILON
-      ) *
-      Number(
-        detail.legacyRealtimeBoost ?? 1
-      );
-
     detail.slotBucket =
       getMatchingSlotBucketKey(
         player.__rankKey
@@ -6010,14 +5930,6 @@ function applyCandidateSlotScores(
       slotScore > 0
         ? slotScore
         : 0;
-    detail.legacySlotScore =
-      Number.isFinite(
-        legacySlotScore
-      ) &&
-      legacySlotScore > 0
-        ? legacySlotScore
-        : 0;
-
     player.__slotScore =
       detail.slotScore;
   }
@@ -6476,55 +6388,6 @@ function assignCandidateSlotRanks(
       );
   }
 
-  assignLegacyCandidateSlotRanks(
-    candidates
-  );
-}
-
-function assignLegacyCandidateSlotRanks(
-  candidates
-) {
-  const buckets = {};
-
-  for (const player of candidates ?? []) {
-    const bucket =
-      getMatchingSlotBucketKey(
-        player.__rankKey
-      );
-
-    if (!bucket) {
-      continue;
-    }
-
-    if (!buckets[bucket]) {
-      buckets[bucket] = [];
-    }
-
-    buckets[bucket].push(player);
-  }
-
-  for (
-    const players of
-    Object.values(buckets)
-  ) {
-    players
-      .sort(
-        (a, b) =>
-          Number(
-            b.__detail
-              ?.legacySlotScore ?? 0
-          ) -
-          Number(
-            a.__detail
-              ?.legacySlotScore ?? 0
-          )
-      )
-      .forEach((player, index) => {
-        player.__detail
-          .legacySlotRank =
-          index + 1;
-      });
-  }
 }
 
 function buildMatchingSlotBucketProbabilities(
@@ -6973,14 +6836,18 @@ function selectNormalCandidatesBySlots(
 function calcMatchingScoreDetail(
     player,
     tierCounts = State.matchingTierCounts,
-    viewerContext = null
+    viewerContext = null,
+    evaluationTimeMs = Date.now()
 ) {
     if (!player || !player.updateDate) {
         return { score: 0 };
     }
 
     const phaseCtx =
-        computePhaseContext(player);
+        computePhaseContext(
+            player,
+            evaluationTimeMs
+        );
 
     const finalPhaseScore =
         Number(
@@ -7027,7 +6894,8 @@ function calcMatchingScoreDetail(
     const playerActivitySignal =
         isPinkManaged
             ? computeActivitySignal(
-                playerActivityEntry
+                playerActivityEntry,
+                evaluationTimeMs
               )
             : 0;
     const rankActivitySignal =
@@ -7045,7 +6913,8 @@ function calcMatchingScoreDetail(
             )
         )
             ? computeActivitySignal(
-                rankActivityEntry
+                rankActivityEntry,
+                evaluationTimeMs
               )
             : 0;
     const playerWeight =
@@ -7107,16 +6976,6 @@ function calcMatchingScoreDetail(
     const rankBoost =
         1 +
         rankRealtimeBonus;
-    const legacyRealtimeBoost =
-        isPinkManaged
-            ? computeLegacyBoostValue(
-                playerActivityEntry
-              ) *
-              computeLegacyBoostValue(
-                rankActivityEntry
-              )
-            : 1;
-
     /*
      * 【2026-09 改善2】位相を主要スコアから補助要素へ弱める
      *
@@ -7288,8 +7147,6 @@ function calcMatchingScoreDetail(
         rankRealtimeBonus,
         realtimeBonusBeforeCap,
         realtimeBonusCap,
-        legacyRealtimeBoost,
-
         phaseError: phaseCtx?.phaseError ?? 0,
         signedPhaseError:
             phaseCtx?.signedPhaseError ?? 0,
@@ -7333,13 +7190,15 @@ function calcMatchingScoreDetail(
 function buildCandidateScore(
     player,
     tierCounts = State.matchingTierCounts,
-    viewerContext = null
+    viewerContext = null,
+    evaluationTimeMs = Date.now()
 ) {
     const detail =
         calcMatchingScoreDetail(
             player,
             tierCounts,
-            viewerContext
+            viewerContext,
+            evaluationTimeMs
         );
 
     const score =
@@ -7830,7 +7689,22 @@ function computeSoftmaxBacktestPreview(
 /* =========================================================
  [8310] Candidate Builder:buildMatchingCandidates【State】【DOM】（旧 [7700]）
 ========================================================= */
-function buildMatchingCandidates() {
+function buildMatchingCandidates(
+  {
+    evaluationTimeMs = Date.now(),
+    saveEvent = false,
+    clickedAtMs = Date.now(),
+    mode = "matching",
+    offsetSec = 0
+  } = {}
+) {
+
+  State.matchingContext = {
+    mode,
+    clickedAtMs,
+    evaluationTimeMs,
+    offsetSec
+  };
 
   const selectedStars =
     readSelectedStars();
@@ -7906,7 +7780,8 @@ function buildMatchingCandidates() {
           Math.max(
             1,
             getCurrentCycle(p) / 60
-          )
+          ),
+          evaluationTimeMs
         );
 
       /*
@@ -7958,7 +7833,8 @@ function buildMatchingCandidates() {
       buildCandidateScore(
         p,
         tierCounts,
-        viewerContext
+        viewerContext,
+        evaluationTimeMs
       )
     );
 
@@ -8181,7 +8057,16 @@ function buildMatchingCandidates() {
     `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
   );
 
-  saveCandidateEvent();
+  if (saveEvent) {
+    saveCandidateEvent({
+      clickedAtMs,
+      evaluationTimeMs,
+      offsetSec
+    });
+  } else {
+    State.activeCandidateEventId =
+      null;
+  }
 }
 
 
@@ -9606,7 +9491,45 @@ function buildSummaryModeNavHTML(activeMode) {
           data-summary-mode="${mode.key}"
         >${mode.label}</button>
       `).join("")}
+      <button
+        type="button"
+        class="summary-mode-btn summary-mode-btn-preview${State.matchingContext?.mode === "preview" && activeMode === "both" ? " active" : ""}"
+        data-matching-preview
+      >🔭 PREVIEW</button>
+      ${buildMatchingOffsetSelectHTML(
+        "previewOffsetSelect",
+        State.previewOffsetSec,
+        "PREVIEWの予測時刻"
+      )}
     </div>
+  `;
+}
+
+function buildMatchingOffsetSelectHTML(
+  id,
+  selectedValue,
+  ariaLabel
+) {
+  const options = [
+    { value: 0, label: "NOW" },
+    { value: 5, label: "5秒後" },
+    { value: 10, label: "10秒後" },
+    { value: 15, label: "15秒後" }
+  ];
+
+  return `
+    <select
+      id="${id}"
+      class="matching-offset-select"
+      aria-label="${ariaLabel}"
+    >
+      ${options.map(option => `
+        <option
+          value="${option.value}"
+          ${Number(selectedValue) === option.value ? "selected" : ""}
+        >${option.label}</option>
+      `).join("")}
+    </select>
   `;
 }
 
@@ -9651,6 +9574,17 @@ function ensureAreaSummaryStyles() {
       background: #643191;
     }
 
+    .summary-mode-btn-preview,
+    .summary-mode-btn-preview.active {
+      background: #2563a6;
+      border-color: #1d4f84;
+      color: #fff;
+    }
+
+    .summary-mode-btn-preview:hover {
+      background: #1d4f84;
+    }
+
     .summary-mode-btn.active {
       box-shadow:
         inset 0 0 0 2px rgba(255, 255, 255, 0.5),
@@ -9669,9 +9603,28 @@ function ensureAreaSummaryStyles() {
       width: 100%;
       margin-top: 8px;
       margin-bottom: 0;
+      display: grid;
+      grid-template-columns:
+        minmax(0, 1fr)
+        minmax(0, 0.85fr)
+        minmax(0, 1.15fr)
+        minmax(0, 0.85fr);
+      gap: 5px;
     }
 
     .summary-mode-btn,
+    .matching-offset-select {
+      box-sizing: border-box;
+      width: 100%;
+      min-width: 0;
+      height: 48px;
+      padding: 12px 6px;
+      font-size: 15px;
+      font-weight: bold;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
     #analysisLogBtn {
       box-sizing: border-box;
       width: calc((100% - 16px) / 3);
@@ -9681,6 +9634,36 @@ function ensureAreaSummaryStyles() {
       font-size: 15px;
       font-weight: bold;
       border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    .matching-offset-select {
+      background: #fff;
+      color: #222;
+      border: 1px solid #aeb7c2;
+      text-align: center;
+      padding: 8px 2px;
+    }
+
+    .matching-primary-row {
+      display: grid !important;
+      grid-template-columns:
+        minmax(0, 1fr)
+        minmax(0, 0.85fr)
+        minmax(0, 1.15fr)
+        minmax(0, 0.85fr);
+      gap: 5px !important;
+      width: 100%;
+    }
+
+    .matching-primary-row > #reloadBtn,
+    .matching-primary-row > #undoCopyBtn,
+    .matching-primary-row > #matchingBtn,
+    .matching-primary-row > #matchingOffsetSelect {
+      box-sizing: border-box;
+      width: 100% !important;
+      min-width: 0;
+      margin: 0 !important;
       white-space: nowrap;
     }
 
@@ -9891,6 +9874,15 @@ function ensureAreaSummaryStyles() {
     }
 
     @media (max-width: 700px) {
+      .summary-mode-btn,
+      .matching-offset-select,
+      .matching-primary-row > button,
+      .matching-primary-row > select {
+        padding-left: 2px !important;
+        padding-right: 2px !important;
+        font-size: 11px !important;
+      }
+
       .area-summary-row {
         flex-direction: column;
         align-items: stretch;
@@ -9939,6 +9931,51 @@ function bindSummaryModeButtons(root) {
     });
   });
 
+  const previewBtn =
+    root.querySelector(
+      "[data-matching-preview]"
+    );
+
+  if (previewBtn) {
+    previewBtn.addEventListener(
+      "click",
+      () => {
+        State.searchText = "";
+
+        const searchInput =
+          document.getElementById(
+            "searchInput"
+          );
+
+        if (searchInput) {
+          searchInput.value = "";
+        }
+
+        showMatchingCandidates({
+          push: true,
+          mode: "preview",
+          offsetSec:
+            State.previewOffsetSec
+        });
+      }
+    );
+  }
+
+  const previewOffsetSelect =
+    root.querySelector(
+      "#previewOffsetSelect"
+    );
+
+  if (previewOffsetSelect) {
+    previewOffsetSelect.addEventListener(
+      "change",
+      e => {
+        State.previewOffsetSec =
+          Number(e.target.value) || 0;
+      }
+    );
+  }
+
   const nav =
     root.querySelector(
       ".summary-mode-nav"
@@ -9970,7 +10007,6 @@ function bindSummaryModeButtons(root) {
 }
 
 function getAreaSummaryRows() {
-  const areaSet = new Set();
   const searchNorm = normalize(State.searchText || "");
   const nowMs = Date.now();
 
@@ -9979,8 +10015,56 @@ function getAreaSummaryRows() {
     return (p.normalizedName || "").includes(searchNorm);
   });
 
+  const groupedByArea =
+    new Map();
+
   for (let areaNo = 0; areaNo <= 62; areaNo++) {
-    areaSet.add(String(areaNo));
+    const counts = {};
+
+    RANKS.forEach(rank => {
+      counts[rank.key] = 0;
+    });
+
+    groupedByArea.set(
+      String(areaNo),
+      {
+        list: [],
+        counts,
+        phaseMatchedTotal: 0
+      }
+    );
+  }
+
+  for (const player of basePlayers) {
+    const rankKey =
+      getPlayerRankKey(player);
+
+    const group =
+      groupedByArea.get(
+        String(player.area ?? "")
+      );
+
+    if (!rankKey || !group) {
+      continue;
+    }
+
+    group.list.push(player);
+    group.counts[rankKey] += 1;
+
+    const phaseMatched =
+      isCopiedPlayer(player)
+        ? isMatchingCandidateByCopyPhase(
+            player,
+            nowMs
+          )
+        : isMatchingCandidateByPhase(
+            player,
+            nowMs
+          );
+
+    if (phaseMatched) {
+      group.phaseMatchedTotal += 1;
+    }
   }
 
   const rows = [];
@@ -9988,43 +10072,22 @@ function getAreaSummaryRows() {
   for (let areaNo = 0; areaNo <= 62; areaNo++) {
     const areaKey = String(areaNo);
     const areaName = getAreaDisplayName(areaKey);
-    const counts = {};
-
-    RANKS.forEach(rank => {
-      counts[rank.key] = 0;
-    });
-
-    const list = basePlayers
-      .filter(p => String(p.area ?? "") === areaKey)
-      .filter(player => Boolean(getPlayerRankKey(player)));
-
-    list.forEach(player => {
-      const rankKey = getPlayerRankKey(player);
-      if (rankKey && Object.prototype.hasOwnProperty.call(counts, rankKey)) {
-        counts[rankKey] += 1;
-      }
-    });
+    const group =
+      groupedByArea.get(areaKey);
+    const list =
+      group?.list ?? [];
+    const counts =
+      group?.counts ?? {};
 
     const total = Object.values(counts).reduce((sum, v) => sum + v, 0);
-    const phaseMatchedTotal =
-      list.filter(player =>
-        isCopiedPlayer(player)
-          ? isMatchingCandidateByCopyPhase(
-              player,
-              nowMs
-            )
-          : isMatchingCandidateByPhase(
-              player,
-              nowMs
-            )
-      ).length;
 
     rows.push({
       areaNo,
       areaKey,
       areaName,
       total,
-      phaseMatchedTotal,
+      phaseMatchedTotal:
+        group?.phaseMatchedTotal ?? 0,
       counts,
       list
     });
@@ -10293,8 +10356,6 @@ function renderAreaSummary() {
   State.currentDetailKey = "";
   State.currentDetailLabel = "";
   State.currentDetailIcon = "";
-  setCurrentView(STATE.SUMMARY);
-  switchDisplayView(STATE.SUMMARY);
 }
 
 function renderSummary() {
@@ -10470,8 +10531,6 @@ function renderSummary() {
   State.currentDetailKey = "";
   State.currentDetailLabel = "";
   State.currentDetailIcon = "";
-  setCurrentView(STATE.SUMMARY);
-  switchDisplayView(STATE.SUMMARY);
 }
 
 /* =========================================================
@@ -10728,12 +10787,20 @@ function renderMatchingHeader() {
     return;
   }
 
-  /*
-   * ランクアイコン：人数の表示は
-   * マッチング候補テーブル側（PhaseグラフとTableの間）に統合したため、
-   * 従来のこの位置（matchingHeader要素）は空にする。
-   */
-  headerEl.innerHTML = "";
+  const context =
+    State.matchingContext || {};
+
+  const offsetSec =
+    Number(context.offsetSec) || 0;
+
+  const modeLabel =
+    context.mode === "preview"
+      ? "🔭 PREVIEW"
+      : "⚔️ MATCHING";
+
+  headerEl.textContent =
+    `${modeLabel} — ${offsetSec > 0 ? `${offsetSec}秒後予測` : "NOW"}` +
+    ` ／ 予測ログ：${context.mode === "preview" ? "記録なし" : "記録あり"}`;
 }
 
 /* =========================================================
@@ -10750,7 +10817,11 @@ function renderMatchingTable() {
 
   area.innerHTML = `
     ${buildSummaryModeNavHTML("both")}
-    ${buildPhaseCycleMonitorHTML()}
+    ${buildPhaseCycleMonitorHTML(
+      State.matchingContext
+        ?.evaluationTimeMs ??
+      Date.now()
+    )}
 
     <div
       id="matchingRankCounts"
@@ -10949,6 +11020,14 @@ function allowLog(
   }
 
   if (
+    message.includes(
+      "PREVIEWではコピー操作"
+    )
+  ) {
+    return true;
+  }
+
+  if (
     message.startsWith(
       "コピー:"
     ) ||
@@ -11070,6 +11149,16 @@ function copyToClipboard(
   playerName = "",
   shopName = ""
 ) {
+  if (
+    isCurrentView(STATE.MATCHING) &&
+    State.matchingContext?.mode ===
+      "preview"
+  ) {
+    log(
+      "PREVIEWではコピー操作と実績記録を行いません"
+    );
+    return;
+  }
 
   const afterCopySuccess = () => {
 
@@ -11098,7 +11187,28 @@ function copyToClipboard(
       `コピー: ${text}`
     );
 
-    buildMatchingCandidates();
+    const matchingContext =
+      State.matchingContext || {};
+
+    const clickedAtMs =
+      Date.now();
+
+    const offsetSec =
+      isCurrentView(STATE.MATCHING)
+        ? Number(
+            matchingContext.offsetSec
+          ) || 0
+        : 0;
+
+    buildMatchingCandidates({
+      clickedAtMs,
+      evaluationTimeMs:
+        clickedAtMs +
+        offsetSec * 1000,
+      offsetSec,
+      mode: "matching",
+      saveEvent: false
+    });
 
     if (
       isCurrentView(
@@ -11332,9 +11442,7 @@ async function exportTodayViewerLogsAsJSON() {
   if (!rawDate) {
 
     dateKey =
-      compactYMD(
-        getTodayYMDJa()
-      );
+      buildDailyKey();
 
   } else {
 
@@ -11395,7 +11503,7 @@ async function exportTodayViewerLogsAsJSON() {
       year,
       month,
       day,
-      0,
+      4,
       0,
       0,
       0
@@ -11405,8 +11513,8 @@ async function exportTodayViewerLogsAsJSON() {
     new Date(
       year,
       month,
-      day,
-      23,
+      day + 1,
+      3,
       59,
       59,
       999
@@ -11594,14 +11702,13 @@ async function exportTodayViewerLogsAsJSON() {
  [12990] Log Use Case:buildScoreBreakdownLog【ログ軽量化】
 ========================================================= */
 /*
- * copyEvents / candidateEvents（candidates・allCandidates）・
- * candidateSnapshot で重複していた scoreBreakdown 組み立てを
- * 1箇所へ集約する。
+ * copyEvents / candidateEvents（candidates・allCandidates）で
+ * 重複していた scoreBreakdown 組み立てを1箇所へ集約する。
  *
  * slim=false（既定）:
  *   従来どおりの全項目（バックオフ診断用の詳細項目を含む）。
- *   Top10表示分（copyEvents本体・candidates・
- *   candidateSnapshot）は情報量が小さいため、こちらを使う。
+ *   Top10表示分（copyEvents本体・candidates）は
+ *   情報量が小さいため、こちらを使う。
  *
  * slim=true:
  *   Phase傾向分析（signedPhaseError・phaseBucket・
@@ -11641,19 +11748,12 @@ function buildScoreBreakdownLog(
         Number(detail.realtimeBonusBeforeCap ?? 0),
       realtimeBonusCap:
         Number(detail.realtimeBonusCap ?? 0),
-      legacyRealtimeBoost:
-        Number(detail.legacyRealtimeBoost ?? 1),
       slotScore:
         Number(detail.slotScore ?? 0),
-      legacySlotScore:
-        Number(detail.legacySlotScore ?? 0),
       slotBucket:
         detail.slotBucket ?? null,
       slotRank:
         Number(detail.slotRank ?? 0) ||
-        null,
-      legacySlotRank:
-        Number(detail.legacySlotRank ?? 0) ||
         null,
       crossBucketRank:
         Number(detail.crossBucketRank ?? 0) ||
@@ -11777,19 +11877,12 @@ function buildScoreBreakdownLog(
       Number(detail.realtimeBonusBeforeCap ?? 0),
     realtimeBonusCap:
       Number(detail.realtimeBonusCap ?? 0),
-    legacyRealtimeBoost:
-      Number(detail.legacyRealtimeBoost ?? 1),
     slotScore:
       Number(detail.slotScore ?? 0),
-    legacySlotScore:
-      Number(detail.legacySlotScore ?? 0),
     slotBucket:
       detail.slotBucket ?? null,
     slotRank:
       Number(detail.slotRank ?? 0) ||
-      null,
-    legacySlotRank:
-      Number(detail.legacySlotRank ?? 0) ||
       null,
     crossBucketRank:
       Number(detail.crossBucketRank ?? 0) ||
@@ -11934,12 +12027,9 @@ function buildAllCandidateRow(
     Number(d.rankRealtimeBonus ?? 0),
     Number(d.realtimeBonusBeforeCap ?? 0),
     Number(d.realtimeBonusCap ?? 0),
-    Number(d.legacyRealtimeBoost ?? 1),
     Number(d.slotScore ?? 0),
-    Number(d.legacySlotScore ?? 0),
     d.slotBucket ?? null,
     Number(d.slotRank ?? 0) || null,
-    Number(d.legacySlotRank ?? 0) || null,
     Number(d.prideBandPriorWeight ?? 1),
     Number(d.areaBucketCount ?? 0),
     Number(d.areaTotalCount ?? 0),
@@ -12043,7 +12133,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v6_cross_bucket",
+        "slot_area_v7_prediction_time",
 
       dk:
         buildDailyKey(),
@@ -12085,11 +12175,11 @@ function saveCopyEventUnified(
         false,
 
       predictionAgeSec:
-        State.lastCandidateEventId
+        State.activeCandidateEventId
           ? Number(
               (
                 (Date.now() -
-                  State.lastCandidateEventId) /
+                  State.activeCandidateEventId) /
                 1000
               ).toFixed(3)
             )
@@ -12099,10 +12189,7 @@ function saveCopyEventUnified(
         true,
 
       candidateEventId:
-        State.lastCandidateEventId ?? null,
-
-      candidateSnapshot:
-        buildCopyCandidateSnapshot()
+        State.activeCandidateEventId ?? null
 
     };
 
@@ -12117,66 +12204,80 @@ function saveCopyEventUnified(
 
   }
 
-  const scoredPlayer =
-    buildCandidateScore(
-      player,
-      State.matchingTierCounts,
-      buildViewerHistoricalContext(
-        State.myRankKey
-      )
+  const scoredAtPrediction =
+    State.activeCandidateEventId
+      ? State.matchingScoredAll.find(
+          candidate =>
+            buildPlayerIdentityKey(
+              candidate
+            ) ===
+            buildPlayerIdentityKey(
+              player
+            )
+        ) ?? null
+      : null;
+
+  let scoredPlayer =
+    scoredAtPrediction;
+
+  if (!scoredPlayer) {
+    scoredPlayer =
+      buildCandidateScore(
+        player,
+        State.matchingTierCounts,
+        buildViewerHistoricalContext(
+          State.myRankKey
+        ),
+        State.activeCandidateEventId
+          ? Number(
+              State.matchingContext
+                ?.evaluationTimeMs
+            ) || Date.now()
+          : Date.now()
+      );
+
+    applyCandidateSlotScores(
+      [scoredPlayer],
+      buildAreaDensityContext(
+        State.filtered
+      ),
+      [
+        ...State.matchingScoredAll,
+        scoredPlayer
+      ]
     );
 
-  applyCandidateSlotScores(
-    [scoredPlayer],
-    buildAreaDensityContext(
-      State.filtered
-    ),
-    [
-      ...State.matchingScoredAll,
+    const diagnosticCandidates = [
+      ...State.matchingScoredAll.filter(
+        candidate =>
+          buildPlayerIdentityKey(candidate) !==
+          buildPlayerIdentityKey(scoredPlayer)
+      ),
       scoredPlayer
-    ]
-  );
+    ];
 
-  const diagnosticCandidates = [
-    ...State.matchingScoredAll.filter(
-      candidate =>
-        buildPlayerIdentityKey(candidate) !==
-        buildPlayerIdentityKey(scoredPlayer)
-    ),
-    scoredPlayer
-  ];
+    applyCandidateAreaHistoryDiagnostics(
+      diagnosticCandidates
+    );
 
-  applyCandidateAreaHistoryDiagnostics(
-    diagnosticCandidates
-  );
+    applyCandidateAreaPhaseDiagnostics(
+      diagnosticCandidates
+    );
 
-  applyCandidateAreaPhaseDiagnostics(
-    diagnosticCandidates
-  );
-
-  assignLegacyCandidateSlotRanks(
-    diagnosticCandidates
-  );
+  }
 
   const detail =
     scoredPlayer.__detail;
 
   const rankedAll =
-    State.matchingRankedAll ?? [];
-
-  const scoredAtPrediction =
-    State.matchingScoredAll.find(
-      candidate =>
-        buildPlayerIdentityKey(
-          candidate
-        ) ===
-        buildPlayerIdentityKey(
-          player
-        )
-    ) ?? null;
+    State.activeCandidateEventId
+      ? State.matchingRankedAll ?? []
+      : [];
 
   const displayedCandidates =
-    State.matchingList ?? [];
+    State.activeCandidateEventId
+      ? State.matchingList ?? []
+      : [];
 
   let candidateRank = -1;
 
@@ -12228,9 +12329,6 @@ function saveCopyEventUnified(
       ? displayedIndex + 1
       : null;
 
-  const copyCandidateSnapshot =
-    buildCopyCandidateSnapshot();
-
   /*
    * Pink管理対象の再登場分析用
    * ・pinkEntryAgeSec: 初回コピーからの経過秒
@@ -12259,7 +12357,7 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "slot_area_v6_cross_bucket",
+      "slot_area_v7_prediction_time",
 
     dk:
       buildDailyKey(),
@@ -12312,11 +12410,11 @@ function saveCopyEventUnified(
       predictedRank !== null,
 
     predictionAgeSec:
-      State.lastCandidateEventId
+      State.activeCandidateEventId
         ? Number(
             (
               (Date.now() -
-                State.lastCandidateEventId) /
+                State.activeCandidateEventId) /
               1000
             ).toFixed(3)
           )
@@ -12360,10 +12458,7 @@ function saveCopyEventUnified(
     cycleCountAtCopy,
 
     candidateEventId:
-      State.lastCandidateEventId ?? null,
-
-    candidateSnapshot:
-      copyCandidateSnapshot
+      State.activeCandidateEventId ?? null
 
   };
 
@@ -12377,74 +12472,6 @@ function saveCopyEventUnified(
   appendCopyAreaHistory(record);
 
   return record;
-
-}
-
-/* =========================================================
- [13010] Copy Use Case:buildCopyCandidateSnapshot【State】（旧 [9210]）
-========================================================= */
-function buildCopyCandidateSnapshot() {
-
-  const candidates =
-    (State.matchingList ?? [])
-      .map(p => ({
-        scoreRank: p.displayRank ?? null,
-        globalScoreRank: p.__scoreRank ?? null,
-        name: p.name,
-        shopname: p.shopname ?? "",
-        rankKey: p.__rankKey ?? null,
-        area: String(p.area ?? ""),
-        score: Number(
-          (p.__score ?? 0).toFixed(6)
-        ),
-        slotScore: Number(
-          (p.__slotScore ?? 0).toFixed(6)
-        ),
-        slotBucket:
-          p.__slotBucket ??
-          p.__detail?.slotBucket ??
-          null,
-        slotRank:
-          p.__slotRank ?? null,
-        scoreBreakdown:
-          buildScoreBreakdownLog(
-            p.__detail,
-            false
-          ),
-        isYellow:
-          Boolean(p.__detail?.isYellow),
-        isPink:
-          Boolean(p.__detail?.isPink),
-        isPinkManaged:
-          Boolean(p.__detail?.isPinkManaged),
-        yellowThreshold:
-          Number(p.__detail?.yellowThreshold ?? 0),
-        pinkThreshold:
-          Number(p.__detail?.pinkThreshold ?? 0),
-        cycleCount:
-          Number(p.__detail?.cycleCount ?? 0),
-        cycleSec:
-          Number(p.__detail?.cycleSec ?? 0),
-        encounterCount:
-          getEncounterHistory(p)?.count ?? 0,
-        isCrossBucket:
-          Boolean(p.__crossBucket),
-        crossBucketRank:
-          p.__crossBucketRank ?? null,
-        crossBucketScore:
-          Number(
-            p.__crossBucketScore ?? 0
-          ),
-        crossBucketSelectionReason:
-          p.__crossBucketSelectionReason ??
-          null
-      }));
-
-  return {
-    candidateCount:
-      candidates.length,
-    candidates
-  };
 
 }
 
@@ -12510,17 +12537,48 @@ function recordClickFromCopiedInfo(
    * 現在のマッチング候補リスト（State.matchingList）における
    * このプレイヤーの予測順位（1-indexed）を取得
    * ---------------------------------------------------- */
-  const candidateIndex = (State.matchingList || []).findIndex(
-    p =>
-      normalizePlayerName(p.name ?? "") === normalizedName &&
-      normalizePlayerName(p.shopname ?? "") === normalizedShop
-  );
+  const candidateIndex =
+    State.activeCandidateEventId
+      ? (State.matchingList || []).findIndex(
+          p =>
+            normalizePlayerName(
+              p.name ?? ""
+            ) === normalizedName &&
+            normalizePlayerName(
+              p.shopname ?? ""
+            ) === normalizedShop
+        )
+      : -1;
 
   const predictedRank = candidateIndex >= 0 ? candidateIndex + 1 : null;
-  const scoreDetail = calcMatchingScoreDetail(player);
+  const predictedPlayer =
+    State.activeCandidateEventId
+      ? State.matchingScoredAll.find(
+          candidate =>
+            buildPlayerIdentityKey(
+              candidate
+            ) ===
+            buildPlayerIdentityKey(
+              player
+            )
+        ) ?? null
+      : null;
 
-  State.viewerLastCopiedAt =
-    copiedAt;
+  const scoreDetail =
+    predictedPlayer?.__detail ??
+    calcMatchingScoreDetail(
+      player,
+      State.matchingTierCounts,
+      buildViewerHistoricalContext(
+        State.myRankKey
+      ),
+      State.activeCandidateEventId
+        ? Number(
+            State.matchingContext
+              ?.evaluationTimeMs
+          ) || copiedAt
+        : copiedAt
+    );
 
   const areaName =
     AreaList[
@@ -12827,11 +12885,11 @@ function undoLastCopiedInfo() {
  * 蓄積され続けていた。ここで LOG_STORAGE_LIMITS.candidateEvents
  * を超えた分（最も古いもの）を削除する。
  *
- * candidateEvents の id は Date.now() の数値（時刻順）で
- * 発行されているため、キーの昇順ソート＝時系列順となる。
+ * ストアの主キー昇順を時系列順として、上限超過分を削除する。
  */
-function pruneCandidateEventsStore(
-  limit = 300
+function pruneLogStore(
+  storeName,
+  limit
 ) {
 
   if (!logDB) {
@@ -12840,13 +12898,13 @@ function pruneCandidateEventsStore(
 
   const tx =
     logDB.transaction(
-      LOG_STORE.candidateEvents,
+      storeName,
       "readwrite"
     );
 
   const store =
     tx.objectStore(
-      LOG_STORE.candidateEvents
+      storeName
     );
 
   const req =
@@ -12883,7 +12941,7 @@ function pruneCandidateEventsStore(
     (e) => {
 
       console.error(
-        "[LOG] pruneCandidateEventsStore failed",
+        `[LOG] ${storeName} prune failed`,
         e
       );
 
@@ -12891,13 +12949,28 @@ function pruneCandidateEventsStore(
 
 }
 
+function pruneCandidateEventsStore(
+  limit = 300
+) {
+  pruneLogStore(
+    LOG_STORE.candidateEvents,
+    limit
+  );
+}
+
 /* =========================================================
  [13100] Candidate Event Log:saveCandidateEvent【State】【永続化】（旧 [9500]）
 ========================================================= */
-function saveCandidateEvent() {
+function saveCandidateEvent(
+  {
+    clickedAtMs = Date.now(),
+    evaluationTimeMs = clickedAtMs,
+    offsetSec = 0
+  } = {}
+) {
 
   const now =
-    Date.now();
+    clickedAtMs;
 
   /*
    * ログ整合性修正
@@ -13104,14 +13177,20 @@ function saveCandidateEvent() {
     t: now,
 
     logSchemaVersion:
-      "slot_area_v6_cross_bucket",
+      "slot_area_v7_prediction_time",
 
     e: "candidate",
 
     id: now,
 
-    eventAt:
-      getNowLabelJa(),
+    evaluationOffsetSec:
+      Number(offsetSec) || 0,
+
+    trigger:
+      "matching-button",
+
+    evaluationTimeMs:
+      Number(evaluationTimeMs) || now,
 
     dk:
       buildDailyKey(),
@@ -13193,13 +13272,6 @@ function saveCandidateEvent() {
         })
       ),
 
-    normalSlotCount:
-      State.matchingSlotPlan.reduce(
-        (sum, entry) =>
-          sum + Number(entry.slots ?? 0),
-        0
-      ),
-
     crossBucketSelection:
       State.matchingCrossBucketDiagnostics ?? {
         crossBucketSlotCount:
@@ -13225,15 +13297,6 @@ function saveCandidateEvent() {
           p.__detail?.isPinkManaged &&
           !p.__detail?.pinkPhaseMatched
       ).length,
-
-    loggedCandidateLimit:
-      LOG_TOP_CANDIDATE_LIMIT,
-
-    yellowPhaseWeightCap:
-      MAX_YELLOW_PHASE_WEIGHT,
-
-    pinkMismatchBoostFactor:
-      PINK_MISMATCH_BOOST_FACTOR,
 
     /*
      * 【2026-09 改善6】Pink不一致減衰の段階化パラメータ
@@ -13480,7 +13543,7 @@ function saveCandidateEvent() {
         : []
   };
 
-  State.lastCandidateEventId =
+  State.activeCandidateEventId =
     now;
 
   logEvent(
@@ -13500,8 +13563,13 @@ function showSummaryUI(
   push = true,
   mode = "rank"
 ) {
+  State.activeCandidateEventId =
+    null;
   State.summaryMode = mode;
   renderSummary();
+
+  State.activeCandidateEventId =
+    null;
 
   setCurrentView(
     STATE.SUMMARY
@@ -13526,8 +13594,13 @@ function showSummaryUI(
 function showAreaSummary(
   push = true
 ) {
+  State.activeCandidateEventId =
+    null;
   State.summaryMode = "area";
   renderSummary();
+
+  State.activeCandidateEventId =
+    null;
 
   setCurrentView(
     STATE.SUMMARY
@@ -13556,6 +13629,8 @@ function showDetail(
   key,
   push = true
 ) {
+  State.activeCandidateEventId =
+    null;
   const row =
     State.summary.find(
       r => r.key === key
@@ -13673,6 +13748,8 @@ function showAreaDetail(
   areaNo,
   push = true
 ) {
+  State.activeCandidateEventId =
+    null;
   const areaKey = String(areaNo);
   const areaName = getAreaDisplayName(areaKey);
   const list = (State.filtered || []).filter(p => String(p.area ?? "") === areaKey);
@@ -13707,10 +13784,50 @@ function showAreaDetail(
  [13220] Navigation Use Case:showMatchingCandidates【State】【DOM】（旧 [7900]）
 ========================================================= */
 function showMatchingCandidates(
-  push = true
+  options = true
 ) {
 
-  buildMatchingCandidates();
+  const normalizedOptions =
+    typeof options === "boolean"
+      ? {
+          push: options,
+          mode: "matching",
+          offsetSec:
+            State.matchingOffsetSec,
+          saveEvent: false
+        }
+      : options;
+
+  const push =
+    normalizedOptions.push !== false;
+
+  const mode =
+    normalizedOptions.mode === "preview"
+      ? "preview"
+      : "matching";
+
+  const offsetSec =
+    Number(
+      normalizedOptions.offsetSec
+    ) || 0;
+
+  const clickedAtMs =
+    Date.now();
+
+  const saveEvent =
+    mode === "matching" &&
+    normalizedOptions.saveEvent ===
+      true;
+
+  buildMatchingCandidates({
+    clickedAtMs,
+    evaluationTimeMs:
+      clickedAtMs +
+      offsetSec * 1000,
+    offsetSec,
+    mode,
+    saveEvent
+  });
 
   renderMatchingHeader();
 
@@ -13728,7 +13845,9 @@ function showMatchingCandidates(
 
     history.pushState(
       {
-        page: STATE.MATCHING
+        page: STATE.MATCHING,
+        matchingMode: mode,
+        matchingOffsetSec: offsetSec
       },
       "",
       ""
@@ -13742,6 +13861,8 @@ function showMatchingCandidates(
 function backToSummaryFromMatching(
   push = true
 ) {
+  State.activeCandidateEventId =
+    null;
   State.summaryMode = State.summaryMode === "area" ? "area" : "rank";
   renderSummary();
 
@@ -13928,7 +14049,17 @@ window.addEventListener(
         if (input) input.value = "";
       }
 
-      showMatchingCandidates(false);
+      showMatchingCandidates({
+        push: false,
+        mode:
+          state.matchingMode ||
+          "matching",
+        offsetSec:
+          Number(
+            state.matchingOffsetSec
+          ) || 0,
+        saveEvent: false
+      });
       return;
     }
 
@@ -14138,6 +14269,14 @@ async function init() {
 
   renderSummary();
 
+  setCurrentView(
+    STATE.SUMMARY
+  );
+
+  switchDisplayView(
+    STATE.SUMMARY
+  );
+
   stopProgress();
 
   startUpdateWatch();
@@ -14221,6 +14360,9 @@ document.addEventListener(
       );
 
     if (undoCopyBtn) {
+      undoCopyBtn.textContent =
+        "↩️ UNDO";
+
       undoCopyBtn.onclick = () => {
         if (typeof undoLastCopiedInfo === "function") {
           undoLastCopiedInfo();
@@ -14287,6 +14429,14 @@ document.addEventListener(
         buildSummary();
 
         renderSummary();
+
+        setCurrentView(
+          STATE.SUMMARY
+        );
+
+        switchDisplayView(
+          STATE.SUMMARY
+        );
 
         stopProgress();
 
@@ -14385,6 +14535,57 @@ document.addEventListener(
       matchingBtn &&
       searchInput
     ) {
+      matchingBtn.textContent =
+        "⚔️ MATCHING";
+
+      const matchingOffsetSelect =
+        document.createElement(
+          "select"
+        );
+
+      matchingOffsetSelect.id =
+        "matchingOffsetSelect";
+
+      matchingOffsetSelect.className =
+        "matching-offset-select";
+
+      matchingOffsetSelect.setAttribute(
+        "aria-label",
+        "MATCHINGの予測時刻"
+      );
+
+      matchingOffsetSelect.innerHTML = `
+        <option value="0">NOW</option>
+        <option value="5">5秒後</option>
+        <option value="10">10秒後</option>
+        <option value="15">15秒後</option>
+      `;
+
+      matchingBtn.insertAdjacentElement(
+        "afterend",
+        matchingOffsetSelect
+      );
+
+      const primaryRow =
+        matchingBtn.parentElement;
+
+      if (
+        primaryRow &&
+        reloadBtn?.parentElement === primaryRow &&
+        undoCopyBtn?.parentElement === primaryRow
+      ) {
+        primaryRow.classList.add(
+          "matching-primary-row"
+        );
+      }
+
+      matchingOffsetSelect.addEventListener(
+        "change",
+        e => {
+          State.matchingOffsetSec =
+            Number(e.target.value) || 0;
+        }
+      );
 
       matchingBtn.onclick =
         () => {
@@ -14393,9 +14594,13 @@ document.addEventListener(
 
           searchInput.value = "";
 
-          showMatchingCandidates(
-            true
-          );
+          showMatchingCandidates({
+            push: true,
+            mode: "matching",
+            offsetSec:
+              State.matchingOffsetSec,
+            saveEvent: true
+          });
 
         };
 
@@ -14458,7 +14663,28 @@ document.addEventListener(
               STATE.MATCHING
             )
           ) {
-            buildMatchingCandidates();
+            const context =
+              State.matchingContext || {};
+
+            const clickedAtMs =
+              Date.now();
+
+            const offsetSec =
+              Number(
+                context.offsetSec
+              ) || 0;
+
+            buildMatchingCandidates({
+              clickedAtMs,
+              evaluationTimeMs:
+                clickedAtMs +
+                offsetSec * 1000,
+              offsetSec,
+              mode:
+                context.mode ||
+                "matching",
+              saveEvent: false
+            });
             renderMatchingHeader();
             renderMatchingTable();
           }
