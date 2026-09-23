@@ -14574,6 +14574,11 @@ document.addEventListener(
         reloadBtn?.parentElement === primaryRow &&
         undoCopyBtn?.parentElement === primaryRow
       ) {
+        primaryRow.appendChild(reloadBtn);
+        primaryRow.appendChild(undoCopyBtn);
+        primaryRow.appendChild(matchingBtn);
+        primaryRow.appendChild(matchingOffsetSelect);
+
         primaryRow.classList.add(
           "matching-primary-row"
         );
