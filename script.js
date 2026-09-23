@@ -9469,11 +9469,11 @@ function buildSummaryModeNavHTML(activeMode) {
   const modes = [
     {
       key: "rank",
-      label: "🏆 Rank"
+      label: "🏆 RANK"
     },
     {
       key: "area",
-      label: "🗺️ Area"
+      label: "🗺️ AREA"
     }
   ];
 
@@ -9646,6 +9646,7 @@ function ensureAreaSummaryStyles() {
     }
 
     #matchingHeader {
+      display: block;
       box-sizing: border-box;
       width: 100%;
       margin: 12px 0;
@@ -9654,6 +9655,8 @@ function ensureAreaSummaryStyles() {
       box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
       color: #fff;
       font-weight: 600;
+      cursor: pointer;
+      user-select: none;
     }
 
     #matchingHeader.matching-header-matching {
@@ -9664,6 +9667,45 @@ function ensureAreaSummaryStyles() {
     #matchingHeader.matching-header-preview {
       background: rgba(37, 99, 166, 0.94);
       border: 1px solid #1d4f84;
+    }
+
+    #matchingHeader:hover {
+      filter: brightness(0.92);
+    }
+
+    #matchingHeader:focus-visible,
+    .summary-action-header:focus-visible {
+      outline: 3px solid rgba(14, 165, 233, 0.45);
+      outline-offset: 2px;
+    }
+
+    .summary-action-header {
+      display: block;
+      box-sizing: border-box;
+      width: 100%;
+      margin: 12px 0;
+      padding: 10px 14px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .summary-action-header-rank {
+      background: #168a45;
+      border: 1px solid #116f37;
+    }
+
+    .summary-action-header-area {
+      background: #7c3fb3;
+      border: 1px solid #643191;
+    }
+
+    .summary-action-header:hover {
+      filter: brightness(0.92);
     }
 
     .matching-primary-row {
@@ -9930,6 +9972,20 @@ function ensureAreaSummaryStyles() {
 
 function bindSummaryModeButtons(root) {
   if (!root) return;
+
+  const refreshButton =
+    root.querySelector(
+      "[data-summary-refresh]"
+    );
+
+  if (refreshButton) {
+    refreshButton.addEventListener(
+      "click",
+      () => {
+        renderSummary();
+      }
+    );
+  }
 
   root.querySelectorAll("[data-summary-mode]").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -10314,6 +10370,12 @@ function renderAreaSummary() {
 
   area.innerHTML = `
     ${buildSummaryModeNavHTML("area")}
+    <button
+      type="button"
+      class="summary-action-header summary-action-header-area"
+      data-summary-refresh
+      title="AREAを再表示"
+    >🗺️ AREA</button>
     <h3 class="summary-total-badge">
       合計 ${fmt(total)}人：
       RUBY帯 ${fmt(rubyTotal)}人＝${rubyPercent}% ＋
@@ -10441,6 +10503,12 @@ function renderSummary() {
 
   area.innerHTML = `
     ${buildSummaryModeNavHTML("rank")}
+    <button
+      type="button"
+      class="summary-action-header summary-action-header-rank"
+      data-summary-refresh
+      title="RANKを再表示"
+    >🏆 RANK</button>
     <h3 class="summary-total-badge">
       合計 ${fmt(total)}人：
       RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋
@@ -10831,6 +10899,50 @@ function renderMatchingHeader() {
     "matching-header-matching",
     !isPreview
   );
+
+  headerEl.setAttribute(
+    "role",
+    "button"
+  );
+
+  headerEl.tabIndex = 0;
+  headerEl.title =
+    `${modeLabel}を現在の時刻設定で再計算`;
+
+  const refreshMatching =
+    () => {
+      const currentOffsetSec =
+        isPreview
+          ? State.previewOffsetSec
+          : State.matchingOffsetSec;
+
+      showMatchingCandidates({
+        push: false,
+        mode:
+          isPreview
+            ? "preview"
+            : "matching",
+        offsetSec:
+          currentOffsetSec,
+        saveEvent: !isPreview
+      });
+    };
+
+  headerEl.onclick =
+    refreshMatching;
+
+  headerEl.onkeydown =
+    event => {
+      if (
+        event.key !== "Enter" &&
+        event.key !== " "
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      refreshMatching();
+    };
 
   headerEl.textContent =
     `${modeLabel} — ${offsetSec > 0 ? `${offsetSec}秒後予測` : "NOW"}` +
