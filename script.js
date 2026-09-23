@@ -9987,6 +9987,38 @@ function bindSummaryModeButtons(root) {
     );
   }
 
+  const detailRefreshButton =
+    root.querySelector(
+      "[data-detail-refresh]"
+    );
+
+  if (detailRefreshButton) {
+    detailRefreshButton.addEventListener(
+      "click",
+      () => {
+        if (
+          State.currentDetailType ===
+          "area"
+        ) {
+          const areaNo =
+            Number(
+              State.currentDetailKey
+            );
+
+          if (!Number.isNaN(areaNo)) {
+            renderAreaDetailTable(
+              areaNo
+            );
+          }
+
+          return;
+        }
+
+        renderDetailTable();
+      }
+    );
+  }
+
   root.querySelectorAll("[data-summary-mode]").forEach(btn => {
     btn.addEventListener("click", () => {
       const mode = btn.dataset.summaryMode;
@@ -10641,6 +10673,13 @@ function renderDetailTable() {
   area.innerHTML = `
     ${buildSummaryModeNavHTML()}
 
+    <button
+      type="button"
+      class="summary-action-header summary-action-header-rank"
+      data-detail-refresh
+      title="RANK詳細を再表示"
+    >🏆 RANK 詳細</button>
+
     ${buildPhaseCycleMonitorHTML()}
 
     <div class="rank-nav-box">
@@ -10702,6 +10741,13 @@ function renderAreaDetailTable(areaNo) {
     .filter(isPlayerIncludedInRankFilters);
   area.innerHTML = `
     ${buildSummaryModeNavHTML()}
+
+    <button
+      type="button"
+      class="summary-action-header summary-action-header-area"
+      data-detail-refresh
+      title="AREA詳細を再表示"
+    >🗺️ AREA 詳細</button>
 
     ${buildPhaseCycleMonitorHTML()}
 
