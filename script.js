@@ -1490,6 +1490,11 @@ function applyScoringConfigJson(
       DEFAULT_MY_RANK_KEY
     );
 
+  const normalizedMyRankKey =
+    syncMyRankSelection(
+      myRankKey
+    );
+
   const myRankSelect =
     document.getElementById(
       "myRankSelect"
@@ -1499,11 +1504,11 @@ function applyScoringConfigJson(
     myRankSelect &&
     [...myRankSelect.options].some(
       option =>
-        option.value === myRankKey
+        option.value === normalizedMyRankKey
     )
   ) {
     myRankSelect.value =
-      myRankKey;
+      normalizedMyRankKey;
   }
 
   log(
