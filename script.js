@@ -9987,34 +9987,27 @@ function bindSummaryModeButtons(root) {
     );
   }
 
-  const detailRefreshButton =
+  const detailSummaryButton =
     root.querySelector(
-      "[data-detail-refresh]"
+      "[data-detail-summary]"
     );
 
-  if (detailRefreshButton) {
-    detailRefreshButton.addEventListener(
+  if (detailSummaryButton) {
+    detailSummaryButton.addEventListener(
       "click",
       () => {
         if (
           State.currentDetailType ===
           "area"
         ) {
-          const areaNo =
-            Number(
-              State.currentDetailKey
-            );
-
-          if (!Number.isNaN(areaNo)) {
-            renderAreaDetailTable(
-              areaNo
-            );
-          }
-
+          showAreaSummary(true);
           return;
         }
 
-        renderDetailTable();
+        showSummaryUI(
+          true,
+          "rank"
+        );
       }
     );
   }
@@ -10676,8 +10669,8 @@ function renderDetailTable() {
     <button
       type="button"
       class="summary-action-header summary-action-header-rank"
-      data-detail-refresh
-      title="RANK詳細を再表示"
+      data-detail-summary
+      title="RANKサマリへ戻る"
     >🏆 RANK 詳細</button>
 
     ${buildPhaseCycleMonitorHTML()}
@@ -10745,8 +10738,8 @@ function renderAreaDetailTable(areaNo) {
     <button
       type="button"
       class="summary-action-header summary-action-header-area"
-      data-detail-refresh
-      title="AREA詳細を再表示"
+      data-detail-summary
+      title="AREAサマリへ戻る"
     >🗺️ AREA 詳細</button>
 
     ${buildPhaseCycleMonitorHTML()}
