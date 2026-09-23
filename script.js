@@ -459,7 +459,7 @@ function syncMyRankSelection(
     State.myRankKey = selectedMyRank;
   }
 
-  return selectedMyRank;
+  return State.myRankKey;
 }
 
 
@@ -14850,38 +14850,29 @@ document.addEventListener(
             );
 
           log(
-            `自分ランク変更：${selectedMyRank}`
+            `自分ランク変更：${selectedMyRank}` +
+            `（候補生成はMATCHINGボタン押下時に反映されます）`
           );
 
+          /*
+           * 自ランク変更時点では候補の
+           * 即時再生成は行わない。
+           * 候補生成・ログ保存は
+           * MATCHINGボタン押下時のみ実行する。
+           * 表示は「候補0件」時と同じ見た目にするため、
+           * 候補リストを空にして通常描画に任せる。
+           */
           if (
             isCurrentView(
               STATE.MATCHING
             )
           ) {
-            const context =
-              State.matchingContext || {};
 
-            const clickedAtMs =
-              Date.now();
+            State.matchingList = [];
 
-            const offsetSec =
-              Number(
-                context.offsetSec
-              ) || 0;
-
-            buildMatchingCandidates({
-              clickedAtMs,
-              evaluationTimeMs:
-                clickedAtMs +
-                offsetSec * 1000,
-              offsetSec,
-              mode:
-                context.mode ||
-                "matching",
-              saveEvent: false
-            });
             renderMatchingHeader();
             renderMatchingTable();
+
           }
 
         }
