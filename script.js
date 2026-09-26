@@ -216,11 +216,11 @@ const DEFAULT_PHASE_ERROR_SCALE_SEC = 90;
 const DEFAULT_AREA_BOOST_WEIGHT = 0.05;
 const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
 const DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT = 0.1;
+const DEFAULT_RECENT_AREA_BOOST_ENABLED = true;
+const DEFAULT_RECENT_AREA_BOOST_WEIGHT = 0.1;
 const DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT = 0.05;
 const DEFAULT_PRIDE_BAND_PRIOR_EXPONENT = 0.5;
 const DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD = 0.08;
-const DEFAULT_PRIDE_BAND_INTERNAL_DISTRIBUTION_ENABLED = true;
-const DEFAULT_PRIDE_BAND_REALTIME_BOOST_ENABLED = true;
 const DEFAULT_REALTIME_PLAYER_WEIGHT = 0.35;
 const DEFAULT_REALTIME_RANK_WEIGHT = 0.03;
 const DEFAULT_REALTIME_MAX_BONUS = 0.25;
@@ -5836,16 +5836,6 @@ function applyCandidateSlotScores(
         ?.prideBandPriorExponent ??
       DEFAULT_PRIDE_BAND_PRIOR_EXPONENT
     );
-  const prideBandInternalDistributionEnabled =
-    Boolean(
-      State.scoringConfig
-        ?.candidateSelection
-        ?.slotAllocation
-        ?.prideBandInternalDistribution
-        ?.enabled ??
-      DEFAULT_PRIDE_BAND_INTERNAL_DISTRIBUTION_ENABLED
-    );
-
   const prideBandPriorExponent =
     Number.isFinite(
       configuredPrideBandPriorExponent
@@ -5879,7 +5869,6 @@ function applyCandidateSlotScores(
 
     const prideBandPriorWeight =
       isPride &&
-      prideBandInternalDistributionEnabled &&
       maxPrideBandProbability > 0
         ? Math.pow(
             prideBandProbability /
@@ -5906,18 +5895,6 @@ function applyCandidateSlotScores(
       );
     detail.prideBandPriorWeight =
       prideBandPriorWeight;
-    detail.prideBandInternalDistributionEnabled =
-      isPride &&
-      prideBandInternalDistributionEnabled;
-    detail.prideBandRealtimeBoostEnabled =
-      isPride &&
-      Boolean(
-        State.scoringConfig
-          ?.realtimeBoost
-          ?.prideBand
-          ?.enabled ??
-        DEFAULT_PRIDE_BAND_REALTIME_BOOST_ENABLED
-      );
     detail.areaBucketCount =
       areaDetail.areaBucketCount;
     detail.areaTotalCount =
@@ -5991,25 +5968,35 @@ function buildCopyAreaHistoryContext() {
   };
 }
 
-function applyCandidateAreaHistoryDiagnostics(
+function applyCandidateAreaHistoryBoost(
   candidates
 ) {
   const context =
     buildCopyAreaHistoryContext();
 
+  const config =
+    State.scoringConfig
+      ?.candidateSelection
+      ?.areaBoost
+      ?.recentMatch ?? {};
+  const enabled =
+    config.enabled ??
+    DEFAULT_RECENT_AREA_BOOST_ENABLED;
+  const excludePinkManaged =
+    config.excludePinkManaged !== false;
   const configuredWeight =
     Number(
-      State.scoringConfig
-        ?.candidateSelection
-        ?.areaBoost
-        ?.diagnosticRecentWeight ??
-      DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT
+      config.weight ??
+      DEFAULT_RECENT_AREA_BOOST_WEIGHT
     );
 
-  const diagnosticWeight =
+  const recentWeight =
+    enabled &&
     Number.isFinite(configuredWeight)
       ? clamp(configuredWeight, 0, 1)
-      : DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT;
+      : enabled
+        ? DEFAULT_RECENT_AREA_BOOST_WEIGHT
+        : 0;
 
   const buckets = {};
 
@@ -6027,13 +6014,28 @@ function applyCandidateAreaHistoryDiagnostics(
         recentCount5 /
         context.maxRecent5Count
       );
-    const counterfactualBoost =
-      1 +
-      diagnosticWeight *
-      recentDensity5;
-    const counterfactualSlotScore =
-      getCandidateSlotScore(player) *
-      counterfactualBoost;
+    const isExcludedPinkManaged =
+      excludePinkManaged &&
+      Boolean(detail.isPinkManaged);
+    const recentAreaBoost =
+      isExcludedPinkManaged
+        ? 1
+        : 1 +
+          recentWeight *
+          recentDensity5;
+    const previousRecentAreaBoost =
+      Math.max(
+        Number(
+          detail.recentAreaAppliedBoost ?? 1
+        ),
+        Number.EPSILON
+      );
+    const baseSlotScore =
+      getCandidateSlotScore(player) /
+      previousRecentAreaBoost;
+    const boostedSlotScore =
+      baseSlotScore *
+      recentAreaBoost;
 
     detail.recentAreaMatchCount5 =
       recentCount5;
@@ -6059,9 +6061,15 @@ function applyCandidateAreaHistoryDiagnostics(
     detail.recentAreaMatchDensity5 =
       recentDensity5;
     detail.recentAreaCounterfactualBoost5 =
-      counterfactualBoost;
+      recentAreaBoost;
     detail.recentAreaCounterfactualSlotScore =
-      counterfactualSlotScore;
+      boostedSlotScore;
+    detail.recentAreaAppliedBoost =
+      recentAreaBoost;
+    detail.slotScore =
+      boostedSlotScore;
+    player.__slotScore =
+      boostedSlotScore;
 
     const bucket =
       getMatchingSlotBucketKey(
@@ -6892,10 +6900,6 @@ function calcMatchingScoreDetail(
         State.rankActivity[
             String(rankKey ?? "")
         ];
-    const isPrideCandidate =
-        getMatchingSlotBucketKey(
-            rankKey
-        ) === "PRIDE";
     const playerActivitySignal =
         isPinkManaged
             ? computeActivitySignal(
@@ -6904,19 +6908,7 @@ function calcMatchingScoreDetail(
               )
             : 0;
     const rankActivitySignal =
-        (
-            isPinkManaged ||
-            (
-                isPrideCandidate &&
-                (
-                    State.scoringConfig
-                        ?.realtimeBoost
-                        ?.prideBand
-                        ?.enabled ??
-                    DEFAULT_PRIDE_BAND_REALTIME_BOOST_ENABLED
-                )
-            )
-        )
+        isPinkManaged
             ? computeActivitySignal(
                 rankActivityEntry,
                 evaluationTimeMs
@@ -7292,6 +7284,9 @@ function getCandidateCrossBucketScore(
     ) *
     Number(
       detail.areaBoost ?? 1
+    ) *
+    Number(
+      detail.recentAreaCounterfactualBoost5 ?? 1
     );
 
   return (
@@ -7853,7 +7848,7 @@ function buildMatchingCandidates(
     areaDensityContext
   );
 
-  applyCandidateAreaHistoryDiagnostics(
+  applyCandidateAreaHistoryBoost(
     scoredAll
   );
 
@@ -12446,7 +12441,7 @@ function saveCopyEventUnified(
       scoredPlayer
     ];
 
-    applyCandidateAreaHistoryDiagnostics(
+    applyCandidateAreaHistoryBoost(
       diagnosticCandidates
     );
 
