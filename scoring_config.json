@@ -1,9 +1,9 @@
 {
   "meta": {
-    "version": "scoring_config_v22_viewer_defaults_20260923",
-    "createdAt": "2026-08-30T20:17:00+09:00",
-    "modifiedAt": "2026-09-23T07:26:29+09:00",
-    "description": "ViewerのFilter既定値と自ランク既定値はviewerDefaultsで管理し、Index側に固定値を持たせない。通常9枠は履歴マッチング比率でバケット配分し、枠内ではRealtime・Phase・弱めたエリア密度を合成する。残る1枠は、過去のバケット別マッチング確率を予測時点の同Tier候補数で個人へ配分し、Realtime・Pink不一致・Phase・エリア補正を掛けたcrossBucketScoreにより、通常9枠から外れた候補をバケット横断で選出する。通常9枠と横断1枠はスクリプト側の固定値であり、この設定ファイルでは変更しない。RealtimeBoostは個人とランクの信号を加算し、最大1.25に制限する。PRIDEは全体を1つのslotBucketとして扱い、内部のPRIDE_A〜Gはhistorical_matchup_distributionの比率をsoft priorとして順位付けに反映する。PRIDE候補のrankActivitySignalはPink管理外でも内部順位に反映する。Pink管理対象のPhase不一致時はphaseErrorに応じた連続減衰（floor 0.3）を適用し、最終表示10枠でのPink管理対象占有数はmaxPinkManagedSlots（既定3）で制限する。PRIDEバンド多様性は、同バンド候補と最良の別バンド候補との相対スコア差がprideBandDiversityGapThreshold（既定8%）以内の場合に別バンドを優先し、差が閾値を超える場合は高スコアの同バンド候補を採用する。直近実績エリアとエリアPhase集中は診断ログ専用で選出スコアには適用しない。experimental.softmaxBacktestは本番選出に影響しないバックテスト専用プレビューである。"
+    "version": "scoring_config_v23_recent_area_boost_20260926",
+    "createdAt": "2026-09-26T09:15:11+09:00",
+    "modifiedAt": "2026-09-26T09:16:17+09:00",
+    "description": "ViewerのFilter既定値と自ランク既定値はviewerDefaultsで管理する。通常9枠は自ランク別の履歴マッチング比率でバケット配分し、残る1枠はバケット横断スコアで選出する。枠内順位にはRealtime・Phase・候補集合内のエリア密度を使用する。PRIDEは全体を1つのslotBucketとして扱い、PRIDE_A〜Gの履歴比率をsoft priorとして内部順位へ反映するが、rankActivitySignalはPink管理対象だけに適用する。areaBoost.recentMatchは直近5件のコピー実績に現れたエリアを対象とし、各エリアの出現回数を直近最多回数で割った値の平方根にweightを掛け、通常枠と横断1枠の選出スコアへ最大10%加点する。excludePinkManaged=trueによりPink管理対象にはこの直近エリア加点を適用しない。候補集合内の静的エリア密度加点とは独立して機能し、エリアPhase集中は診断ログ専用とする。Pink管理対象のPhase不一致時はphaseErrorに応じた連続減衰を適用し、最終表示10枠での占有数はmaxPinkManagedSlotsで制限する。experimental.softmaxBacktestは本番選出に影響しない。"
   },
   "viewerDefaults": {
     "filterMinutes": 30,
@@ -13,17 +13,17 @@
     "maxPinkManagedSlots": 3,
     "slotAllocation": {
       "prideBandPriorExponent": 0.5,
-      "prideBandDiversityGapThreshold": 0.08,
-      "prideBandInternalDistribution": {
-        "enabled": true,
-        "source": "historical_matchup_distribution",
-        "mode": "soft_prior"
-      }
+      "prideBandDiversityGapThreshold": 0.08
     },
     "areaBoost": {
       "enabled": true,
       "weight": 0.05,
       "smoothingSampleSize": 30,
+      "recentMatch": {
+        "enabled": true,
+        "weight": 0.10,
+        "excludePinkManaged": true
+      },
       "diagnosticRecentWeight": 0.10,
       "diagnosticPhaseWeight": 0.05
     }
@@ -56,9 +56,6 @@
     "playerWeight": 0.35,
     "rankWeight": 0.03,
     "maxBonus": 0.25,
-    "prideBand": {
-      "enabled": true
-    },
     "pinkMismatch": {
       "floor": 0.3,
       "decaySec": 60
