@@ -218,6 +218,7 @@ const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
 const DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT = 0.1;
 const DEFAULT_RECENT_AREA_BOOST_ENABLED = true;
 const DEFAULT_RECENT_AREA_BOOST_WEIGHT = 0.1;
+const RECENT_AREA_MATCH_WINDOW_SIZE = 5;
 const DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT = 0.05;
 const DEFAULT_PRIDE_BAND_PRIOR_EXPONENT = 0.5;
 const DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD = 0.08;
@@ -5939,7 +5940,9 @@ function buildCopyAreaHistoryContext() {
   };
 
   const recent5 =
-    history.slice(-5);
+    history.slice(
+      -RECENT_AREA_MATCH_WINDOW_SIZE
+    );
   const recent10 =
     history.slice(-10);
   const recent20 =
@@ -5957,14 +5960,7 @@ function buildCopyAreaHistoryContext() {
     recent10Counts:
       buildCounts(recent10),
     recent20Counts:
-      buildCounts(recent20),
-    maxRecent5Count:
-      Math.max(
-        1,
-        ...Object.values(
-          recent5Counts
-        ).map(Number)
-      )
+      buildCounts(recent20)
   };
 }
 
@@ -6009,10 +6005,11 @@ function applyCandidateAreaHistoryBoost(
       Number(
         context.recent5Counts[area] ?? 0
       );
+    // 1件だけでも最多なら最大加点、を避けて固定の5件で正規化する。
     const recentDensity5 =
       Math.sqrt(
         recentCount5 /
-        context.maxRecent5Count
+        RECENT_AREA_MATCH_WINDOW_SIZE
       );
     const isExcludedPinkManaged =
       excludePinkManaged &&
