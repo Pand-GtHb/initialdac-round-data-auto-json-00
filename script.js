@@ -133,11 +133,12 @@ const ALL_CANDIDATES_COLUMNS = [
   "recentAreaMatchCount5",
   "recentAreaMatchCount10",
   "recentAreaMatchCount20",
+  "recentAreaMatchCountWindow",
   "loggedAreaMatchCount",
   "loggedAreaMatchSampleCount",
   "loggedAreaMatchRate",
-  "recentAreaMatchDensity5",
-  "recentAreaCounterfactualBoost5",
+  "recentAreaMatchDensityWindow",
+  "recentAreaCounterfactualBoostWindow",
   "recentAreaCounterfactualSlotScore",
   "recentAreaCounterfactualSlotRank",
   "areaBucketScoredCandidateCount",
@@ -218,7 +219,8 @@ const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
 const DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT = 0.1;
 const DEFAULT_RECENT_AREA_BOOST_ENABLED = true;
 const DEFAULT_RECENT_AREA_BOOST_WEIGHT = 0.1;
-const RECENT_AREA_MATCH_WINDOW_SIZE = 5;
+const MAX_RECENT_AREA_BOOST_WEIGHT = 0.1;
+const DEFAULT_RECENT_AREA_MATCH_WINDOW_SIZE = 10;
 const DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT = 0.05;
 const DEFAULT_PRIDE_BAND_PRIOR_EXPONENT = 0.5;
 const DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD = 0.08;
@@ -403,6 +405,7 @@ const State = {
   },
 
   activeCandidateEventId: null,
+  latestCandidateEventIdForCopy: null,
 
   /* --- 新仕様追加（Fact） --- */
   pinkTargets: {},
@@ -1633,6 +1636,9 @@ function applyRoundDataJson(
   json,
   options = {}
 ) {
+
+  State.latestCandidateEventIdForCopy =
+    null;
 
   const {
     resetReloadButton = true
@@ -6048,14 +6054,16 @@ function buildCopyAreaHistoryContext() {
     return counts;
   };
 
+  const windowSize =
+    getRecentAreaBoostConfig().windowSize;
   const recent5 =
-    history.slice(
-      -RECENT_AREA_MATCH_WINDOW_SIZE
-    );
+    history.slice(-5);
   const recent10 =
     history.slice(-10);
   const recent20 =
     history.slice(-20);
+  const recentWindow =
+    history.slice(-windowSize);
   const allCounts =
     buildCounts(history);
   const recent5Counts =
@@ -6069,16 +6077,13 @@ function buildCopyAreaHistoryContext() {
     recent10Counts:
       buildCounts(recent10),
     recent20Counts:
-      buildCounts(recent20)
+      buildCounts(recent20),
+    recentWindowCounts:
+      buildCounts(recentWindow)
   };
 }
 
-function applyCandidateAreaHistoryBoost(
-  candidates
-) {
-  const context =
-    buildCopyAreaHistoryContext();
-
+function getRecentAreaBoostConfig() {
   const config =
     State.scoringConfig
       ?.candidateSelection
@@ -6087,21 +6092,54 @@ function applyCandidateAreaHistoryBoost(
   const enabled =
     config.enabled ??
     DEFAULT_RECENT_AREA_BOOST_ENABLED;
-  const excludePinkManaged =
-    config.excludePinkManaged !== false;
   const configuredWeight =
     Number(
       config.weight ??
       DEFAULT_RECENT_AREA_BOOST_WEIGHT
     );
-
-  const recentWeight =
+  const weight =
     enabled &&
     Number.isFinite(configuredWeight)
-      ? clamp(configuredWeight, 0, 1)
+      ? Math.min(
+          MAX_RECENT_AREA_BOOST_WEIGHT,
+          clamp(configuredWeight, 0, 1)
+        )
       : enabled
         ? DEFAULT_RECENT_AREA_BOOST_WEIGHT
         : 0;
+  const windowSize =
+    config.windowSize === undefined
+      ? DEFAULT_RECENT_AREA_MATCH_WINDOW_SIZE
+      : config.windowSize;
+
+  if (
+    !Number.isInteger(windowSize) ||
+    windowSize < 1 ||
+    windowSize > LOG_STORAGE_LIMITS.copyEvents
+  ) {
+    throw new Error(
+      "candidateSelection.areaBoost.recentMatch.windowSize は1～" +
+      LOG_STORAGE_LIMITS.copyEvents +
+      "の整数を指定してください"
+    );
+  }
+
+  return {
+    enabled: Boolean(enabled),
+    weight,
+    windowSize,
+    includePinkManaged: true,
+    maxMultiplier: 1 + weight
+  };
+}
+
+function applyCandidateAreaHistoryBoost(
+  candidates
+) {
+  const context =
+    buildCopyAreaHistoryContext();
+  const boostConfig =
+    getRecentAreaBoostConfig();
 
   const buckets = {};
 
@@ -6114,21 +6152,23 @@ function applyCandidateAreaHistoryBoost(
       Number(
         context.recent5Counts[area] ?? 0
       );
-    // 1件だけでも最多なら最大加点、を避けて固定の5件で正規化する。
-    const recentDensity5 =
-      Math.sqrt(
-        recentCount5 /
-        RECENT_AREA_MATCH_WINDOW_SIZE
+    const recentCount10 =
+      Number(
+        context.recent10Counts[area] ?? 0
       );
-    const isExcludedPinkManaged =
-      excludePinkManaged &&
-      Boolean(detail.isPinkManaged);
+    const recentCountWindow =
+      Number(
+        context.recentWindowCounts[area] ?? 0
+      );
+    const recentDensityWindow =
+      Math.sqrt(
+        recentCountWindow /
+        boostConfig.windowSize
+      );
     const recentAreaBoost =
-      isExcludedPinkManaged
-        ? 1
-        : 1 +
-          recentWeight *
-          recentDensity5;
+      1 +
+      boostConfig.weight *
+      recentDensityWindow;
     const previousRecentAreaBoost =
       Math.max(
         Number(
@@ -6146,9 +6186,9 @@ function applyCandidateAreaHistoryBoost(
     detail.recentAreaMatchCount5 =
       recentCount5;
     detail.recentAreaMatchCount10 =
-      Number(
-        context.recent10Counts[area] ?? 0
-      );
+      recentCount10;
+    detail.recentAreaMatchCountWindow =
+      recentCountWindow;
     detail.recentAreaMatchCount20 =
       Number(
         context.recent20Counts[area] ?? 0
@@ -6164,9 +6204,9 @@ function applyCandidateAreaHistoryBoost(
         ? detail.loggedAreaMatchCount /
           context.sampleCount
         : 0;
-    detail.recentAreaMatchDensity5 =
-      recentDensity5;
-    detail.recentAreaCounterfactualBoost5 =
+    detail.recentAreaMatchDensityWindow =
+      recentDensityWindow;
+    detail.recentAreaCounterfactualBoostWindow =
       recentAreaBoost;
     detail.recentAreaCounterfactualSlotScore =
       boostedSlotScore;
@@ -7392,7 +7432,7 @@ function getCandidateCrossBucketScore(
       detail.areaBoost ?? 1
     ) *
     Number(
-      detail.recentAreaCounterfactualBoost5 ?? 1
+      detail.recentAreaCounterfactualBoostWindow ?? 1
     );
 
   return (
@@ -7804,6 +7844,11 @@ function buildMatchingCandidates(
     offsetSec = 0
   } = {}
 ) {
+
+  if (!saveEvent) {
+    State.latestCandidateEventIdForCopy =
+      null;
+  }
 
   State.matchingContext = {
     mode,
@@ -12063,16 +12108,18 @@ function buildScoreBreakdownLog(
         Number(detail.recentAreaMatchCount10 ?? 0),
       recentAreaMatchCount20:
         Number(detail.recentAreaMatchCount20 ?? 0),
+      recentAreaMatchCountWindow:
+        Number(detail.recentAreaMatchCountWindow ?? 0),
       loggedAreaMatchCount:
         Number(detail.loggedAreaMatchCount ?? 0),
       loggedAreaMatchSampleCount:
         Number(detail.loggedAreaMatchSampleCount ?? 0),
       loggedAreaMatchRate:
         Number(detail.loggedAreaMatchRate ?? 0),
-      recentAreaMatchDensity5:
-        Number(detail.recentAreaMatchDensity5 ?? 0),
-      recentAreaCounterfactualBoost5:
-        Number(detail.recentAreaCounterfactualBoost5 ?? 1),
+      recentAreaMatchDensityWindow:
+        Number(detail.recentAreaMatchDensityWindow ?? 0),
+      recentAreaCounterfactualBoostWindow:
+        Number(detail.recentAreaCounterfactualBoostWindow ?? 1),
       recentAreaCounterfactualSlotScore:
         Number(detail.recentAreaCounterfactualSlotScore ?? 0),
       recentAreaCounterfactualSlotRank:
@@ -12200,16 +12247,18 @@ function buildScoreBreakdownLog(
       Number(detail.recentAreaMatchCount10 ?? 0),
     recentAreaMatchCount20:
       Number(detail.recentAreaMatchCount20 ?? 0),
+    recentAreaMatchCountWindow:
+      Number(detail.recentAreaMatchCountWindow ?? 0),
     loggedAreaMatchCount:
       Number(detail.loggedAreaMatchCount ?? 0),
     loggedAreaMatchSampleCount:
       Number(detail.loggedAreaMatchSampleCount ?? 0),
     loggedAreaMatchRate:
       Number(detail.loggedAreaMatchRate ?? 0),
-    recentAreaMatchDensity5:
-      Number(detail.recentAreaMatchDensity5 ?? 0),
-    recentAreaCounterfactualBoost5:
-      Number(detail.recentAreaCounterfactualBoost5 ?? 1),
+    recentAreaMatchDensityWindow:
+      Number(detail.recentAreaMatchDensityWindow ?? 0),
+    recentAreaCounterfactualBoostWindow:
+      Number(detail.recentAreaCounterfactualBoostWindow ?? 1),
     recentAreaCounterfactualSlotScore:
       Number(detail.recentAreaCounterfactualSlotScore ?? 0),
     recentAreaCounterfactualSlotRank:
@@ -12329,11 +12378,12 @@ function buildAllCandidateRow(
     Number(d.recentAreaMatchCount5 ?? 0),
     Number(d.recentAreaMatchCount10 ?? 0),
     Number(d.recentAreaMatchCount20 ?? 0),
+    Number(d.recentAreaMatchCountWindow ?? 0),
     Number(d.loggedAreaMatchCount ?? 0),
     Number(d.loggedAreaMatchSampleCount ?? 0),
     Number(d.loggedAreaMatchRate ?? 0),
-    Number(d.recentAreaMatchDensity5 ?? 0),
-    Number(d.recentAreaCounterfactualBoost5 ?? 1),
+    Number(d.recentAreaMatchDensityWindow ?? 0),
+    Number(d.recentAreaCounterfactualBoostWindow ?? 1),
     Number(d.recentAreaCounterfactualSlotScore ?? 0),
     Number(d.recentAreaCounterfactualSlotRank ?? 0) || null,
     Number(d.areaBucketScoredCandidateCount ?? 0),
@@ -12394,6 +12444,11 @@ function saveCopyEventUnified(
   shopName = ""
 ) {
 
+  const candidateEventIdForCopy =
+    State.latestCandidateEventIdForCopy ??
+    State.activeCandidateEventId ??
+    null;
+
   const normalizedName =
     normalizePlayerName(
       playerName
@@ -12424,7 +12479,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v8_rank_population",
+        "slot_area_v11_recent_area_config",
 
       dk:
         buildDailyKey(),
@@ -12465,17 +12520,6 @@ function saveCopyEventUnified(
       wasInTop10:
         false,
 
-      predictionAgeSec:
-        State.activeCandidateEventId
-          ? Number(
-              (
-                (Date.now() -
-                  State.activeCandidateEventId) /
-                1000
-              ).toFixed(3)
-            )
-          : null,
-
       unmatchedPlayer:
         true,
 
@@ -12497,7 +12541,13 @@ function saveCopyEventUnified(
       },
 
       candidateEventId:
-        State.activeCandidateEventId ?? null
+        candidateEventIdForCopy,
+
+      predictionSnapshotAvailable:
+        false,
+
+      scoreSource:
+        "unavailable"
 
     };
 
@@ -12513,7 +12563,7 @@ function saveCopyEventUnified(
   }
 
   const scoredAtPrediction =
-    State.activeCandidateEventId
+    candidateEventIdForCopy
       ? State.matchingScoredAll.find(
           candidate =>
             buildPlayerIdentityKey(
@@ -12536,7 +12586,7 @@ function saveCopyEventUnified(
         buildViewerHistoricalContext(
           State.myRankKey
         ),
-        State.activeCandidateEventId
+        candidateEventIdForCopy
           ? Number(
               State.matchingContext
                 ?.evaluationTimeMs
@@ -12578,12 +12628,12 @@ function saveCopyEventUnified(
     scoredPlayer.__detail;
 
   const rankedAll =
-    State.activeCandidateEventId
+    candidateEventIdForCopy
       ? State.matchingRankedAll ?? []
       : [];
 
   const displayedCandidates =
-    State.activeCandidateEventId
+    candidateEventIdForCopy
       ? State.matchingList ?? []
       : [];
 
@@ -12665,7 +12715,7 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "slot_area_v8_rank_population",
+      "slot_area_v11_recent_area_config",
 
     dk:
       buildDailyKey(),
@@ -12717,16 +12767,13 @@ function saveCopyEventUnified(
     wasInTop10:
       predictedRank !== null,
 
-    predictionAgeSec:
-      State.activeCandidateEventId
-        ? Number(
-            (
-              (Date.now() -
-                State.activeCandidateEventId) /
-              1000
-            ).toFixed(3)
-          )
-        : null,
+    predictionSnapshotAvailable:
+      Boolean(scoredAtPrediction),
+
+    scoreSource:
+      scoredAtPrediction
+        ? "prediction"
+        : "copy-time-recalculation",
 
     scoreBreakdown:
       buildScoreBreakdownLog(
@@ -12783,7 +12830,7 @@ function saveCopyEventUnified(
     },
 
     candidateEventId:
-      State.activeCandidateEventId ?? null
+      candidateEventIdForCopy
 
   };
 
@@ -12809,6 +12856,11 @@ function recordClickFromCopiedInfo(
 ) {
 
   if (!playerName) return;
+
+  const candidateEventIdForCopy =
+    State.latestCandidateEventIdForCopy ??
+    State.activeCandidateEventId ??
+    null;
 
   const normalizedName =
     normalizePlayerName(
@@ -12863,7 +12915,7 @@ function recordClickFromCopiedInfo(
    * このプレイヤーの予測順位（1-indexed）を取得
    * ---------------------------------------------------- */
   const candidateIndex =
-    State.activeCandidateEventId
+    candidateEventIdForCopy
       ? (State.matchingList || []).findIndex(
           p =>
             normalizePlayerName(
@@ -12877,7 +12929,7 @@ function recordClickFromCopiedInfo(
 
   const predictedRank = candidateIndex >= 0 ? candidateIndex + 1 : null;
   const predictedPlayer =
-    State.activeCandidateEventId
+    candidateEventIdForCopy
       ? State.matchingScoredAll.find(
           candidate =>
             buildPlayerIdentityKey(
@@ -12897,7 +12949,7 @@ function recordClickFromCopiedInfo(
       buildViewerHistoricalContext(
         State.myRankKey
       ),
-      State.activeCandidateEventId
+      candidateEventIdForCopy
         ? Number(
             State.matchingContext
               ?.evaluationTimeMs
@@ -13502,7 +13554,7 @@ function saveCandidateEvent(
     t: now,
 
     logSchemaVersion:
-      "slot_area_v8_rank_population",
+      "slot_area_v11_recent_area_config",
 
     e: "candidate",
 
@@ -13549,6 +13601,9 @@ function saveCandidateEvent(
           State.matchingRankedAll
         )
     },
+
+    recentAreaBoostConfig:
+      getRecentAreaBoostConfig(),
 
     yellowAdjust:
       Math.round(
@@ -13896,6 +13951,9 @@ function saveCandidateEvent(
   State.activeCandidateEventId =
     now;
 
+  State.latestCandidateEventIdForCopy =
+    now;
+
   logEvent(
     "candidate",
     record
@@ -14160,6 +14218,11 @@ function showMatchingCandidates(
     Number(
       normalizedOptions.offsetSec
     ) || 0;
+
+  if (mode === "preview") {
+    State.latestCandidateEventIdForCopy =
+      null;
+  }
 
   const clickedAtMs =
     Date.now();
