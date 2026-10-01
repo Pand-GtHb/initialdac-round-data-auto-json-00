@@ -1195,6 +1195,115 @@ function mapRankKeyToTierKey(rankKey) {
   return rankKey;
 }
 
+function buildRankPopulationSnapshot(players) {
+  const rankKeys = [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "P_A",
+    "P_B",
+    "P_C",
+    "P_D",
+    "P_E",
+    "P_F",
+    "P_G"
+  ];
+
+  const rankCounts =
+    Object.fromEntries(
+      rankKeys.map(key => [key, 0])
+    );
+
+  let sourceCount = 0;
+  let unclassifiedCount = 0;
+
+  for (const player of players ?? []) {
+    sourceCount++;
+
+    const rankKey =
+      player?.__rankKey ??
+      getPlayerRankKey(player);
+
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        rankCounts,
+        rankKey
+      )
+    ) {
+      unclassifiedCount++;
+      continue;
+    }
+
+    rankCounts[rankKey]++;
+  }
+
+  const classifiedCount =
+    sourceCount - unclassifiedCount;
+
+  const rankShares = {};
+
+  for (const rankKey of rankKeys) {
+    rankShares[rankKey] =
+      classifiedCount > 0
+        ? Number(
+            (
+              rankCounts[rankKey] /
+              classifiedCount
+            ).toFixed(6)
+          )
+        : 0;
+  }
+
+  const groupCounts = {
+    ruby1To6:
+      rankCounts.R1 +
+      rankCounts.R2 +
+      rankCounts.R3 +
+      rankCounts.R4 +
+      rankCounts.R5 +
+      rankCounts.R6,
+    ruby7:
+      rankCounts.R7,
+    ruby8:
+      rankCounts.R8,
+    pride:
+      rankCounts.P_A +
+      rankCounts.P_B +
+      rankCounts.P_C +
+      rankCounts.P_D +
+      rankCounts.P_E +
+      rankCounts.P_F +
+      rankCounts.P_G
+  };
+
+  const groupShares = {};
+
+  for (const [group, count] of Object.entries(groupCounts)) {
+    groupShares[group] =
+      classifiedCount > 0
+        ? Number(
+            (count / classifiedCount).toFixed(6)
+          )
+        : 0;
+  }
+
+  return {
+    sourceCount,
+    classifiedCount,
+    unclassifiedCount,
+    denominator: "classifiedCount",
+    rankCounts,
+    rankShares,
+    groupCounts,
+    groupShares
+  };
+}
+
 /* =========================================================
  [3050] Player Identity:buildPlayerIdentityKey（旧 [7070]）
 ========================================================= */
@@ -12315,7 +12424,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v7_prediction_time",
+        "slot_area_v8_rank_population",
 
       dk:
         buildDailyKey(),
@@ -12369,6 +12478,23 @@ function saveCopyEventUnified(
 
       unmatchedPlayer:
         true,
+
+      integratedDataGeneratedAtAtCopy:
+        State.generatedAt || null,
+
+      latestUpdateAtAtCopy:
+        State.latestUpdateAt || null,
+
+      populationAtCopy: {
+        integratedData:
+          buildRankPopulationSnapshot(
+            State.all
+          ),
+        filteredData:
+          buildRankPopulationSnapshot(
+            State.filtered
+          )
+      },
 
       candidateEventId:
         State.activeCandidateEventId ?? null
@@ -12539,7 +12665,7 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "slot_area_v7_prediction_time",
+      "slot_area_v8_rank_population",
 
     dk:
       buildDailyKey(),
@@ -12638,6 +12764,23 @@ function saveCopyEventUnified(
     pinkEntryAgeSec,
 
     cycleCountAtCopy,
+
+    integratedDataGeneratedAtAtCopy:
+      State.generatedAt || null,
+
+    latestUpdateAtAtCopy:
+      State.latestUpdateAt || null,
+
+    populationAtCopy: {
+      integratedData:
+        buildRankPopulationSnapshot(
+          State.all
+        ),
+      filteredData:
+        buildRankPopulationSnapshot(
+          State.filtered
+        )
+    },
 
     candidateEventId:
       State.activeCandidateEventId ?? null
@@ -13359,7 +13502,7 @@ function saveCandidateEvent(
     t: now,
 
     logSchemaVersion:
-      "slot_area_v7_prediction_time",
+      "slot_area_v8_rank_population",
 
     e: "candidate",
 
@@ -13376,6 +13519,36 @@ function saveCandidateEvent(
 
     dk:
       buildDailyKey(),
+
+    viewerTier:
+      mapRankKeyToTierKey(
+        State.myRankKey
+      ),
+
+    integratedDataGeneratedAt:
+      State.generatedAt || null,
+
+    latestUpdateAt:
+      State.latestUpdateAt || null,
+
+    populationAtPrediction: {
+      integratedData:
+        buildRankPopulationSnapshot(
+          State.all
+        ),
+      filteredData:
+        buildRankPopulationSnapshot(
+          State.filtered
+        ),
+      scoredCandidates:
+        buildRankPopulationSnapshot(
+          State.matchingScoredAll
+        ),
+      selectionEligibleCandidates:
+        buildRankPopulationSnapshot(
+          State.matchingRankedAll
+        )
+    },
 
     yellowAdjust:
       Math.round(
@@ -13582,11 +13755,6 @@ function saveCandidateEvent(
         State.matchingRankedAll[0]
           ?.__detail
           ?.minOwnSamplesForNoBackoff ?? 100
-      ),
-
-    viewerTier:
-      mapRankKeyToTierKey(
-        State.myRankKey
       ),
 
     yellowThreshold:
