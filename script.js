@@ -10260,13 +10260,8 @@ function bindSummaryModeButtons(root) {
 }
 
 function getAreaSummaryRows() {
-  const searchNorm = normalize(State.searchText || "");
   const nowMs = Date.now();
-
-  const basePlayers = (State.filtered || []).filter(p => {
-    if (!searchNorm) return true;
-    return (p.normalizedName || "").includes(searchNorm);
-  });
+  const filteredSummary = filterSummaryBySearch();
 
   const groupedByArea =
     new Map();
@@ -10288,35 +10283,34 @@ function getAreaSummaryRows() {
     );
   }
 
-  for (const player of basePlayers) {
-    const rankKey =
-      getPlayerRankKey(player);
+  for (const rank of filteredSummary) {
+    for (const player of rank.list) {
+      const group =
+        groupedByArea.get(
+          String(player.area ?? "")
+        );
 
-    const group =
-      groupedByArea.get(
-        String(player.area ?? "")
-      );
+      if (!group) {
+        continue;
+      }
 
-    if (!rankKey || !group) {
-      continue;
-    }
+      group.list.push(player);
+      group.counts[rank.key] += 1;
 
-    group.list.push(player);
-    group.counts[rankKey] += 1;
+      const phaseMatched =
+        isCopiedPlayer(player)
+          ? isMatchingCandidateByCopyPhase(
+              player,
+              nowMs
+            )
+          : isMatchingCandidateByPhase(
+              player,
+              nowMs
+            );
 
-    const phaseMatched =
-      isCopiedPlayer(player)
-        ? isMatchingCandidateByCopyPhase(
-            player,
-            nowMs
-          )
-        : isMatchingCandidateByPhase(
-            player,
-            nowMs
-          );
-
-    if (phaseMatched) {
-      group.phaseMatchedTotal += 1;
+      if (phaseMatched) {
+        group.phaseMatchedTotal += 1;
+      }
     }
   }
 
