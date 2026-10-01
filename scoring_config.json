@@ -1,9 +1,9 @@
 {
   "meta": {
-    "version": "scoring_config_v23_recent_area_boost_20260926",
+    "version": "scoring_config_v24_recent_area_window_20261002",
     "createdAt": "2026-09-26T09:15:11+09:00",
-    "modifiedAt": "2026-09-26T09:16:17+09:00",
-    "description": "ViewerのFilter既定値と自ランク既定値はviewerDefaultsで管理する。通常9枠は自ランク別の履歴マッチング比率でバケット配分し、残る1枠はバケット横断スコアで選出する。枠内順位にはRealtime・Phase・候補集合内のエリア密度を使用する。PRIDEは全体を1つのslotBucketとして扱い、PRIDE_A〜Gの履歴比率をsoft priorとして内部順位へ反映するが、rankActivitySignalはPink管理対象だけに適用する。areaBoost.recentMatchは直近5件のコピー実績に現れたエリアを対象とし、各エリアの出現回数を直近最多回数で割った値の平方根にweightを掛け、通常枠と横断1枠の選出スコアへ最大10%加点する。excludePinkManaged=trueによりPink管理対象にはこの直近エリア加点を適用しない。候補集合内の静的エリア密度加点とは独立して機能し、エリアPhase集中は診断ログ専用とする。Pink管理対象のPhase不一致時はphaseErrorに応じた連続減衰を適用し、最終表示10枠での占有数はmaxPinkManagedSlotsで制限する。experimental.softmaxBacktestは本番選出に影響しない。"
+    "modifiedAt": "2026-10-02T00:10:25+09:00",
+    "description": "ViewerのFilter既定値と自ランク既定値はviewerDefaultsで管理する。通常9枠は自ランク別の履歴マッチング比率でバケット配分し、残る1枠はバケット横断スコアで選出する。枠内順位にはRealtime・Phase・候補集合内のエリア密度を使用する。PRIDEは全体を1つのslotBucketとして扱い、PRIDE_A〜Gの履歴比率をsoft priorとして内部順位へ反映するが、rankActivitySignalはPink管理対象だけに適用する。areaBoost.recentMatch.windowSizeは直近のコピー実績から参照する件数（1～200の整数、既定10）であり、同エリアの出現回数をwindowSizeで割った値の平方根にweightを掛け、Pink管理対象も含めて通常枠と横断1枠の選出スコアへ最大10%加点する。候補集合内の静的エリア密度加点とは独立して機能し、エリアPhase集中は診断ログ専用とする。Pink管理対象のPhase不一致時はphaseErrorに応じた連続減衰を適用し、最終表示10枠での占有数はmaxPinkManagedSlotsで制限する。experimental.softmaxBacktestは本番選出に影響しない。"
   },
   "viewerDefaults": {
     "filterMinutes": 30,
@@ -22,7 +22,7 @@
       "recentMatch": {
         "enabled": true,
         "weight": 0.10,
-        "excludePinkManaged": true
+        "windowSize": 10
       },
       "diagnosticRecentWeight": 0.10,
       "diagnosticPhaseWeight": 0.05
