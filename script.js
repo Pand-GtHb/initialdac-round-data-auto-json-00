@@ -216,7 +216,6 @@ const DEFAULT_PINK_MISMATCH_DECAY_SEC = 60;
 const DEFAULT_PHASE_ERROR_SCALE_SEC = 90;
 const DEFAULT_AREA_BOOST_WEIGHT = 0.05;
 const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
-const DEFAULT_RECENT_AREA_DIAGNOSTIC_WEIGHT = 0.1;
 const DEFAULT_RECENT_AREA_BOOST_ENABLED = true;
 const DEFAULT_RECENT_AREA_BOOST_WEIGHT = 0.1;
 const MAX_RECENT_AREA_BOOST_WEIGHT = 0.1;
@@ -440,6 +439,9 @@ function syncMyRankSelection(
   rankValue
 ) {
 
+  const previousMyRank =
+    State.myRankKey;
+
   const selectedMyRank =
     rankValue ||
     State.scoringConfig
@@ -461,6 +463,25 @@ function syncMyRankSelection(
 
   } else {
     State.myRankKey = selectedMyRank;
+  }
+
+  if (State.myRankKey !== previousMyRank) {
+    State.activeCandidateEventId = null;
+    State.latestCandidateEventIdForCopy = null;
+    State.matchingList = [];
+    State.matchingScoredAll = [];
+    State.matchingRankedAll = [];
+    State.matchingTierCounts = {};
+    State.matchingSlotPlan = [];
+    State.matchingCrossBucketDiagnostics = null;
+    State.matchingPinkCapDiagnostics = null;
+    State.matchingSoftmaxBacktestPreview = null;
+    State.matchingContext = {
+      mode: "matching",
+      clickedAtMs: null,
+      evaluationTimeMs: null,
+      offsetSec: 0
+    };
   }
 
   return State.myRankKey;
@@ -11494,7 +11515,6 @@ function copyToClipboard(
 
     const copyRecord =
       saveCopyEventUnified(
-        text,
         playerName,
         shopName
       );
@@ -12433,7 +12453,6 @@ function shouldLogCandidateRow(
  [13000] Copy Use Case:saveCopyEventUnified【State】【永続化】（旧 [9200]）
 ========================================================= */
 function saveCopyEventUnified(
-  rawText,
   playerName = "",
   shopName = ""
 ) {
@@ -13577,6 +13596,17 @@ function saveCandidateEvent(
     latestUpdateAt:
       State.latestUpdateAt || null,
 
+    summaryFilterAtPrediction: {
+      rangeMinutes:
+        readRangeMinutes(),
+      selectedStars:
+        readSelectedStars(),
+      selectedPrides:
+        readSelectedPrides(),
+      searchText:
+        State.searchText
+    },
+
     populationAtPrediction: {
       integratedData:
         buildRankPopulationSnapshot(
@@ -13585,6 +13615,11 @@ function saveCandidateEvent(
       filteredData:
         buildRankPopulationSnapshot(
           State.filtered
+        ),
+      rankSummary:
+        buildRankPopulationSnapshot(
+          filterSummaryBySearch()
+            .flatMap(rank => rank.list)
         ),
       scoredCandidates:
         buildRankPopulationSnapshot(
