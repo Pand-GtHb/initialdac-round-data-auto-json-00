@@ -292,19 +292,10 @@ function recordUnmatchedSearchMemo() {
     return;
   }
   const id = State.latestCandidateEventIdForCopy ?? State.activeCandidateEventId;
-  let candidateEventId = null;
-  if (id && State.matchingContext?.mode !== "preview") {
-    const time = new Date(id).toLocaleTimeString();
-    if (confirm(
-      `「${searchMemo}」を候補外対戦の照合メモとして記録します。\n` +
-      `相手名は未確定です。CSVと前後の実績で照合してください。\n` +
-      `${time}の保存予測をこの試合で使用しましたか？\n` +
-      "OK：この予測に紐付ける／キャンセル：予測なしの記録へ進む"
-    )) candidateEventId = id;
-    else if (!confirm("予測IDなしで記録しますか？")) return;
-  } else if (!confirm(`「${searchMemo}」を予測IDなしの候補外対戦メモとして記録しますか？`)) {
-    return;
-  }
+  const candidateEventId =
+    id && State.matchingContext?.mode !== "preview"
+      ? id
+      : null;
   const t = Date.now();
   const record = {
     t, dk: buildDailyKey(), logSchemaVersion: ANALYSIS_SCRIPT_VERSION,
@@ -312,7 +303,7 @@ function recordUnmatchedSearchMemo() {
     matchEventId: `manual-${crypto.randomUUID()}`,
     searchMemo, n: null, shopname: null, opponentTier: null,
     identityStatus: "unresolved", linkSource: candidateEventId
-      ? "user-confirmed-prediction" : "no-prediction-confirmed",
+      ? "automatic-latest-prediction" : "no-prediction-available",
     candidateEventId, viewerTier: mapRankKeyToTierKey(State.myRankKey),
     matchStartedAt: null, wasInTop10: null,
     predictionSnapshotAvailable: false, unmatchedPlayer: true,
@@ -338,7 +329,24 @@ function recordUnmatchedSearchMemo() {
   }
   logEvent("copy", record);
   log(`候補外対戦メモを保存：${searchMemo}（相手名未確定）`);
+  let temporaryInput = null;
   try {
+    temporaryInput = document.createElement("textarea");
+    temporaryInput.value = searchMemo;
+    temporaryInput.setAttribute("readonly", "");
+    temporaryInput.style.position = "fixed";
+    temporaryInput.style.opacity = "0";
+    document.body.appendChild(temporaryInput);
+    temporaryInput.select();
+    temporaryInput.setSelectionRange(0, temporaryInput.value.length);
+    const copied = document.execCommand("copy");
+    temporaryInput.remove();
+
+    if (copied) {
+      log(`候補外メモをクリップボードにコピー：${searchMemo}`);
+      return;
+    }
+
     if (!navigator.clipboard?.writeText) {
       throw new Error("Clipboard APIを利用できません");
     }
@@ -348,6 +356,7 @@ function recordUnmatchedSearchMemo() {
         logError(`候補外メモのクリップボードコピー失敗：${error.message}`)
       );
   } catch (error) {
+    temporaryInput?.remove();
     logError(`候補外メモのクリップボードコピー失敗：${error.message}`);
   }
 }
