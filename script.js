@@ -3548,7 +3548,7 @@ function startUpdateWatch() {
         ).join("、");
 
   log(
-    `✓ 更新監視開始：${watchDescription}、` +
+    `✓ 更新監視を開始しました：${watchDescription}、` +
     `${config.intervalSeconds}秒間隔、` +
     `UTC${config.timezoneOffsetMinutes >= 0 ? "+" : ""}` +
     `${config.timezoneOffsetMinutes / 60}`
