@@ -1,0 +1,29 @@
+{
+  "meta": {
+    "version": "update_watch_config_v1",
+    "createdAt": "2026-10-03T23:47:05+09:00",
+    "modifiedAt": "2026-10-03T23:47:05+09:00",
+    "description": "Viewerの更新監視窓と確認間隔を設定する。時刻はtimezoneOffsetMinutesで指定する固定オフセットのローカル時刻。監視窓は各時のstartMinuteからdurationMinutesの間、終了時刻を含まず有効。"
+  },
+  "enabled": true,
+  "timezoneOffsetMinutes": 540,
+  "intervalSeconds": 30,
+  "windows": [
+    {
+      "startMinute": 5,
+      "durationMinutes": 3
+    },
+    {
+      "startMinute": 20,
+      "durationMinutes": 3
+    },
+    {
+      "startMinute": 35,
+      "durationMinutes": 3
+    },
+    {
+      "startMinute": 50,
+      "durationMinutes": 3
+    }
+  ]
+}
