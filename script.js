@@ -685,6 +685,7 @@ const State = {
   updateWatchTimer: null,
   updateCheckRunning: false,
   updateWatchVisibilityHandler: null,
+  updateWatchActiveWindowKey: "",
   pendingPrefetchForUpdateAt: "",
   prefetchedRoundData: null,
   prefetchedForUpdateAt: "",
@@ -3071,7 +3072,7 @@ function applyUpdateWatchConfigJson(json) {
   log(
     `update_watch_config.json 読み込み完了：` +
     `${timezoneLabel}、` +
-    `${json.unrestricted === true ? "終日監視" : windowLabels.join(" / ")}、` +
+    `${json.unrestricted === true ? "終日監視" : `毎時${windowLabels.join(" / ")}`}、` +
     `${json.intervalSeconds}秒間隔` +
     (json.enabled ? "" : "（監視無効）")
   );
@@ -3218,65 +3219,150 @@ async function reloadLatestDataPreferPrefetch() {
 
   try {
 
-    /* =====================================
-     * Prefetch利用
-     * ===================================== */
+    const maxAttempts = 3;
+    let latestObserved = "";
+    let verifiedRoundData = null;
+    let verifiedLatestAt = "";
+    let verifiedFromPrefetch = false;
 
-    const prefetchedAt =
-      parseDateJST(
-        State.prefetchedRoundData?.generatedAt
-      )?.getTime();
-    const expectedAt =
-      parseDateJST(
-        State.prefetchedForUpdateAt
-      )?.getTime();
-    const prefetchIsCurrent =
-      State.prefetchedRoundData &&
-      State.prefetchedForUpdateAt ===
-        State.latestUpdateAt &&
-      Number.isFinite(prefetchedAt) &&
-      Number.isFinite(expectedAt) &&
-      prefetchedAt === expectedAt;
-
-    if (prefetchIsCurrent) {
-
-      log(
-        "Reload 利用元:Prefetch"
-      );
-
-      applyRoundDataJson(
-        State.prefetchedRoundData,
-        {
-          resetReloadButton: true
-        }
-      );
-
-      State.prefetchedRoundData =
-        null;
-
-      State.prefetchedForUpdateAt =
+    for (
+      let attempt = 1;
+      attempt <= maxAttempts;
+      attempt++
+    ) {
+      const beforeJson =
+        await fetchLatestUpdateJson();
+      const beforeValue =
+        beforeJson?.lastUpdated ??
+        beforeJson?.latestUpdateAt ??
         "";
+      const beforeLatest =
+        String(beforeValue || "");
+      const beforeTime =
+        parseDateJST(beforeLatest)?.getTime();
 
-    } else {
+      if (!Number.isFinite(beforeTime)) {
+        throw new Error(
+          "最新更新時刻を取得または解析できません"
+        );
+      }
+      latestObserved = beforeLatest;
 
-      /* =====================================
-       * Fallback取得
-       * ===================================== */
+      const prefetchedData =
+        State.prefetchedRoundData;
+      const prefetchedTime =
+        parseDateJST(
+          prefetchedData?.generatedAt
+        )?.getTime();
+      const prefetchedVersionTime =
+        parseDateJST(
+          State.prefetchedForUpdateAt
+        )?.getTime();
+      const usePrefetch =
+        prefetchedData &&
+        Number.isFinite(prefetchedTime) &&
+        prefetchedTime === beforeTime &&
+        Number.isFinite(prefetchedVersionTime) &&
+        prefetchedVersionTime === beforeTime;
 
       log(
-        "Reload 利用元:Fallback"
+        `Reload 世代確認 ${attempt}/${maxAttempts}：` +
+        `最新=${beforeLatest}、取得元=${usePrefetch ? "Prefetch" : "Network"}`
       );
 
       const roundDataJson =
-        await fetchRoundDataJson();
+        usePrefetch
+          ? prefetchedData
+          : await fetchRoundDataJson();
+      const roundDataTime =
+        parseDateJST(
+          roundDataJson?.generatedAt
+        )?.getTime();
 
-      applyRoundDataJson(
-        roundDataJson,
-        {
-          resetReloadButton: true
-        }
+      const afterJson =
+        await fetchLatestUpdateJson();
+      const afterValue =
+        afterJson?.lastUpdated ??
+        afterJson?.latestUpdateAt ??
+        "";
+      const afterLatest =
+        String(afterValue || "");
+      const afterTime =
+        parseDateJST(afterLatest)?.getTime();
+
+      if (!Number.isFinite(afterTime)) {
+        throw new Error(
+          "Reload後の最新更新時刻を取得または解析できません"
+        );
+      }
+      latestObserved = afterLatest;
+
+      const stateLatestTime =
+        parseDateJST(State.latestUpdateAt)?.getTime();
+      const generationMatches =
+        Number.isFinite(roundDataTime) &&
+        roundDataTime === beforeTime &&
+        beforeTime === afterTime &&
+        (
+          !Number.isFinite(stateLatestTime) ||
+          stateLatestTime <= afterTime
+        );
+
+      if (generationMatches) {
+        verifiedRoundData = roundDataJson;
+        verifiedLatestAt = afterLatest;
+        verifiedFromPrefetch = Boolean(usePrefetch);
+        log(
+          `Reload 世代確認成功：generatedAt=${roundDataJson.generatedAt}`
+        );
+        break;
+      }
+
+      if (
+        State.prefetchedRoundData &&
+        (
+          State.prefetchedRoundData === roundDataJson ||
+          prefetchedTime !== afterTime
+        )
+      ) {
+        State.prefetchedRoundData = null;
+        State.prefetchedForUpdateAt = "";
+      }
+
+      State.pendingPrefetchForUpdateAt =
+        afterLatest;
+      logWarn(
+        `Reload 世代不一致：公開=${beforeLatest}→${afterLatest} / ` +
+        `取得=${roundDataJson?.generatedAt ?? "none"}。再試行します`
+      );
+
+      if (attempt < maxAttempts) {
+        await new Promise(
+          resolve => setTimeout(resolve, 1000)
+        );
+      }
+    }
+
+    if (!verifiedRoundData) {
+      throw new Error(
+        `最新世代を確認できませんでした（最新=${latestObserved || "不明"}）。` +
+        "表示中のデータを維持します"
       );
     }
+
+    log(
+      `Reload 利用元：${verifiedFromPrefetch ? "Prefetch" : "Network"}`
+    );
+    applyRoundDataJson(
+      verifiedRoundData,
+      {
+        resetReloadButton: true
+      }
+    );
+    State.latestUpdateAt = verifiedLatestAt;
+    State.pendingPrefetchForUpdateAt = "";
+    State.prefetchedRoundData = null;
+    State.prefetchedForUpdateAt = "";
 
     /* =====================================
      * 再集計
@@ -3333,10 +3419,57 @@ async function reloadLatestDataPreferPrefetch() {
 ========================================================= */
 async function checkUpdate() {
 
+  const windowKey =
+    getJstUpdateWatchWindow();
+
+  if (!windowKey) {
+    State.updateWatchActiveWindowKey = "";
+    return;
+  }
+
   if (
-    !isWithinUpdateWatchWindow() ||
-    State.updateCheckRunning
+    windowKey !==
+    State.updateWatchActiveWindowKey
   ) {
+    State.updateWatchActiveWindowKey =
+      windowKey;
+
+    const config =
+      State.updateWatchConfig ??
+      DEFAULT_UPDATE_WATCH_CONFIG;
+    const localDate = new Date(
+      Date.now() +
+      config.timezoneOffsetMinutes * 60 * 1000
+    );
+    const minute = localDate.getUTCMinutes();
+    const activeWindow =
+      config.unrestricted
+        ? null
+        : config.windows.find(
+            window => {
+              const secondOfHour =
+                minute * 60 + localDate.getUTCSeconds();
+              return (
+                secondOfHour >= window.startMinute * 60 &&
+                secondOfHour <
+                  (window.startMinute + window.durationMinutes) * 60
+              );
+            }
+          );
+    const windowLabel =
+      config.unrestricted
+        ? "終日"
+        : activeWindow
+          ? `毎時${activeWindow.startMinute}～` +
+            `${activeWindow.startMinute + activeWindow.durationMinutes}分`
+          : "設定窓";
+
+    log(
+      `更新監視中：${windowLabel}（${config.intervalSeconds}秒間隔）`
+    );
+  }
+
+  if (State.updateCheckRunning) {
     return;
   }
 
