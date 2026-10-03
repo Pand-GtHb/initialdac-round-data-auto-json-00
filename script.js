@@ -9,6 +9,14 @@
 const BASE_URL =
   "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
 
+const DEFAULT_UPDATE_WATCH_CONFIG = Object.freeze({
+  enabled: true,
+  unrestricted: true,
+  timezoneOffsetMinutes: 540,
+  intervalSeconds: 30,
+  windows: Object.freeze([])
+});
+
 /* =========================================================
  [0010] View State Enum（旧 [0010]）
 ========================================================= */
@@ -673,8 +681,11 @@ const State = {
   playerActivity: {},
   rankActivity: {},
   scoringConfig: null,
+  updateWatchConfig: null,
   updateWatchTimer: null,
-  // updateCheckRunning は削除 (常に checkUpdate を実行)
+  updateCheckRunning: false,
+  updateWatchVisibilityHandler: null,
+  pendingPrefetchForUpdateAt: "",
   prefetchedRoundData: null,
   prefetchedForUpdateAt: "",
   prefetchInFlight: null,
@@ -2824,6 +2835,13 @@ async function fetchScoringConfigJson() {
   );
 }
 
+async function fetchUpdateWatchConfigJson() {
+
+  return fetchJSON(
+    "update_watch_config.json"
+  );
+}
+
 /* =========================================================
  [5150] Endpoint Fetcher:fetchRoundDataJson（旧 [3600]）
 ========================================================= */
@@ -2973,6 +2991,120 @@ async function loadScoringConfig() {
   }
 }
 
+function applyUpdateWatchConfigJson(json) {
+  if (
+    typeof json?.enabled !== "boolean" ||
+    (
+      json?.unrestricted !== undefined &&
+      typeof json.unrestricted !== "boolean"
+    ) ||
+    !Number.isInteger(json?.timezoneOffsetMinutes) ||
+    json.timezoneOffsetMinutes < -720 ||
+    json.timezoneOffsetMinutes > 840 ||
+    !Number.isInteger(json?.intervalSeconds) ||
+    json.intervalSeconds < 5 ||
+    json.intervalSeconds > 3600 ||
+    !Array.isArray(json?.windows) ||
+    (
+      json.unrestricted !== true &&
+      json.windows.length === 0
+    ) ||
+    (
+      json.unrestricted === true &&
+      json.windows.length > 0
+    )
+  ) {
+    throw new Error("設定の必須項目または値が不正です");
+  }
+
+  const windows = json.windows.map(window => {
+    if (
+      !Number.isInteger(window?.startMinute) ||
+      window.startMinute < 0 ||
+      window.startMinute > 59 ||
+      !Number.isInteger(window?.durationMinutes) ||
+      window.durationMinutes < 1 ||
+      window.durationMinutes > 15 ||
+      window.startMinute + window.durationMinutes > 60
+    ) {
+      throw new Error("監視窓の開始分または長さが不正です");
+    }
+
+    return {
+      startMinute: window.startMinute,
+      durationMinutes: window.durationMinutes
+    };
+  });
+
+  windows.sort(
+    (a, b) => a.startMinute - b.startMinute
+  );
+
+  for (let i = 1; i < windows.length; i++) {
+    if (
+      windows[i].startMinute <
+      windows[i - 1].startMinute +
+        windows[i - 1].durationMinutes
+    ) {
+      throw new Error("監視窓同士が重複しています");
+    }
+  }
+
+  State.updateWatchConfig = {
+    enabled: json.enabled,
+    unrestricted: json.unrestricted === true,
+    timezoneOffsetMinutes: json.timezoneOffsetMinutes,
+    intervalSeconds: json.intervalSeconds,
+    windows
+  };
+
+  const windowLabels = windows.map(
+    window =>
+      `${window.startMinute}～` +
+      `${window.startMinute + window.durationMinutes}分`
+  );
+  const offsetHours =
+    json.timezoneOffsetMinutes / 60;
+  const timezoneLabel =
+    `UTC${offsetHours >= 0 ? "+" : ""}${offsetHours}`;
+
+  log(
+    `update_watch_config.json 読み込み完了：` +
+    `${timezoneLabel}、` +
+    `${json.unrestricted === true ? "終日監視" : windowLabels.join(" / ")}、` +
+    `${json.intervalSeconds}秒間隔` +
+    (json.enabled ? "" : "（監視無効）")
+  );
+}
+
+async function loadUpdateWatchConfig() {
+  try {
+    const json =
+      await fetchUpdateWatchConfigJson();
+
+    applyUpdateWatchConfigJson(json);
+  } catch (e) {
+    State.updateWatchConfig = {
+      enabled: DEFAULT_UPDATE_WATCH_CONFIG.enabled,
+      unrestricted: DEFAULT_UPDATE_WATCH_CONFIG.unrestricted,
+      timezoneOffsetMinutes:
+        DEFAULT_UPDATE_WATCH_CONFIG.timezoneOffsetMinutes,
+      intervalSeconds:
+        DEFAULT_UPDATE_WATCH_CONFIG.intervalSeconds,
+      windows:
+        DEFAULT_UPDATE_WATCH_CONFIG.windows.map(
+          window => ({ ...window })
+        )
+    };
+
+    logWarn(
+      "update_watch_config.json を適用できません。" +
+      "既定の監視条件（時間帯制限なし）を使用します：" +
+      e.message
+    );
+  }
+}
+
 /* =========================================================
  [5300] Prefetch:prefetchLatestRoundData【State】（旧 [3710]）
 ========================================================= */
@@ -3015,11 +3147,30 @@ async function prefetchLatestRoundData(
         const json =
           await fetchRoundDataJson();
 
+        const expectedTime =
+          parseDateJST(lastUpdatedValue)?.getTime();
+        const generatedTime =
+          parseDateJST(json?.generatedAt)?.getTime();
+
+        if (
+          !Number.isFinite(expectedTime) ||
+          !Number.isFinite(generatedTime) ||
+          generatedTime !== expectedTime
+        ) {
+          logWarn(
+            `先読み世代不一致：期待=${lastUpdatedValue} / ` +
+            `取得=${json?.generatedAt ?? "none"}。監視窓内で再試行します`
+          );
+          return;
+        }
+
         State.prefetchedRoundData =
           json;
 
         State.prefetchedForUpdateAt =
           lastUpdatedValue;
+        State.pendingPrefetchForUpdateAt =
+          "";
 
         const elapsed =
           Math.round(
@@ -3071,9 +3222,23 @@ async function reloadLatestDataPreferPrefetch() {
      * Prefetch利用
      * ===================================== */
 
-    if (
-      State.prefetchedRoundData
-    ) {
+    const prefetchedAt =
+      parseDateJST(
+        State.prefetchedRoundData?.generatedAt
+      )?.getTime();
+    const expectedAt =
+      parseDateJST(
+        State.prefetchedForUpdateAt
+      )?.getTime();
+    const prefetchIsCurrent =
+      State.prefetchedRoundData &&
+      State.prefetchedForUpdateAt ===
+        State.latestUpdateAt &&
+      Number.isFinite(prefetchedAt) &&
+      Number.isFinite(expectedAt) &&
+      prefetchedAt === expectedAt;
+
+    if (prefetchIsCurrent) {
 
       log(
         "Reload 利用元:Prefetch"
@@ -3168,6 +3333,15 @@ async function reloadLatestDataPreferPrefetch() {
 ========================================================= */
 async function checkUpdate() {
 
+  if (
+    !isWithinUpdateWatchWindow() ||
+    State.updateCheckRunning
+  ) {
+    return;
+  }
+
+  State.updateCheckRunning = true;
+
   try {
 
     const prev =
@@ -3197,8 +3371,35 @@ async function checkUpdate() {
       prev &&
       prev !== latest;
 
-    State.latestUpdateAt =
-      latest;
+    const latestTime =
+      parseDateJST(latest)?.getTime();
+    const generatedTime =
+      parseDateJST(State.generatedAt)?.getTime();
+    const integratedDataBehind =
+      Number.isFinite(latestTime) &&
+      (
+        !Number.isFinite(generatedTime) ||
+        generatedTime < latestTime
+      );
+
+    if (integratedDataBehind) {
+      State.pendingPrefetchForUpdateAt = latest;
+    } else if (
+      State.pendingPrefetchForUpdateAt &&
+      !State.prefetchedRoundData
+    ) {
+      State.pendingPrefetchForUpdateAt = "";
+    }
+
+    if (changed) {
+      if (
+        State.prefetchedForUpdateAt !== latest
+      ) {
+        State.prefetchedRoundData = null;
+        State.prefetchedForUpdateAt = "";
+      }
+    }
+    State.latestUpdateAt = latest;
 
     /* =====================================
      * 更新検知
@@ -3225,23 +3426,17 @@ async function checkUpdate() {
         "新しいデータが公開されています。更新時刻: " + latest
       );
 
-      /* =====================================
-       * 先読み開始
-       * ===================================== */
+    }
 
-      // prefetch が実行中でなければ開始
-      if (
-        !State.prefetchInFlight ||
-        State.prefetchInFlight.status === "fulfilled"
-      ) {
-        prefetchLatestRoundData(
-          latest
-        );
-      } else {
-        logWarn(
-          "Prefetch already in flight, skipping duplicate"
-        );
-      }
+    if (
+      State.pendingPrefetchForUpdateAt &&
+      !State.prefetchedRoundData &&
+      !State.prefetchInFlight &&
+      isWithinUpdateWatchWindow()
+    ) {
+      prefetchLatestRoundData(
+        State.pendingPrefetchForUpdateAt
+      );
     }
 
   } catch (e) {
@@ -3251,7 +3446,63 @@ async function checkUpdate() {
       e.message
     );
 
+  } finally {
+    State.updateCheckRunning = false;
   }
+}
+
+function getJstUpdateWatchWindow(nowMs = Date.now()) {
+  const config =
+    State.updateWatchConfig ??
+    DEFAULT_UPDATE_WATCH_CONFIG;
+  if (!config.enabled) {
+    return null;
+  }
+
+  const localDate = new Date(
+    nowMs +
+    config.timezoneOffsetMinutes * 60 * 1000
+  );
+  const dateKey = [
+    localDate.getUTCFullYear(),
+    String(localDate.getUTCMonth() + 1).padStart(2, "0"),
+    String(localDate.getUTCDate()).padStart(2, "0")
+  ].join("");
+  const hourKey =
+    String(localDate.getUTCHours()).padStart(2, "0");
+
+  if (config.unrestricted) {
+    return `${dateKey}-${hourKey}:all`;
+  }
+
+  const minute = localDate.getUTCMinutes();
+  const secondOfHour =
+    minute * 60 + localDate.getUTCSeconds();
+  const matchingWindow = config.windows.find(
+    window => {
+      const startSecond =
+        window.startMinute * 60;
+      const endSecond =
+        startSecond + window.durationMinutes * 60;
+      return (
+        secondOfHour >= startSecond &&
+        secondOfHour < endSecond
+      );
+    }
+  );
+
+  if (!matchingWindow) {
+    return null;
+  }
+
+  return (
+    `${dateKey}-${hourKey}:` +
+    String(matchingWindow.startMinute).padStart(2, "0")
+  );
+}
+
+function isWithinUpdateWatchWindow(nowMs = Date.now()) {
+  return getJstUpdateWatchWindow(nowMs) !== null;
 }
 
 /* =========================================================
@@ -3268,21 +3519,65 @@ function startUpdateWatch() {
     );
   }
 
-  log(
-    "✓ 更新監視開始(30秒間隔) - latest_update.json は常にチェック"
-  );
+  if (
+    State.updateWatchVisibilityHandler
+  ) {
+    document.removeEventListener(
+      "visibilitychange",
+      State.updateWatchVisibilityHandler
+    );
+    State.updateWatchVisibilityHandler = null;
+  }
 
-  checkUpdate();
+  const config =
+    State.updateWatchConfig ??
+    DEFAULT_UPDATE_WATCH_CONFIG;
+
+  if (!config.enabled) {
+    log("更新監視はConfigで無効化されています");
+    return;
+  }
+
+  const watchDescription =
+    config.unrestricted
+      ? "終日"
+      : config.windows.map(
+          window =>
+            `${window.startMinute}～` +
+            `${window.startMinute + window.durationMinutes}分`
+        ).join("、");
+
+  log(
+    `✓ 更新監視開始：${watchDescription}、` +
+    `${config.intervalSeconds}秒間隔、` +
+    `UTC${config.timezoneOffsetMinutes >= 0 ? "+" : ""}` +
+    `${config.timezoneOffsetMinutes / 60}`
+  );
 
   State.updateWatchTimer =
     setInterval(
       () => {
-
         checkUpdate();
-
       },
-      30000
+      config.intervalSeconds * 1000
     );
+
+  State.updateWatchVisibilityHandler = () => {
+    if (
+      document.visibilityState === "visible" &&
+      isWithinUpdateWatchWindow()
+    ) {
+      checkUpdate();
+    }
+  };
+  document.addEventListener(
+    "visibilitychange",
+    State.updateWatchVisibilityHandler
+  );
+
+  if (isWithinUpdateWatchWindow()) {
+    checkUpdate();
+  }
 }
 
 
@@ -15122,6 +15417,8 @@ async function init() {
   );
 
   stopProgress();
+
+  await loadUpdateWatchConfig();
 
   startUpdateWatch();
 }
