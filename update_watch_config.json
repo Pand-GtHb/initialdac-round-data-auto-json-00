@@ -10,19 +10,19 @@
   "intervalSeconds": 30,
   "windows": [
     {
-      "startMinute": 5,
+      "startMinute": 4,
       "durationMinutes": 3
     },
     {
-      "startMinute": 20,
+      "startMinute": 19,
       "durationMinutes": 3
     },
     {
-      "startMinute": 35,
+      "startMinute": 34,
       "durationMinutes": 3
     },
     {
-      "startMinute": 50,
+      "startMinute": 49,
       "durationMinutes": 3
     }
   ]
