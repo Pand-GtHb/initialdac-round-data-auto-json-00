@@ -12238,6 +12238,22 @@ function allowLog(
   }
 
   if (
+    message.includes("更新監視を開始しました") ||
+    message.includes("更新監視中：") ||
+    message.includes("update_watch_config.json 読み込み完了")
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes("Reload 世代確認") ||
+    message.includes("Reload 世代不一致") ||
+    message.includes("Reload 利用元")
+  ) {
+    return true;
+  }
+
+  if (
     message.includes(
       "先読み開始"
     )
