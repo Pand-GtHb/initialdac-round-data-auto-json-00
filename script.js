@@ -63,6 +63,224 @@ const LOG_DETAIL_CONFIG = {
   includeAllCandidates: true
 };
 
+const ANALYSIS_SCRIPT_VERSION = "softmax-10-analysis-v1";
+
+/*
+ * -10: 本番選出・学習・保存上限は維持する。
+ * 候補外記録のsearchMemoは部分文字列でもよく、相手名ではない。
+ * CSVの自ランク・店舗・前後の実績と照合し、曖昧なら未確定を維持する。
+ * 比較案は完全な選出可能候補で計算し、結果だけ保存する。
+ * phase-tiebreakは通常Ruby枠のみ、PRIDE救済は既存横断枠を置換する仮説。
+ */
+function analysisChecksum(value) {
+  const text = JSON.stringify(value);
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function buildAnalysisDiagnostics() {
+  const startedAt = performance.now();
+  const pool = State.matchingRankedAll;
+  const current = State.matchingList;
+  const identify = p => ({
+    name: p.name,
+    shopname: p.shopname ?? "",
+    rankKey: p.__rankKey,
+    slotScore: getCandidateSlotScore(p)
+  });
+  const phasePopulation = {};
+  for (const p of State.matchingScoredAll) {
+    const key = p.__rankKey;
+    const group = phasePopulation[key] ??= {
+      count: 0, phaseUnknown: 0, phaseUnder30: 0,
+      phase30To60: 0, phase60OrMore: 0, pinkManaged: 0
+    };
+    group.count++;
+    if (p.__detail?.isPinkManaged) group.pinkManaged++;
+    const error = p.__detail?.phaseError;
+    if (typeof error !== "number" || !Number.isFinite(error)) {
+      group.phaseUnknown++;
+    } else if (Math.abs(error) < 30) {
+      group.phaseUnder30++;
+    } else if (Math.abs(error) < 60) {
+      group.phase30To60++;
+    } else {
+      group.phase60OrMore++;
+    }
+  }
+
+  const finish = (id, parameters, selected, extra = {}) => {
+    const clones = new Map(pool.map(p => [
+      p, { ...p, __detail: { ...p.__detail } }
+    ]));
+    const originals = new Map([...clones].map(([p, clone]) => [clone, p]));
+    const capped = applyPinkManagedSlotCap(
+      selected.map(p => clones.get(p)), pool.map(p => clones.get(p)),
+      State.matchingPinkCapDiagnostics?.maxPinkManagedSlots ??
+        DEFAULT_MAX_PINK_MANAGED_SLOTS
+    ).finalSelected.map(p => originals.get(p));
+    return {
+      id, parameters, status: "computed",
+      evaluatedCandidateCount: pool.length,
+      candidates: capped.map(identify),
+      added: capped.filter(p => !current.includes(p)).map(identify),
+      removed: current.filter(p => !capped.includes(p)).map(identify),
+      ...extra
+    };
+  };
+  const comparisons = [];
+  for (const relativeGap of [0.01, 0.03, 0.05]) {
+    const selected = current.slice();
+    const phaseSwaps = [];
+    for (const entry of State.matchingSlotPlan) {
+      if (entry.bucket === "PRIDE" || entry.slots <= 0) continue;
+      const bucket = pool.filter(p =>
+        p.__detail?.slotBucket === entry.bucket &&
+        !p.__detail?.isPinkManaged
+      );
+      const anchors = current.filter(p =>
+        p.__detail?.slotBucket === entry.bucket &&
+        !p.__crossBucket && !p.__detail?.isPinkManaged
+      ).sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a));
+      for (const anchor of anchors) {
+        const boundary = getCandidateSlotScore(anchor) * (1 - relativeGap);
+        const error = p => {
+          const value = p.__detail?.phaseError;
+          return typeof value === "number" && Number.isFinite(value)
+            ? Math.abs(value) : Infinity;
+        };
+        const alternatives = bucket.filter(p =>
+          !selected.includes(p) &&
+          getCandidateSlotScore(p) >= boundary && error(p) < 60 &&
+          error(p) < error(anchor)
+        ).sort((a, b) =>
+          error(a) - error(b) ||
+          getCandidateSlotScore(b) - getCandidateSlotScore(a)
+        );
+        if (alternatives.length) {
+          const replacement = alternatives[0];
+          selected[selected.indexOf(anchor)] = replacement;
+          phaseSwaps.push({
+            removed: identify(anchor), added: identify(replacement)
+          });
+        }
+      }
+    }
+    comparisons.push(finish(
+      `phase-tiebreak-${relativeGap}`, {
+        relativeGap, phaseLimitSec: 60, sameBucketOnly: true,
+        excludePride: true, excludePinkManaged: true
+      }, selected, { phaseSwaps }
+    ));
+  }
+
+  const rescuePool = pool.filter(p =>
+    p.__detail?.slotBucket === "PRIDE" &&
+    !current.includes(p) && !p.__detail?.isPinkManaged &&
+    typeof p.__detail?.phaseError === "number" &&
+    Number.isFinite(p.__detail.phaseError) &&
+    Math.abs(p.__detail.phaseError) < 60 &&
+    Number(p.__detail?.prideBandPriorWeight) > 0
+  );
+  const rescueScore = p =>
+    getCandidateSlotScore(p) / p.__detail.prideBandPriorWeight;
+  rescuePool.sort((a, b) => rescueScore(b) - rescueScore(a));
+  const rescue = rescuePool[0];
+  const cross = current.find(p => p.__crossBucket);
+  const selected = current.slice();
+  const eligibleViewer = /^R[78]$/.test(mapRankKeyToTierKey(State.myRankKey));
+  if (eligibleViewer && rescue && cross) {
+    selected[selected.indexOf(cross)] = rescue;
+  }
+  comparisons.push(finish("pride-rescue-cross-slot", {
+    phaseLimitSec: 60, excludePinkManaged: true,
+    eligibleViewerTiers: ["R7", "R8"],
+    replacementRule: "replace-existing-cross-slot",
+    removeBandPriorForRescueOnly: true
+  }, selected, {
+    applied: Boolean(eligibleViewer && rescue && cross),
+    rescue: rescue ? { ...identify(rescue), rescueScore: rescueScore(rescue) } : null,
+    replacement: eligibleViewer && rescue && cross ? identify(cross) : null
+  }));
+  return {
+    version: ANALYSIS_SCRIPT_VERSION,
+    evaluatedAt: State.matchingContext.evaluationTimeMs,
+    phasePopulationSource: "scoredCandidates",
+    phasePopulation,
+    comparisons,
+    computationMs: performance.now() - startedAt,
+    provenance: {
+      historicalMeta: State.historicalMatchupDistribution?.meta ?? null,
+      historicalChecksum: analysisChecksum(State.historicalMatchupDistribution),
+      scoringConfigChecksum: analysisChecksum(State.scoringConfig),
+      historicalSampleCount: pool[0]?.__detail?.ownSampleCount ?? null,
+      scoringConfig: State.scoringConfig
+    }
+  };
+}
+
+function recordUnmatchedSearchMemo() {
+  const input = document.getElementById("searchInput");
+  const searchMemo = String(input?.value ?? "").trim();
+  if (!searchMemo) {
+    logWarn("候補外記録：検索欄に照合用メモを入力してください");
+    alert("検索欄に相手を照合するための文字を入力してください。");
+    return;
+  }
+  const id = State.latestCandidateEventIdForCopy ?? State.activeCandidateEventId;
+  let candidateEventId = null;
+  if (id && State.matchingContext?.mode !== "preview") {
+    const time = new Date(id).toLocaleTimeString();
+    if (confirm(
+      `「${searchMemo}」を候補外対戦の照合メモとして記録します。\n` +
+      `相手名は未確定です。CSVと前後の実績で照合してください。\n` +
+      `${time}の保存予測をこの試合で使用しましたか？\n` +
+      "OK：この予測に紐付ける／キャンセル：予測なしの記録へ進む"
+    )) candidateEventId = id;
+    else if (!confirm("予測IDなしで記録しますか？")) return;
+  } else if (!confirm(`「${searchMemo}」を予測IDなしの候補外対戦メモとして記録しますか？`)) {
+    return;
+  }
+  const t = Date.now();
+  const record = {
+    t, dk: buildDailyKey(), logSchemaVersion: ANALYSIS_SCRIPT_VERSION,
+    recordKind: "unmatched-search-memo",
+    matchEventId: `manual-${crypto.randomUUID()}`,
+    searchMemo, n: null, shopname: null, opponentTier: null,
+    identityStatus: "unresolved", linkSource: candidateEventId
+      ? "user-confirmed-prediction" : "no-prediction-confirmed",
+    candidateEventId, viewerTier: mapRankKeyToTierKey(State.myRankKey),
+    matchStartedAt: null, wasInTop10: null,
+    predictionSnapshotAvailable: false, unmatchedPlayer: true,
+    scoreSource: "unavailable",
+    populationAtCopy: {
+      integratedData: buildRankPopulationSnapshot(State.all),
+      filteredData: buildRankPopulationSnapshot(State.filtered)
+    },
+    integratedDataGeneratedAtAtCopy: State.generatedAt || null,
+    dataPresenceStatus: "user-reported-absent-not-verified",
+    dataPresenceObservedAt: t
+  };
+  const key = LOG_STORAGE_KEYS.copyEvents + record.dk;
+  const records = readStoredArraySafe(key);
+  try {
+    localStorage.setItem(
+      key, JSON.stringify([record, ...records].slice(0, LOG_STORAGE_LIMITS.copyEvents))
+    );
+  } catch (error) {
+    console.error("候補外記録の保存失敗", error);
+    logError(`候補外記録の保存失敗：${error.message}`);
+    alert("候補外記録の保存に失敗しました。");
+    return;
+  }
+  logEvent("copy", record);
+  log(`候補外対戦メモを保存：${searchMemo}（相手名未確定）`);
+  alert("候補外対戦メモを保存しました。相手名・店舗はCSVで確定します。");
+}
+
 
 /*
  * 【2026-09 ログ量対策②】allCandidates 配列化フォーマット
@@ -2252,6 +2470,10 @@ function logEvent(
 ) {
 
   if (!logDB) {
+    if (type === "candidate" && payload.analysisDiagnostics) {
+      logError("IndexedDB未初期化：候補分析ログを保存できません");
+      alert("候補分析ログを保存できません。IndexedDBの初期化状態を確認してください。");
+    }
     return;
   }
 
@@ -2308,10 +2530,29 @@ function logEvent(
     type === "candidate"
   ) {
 
-    putLog(
-      LOG_STORE.candidateEvents,
-      record
-    );
+    const startedAt = performance.now();
+    let tx;
+    try {
+      tx = putLog(LOG_STORE.candidateEvents, record);
+    } catch (error) {
+      logError(`候補ログの保存開始失敗：${error.message}`);
+      alert("候補ログの保存に失敗しました。分析ログを確認してください。");
+      return;
+    }
+    if (tx && record.analysisDiagnostics) {
+      tx.oncomplete = () => logEvent("runtime", {
+        severity: "info",
+        message: "analysis-candidate-save",
+        candidateEventId: record.id,
+        storageTransactionMs: performance.now() - startedAt,
+        jsonUtf8BytesBeforeMetrics:
+          record.analysisDiagnostics.storageMetrics?.jsonUtf8BytesBeforeMetrics
+      });
+      tx.onabort = () => {
+        logError(`候補ログの保存失敗：${tx.error?.message ?? "transaction aborted"}`);
+        alert("候補ログの保存に失敗しました。分析ログを確認してください。");
+      };
+    }
 
     return;
 
@@ -9904,6 +10145,27 @@ function ensureAreaSummaryStyles() {
 
     #searchRow {
       align-items: stretch;
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 4px;
+      min-width: 0;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    #searchInput {
+      flex: 1 1 0;
+      min-width: 0;
+      width: 0 !important;
+    }
+
+    #unmatchedMemoBtn {
+      flex: 0 0 auto;
+      height: 36px;
+      padding: 0 6px;
+      margin: 0;
+      white-space: nowrap;
+      font-size: 12px;
     }
 
     #myRankSelect,
@@ -13362,6 +13624,8 @@ function saveCandidateEvent(
   const now =
     clickedAtMs;
 
+  const analysisDiagnostics = buildAnalysisDiagnostics();
+
   /*
    * ログ整合性修正
    *
@@ -13578,6 +13842,8 @@ function saveCandidateEvent(
 
     trigger:
       "matching-button",
+
+    analysisDiagnostics,
 
     evaluationTimeMs:
       Number(evaluationTimeMs) || now,
@@ -13982,6 +14248,18 @@ function saveCandidateEvent(
 
   State.latestCandidateEventIdForCopy =
     now;
+
+  record.analysisDiagnostics.storageCoverage = {
+    scoredCandidateCount: State.matchingScoredAll.length,
+    savedCandidateCount: record.allCandidates.length,
+    complete: record.allCandidates.length === State.matchingScoredAll.length
+  };
+  const serializationStartedAt = performance.now();
+  const serialized = JSON.stringify(record);
+  record.analysisDiagnostics.storageMetrics = {
+    jsonUtf8BytesBeforeMetrics: new TextEncoder().encode(serialized).length,
+    serializationMs: performance.now() - serializationStartedAt
+  };
 
   logEvent(
     "candidate",
@@ -14790,6 +15068,16 @@ document.addEventListener(
       document.getElementById(
         "searchInput"
       );
+
+    if (searchInput && !document.getElementById("unmatchedMemoBtn")) {
+      const button = document.createElement("button");
+      button.id = "unmatchedMemoBtn";
+      button.type = "button";
+      button.textContent = "候補外記録";
+      button.title = "検索文字を未確定の対戦相手メモとして保存";
+      button.onclick = recordUnmatchedSearchMemo;
+      searchInput.insertAdjacentElement("afterend", button);
+    }
 
     const analysisLogBtn =
       document.getElementById(
