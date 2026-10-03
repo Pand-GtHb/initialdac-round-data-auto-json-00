@@ -40,30 +40,11 @@ const LOG_STORAGE_LIMITS = {
 };
 
 /*
- * ログ量削減設定【2026-09 改善：ログ軽量化】
- *
- * candidateEvents.allCandidates は、実績相手が表示Top10圏外
- * だった場合でも後から global score rank を特定できるよう
- * スコア対象の全候補を保存する目的で追加されたが、
- * 1候補あたりの scoreBreakdown 情報量が大きく、
- * 1日の分析JSON（viewer_analysis_*.json）が数MB～十数MBに
- * 肥大化する主因になっていた。
- *
- * includeAllCandidates:
- *   false にすると allCandidates 自体を記録しない
- *   （最も軽量。ただしTop10圏外だった実績相手の
- *   global rank 検証はできなくなる）
- *
- * ※ allCandidates の軽量化自体は、【2026-09 ログ量対策②】として
- *   下記 ALL_CANDIDATES_COLUMNS ＋ buildAllCandidateRow による
- *   配列化（列固定フォーマット）で行うため、旧来の
- *   allCandidatesSlimBreakdown フラグは廃止した。
+ * allCandidatesは、時間・ランクUIフィルターおよびPink cooldown適用後の
+ * スコア対象候補を、列固定の軽量配列形式で全件保存する。
  */
-const LOG_DETAIL_CONFIG = {
-  includeAllCandidates: true
-};
-
-const ANALYSIS_SCRIPT_VERSION = "softmax-10-analysis-v1";
+const ANALYSIS_SCRIPT_VERSION = "softmax-11-analysis-v1";
+const DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP = 0.03;
 
 /*
  * -10: 本番選出・学習・保存上限は維持する。
@@ -81,10 +62,89 @@ function analysisChecksum(value) {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
+function getPhaseTieBreakRelativeGap() {
+  const configuredGap = Number(
+    State.scoringConfig
+      ?.candidateSelection
+      ?.slotAllocation
+      ?.phaseTieBreakRelativeGap ??
+    DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP
+  );
+
+  return Number.isFinite(configuredGap)
+    ? clamp(configuredGap, 0, 1)
+    : DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP;
+}
+
+function applyPhaseTieBreak(selectedCandidates, candidates, slotPlan, relativeGap) {
+  const selected = [...selectedCandidates];
+  const swaps = [];
+  const phaseError = player => {
+    const value = player.__detail?.phaseError;
+    return typeof value === "number" && Number.isFinite(value)
+      ? Math.abs(value)
+      : Infinity;
+  };
+
+  for (const entry of slotPlan ?? []) {
+    if (entry.bucket === "PRIDE" || entry.slots <= 0) continue;
+
+    const bucket = (candidates ?? []).filter(player =>
+      player.__detail?.slotBucket === entry.bucket &&
+      !player.__detail?.isPinkManaged
+    );
+    const anchors = selected.filter(player =>
+      player.__detail?.slotBucket === entry.bucket &&
+      !player.__crossBucket &&
+      !player.__detail?.isPinkManaged
+    ).sort((a, b) =>
+      getCandidateSlotScore(b) - getCandidateSlotScore(a)
+    );
+
+    for (const anchor of anchors) {
+      const boundary =
+        getCandidateSlotScore(anchor) * (1 - relativeGap);
+      const alternatives = bucket.filter(player =>
+        !selected.includes(player) &&
+        getCandidateSlotScore(player) >= boundary &&
+        phaseError(player) < 60 &&
+        phaseError(player) < phaseError(anchor)
+      ).sort((a, b) =>
+        phaseError(a) - phaseError(b) ||
+        getCandidateSlotScore(b) - getCandidateSlotScore(a)
+      );
+
+      if (alternatives.length === 0) continue;
+
+      const replacement = alternatives[0];
+      selected[selected.indexOf(anchor)] = replacement;
+      swaps.push({
+        bucket: entry.bucket,
+        removed: {
+          name: anchor.name,
+          shopname: anchor.shopname ?? "",
+          slotScore: getCandidateSlotScore(anchor),
+          phaseError: phaseError(anchor)
+        },
+        added: {
+          name: replacement.name,
+          shopname: replacement.shopname ?? "",
+          slotScore: getCandidateSlotScore(replacement),
+          phaseError: phaseError(replacement)
+        }
+      });
+    }
+  }
+
+  return { selected, swaps };
+}
+
 function buildAnalysisDiagnostics() {
   const startedAt = performance.now();
   const pool = State.matchingRankedAll;
-  const current = State.matchingList;
+  const current =
+    State.matchingPrePhaseTieBreak ??
+    State.matchingList;
   const identify = p => ({
     name: p.name,
     shopname: p.shopname ?? "",
@@ -211,6 +271,8 @@ function buildAnalysisDiagnostics() {
     phasePopulationSource: "scoredCandidates",
     phasePopulation,
     comparisons,
+    appliedPhaseTieBreak:
+      State.matchingPhaseTieBreakDiagnostics,
     computationMs: performance.now() - startedAt,
     provenance: {
       historicalMeta: State.historicalMatchupDistribution?.meta ?? null,
@@ -227,7 +289,6 @@ function recordUnmatchedSearchMemo() {
   const searchMemo = String(input?.value ?? "").trim();
   if (!searchMemo) {
     logWarn("候補外記録：検索欄に照合用メモを入力してください");
-    alert("検索欄に相手を照合するための文字を入力してください。");
     return;
   }
   const id = State.latestCandidateEventIdForCopy ?? State.activeCandidateEventId;
@@ -273,12 +334,22 @@ function recordUnmatchedSearchMemo() {
   } catch (error) {
     console.error("候補外記録の保存失敗", error);
     logError(`候補外記録の保存失敗：${error.message}`);
-    alert("候補外記録の保存に失敗しました。");
     return;
   }
   logEvent("copy", record);
   log(`候補外対戦メモを保存：${searchMemo}（相手名未確定）`);
-  alert("候補外対戦メモを保存しました。相手名・店舗はCSVで確定します。");
+  try {
+    if (!navigator.clipboard?.writeText) {
+      throw new Error("Clipboard APIを利用できません");
+    }
+    navigator.clipboard.writeText(searchMemo)
+      .then(() => log(`候補外メモをクリップボードにコピー：${searchMemo}`))
+      .catch(error =>
+        logError(`候補外メモのクリップボードコピー失敗：${error.message}`)
+      );
+  } catch (error) {
+    logError(`候補外メモのクリップボードコピー失敗：${error.message}`);
+  }
 }
 
 
@@ -386,7 +457,6 @@ const ALL_CANDIDATES_COLUMNS = [
   "phaseAdjustValue"
 ];
 
-const LOG_TOP_CANDIDATE_LIMIT = 60;
 const MAX_YELLOW_PHASE_WEIGHT = 0.55;
 
 /*
@@ -567,6 +637,10 @@ const State = {
   currentDetailLabel: "",
   currentDetailIcon: "",
   matchingList: [],
+  matchingPrePhaseTieBreak: null,
+  matchingPhaseTieBreakDiagnostics: null,
+  matchingFilteredPopulationCount: 0,
+  matchingCooldownExcludedCandidates: [],
   matchingRankedAll: [],
   matchingScoredAll: [],
   matchingTierCounts: {},
@@ -687,6 +761,10 @@ function syncMyRankSelection(
     State.activeCandidateEventId = null;
     State.latestCandidateEventIdForCopy = null;
     State.matchingList = [];
+    State.matchingPrePhaseTieBreak = null;
+    State.matchingPhaseTieBreakDiagnostics = null;
+    State.matchingFilteredPopulationCount = 0;
+    State.matchingCooldownExcludedCandidates = [];
     State.matchingScoredAll = [];
     State.matchingRankedAll = [];
     State.matchingTierCounts = {};
@@ -8209,6 +8287,19 @@ function buildMatchingCandidates(
       return true;
 
     });
+  const afterCooldownSet = new Set(afterCooldown);
+  State.matchingFilteredPopulationCount =
+    filteredByUi.length;
+  State.matchingCooldownExcludedCandidates =
+    filteredByUi
+      .filter(p => !afterCooldownSet.has(p))
+      .map(p => ({
+        name: p.name,
+        shopname: p.shopname ?? "",
+        rankKey: p.__rankKey,
+        area: String(p.area ?? ""),
+        exclusionReason: "pink-initial-cooldown"
+      }));
 
   const tierCounts = {};
 
@@ -8347,6 +8438,30 @@ function buildMatchingCandidates(
     ...normalSelected,
     ...crossBucketSelected
   ];
+  State.matchingPrePhaseTieBreak =
+    selected.slice();
+  const phaseTieBreakRelativeGap =
+    getPhaseTieBreakRelativeGap();
+  const phaseTieBreakResult =
+    applyPhaseTieBreak(
+      selected,
+      scoreEligible,
+      State.matchingSlotPlan,
+      phaseTieBreakRelativeGap
+    );
+  selected.splice(
+    0,
+    selected.length,
+    ...phaseTieBreakResult.selected
+  );
+  State.matchingPhaseTieBreakDiagnostics = {
+    relativeGap: phaseTieBreakRelativeGap,
+    phaseLimitSec: 60,
+    sameBucketOnly: true,
+    excludePride: true,
+    excludePinkManaged: true,
+    swaps: phaseTieBreakResult.swaps
+  };
 
   /*
    * 【2026-09 改善6】Pink管理対象の最終表示枠占有数キャップ適用
@@ -11633,6 +11748,13 @@ function allowLog(
   }
 
   if (
+    message.includes("候補外対戦メモ") ||
+    message.includes("候補外メモをクリップボードにコピー")
+  ) {
+    return true;
+  }
+
+  if (
     message.includes(
       "PREVIEWではコピー操作"
     )
@@ -12689,26 +12811,6 @@ function buildAllCandidateRow(
     Number(d.phaseAdjustValue ?? 0)
   ];
 
-}
-
-function shouldLogCandidateRow(
-  player,
-  index
-) {
-  const slotRank =
-    Number(
-      player?.__slotRank ?? 0
-    );
-
-  return (
-    index < LOG_TOP_CANDIDATE_LIMIT ||
-    (
-      slotRank > 0 &&
-      slotRank <= 10
-    ) ||
-    Boolean(player?.__crossBucket) ||
-    Boolean(player?.__detail?.isPinkManaged)
-  );
 }
 
 /* =========================================================
@@ -13960,6 +14062,15 @@ function saveCandidateEvent(
     scoredCandidateCount:
       State.matchingScoredAll.length,
 
+    filteredPopulationAfterTimeAndRankFilters: {
+      candidateCount:
+        State.matchingFilteredPopulationCount,
+      scoredCandidateCount:
+        State.matchingScoredAll.length,
+      pinkCooldownExcludedCandidates:
+        State.matchingCooldownExcludedCandidates
+    },
+
     slotPlan:
       State.matchingSlotPlan.map(
         entry => ({
@@ -14213,14 +14324,13 @@ function saveCandidateEvent(
      * 「予測時点でのglobal score rank」「表示選出の有無」を
      * 特定できない問題があった。
      *
-     * ここでは matchingScoredAll（スコア計算対象）から、
-     * スコア上位とPink管理対象を保存する。Pink周期不一致で
-     * 選外になった相手も分析できる一方、全候補の重複保存は避ける。
+     * ここでは matchingScoredAll（時間・ランクUIフィルターおよび
+     * Pink cooldown適用後のスコア計算対象）を全件保存する。
+     * Top10外も含む候補間比較を後日再現できるようにする。
      *
-     * 【2026-09 ログ量対策②】1候補あたりの情報量を抑えるため、
-     * キー名付きオブジェクトではなく列固定の配列（行）として
-     * 保存する。列の意味は allCandidatesColumns
-     * （＝ALL_CANDIDATES_COLUMNS）を参照。
+     * 1候補あたりの情報量を抑えるため、キー名付きオブジェクト
+     * ではなく列固定の配列（行）として保存する。列の意味は
+     * allCandidatesColumns（＝ALL_CANDIDATES_COLUMNS）を参照。
      *
      * candidateEvents ストア自体のレコード数（イベント件数）は
      * 従来どおり putLog による1イベント1レコードのままで、
@@ -14231,16 +14341,13 @@ function saveCandidateEvent(
       ALL_CANDIDATES_COLUMNS,
 
     allCandidates:
-      LOG_DETAIL_CONFIG.includeAllCandidates
-        ? [...State.matchingScoredAll]
-            .sort(
-              (a, b) =>
-                getCandidateSelectionScore(b) -
-                getCandidateSelectionScore(a)
-            )
-            .filter(shouldLogCandidateRow)
-            .map(buildAllCandidateRow)
-        : []
+      [...State.matchingScoredAll]
+        .sort(
+          (a, b) =>
+            getCandidateSelectionScore(b) -
+            getCandidateSelectionScore(a)
+        )
+        .map(buildAllCandidateRow)
   };
 
   State.activeCandidateEventId =
@@ -14252,7 +14359,15 @@ function saveCandidateEvent(
   record.analysisDiagnostics.storageCoverage = {
     scoredCandidateCount: State.matchingScoredAll.length,
     savedCandidateCount: record.allCandidates.length,
-    complete: record.allCandidates.length === State.matchingScoredAll.length
+    filteredCandidateCount:
+      State.matchingFilteredPopulationCount,
+    pinkCooldownExcludedCount:
+      State.matchingCooldownExcludedCandidates.length,
+    complete:
+      record.allCandidates.length === State.matchingScoredAll.length &&
+      record.allCandidates.length +
+        State.matchingCooldownExcludedCandidates.length ===
+        State.matchingFilteredPopulationCount
   };
   const serializationStartedAt = performance.now();
   const serialized = JSON.stringify(record);
@@ -15409,6 +15524,10 @@ document.addEventListener(
           ) {
 
             State.matchingList = [];
+            State.matchingPrePhaseTieBreak = null;
+            State.matchingPhaseTieBreakDiagnostics = null;
+            State.matchingFilteredPopulationCount = 0;
+            State.matchingCooldownExcludedCandidates = [];
 
             renderMatchingHeader();
             renderMatchingTable();
