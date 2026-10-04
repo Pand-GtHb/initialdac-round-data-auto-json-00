@@ -51,8 +51,15 @@ const LOG_STORAGE_LIMITS = {
  * allCandidatesは、時間・ランクUIフィルターおよびPink cooldown適用後の
  * スコア対象候補を、列固定の軽量配列形式で全件保存する。
  */
-const ANALYSIS_SCRIPT_VERSION = "softmax-11-analysis-v1";
+const ANALYSIS_SCRIPT_VERSION = "softmax-12-analysis-v1";
 const DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP = 0.03;
+const DEFAULT_PRIDE_POPULATION_ADJUSTMENT = Object.freeze({
+  enabled: false,
+  viewerTiers: Object.freeze(["R7", "R8"]),
+  lowRubyShareThreshold: 0.65,
+  minFilteredCandidateCount: 50,
+  maxAdditionalSlots: 1
+});
 
 /*
  * -10: 本番選出・学習・保存上限は維持する。
@@ -82,6 +89,43 @@ function getPhaseTieBreakRelativeGap() {
   return Number.isFinite(configuredGap)
     ? clamp(configuredGap, 0, 1)
     : DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP;
+}
+
+function getPridePopulationAdjustmentConfig() {
+  const configured =
+    State.scoringConfig
+      ?.candidateSelection
+      ?.slotAllocation
+      ?.pridePopulationAdjustment ?? {};
+  const threshold = Number(
+    configured.lowRubyShareThreshold ??
+    DEFAULT_PRIDE_POPULATION_ADJUSTMENT.lowRubyShareThreshold
+  );
+  const minFilteredCandidateCount = Number(
+    configured.minFilteredCandidateCount ??
+    DEFAULT_PRIDE_POPULATION_ADJUSTMENT.minFilteredCandidateCount
+  );
+  const maxAdditionalSlots = Number(
+    configured.maxAdditionalSlots ??
+    DEFAULT_PRIDE_POPULATION_ADJUSTMENT.maxAdditionalSlots
+  );
+
+  return {
+    enabled: configured.enabled === true,
+    viewerTiers: Array.isArray(configured.viewerTiers)
+      ? configured.viewerTiers.filter(tier => ["R7", "R8"].includes(tier))
+      : [...DEFAULT_PRIDE_POPULATION_ADJUSTMENT.viewerTiers],
+    lowRubyShareThreshold: Number.isFinite(threshold)
+      ? clamp(threshold, 0, 1)
+      : DEFAULT_PRIDE_POPULATION_ADJUSTMENT.lowRubyShareThreshold,
+    minFilteredCandidateCount:
+      Number.isFinite(minFilteredCandidateCount)
+        ? Math.max(0, Math.floor(minFilteredCandidateCount))
+        : DEFAULT_PRIDE_POPULATION_ADJUSTMENT.minFilteredCandidateCount,
+    maxAdditionalSlots: Number.isFinite(maxAdditionalSlots)
+      ? clamp(Math.floor(maxAdditionalSlots), 0, 1)
+      : DEFAULT_PRIDE_POPULATION_ADJUSTMENT.maxAdditionalSlots
+  };
 }
 
 function applyPhaseTieBreak(selectedCandidates, candidates, slotPlan, relativeGap) {
@@ -662,6 +706,8 @@ const State = {
   matchingScoredAll: [],
   matchingTierCounts: {},
   matchingSlotPlan: [],
+  matchingSlotAllocationDiagnostics: null,
+  matchingFilteredPopulationSnapshot: null,
   matchingCrossBucketDiagnostics: null,
   matchingPinkCapDiagnostics: null,
   matchingSoftmaxBacktestPreview: null,
@@ -790,6 +836,8 @@ function syncMyRankSelection(
     State.matchingRankedAll = [];
     State.matchingTierCounts = {};
     State.matchingSlotPlan = [];
+    State.matchingSlotAllocationDiagnostics = null;
+    State.matchingFilteredPopulationSnapshot = null;
     State.matchingCrossBucketDiagnostics = null;
     State.matchingPinkCapDiagnostics = null;
     State.matchingSoftmaxBacktestPreview = null;
@@ -7544,6 +7592,117 @@ function buildMatchingSlotPlan(
   }));
 }
 
+function adjustPrideSlotsByCandidatePopulation(
+  slotPlan,
+  population,
+  enabledRankKeys,
+  viewerTier
+) {
+  const config =
+    getPridePopulationAdjustmentConfig();
+  const before =
+    (slotPlan ?? []).map(entry => ({ ...entry }));
+  const after =
+    before.map(entry => ({ ...entry }));
+  const rankCounts =
+    population?.rankCounts ?? {};
+  const ruby1To6 =
+    ["R1", "R2", "R3", "R4", "R5", "R6"]
+      .reduce((sum, key) => sum + Number(rankCounts[key] ?? 0), 0);
+  const ruby7To8 =
+    Number(rankCounts.R7 ?? 0) +
+    Number(rankCounts.R8 ?? 0);
+  const rubyTotal =
+    ruby1To6 + ruby7To8;
+  const lowRubyShare =
+    rubyTotal > 0
+      ? ruby1To6 / rubyTotal
+      : null;
+  const allRanksSelected =
+    enabledRankKeys?.length === 15 &&
+    [
+      "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8",
+      "P_A", "P_B", "P_C", "P_D", "P_E", "P_F", "P_G"
+    ].every(key => enabledRankKeys.includes(key));
+  let reason = "disabled";
+  let donorBucket = null;
+  let applied = false;
+
+  if (config.enabled !== true) {
+    reason = "disabled";
+  } else if (!config.viewerTiers.includes(viewerTier)) {
+    reason = "viewer-tier-not-eligible";
+  } else if (!allRanksSelected) {
+    reason = "rank-filter-incomplete";
+  } else if (
+    Number(population?.classifiedCount ?? 0) <
+    config.minFilteredCandidateCount
+  ) {
+    reason = "population-below-minimum";
+  } else if (rubyTotal <= 0) {
+    reason = "no-ruby-candidates";
+  } else if (lowRubyShare > config.lowRubyShareThreshold) {
+    reason = "low-ruby-share-above-threshold";
+  } else if (config.maxAdditionalSlots < 1) {
+    reason = "max-additional-slots-is-zero";
+  } else {
+    const prideEntry =
+      after.find(entry => entry.bucket === "PRIDE");
+    const donors =
+      after
+        .filter(entry =>
+          /^R[1-6]$/.test(entry.bucket) &&
+          entry.slots > 0 &&
+          entry.capacity > entry.slots
+        )
+        .sort((a, b) =>
+          a.probability - b.probability ||
+          a.bucket.localeCompare(b.bucket)
+        );
+
+    if (!prideEntry || prideEntry.capacity <= prideEntry.slots) {
+      reason = "no-pride-slot-capacity";
+    } else if (donors.length === 0) {
+      reason = "no-donor-slot";
+    } else {
+      donorBucket = donors[0].bucket;
+      donors[0].slots--;
+      prideEntry.slots++;
+      reason = "low-ruby-share";
+      applied = true;
+    }
+  }
+
+  return {
+    plan: after,
+    diagnostics: {
+      enabled: config.enabled,
+      eligibleViewerTiers: config.viewerTiers,
+      viewerTier,
+      lowRubyShareThreshold: config.lowRubyShareThreshold,
+      minFilteredCandidateCount: config.minFilteredCandidateCount,
+      maxAdditionalSlots: config.maxAdditionalSlots,
+      population: {
+        filteredCandidateCount:
+          Number(population?.classifiedCount ?? 0),
+        ruby1To6,
+        ruby7To8,
+        rubyTotal,
+        lowRubyShare:
+          lowRubyShare === null
+            ? null
+            : Number(lowRubyShare.toFixed(6))
+      },
+      applied,
+      additionalSlots: applied ? 1 : 0,
+      donorBucket,
+      reason,
+      slotPlanBeforeAdjustment: before,
+      slotPlanAfterAdjustment: after
+    }
+  };
+}
+
 function selectPrideSlotCandidates(
   candidates,
   slotCount
@@ -7659,19 +7818,21 @@ function selectPrideSlotCandidates(
 function selectNormalCandidatesBySlots(
   candidates,
   slotCount = 9,
-  bucketProbabilities = {}
+  bucketProbabilities = {},
+  slotPlanOverride = null
 ) {
   if (!Array.isArray(candidates)) {
     State.matchingSlotPlan = [];
     return [];
   }
 
-  const plan =
-    buildMatchingSlotPlan(
-      candidates,
-      slotCount,
-      bucketProbabilities
-    );
+  const plan = Array.isArray(slotPlanOverride)
+    ? slotPlanOverride.map(entry => ({ ...entry }))
+    : buildMatchingSlotPlan(
+        candidates,
+        slotCount,
+        bucketProbabilities
+      );
 
   if (plan.length === 0) {
     State.matchingSlotPlan = [];
@@ -8841,6 +9002,12 @@ function buildMatchingCandidates(
     ),
     ...selectedPrides
   ];
+  const filteredPopulation =
+    buildRankPopulationSnapshot(
+      filteredByUi
+    );
+  State.matchingFilteredPopulationSnapshot =
+    filteredPopulation;
 
   const slotBucketProbabilities =
     buildMatchingSlotBucketProbabilities(
@@ -8848,12 +9015,28 @@ function buildMatchingCandidates(
       tierCounts,
       enabledRankKeys
     );
+  const originalSlotPlan =
+    buildMatchingSlotPlan(
+      scoreEligible,
+      NORMAL_SLOT_COUNT,
+      slotBucketProbabilities
+    );
+  const adjustedSlotPlan =
+    adjustPrideSlotsByCandidatePopulation(
+      originalSlotPlan,
+      filteredPopulation,
+      enabledRankKeys,
+      mapRankKeyToTierKey(State.myRankKey)
+    );
+  State.matchingSlotAllocationDiagnostics =
+    adjustedSlotPlan.diagnostics;
 
   const normalSelected =
     selectNormalCandidatesBySlots(
       scoreEligible,
       NORMAL_SLOT_COUNT,
-      slotBucketProbabilities
+      slotBucketProbabilities,
+      adjustedSlotPlan.plan
     );
 
   const crossBucketSelected =
@@ -9019,6 +9202,10 @@ function buildMatchingCandidates(
       .filter(entry => entry.slots > 0)
       .map(entry => `${entry.bucket}:${entry.slots}`)
       .join(",") || "fallback"}` +
+    `${State.matchingSlotAllocationDiagnostics?.applied
+      ? ` PRIDE枠調整=${State.matchingSlotAllocationDiagnostics.donorBucket}→PRIDE(+1)` +
+        ` lowRubyShare=${State.matchingSlotAllocationDiagnostics.population.lowRubyShare}`
+      : ""}` +
     `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
   );
 
@@ -13309,7 +13496,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v11_recent_area_config",
+        "slot_area_v12_pride_population_adjustment",
 
       dk:
         buildDailyKey(),
@@ -14437,6 +14624,8 @@ function saveCandidateEvent(
         buildRankPopulationSnapshot(
           State.filtered
         ),
+      filteredDataAfterTimeAndRankFilters:
+        State.matchingFilteredPopulationSnapshot,
       rankSummary:
         buildRankPopulationSnapshot(
           filterSummaryBySearch()
@@ -14540,6 +14729,9 @@ function saveCandidateEvent(
           capacity: entry.capacity
         })
       ),
+
+    pridePopulationSlotAdjustment:
+      State.matchingSlotAllocationDiagnostics,
 
     crossBucketSelection:
       State.matchingCrossBucketDiagnostics ?? {
