@@ -1,9 +1,9 @@
 {
   "meta": {
-    "version": "scoring_config_v25_phase_tiebreak_20261003",
+    "version": "scoring_config_v26_pride_population_adjustment_20261004",
     "createdAt": "2026-09-26T09:15:11+09:00",
-    "modifiedAt": "2026-10-03T18:15:29+09:00",
-    "description": "ViewerのFilter既定値と自ランク既定値はviewerDefaultsで管理する。通常9枠は自ランク別の履歴マッチング比率でバケット配分し、残る1枠はバケット横断スコアで選出する。枠内順位にはRealtime・Phase・候補集合内のエリア密度を使用する。candidateSelection.slotAllocation.phaseTieBreakRelativeGapは、PRIDEとPink管理対象を除く通常枠で、Phase誤差60秒未満の候補を相対slotScore差以内なら優先する設定であり、既定は0.03。PRIDEは全体を1つのslotBucketとして扱い、PRIDE_A〜Gの履歴比率をsoft priorとして内部順位へ反映するが、rankActivitySignalはPink管理対象だけに適用する。areaBoost.recentMatch.windowSizeは直近のコピー実績から参照する件数（1～200の整数、既定10）であり、同エリアの出現回数をwindowSizeで割った値の平方根にweightを掛け、Pink管理対象も含めて通常枠と横断1枠の選出スコアへ最大10%加点する。候補集合内の静的エリア密度加点とは独立して機能し、エリアPhase集中は診断ログ専用とする。Pink管理対象のPhase不一致時はphaseErrorに応じた連続減衰を適用し、最終表示10枠での占有数はmaxPinkManagedSlotsで制限する。experimental.softmaxBacktestは本番選出に影響しない。"
+    "modifiedAt": "2026-10-04T17:59:54+09:00",
+    "description": "ViewerのFilter既定値と自ランク既定値はviewerDefaultsで管理する。通常9枠は自ランク別の履歴マッチング比率でバケット配分し、残る1枠はバケット横断スコアで選出する。枠内順位にはRealtime・Phase・候補集合内のエリア密度を使用する。candidateSelection.slotAllocation.phaseTieBreakRelativeGapは、PRIDEとPink管理対象を除く通常枠で、Phase誤差60秒未満の候補を相対slotScore差以内なら優先する設定であり、既定は0.03。pridePopulationAdjustmentは時間・全ランクフィルター後の候補人口でRuby R1～R6/R1～R8比率を測り、R7/R8予測時に閾値以下かつ最小母数以上なら、R1～R6の通常枠から最大1枠をPRIDE通常枠へ移す試験設定である。全ランク選択時のみ動作し、maxAdditionalSlotsは実装側でも1枠に制限する。PRIDEは全体を1つのslotBucketとして扱い、PRIDE_A～Gの履歴比率をsoft priorとして内部順位へ反映するが、rankActivitySignalはPink管理対象だけに適用する。areaBoost.recentMatch.windowSizeは直近のコピー実績から参照する件数（1～200の整数、既定10）であり、同エリアの出現回数をwindowSizeで割った値の平方根にweightを掛け、Pink管理対象も含めて通常枠と横断1枠の選出スコアへ最大10%加点する。候補集合内の静的エリア密度加点とは独立して機能し、エリアPhase集中は診断ログ専用とする。Pink管理対象のPhase不一致時はphaseErrorに応じた連続減衰を適用し、最終表示10枠での占有数はmaxPinkManagedSlotsで制限する。experimental.softmaxBacktestは本番選出に影響しない。"
   },
   "viewerDefaults": {
     "filterMinutes": 30,
@@ -14,7 +14,14 @@
     "slotAllocation": {
       "prideBandPriorExponent": 0.5,
       "prideBandDiversityGapThreshold": 0.08,
-      "phaseTieBreakRelativeGap": 0.03
+      "phaseTieBreakRelativeGap": 0.03,
+      "pridePopulationAdjustment": {
+        "enabled": true,
+        "viewerTiers": ["R7", "R8"],
+        "lowRubyShareThreshold": 0.65,
+        "minFilteredCandidateCount": 50,
+        "maxAdditionalSlots": 1
+      }
     },
     "areaBoost": {
       "enabled": true,
