@@ -51,11 +51,12 @@ const LOG_STORAGE_LIMITS = {
  * allCandidatesは、時間・ランクUIフィルターおよびPink cooldown適用後の
  * スコア対象候補を、列固定の軽量配列形式で全件保存する。
  */
-const ANALYSIS_SCRIPT_VERSION = "softmax-12-analysis-v1";
+const ANALYSIS_SCRIPT_VERSION = "softmax-14-analysis-v1";
 const DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP = 0.03;
 const DEFAULT_PRIDE_POPULATION_ADJUSTMENT = Object.freeze({
   enabled: false,
   viewerTiers: Object.freeze(["R7", "R8"]),
+  lowRubyMaxRank: 6,
   lowRubyShareThreshold: 0.65,
   minFilteredCandidateCount: 50,
   maxAdditionalSlots: 1
@@ -91,12 +92,24 @@ function getPhaseTieBreakRelativeGap() {
     : DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP;
 }
 
-function getPridePopulationAdjustmentConfig() {
-  const configured =
-    State.scoringConfig
-      ?.candidateSelection
-      ?.slotAllocation
-      ?.pridePopulationAdjustment ?? {};
+function getPridePopulationAdjustmentConfig(
+  configured = State.scoringConfig
+    ?.candidateSelection
+    ?.slotAllocation
+    ?.pridePopulationAdjustment ?? {}
+) {
+  const lowRubyMaxRank =
+    configured.lowRubyMaxRank ??
+    DEFAULT_PRIDE_POPULATION_ADJUSTMENT.lowRubyMaxRank;
+  if (
+    !Number.isInteger(lowRubyMaxRank) ||
+    lowRubyMaxRank < 1 ||
+    lowRubyMaxRank > 7
+  ) {
+    throw new Error(
+      "candidateSelection.slotAllocation.pridePopulationAdjustment.lowRubyMaxRank は1～7の整数を指定してください"
+    );
+  }
   const threshold = Number(
     configured.lowRubyShareThreshold ??
     DEFAULT_PRIDE_POPULATION_ADJUSTMENT.lowRubyShareThreshold
@@ -112,6 +125,7 @@ function getPridePopulationAdjustmentConfig() {
 
   return {
     enabled: configured.enabled === true,
+    lowRubyMaxRank,
     viewerTiers: Array.isArray(configured.viewerTiers)
       ? configured.viewerTiers.filter(tier => ["R7", "R8"].includes(tier))
       : [...DEFAULT_PRIDE_POPULATION_ADJUSTMENT.viewerTiers],
@@ -126,6 +140,43 @@ function getPridePopulationAdjustmentConfig() {
       ? clamp(Math.floor(maxAdditionalSlots), 0, 1)
       : DEFAULT_PRIDE_POPULATION_ADJUSTMENT.maxAdditionalSlots
   };
+}
+
+function getRubyPopulationGroups(
+  rankCounts,
+  lowRubyMaxRank = getPridePopulationAdjustmentConfig().lowRubyMaxRank
+) {
+  const lowRubyRankKeys =
+    Array.from({ length: lowRubyMaxRank }, (_, i) => `R${i + 1}`);
+  const highRubyRankKeys =
+    Array.from({ length: 8 - lowRubyMaxRank }, (_, i) => `R${lowRubyMaxRank + i + 1}`);
+  const countRanks = keys =>
+    keys.reduce((sum, key) => sum + Number(rankCounts[key] ?? 0), 0);
+  const lowRubyCount = countRanks(lowRubyRankKeys);
+  const highRubyCount = countRanks(highRubyRankKeys);
+  const rangeLabel = keys =>
+    keys.length === 1
+      ? keys[0]
+      : `${keys[0]}～${keys[keys.length - 1].slice(1)}`;
+  return {
+    lowRubyRankKeys,
+    highRubyRankKeys,
+    lowRubyCount,
+    highRubyCount,
+    rubyTotal: lowRubyCount + highRubyCount,
+    lowRubyLabel: rangeLabel(lowRubyRankKeys),
+    highRubyLabel: rangeLabel(highRubyRankKeys)
+  };
+}
+
+function buildSummaryPopulationText(total, rankCounts) {
+  const groups = getRubyPopulationGroups(rankCounts);
+  const prideTotal = total - groups.rubyTotal;
+  const percent = count => total ? Math.round(count / total * 100) : 0;
+  return `合計 ${fmt(total)}人： ` +
+    `${groups.lowRubyLabel}＝${fmt(groups.lowRubyCount)}人[${percent(groups.lowRubyCount)}%] ＋ ` +
+    `${groups.highRubyLabel}＝${fmt(groups.highRubyCount)}人[${percent(groups.highRubyCount)}%] ＋ ` +
+    `PRIDE帯＝${fmt(prideTotal)}人[${percent(prideTotal)}%]`;
 }
 
 function applyPhaseTieBreak(selectedCandidates, candidates, slotPlan, relativeGap) {
@@ -1954,6 +2005,9 @@ function applyScoringConfigJson(
   json
 ) {
 
+  getPridePopulationAdjustmentConfig(
+    json?.candidateSelection?.slotAllocation?.pridePopulationAdjustment ?? {}
+  );
   State.scoringConfig = json;
 
   const viewerDefaults =
@@ -7606,6 +7660,8 @@ function adjustPrideSlotsByCandidatePopulation(
     before.map(entry => ({ ...entry }));
   const rankCounts =
     population?.rankCounts ?? {};
+  const groups =
+    getRubyPopulationGroups(rankCounts, config.lowRubyMaxRank);
   const ruby1To6 =
     ["R1", "R2", "R3", "R4", "R5", "R6"]
       .reduce((sum, key) => sum + Number(rankCounts[key] ?? 0), 0);
@@ -7613,10 +7669,10 @@ function adjustPrideSlotsByCandidatePopulation(
     Number(rankCounts.R7 ?? 0) +
     Number(rankCounts.R8 ?? 0);
   const rubyTotal =
-    ruby1To6 + ruby7To8;
+    groups.rubyTotal;
   const lowRubyShare =
     rubyTotal > 0
-      ? ruby1To6 / rubyTotal
+      ? groups.lowRubyCount / rubyTotal
       : null;
   const allRanksSelected =
     enabledRankKeys?.length === 15 &&
@@ -7651,11 +7707,13 @@ function adjustPrideSlotsByCandidatePopulation(
     const donors =
       after
         .filter(entry =>
-          /^R[1-6]$/.test(entry.bucket) &&
+          groups.lowRubyRankKeys.includes(entry.bucket) &&
           entry.slots > 0 &&
           entry.capacity > entry.slots
         )
         .sort((a, b) =>
+          Number(rankCounts[a.bucket] ?? 0) -
+            Number(rankCounts[b.bucket] ?? 0) ||
           a.probability - b.probability ||
           a.bucket.localeCompare(b.bucket)
         );
@@ -7679,6 +7737,9 @@ function adjustPrideSlotsByCandidatePopulation(
       enabled: config.enabled,
       eligibleViewerTiers: config.viewerTiers,
       viewerTier,
+      lowRubyMaxRank: config.lowRubyMaxRank,
+      lowRubyRankKeys: groups.lowRubyRankKeys,
+      highRubyRankKeys: groups.highRubyRankKeys,
       lowRubyShareThreshold: config.lowRubyShareThreshold,
       minFilteredCandidateCount: config.minFilteredCandidateCount,
       maxAdditionalSlots: config.maxAdditionalSlots,
@@ -7687,6 +7748,8 @@ function adjustPrideSlotsByCandidatePopulation(
           Number(population?.classifiedCount ?? 0),
         ruby1To6,
         ruby7To8,
+        lowRubyCount: groups.lowRubyCount,
+        highRubyCount: groups.highRubyCount,
         rubyTotal,
         lowRubyShare:
           lowRubyShare === null
@@ -7696,6 +7759,13 @@ function adjustPrideSlotsByCandidatePopulation(
       applied,
       additionalSlots: applied ? 1 : 0,
       donorBucket,
+      donorSelectionBasis: "filtered-candidate-count",
+      donorCandidateCount: donorBucket === null
+        ? null
+        : Number(rankCounts[donorBucket] ?? 0),
+      donorCandidateCounts: Object.fromEntries(
+        groups.lowRubyRankKeys.map(key => [key, Number(rankCounts[key] ?? 0)])
+      ),
       reason,
       slotPlanBeforeAdjustment: before,
       slotPlanAfterAdjustment: after
@@ -11545,12 +11615,12 @@ function renderAreaSummary() {
 
   const rows = sortAreaSummaryRows(getAreaSummaryRows());
   const total = rows.reduce((sum, row) => sum + row.total, 0);
-  const rubyTotal = rows.reduce((sum, row) => {
-    return sum + RANKS.filter(rank => rank.type === "ruby").reduce((inner, rank) => inner + (row.counts[rank.key] || 0), 0);
-  }, 0);
-  const prideTotal = total - rubyTotal;
-  const rubyPercent = total ? Math.round((rubyTotal / total) * 100) : 0;
-  const pridePercent = total ? Math.round((prideTotal / total) * 100) : 0;
+  const rankCounts = Object.fromEntries(
+    RANKS.map(rank => [
+      rank.key,
+      rows.reduce((sum, row) => sum + (row.counts[rank.key] || 0), 0)
+    ])
+  );
 
   const maxAreaTotal = Math.max(1, ...rows.map(r => r.total));
   const legendHTML = RANKS.map(rank => `
@@ -11569,9 +11639,7 @@ function renderAreaSummary() {
       title="AREAを再表示"
     >🗺️ AREA</button>
     <h3 class="summary-total-badge">
-      合計 ${fmt(total)}人：
-      RUBY帯 ${fmt(rubyTotal)}人＝${rubyPercent}% ＋
-      PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
+      ${buildSummaryPopulationText(total, rankCounts)}
     </h3>
 
     <div class="area-summary-legend">${legendHTML}</div>
@@ -11656,42 +11724,9 @@ function renderSummary() {
       0
     );
 
-  const rubyTotal =
-    filteredSummary
-      .filter(
-        r =>
-          r.key.startsWith(
-            "R"
-          )
-      )
-      .reduce(
-        (s, r) =>
-          s + r.list.length,
-        0
-      );
-
-  const prideTotal =
-    total - rubyTotal;
-
-  const rankPercent =
-    total
-      ? Math.round(
-          (
-            rubyTotal /
-            total
-          ) * 100
-        )
-      : 0;
-
-  const pridePercent =
-    total
-      ? Math.round(
-          (
-            prideTotal /
-            total
-          ) * 100
-        )
-      : 0;
+  const rankCounts = Object.fromEntries(
+    filteredSummary.map(row => [row.key, row.list.length])
+  );
 
   area.innerHTML = `
     ${buildSummaryModeNavHTML("rank")}
@@ -11702,9 +11737,7 @@ function renderSummary() {
       title="RANKを再表示"
     >🏆 RANK</button>
     <h3 class="summary-total-badge">
-      合計 ${fmt(total)}人：
-      RUBY帯 ${fmt(rubyTotal)}人＝${rankPercent}% ＋
-      PRIDE帯 ${fmt(prideTotal)}人＝${pridePercent}%
+      ${buildSummaryPopulationText(total, rankCounts)}
     </h3>
 
     <div style="overflow-x:auto;">
@@ -12277,7 +12310,8 @@ function appendLog(
         "#ff5555";
 
     } else if (
-      type === "warn"
+      type === "warn" ||
+      String(msg).includes("PRIDE枠調整=")
     ) {
 
       line.style.color =
