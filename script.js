@@ -4021,7 +4021,7 @@ function registerPinkTarget(
    */
   if (entry.history && entry.history.length >= 2) {
     try {
-      calcPinkCycle(null, { learn: true });
+      calcPinkCycle({ learn: true });
       savePinkStateToStorage();
     } catch (e) {
       console.warn("[pink] calcPinkCycle failed:", e);
@@ -4343,7 +4343,7 @@ function registerYellowSample(
   // Immediately update learned yellow adjustment so
   // subsequent candidate generation uses the new sample.
   try {
-    calcYellowCycle(null, { learn: true });
+    calcYellowCycle({ learn: true });
     savePinkStateToStorage();
   } catch (e) {
     console.warn("[yellow] calcYellowCycle failed:", e);
@@ -4520,7 +4520,7 @@ function hasSamePlayerRecentClick(player) {
 /* =========================================================
  [7000] Cycle Learning:calcYellowCycle【State】（旧 [7220]）
 ========================================================= */
-function calcYellowCycle(player, opts = {}) {
+function calcYellowCycle(opts = {}) {
 
   const learn =
     Boolean(opts.learn);
@@ -4754,7 +4754,6 @@ function calcYellowCycle(player, opts = {}) {
  [7010] Cycle Learning:calcPinkCycle【State】（旧 [7230]）
 ========================================================= */
 function calcPinkCycle(
-  player,
   opts = {}
 ) {
 
@@ -4947,8 +4946,8 @@ function getCurrentCycle(
 ) {
 
   return isCopiedPlayer(player)
-    ? calcPinkCycle(player)
-    : calcYellowCycle(player);
+    ? calcPinkCycle()
+    : calcYellowCycle();
 }
 
 /* =========================================================
@@ -6173,10 +6172,8 @@ function getHistoricalDistribution(
 function getDistributionCellScore(
   distribution,
   opponentTier,
-  area,
   supportSize,
-  tierCandidateCount,
-  tierCounts
+  tierCandidateCount
 ) {
 
   const oppKey = String(opponentTier ?? "");
@@ -6366,7 +6363,6 @@ function buildViewerHistoricalContext(viewerRankKey) {
 function getHistoricalScoreDetail(
   viewerRankKey,
   opponentRankKey,
-  area,
   tierCounts = State.matchingTierCounts,
   viewerContext = null
 ) {
@@ -6428,10 +6424,8 @@ function getHistoricalScoreDetail(
       ? getDistributionCellScore(
           ctx.ownDistribution,
           opponentTier,
-          area,
           ctx.supportSize,
-          tierCandidateCount,
-          tierCounts
+          tierCandidateCount
         )
       : null;
 
@@ -6445,10 +6439,8 @@ function getHistoricalScoreDetail(
         ...getDistributionCellScore(
           distribution,
           opponentTier,
-          area,
           ctx.supportSize,
-          tierCandidateCount,
-          tierCounts
+          tierCandidateCount
         )
       })
     ) ?? [];
@@ -7013,14 +7005,13 @@ function getRecentAreaBoostConfig() {
 }
 
 function applyCandidateAreaHistoryBoost(
-  candidates
+  candidates,
+  { assignSlotRanks = false } = {}
 ) {
   const context =
     buildCopyAreaHistoryContext();
   const boostConfig =
     getRecentAreaBoostConfig();
-
-  const buckets = {};
 
   for (const player of candidates ?? []) {
     const detail =
@@ -7095,42 +7086,12 @@ function applyCandidateAreaHistoryBoost(
       boostedSlotScore;
     player.__slotScore =
       boostedSlotScore;
-
-    const bucket =
-      getMatchingSlotBucketKey(
-        player.__rankKey
-      );
-
-    if (!bucket) {
-      continue;
-    }
-
-    if (!buckets[bucket]) {
-      buckets[bucket] = [];
-    }
-
-    buckets[bucket].push(player);
   }
 
-  for (const players of Object.values(buckets)) {
-    players
-      .sort(
-        (a, b) =>
-          Number(
-            b.__detail
-              ?.recentAreaCounterfactualSlotScore ?? 0
-          ) -
-          Number(
-            a.__detail
-              ?.recentAreaCounterfactualSlotScore ?? 0
-          )
-      )
-      .forEach((player, index) => {
-        player.__detail
-          .recentAreaCounterfactualSlotRank =
-          index + 1;
-      });
-  }
+  assignCandidateSlotRanks(candidates, {
+    assignSlotRanks,
+    assignRecentAreaRanks: true
+  });
 }
 
 function applyCandidateAreaPhaseDiagnostics(
@@ -7379,7 +7340,8 @@ function getCandidateSlotScore(
 }
 
 function assignCandidateSlotRanks(
-  candidates
+  candidates,
+  { assignSlotRanks = true, assignRecentAreaRanks = false } = {}
 ) {
   const buckets = {};
 
@@ -7415,12 +7377,15 @@ function assignCandidateSlotRanks(
           const slotRank =
             index + 1;
 
-          player.__slotRank =
-            slotRank;
-
-          if (player.__detail) {
+          if (assignSlotRanks) {
+            player.__slotRank = slotRank;
+          }
+          if (assignSlotRanks && player.__detail) {
             player.__detail.slotRank =
               slotRank;
+          }
+          if (assignRecentAreaRanks && player.__detail) {
+            player.__detail.recentAreaCounterfactualSlotRank = slotRank;
           }
         }
       );
@@ -7456,7 +7421,6 @@ function buildMatchingSlotBucketProbabilities(
       getHistoricalScoreDetail(
         State.myRankKey,
         rank.key,
-        "",
         tierCounts,
         viewerContext
       );
@@ -8031,7 +7995,6 @@ function calcMatchingScoreDetail(
         getHistoricalScoreDetail(
             viewerRankKey,
             rankKey,
-            player.area,
             tierCounts,
             viewerContext
         );
@@ -9021,14 +8984,11 @@ function buildMatchingCandidates(
   );
 
   applyCandidateAreaHistoryBoost(
-    scoredAll
+    scoredAll,
+    { assignSlotRanks: true }
   );
 
   applyCandidateAreaPhaseDiagnostics(
-    scoredAll
-  );
-
-  assignCandidateSlotRanks(
     scoredAll
   );
 
@@ -9464,9 +9424,6 @@ function applyFilters() {
  [9100] Summary Builder:buildSummary【State】【DOM】（旧 [5300]）
 ========================================================= */
 function buildSummary() {
-
-  State.summary = [];
-
   const selectedStars =
     readSelectedStars();
 
@@ -9476,7 +9433,7 @@ function buildSummary() {
   const base =
     State.filtered;
 
-  State.summary =
+  const selectedRanks =
     RANKS
       .filter(rank => {
 
@@ -9495,42 +9452,37 @@ function buildSummary() {
         }
 
         return false;
-      })
-      .map(rank => {
-
-        const list =
-          base.filter(p => {
-
-            if (
-              rank.type === "ruby"
-            ) {
-
-              return (
-                p.onlineBattleRankId ===
-                  RUBY_ID &&
-                p.starCnt ===
-                  rank.star
-              );
-            }
-
-            const pt =
-              Number(
-                p.pridePoint ?? 0
-              );
-
-            return (
-              pt >= rank.min &&
-              pt <= rank.max
-            );
-          });
-
-        return {
-          key: rank.key,
-          label: rank.label,
-          icon: rank.icon,
-          list
-        };
       });
+  const listsByRank =
+    new Map(selectedRanks.map(rank => [rank.key, []]));
+  const rubyRanksByStar =
+    new Map(selectedRanks
+      .filter(rank => rank.type === "ruby")
+      .map(rank => [rank.star, rank]));
+  const prideRanks =
+    selectedRanks.filter(rank => rank.type === "pride");
+
+  for (const player of base) {
+    if (player.onlineBattleRankId === RUBY_ID) {
+      const rank = rubyRanksByStar.get(player.starCnt);
+      if (rank) {
+        listsByRank.get(rank.key).push(player);
+      }
+    }
+    const pridePoint = Number(player.pridePoint ?? 0);
+    for (const rank of prideRanks) {
+      if (pridePoint >= rank.min && pridePoint <= rank.max) {
+        listsByRank.get(rank.key).push(player);
+      }
+    }
+  }
+
+  State.summary = selectedRanks.map(rank => ({
+    key: rank.key,
+    label: rank.label,
+    icon: rank.icon,
+    list: listsByRank.get(rank.key)
+  }));
 }
 
 /* =========================================================
@@ -11022,7 +10974,7 @@ function ensureAreaSummaryStyles() {
 
     /*
      * 【表示修正】ランクサマリ／エリアサマリ共通の
-     * 「合計X人：RUBY帯Y人＝Z% ＋ PRIDE帯…」見出しの背景。
+     * Rubyの設定範囲2帯とPRIDE帯を表示する合計見出しの背景。
      * ランク・エリア別バッジ（rank-count-badge）と同じ
      * 半透明白ピル背景に揃えることで、写真背景の上でも
      * 見出しの視認性を確保する。
