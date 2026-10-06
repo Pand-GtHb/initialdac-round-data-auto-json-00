@@ -64,6 +64,10 @@ const DEFAULT_RELATIVE_POPULATION_ADJUSTMENT = Object.freeze({
   maxTransferredSlots: 1,
   baselineByViewerTier: Object.freeze({})
 });
+const POPULATION_RANK_KEYS = Object.freeze([
+  "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8",
+  "P_A", "P_B", "P_C", "P_D", "P_E", "P_F", "P_G"
+]);
 
 /*
  * -10: 本番選出・学習・保存上限は維持する。
@@ -146,40 +150,18 @@ function getRelativePopulationAdjustmentConfig(
   return config;
 }
 
-function getRubyPopulationGroups(
-  rankCounts,
-  lowRubyMaxRank = 6
-) {
-  const lowRubyRankKeys =
-    Array.from({ length: lowRubyMaxRank }, (_, i) => `R${i + 1}`);
-  const highRubyRankKeys =
-    Array.from({ length: 8 - lowRubyMaxRank }, (_, i) => `R${lowRubyMaxRank + i + 1}`);
-  const countRanks = keys =>
-    keys.reduce((sum, key) => sum + Number(rankCounts[key] ?? 0), 0);
-  const lowRubyCount = countRanks(lowRubyRankKeys);
-  const highRubyCount = countRanks(highRubyRankKeys);
-  const rangeLabel = keys =>
-    keys.length === 1
-      ? keys[0]
-      : `${keys[0]}～${keys[keys.length - 1].slice(1)}`;
-  return {
-    lowRubyRankKeys,
-    highRubyRankKeys,
-    lowRubyCount,
-    highRubyCount,
-    rubyTotal: lowRubyCount + highRubyCount,
-    lowRubyLabel: rangeLabel(lowRubyRankKeys),
-    highRubyLabel: rangeLabel(highRubyRankKeys)
-  };
-}
-
 function buildSummaryPopulationText(total, rankCounts) {
-  const groups = getRubyPopulationGroups(rankCounts);
-  const prideTotal = total - groups.rubyTotal;
+  let lowRubyCount = 0;
+  for (let rank = 1; rank <= 6; rank++) {
+    lowRubyCount += Number(rankCounts[`R${rank}`] ?? 0);
+  }
+  const highRubyCount =
+    Number(rankCounts.R7 ?? 0) + Number(rankCounts.R8 ?? 0);
+  const prideTotal = total - (lowRubyCount + highRubyCount);
   const percent = count => total ? Math.round(count / total * 100) : 0;
   return `合計 ${fmt(total)}人： ` +
-    `${groups.lowRubyLabel}＝${fmt(groups.lowRubyCount)}人[${percent(groups.lowRubyCount)}%] ＋ ` +
-    `${groups.highRubyLabel}＝${fmt(groups.highRubyCount)}人[${percent(groups.highRubyCount)}%] ＋ ` +
+    `R1～6＝${fmt(lowRubyCount)}人[${percent(lowRubyCount)}%] ＋ ` +
+    `R7～8＝${fmt(highRubyCount)}人[${percent(highRubyCount)}%] ＋ ` +
     `PRIDE帯＝${fmt(prideTotal)}人[${percent(prideTotal)}%]`;
 }
 
@@ -7629,17 +7611,15 @@ function adjustSlotsByRelativePopulation(
   const rankCounts =
     population?.rankCounts ?? {};
   const ownRank = Number(viewerTier?.slice(1));
-  const groupForBucket = bucket =>
-    bucket === "PRIDE" || Number(bucket.slice(1)) > ownRank
-      ? "higher"
-      : Number(bucket.slice(1)) === ownRank ? "same" : "lower";
+  const groupForBucket = bucket => {
+    if (bucket === "PRIDE") return "higher";
+    const rank = Number(bucket.slice(1));
+    return rank > ownRank ? "higher" : rank === ownRank ? "same" : "lower";
+  };
   const counts = { lower: 0, same: 0, higher: 0 };
   const bucketCounts = {};
   let invalidPopulation = !population?.rankCounts;
-  for (const key of [
-    "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8",
-    "P_A", "P_B", "P_C", "P_D", "P_E", "P_F", "P_G"
-  ]) {
+  for (const key of POPULATION_RANK_KEYS) {
     const count = rankCounts[key] ?? 0;
     if (!Number.isInteger(count) || count < 0) {
       invalidPopulation = true;
@@ -7657,13 +7637,10 @@ function adjustSlotsByRelativePopulation(
   const baseline = config.baselineByViewerTier?.[viewerTier] ?? null;
   const multipliers = { lower: 1, same: 1, higher: 1 };
   const transfers = [];
-  let target = before.map(entry => ({ ...entry }));
+  let target = null;
   const allRanksSelected =
-    enabledRankKeys?.length === 15 &&
-    [
-      "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8",
-      "P_A", "P_B", "P_C", "P_D", "P_E", "P_F", "P_G"
-    ].every(key => enabledRankKeys.includes(key));
+    enabledRankKeys?.length === POPULATION_RANK_KEYS.length &&
+    POPULATION_RANK_KEYS.every(key => enabledRankKeys.includes(key));
   let reason = "disabled";
   if (config.enabled !== true) {
     reason = "disabled";
@@ -7700,8 +7677,10 @@ function adjustSlotsByRelativePopulation(
       Object.fromEntries(before.map(entry => [entry.bucket, entry.capacity]))
     );
     const targets = new Map(target.map(entry => [entry.bucket, entry]));
+    let hasSlotChanges = false;
     for (const entry of after) {
       const adjusted = targets.get(entry.bucket);
+      hasSlotChanges ||= entry.slots !== adjusted.slots;
       entry.probability = adjusted.probability;
       entry.rawQuota = adjusted.rawQuota;
     }
@@ -7728,8 +7707,7 @@ function adjustSlotsByRelativePopulation(
       transfers.push({ from: donors[0].bucket, to: recipients[0].bucket });
     }
     reason = transfers.length ? "relative-population" :
-      target.some(entry => entry.slots !== before.find(original => original.bucket === entry.bucket).slots)
-        ? "no-transferable-donor" : "integer-plan-unchanged";
+      hasSlotChanges ? "no-transferable-donor" : "integer-plan-unchanged";
   }
 
   return {
@@ -7755,7 +7733,7 @@ function adjustSlotsByRelativePopulation(
       bucketCandidateCounts: bucketCounts,
       reason,
       slotPlanBeforeAdjustment: before,
-      targetSlotPlan: target,
+      targetSlotPlan: target ?? before.map(entry => ({ ...entry })),
       slotPlanAfterAdjustment: after
     }
   };
@@ -9047,7 +9025,7 @@ function buildMatchingCandidates(
   );
 
   /* =====================================
-   * STEP7: 履歴分布を通常9枠へ配分
+   * STEP7: 履歴分布を通常9枠へ配分し、自ランク基準の人口構成で補正
    * STEP8: 個人推定確率によるバケット横断1枠を追加
    * ===================================== */
   const enabledRankKeys = [
