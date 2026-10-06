@@ -51,15 +51,18 @@ const LOG_STORAGE_LIMITS = {
  * allCandidatesは、時間・ランクUIフィルターおよびPink cooldown適用後の
  * スコア対象候補を、列固定の軽量配列形式で全件保存する。
  */
-const ANALYSIS_SCRIPT_VERSION = "softmax-14-analysis-v1";
+const ANALYSIS_SCRIPT_VERSION = "softmax-15-analysis-v1";
 const DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP = 0.03;
-const DEFAULT_PRIDE_POPULATION_ADJUSTMENT = Object.freeze({
+const DEFAULT_RELATIVE_POPULATION_ADJUSTMENT = Object.freeze({
   enabled: false,
-  viewerTiers: Object.freeze(["R7", "R8"]),
-  lowRubyMaxRank: 6,
-  lowRubyShareThreshold: 0.65,
+  viewerTiers: Object.freeze(["R6", "R7", "R8"]),
+  exponent: 0.5,
+  minMultiplier: 0.8,
+  maxMultiplier: 1.25,
   minFilteredCandidateCount: 50,
-  maxAdditionalSlots: 1
+  minSameRankCandidateCount: 5,
+  maxTransferredSlots: 1,
+  baselineByViewerTier: Object.freeze({})
 });
 
 /*
@@ -92,59 +95,60 @@ function getPhaseTieBreakRelativeGap() {
     : DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP;
 }
 
-function getPridePopulationAdjustmentConfig(
+function getRelativePopulationAdjustmentConfig(
   configured = State.scoringConfig
     ?.candidateSelection
     ?.slotAllocation
-    ?.pridePopulationAdjustment ?? {}
+    ?.relativePopulationAdjustment ?? {}
 ) {
-  const lowRubyMaxRank =
-    configured.lowRubyMaxRank ??
-    DEFAULT_PRIDE_POPULATION_ADJUSTMENT.lowRubyMaxRank;
-  if (
-    !Number.isInteger(lowRubyMaxRank) ||
-    lowRubyMaxRank < 1 ||
-    lowRubyMaxRank > 7
-  ) {
-    throw new Error(
-      "candidateSelection.slotAllocation.pridePopulationAdjustment.lowRubyMaxRank は1～7の整数を指定してください"
-    );
-  }
-  const threshold = Number(
-    configured.lowRubyShareThreshold ??
-    DEFAULT_PRIDE_POPULATION_ADJUSTMENT.lowRubyShareThreshold
-  );
-  const minFilteredCandidateCount = Number(
-    configured.minFilteredCandidateCount ??
-    DEFAULT_PRIDE_POPULATION_ADJUSTMENT.minFilteredCandidateCount
-  );
-  const maxAdditionalSlots = Number(
-    configured.maxAdditionalSlots ??
-    DEFAULT_PRIDE_POPULATION_ADJUSTMENT.maxAdditionalSlots
-  );
-
-  return {
+  const config = {
+    ...DEFAULT_RELATIVE_POPULATION_ADJUSTMENT,
+    ...configured,
     enabled: configured.enabled === true,
-    lowRubyMaxRank,
-    viewerTiers: Array.isArray(configured.viewerTiers)
-      ? configured.viewerTiers.filter(tier => ["R7", "R8"].includes(tier))
-      : [...DEFAULT_PRIDE_POPULATION_ADJUSTMENT.viewerTiers],
-    lowRubyShareThreshold: Number.isFinite(threshold)
-      ? clamp(threshold, 0, 1)
-      : DEFAULT_PRIDE_POPULATION_ADJUSTMENT.lowRubyShareThreshold,
-    minFilteredCandidateCount:
-      Number.isFinite(minFilteredCandidateCount)
-        ? Math.max(0, Math.floor(minFilteredCandidateCount))
-        : DEFAULT_PRIDE_POPULATION_ADJUSTMENT.minFilteredCandidateCount,
-    maxAdditionalSlots: Number.isFinite(maxAdditionalSlots)
-      ? clamp(Math.floor(maxAdditionalSlots), 0, 1)
-      : DEFAULT_PRIDE_POPULATION_ADJUSTMENT.maxAdditionalSlots
   };
+  const invalid = message => {
+    throw new Error(`candidateSelection.slotAllocation.relativePopulationAdjustment: ${message}`);
+  };
+  if (!Array.isArray(config.viewerTiers) ||
+      config.viewerTiers.some(tier => !["R6", "R7", "R8"].includes(tier))) {
+    invalid("viewerTiers はR6/R7/R8を指定してください");
+  }
+  for (const key of ["exponent", "minMultiplier", "maxMultiplier"]) {
+    if (typeof config[key] !== "number" || !Number.isFinite(config[key])) {
+      invalid(`${key} は有限の数値を指定してください`);
+    }
+  }
+  if (config.exponent < 0 || config.exponent > 1 ||
+      config.minMultiplier <= 0 || config.minMultiplier > 1 ||
+      config.maxMultiplier < 1) {
+    invalid("exponent は0～1、minMultiplier は0超～1、maxMultiplier は1以上を指定してください");
+  }
+  for (const key of ["minFilteredCandidateCount", "minSameRankCandidateCount", "maxTransferredSlots"]) {
+    if (!Number.isInteger(config[key]) || config[key] < 0) {
+      invalid(`${key} は0以上の整数を指定してください`);
+    }
+  }
+  if (config.minSameRankCandidateCount < 1 || config.maxTransferredSlots > 9) {
+    invalid("minSameRankCandidateCount は1以上、maxTransferredSlots は9以下を指定してください");
+  }
+  if (config.enabled) {
+    for (const tier of config.viewerTiers) {
+      const baseline = config.baselineByViewerTier?.[tier];
+      if (!baseline ||
+          ["lower", "same", "higher"].some(key =>
+            typeof baseline[key] !== "number" ||
+            !Number.isFinite(baseline[key]) || baseline[key] <= 0) ||
+          Math.abs(baseline.lower + baseline.same + baseline.higher - 1) > 0.000001) {
+        invalid(`${tier} の基準人口比率は正の数値で合計1にしてください`);
+      }
+    }
+  }
+  return config;
 }
 
 function getRubyPopulationGroups(
   rankCounts,
-  lowRubyMaxRank = getPridePopulationAdjustmentConfig().lowRubyMaxRank
+  lowRubyMaxRank = 6
 ) {
   const lowRubyRankKeys =
     Array.from({ length: lowRubyMaxRank }, (_, i) => `R${i + 1}`);
@@ -2005,8 +2009,8 @@ function applyScoringConfigJson(
   json
 ) {
 
-  getPridePopulationAdjustmentConfig(
-    json?.candidateSelection?.slotAllocation?.pridePopulationAdjustment ?? {}
+  getRelativePopulationAdjustmentConfig(
+    json?.candidateSelection?.slotAllocation?.relativePopulationAdjustment ?? {}
   );
   State.scoringConfig = json;
 
@@ -7459,7 +7463,8 @@ function buildMatchingSlotBucketProbabilities(
 function buildMatchingSlotPlan(
   candidates,
   slotCount,
-  bucketProbabilities
+  bucketProbabilities,
+  existingCapacities = null
 ) {
   const bucketOrder = [
     "R1",
@@ -7473,9 +7478,9 @@ function buildMatchingSlotPlan(
     "PRIDE"
   ];
 
-  const capacities = {};
+  const capacities = existingCapacities ? { ...existingCapacities } : {};
 
-  for (const player of candidates ?? []) {
+  for (const player of existingCapacities ? [] : candidates ?? []) {
     const bucket =
       getMatchingSlotBucketKey(
         player.__rankKey
@@ -7610,34 +7615,49 @@ function buildMatchingSlotPlan(
   }));
 }
 
-function adjustPrideSlotsByCandidatePopulation(
+function adjustSlotsByRelativePopulation(
   slotPlan,
   population,
   enabledRankKeys,
   viewerTier
 ) {
-  const config =
-    getPridePopulationAdjustmentConfig();
+  const config = getRelativePopulationAdjustmentConfig();
   const before =
     (slotPlan ?? []).map(entry => ({ ...entry }));
   const after =
     before.map(entry => ({ ...entry }));
   const rankCounts =
     population?.rankCounts ?? {};
-  const groups =
-    getRubyPopulationGroups(rankCounts, config.lowRubyMaxRank);
-  const ruby1To6 =
-    ["R1", "R2", "R3", "R4", "R5", "R6"]
-      .reduce((sum, key) => sum + Number(rankCounts[key] ?? 0), 0);
-  const ruby7To8 =
-    Number(rankCounts.R7 ?? 0) +
-    Number(rankCounts.R8 ?? 0);
-  const rubyTotal =
-    groups.rubyTotal;
-  const lowRubyShare =
-    rubyTotal > 0
-      ? groups.lowRubyCount / rubyTotal
-      : null;
+  const ownRank = Number(viewerTier?.slice(1));
+  const groupForBucket = bucket =>
+    bucket === "PRIDE" || Number(bucket.slice(1)) > ownRank
+      ? "higher"
+      : Number(bucket.slice(1)) === ownRank ? "same" : "lower";
+  const counts = { lower: 0, same: 0, higher: 0 };
+  const bucketCounts = {};
+  let invalidPopulation = !population?.rankCounts;
+  for (const key of [
+    "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8",
+    "P_A", "P_B", "P_C", "P_D", "P_E", "P_F", "P_G"
+  ]) {
+    const count = rankCounts[key] ?? 0;
+    if (!Number.isInteger(count) || count < 0) {
+      invalidPopulation = true;
+      continue;
+    }
+    const bucket = key.startsWith("P_") ? "PRIDE" : key;
+    bucketCounts[bucket] = (bucketCounts[bucket] ?? 0) + count;
+    counts[groupForBucket(bucket)] += count;
+  }
+  const total = counts.lower + counts.same + counts.higher;
+  invalidPopulation ||= total !== population?.classifiedCount;
+  const shares = Object.fromEntries(
+    Object.entries(counts).map(([key, count]) => [key, total > 0 ? count / total : null])
+  );
+  const baseline = config.baselineByViewerTier?.[viewerTier] ?? null;
+  const multipliers = { lower: 1, same: 1, higher: 1 };
+  const transfers = [];
+  let target = before.map(entry => ({ ...entry }));
   const allRanksSelected =
     enabledRankKeys?.length === 15 &&
     [
@@ -7645,54 +7665,71 @@ function adjustPrideSlotsByCandidatePopulation(
       "P_A", "P_B", "P_C", "P_D", "P_E", "P_F", "P_G"
     ].every(key => enabledRankKeys.includes(key));
   let reason = "disabled";
-  let donorBucket = null;
-  let applied = false;
-
   if (config.enabled !== true) {
     reason = "disabled";
   } else if (!config.viewerTiers.includes(viewerTier)) {
     reason = "viewer-tier-not-eligible";
   } else if (!allRanksSelected) {
     reason = "rank-filter-incomplete";
-  } else if (
-    Number(population?.classifiedCount ?? 0) <
-    config.minFilteredCandidateCount
-  ) {
+  } else if (invalidPopulation) {
+    reason = "invalid-population";
+    log("人口枠調整: ランク別人数とclassifiedCountが不整合のため調整を中止");
+  } else if (total < config.minFilteredCandidateCount) {
     reason = "population-below-minimum";
-  } else if (rubyTotal <= 0) {
-    reason = "no-ruby-candidates";
-  } else if (lowRubyShare > config.lowRubyShareThreshold) {
-    reason = "low-ruby-share-above-threshold";
-  } else if (config.maxAdditionalSlots < 1) {
-    reason = "max-additional-slots-is-zero";
+  } else if (counts.same < config.minSameRankCandidateCount) {
+    reason = "same-rank-population-below-minimum";
+  } else if (config.maxTransferredSlots === 0) {
+    reason = "max-transferred-slots-is-zero";
   } else {
-    const prideEntry =
-      after.find(entry => entry.bucket === "PRIDE");
-    const donors =
-      after
-        .filter(entry =>
-          groups.lowRubyRankKeys.includes(entry.bucket) &&
-          entry.slots > 0 &&
-          entry.capacity > entry.slots
-        )
-        .sort((a, b) =>
-          Number(rankCounts[a.bucket] ?? 0) -
-            Number(rankCounts[b.bucket] ?? 0) ||
-          a.probability - b.probability ||
-          a.bucket.localeCompare(b.bucket)
-        );
-
-    if (!prideEntry || prideEntry.capacity <= prideEntry.slots) {
-      reason = "no-pride-slot-capacity";
-    } else if (donors.length === 0) {
-      reason = "no-donor-slot";
-    } else {
-      donorBucket = donors[0].bucket;
-      donors[0].slots--;
-      prideEntry.slots++;
-      reason = "low-ruby-share";
-      applied = true;
+    for (const group of ["lower", "higher"]) {
+      const relativeChange = (shares[group] / shares.same) /
+        (baseline[group] / baseline.same);
+      multipliers[group] = clamp(
+        Math.pow(relativeChange, config.exponent),
+        config.minMultiplier,
+        config.maxMultiplier
+      );
     }
+    const weights = Object.fromEntries(before.map(entry => [
+      entry.bucket, entry.probability * multipliers[groupForBucket(entry.bucket)]
+    ]));
+    target = buildMatchingSlotPlan(
+      [],
+      before.reduce((sum, entry) => sum + entry.slots, 0),
+      weights,
+      Object.fromEntries(before.map(entry => [entry.bucket, entry.capacity]))
+    );
+    const targets = new Map(target.map(entry => [entry.bucket, entry]));
+    for (const entry of after) {
+      const adjusted = targets.get(entry.bucket);
+      entry.probability = adjusted.probability;
+      entry.rawQuota = adjusted.rawQuota;
+    }
+    for (let i = 0; i < config.maxTransferredSlots; i++) {
+      const donors = after.filter(entry =>
+        entry.slots > targets.get(entry.bucket).slots &&
+        entry.slots > 0 && entry.capacity > entry.slots
+      ).sort((a, b) =>
+        bucketCounts[a.bucket] - bucketCounts[b.bucket] ||
+        a.probability - b.probability ||
+        a.bucket.localeCompare(b.bucket)
+      );
+      const recipients = after.filter(entry =>
+        entry.slots < targets.get(entry.bucket).slots &&
+        entry.slots < entry.capacity
+      ).sort((a, b) =>
+        (b.rawQuota - b.slots) - (a.rawQuota - a.slots) ||
+        b.probability - a.probability ||
+        a.bucket.localeCompare(b.bucket)
+      );
+      if (!donors.length || !recipients.length) break;
+      donors[0].slots--;
+      recipients[0].slots++;
+      transfers.push({ from: donors[0].bucket, to: recipients[0].bucket });
+    }
+    reason = transfers.length ? "relative-population" :
+      target.some(entry => entry.slots !== before.find(original => original.bucket === entry.bucket).slots)
+        ? "no-transferable-donor" : "integer-plan-unchanged";
   }
 
   return {
@@ -7701,37 +7738,24 @@ function adjustPrideSlotsByCandidatePopulation(
       enabled: config.enabled,
       eligibleViewerTiers: config.viewerTiers,
       viewerTier,
-      lowRubyMaxRank: config.lowRubyMaxRank,
-      lowRubyRankKeys: groups.lowRubyRankKeys,
-      highRubyRankKeys: groups.highRubyRankKeys,
-      lowRubyShareThreshold: config.lowRubyShareThreshold,
+      exponent: config.exponent,
+      minMultiplier: config.minMultiplier,
+      maxMultiplier: config.maxMultiplier,
       minFilteredCandidateCount: config.minFilteredCandidateCount,
-      maxAdditionalSlots: config.maxAdditionalSlots,
-      population: {
-        filteredCandidateCount:
-          Number(population?.classifiedCount ?? 0),
-        ruby1To6,
-        ruby7To8,
-        lowRubyCount: groups.lowRubyCount,
-        highRubyCount: groups.highRubyCount,
-        rubyTotal,
-        lowRubyShare:
-          lowRubyShare === null
-            ? null
-            : Number(lowRubyShare.toFixed(6))
-      },
-      applied,
-      additionalSlots: applied ? 1 : 0,
-      donorBucket,
+      minSameRankCandidateCount: config.minSameRankCandidateCount,
+      maxTransferredSlots: config.maxTransferredSlots,
+      population: { filteredCandidateCount: total, counts, shares },
+      baseline,
+      baselineMetadata: config.baselineMetadata ?? null,
+      multipliers,
+      applied: transfers.length > 0,
+      transferredSlots: transfers.length,
+      transfers,
       donorSelectionBasis: "filtered-candidate-count",
-      donorCandidateCount: donorBucket === null
-        ? null
-        : Number(rankCounts[donorBucket] ?? 0),
-      donorCandidateCounts: Object.fromEntries(
-        groups.lowRubyRankKeys.map(key => [key, Number(rankCounts[key] ?? 0)])
-      ),
+      bucketCandidateCounts: bucketCounts,
       reason,
       slotPlanBeforeAdjustment: before,
+      targetSlotPlan: target,
       slotPlanAfterAdjustment: after
     }
   };
@@ -9052,7 +9076,7 @@ function buildMatchingCandidates(
       slotBucketProbabilities
     );
   const adjustedSlotPlan =
-    adjustPrideSlotsByCandidatePopulation(
+    adjustSlotsByRelativePopulation(
       originalSlotPlan,
       filteredPopulation,
       enabledRankKeys,
@@ -9233,8 +9257,9 @@ function buildMatchingCandidates(
       .map(entry => `${entry.bucket}:${entry.slots}`)
       .join(",") || "fallback"}` +
     `${State.matchingSlotAllocationDiagnostics?.applied
-      ? ` PRIDE枠調整=${State.matchingSlotAllocationDiagnostics.donorBucket}→PRIDE(+1)` +
-        ` lowRubyShare=${State.matchingSlotAllocationDiagnostics.population.lowRubyShare}`
+      ? ` 人口枠調整=${State.matchingSlotAllocationDiagnostics.transfers
+          .map(transfer => `${transfer.from}→${transfer.to}(+1)`).join(",")}` +
+        ` population=${JSON.stringify(State.matchingSlotAllocationDiagnostics.population.shares)}`
       : ""}` +
     `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
   );
@@ -12263,7 +12288,7 @@ function appendLog(
 
     } else if (
       type === "warn" ||
-      String(msg).includes("PRIDE枠調整=")
+      String(msg).includes("人口枠調整=")
     ) {
 
       line.style.color =
@@ -14716,7 +14741,7 @@ function saveCandidateEvent(
         })
       ),
 
-    pridePopulationSlotAdjustment:
+    relativePopulationSlotAdjustment:
       State.matchingSlotAllocationDiagnostics,
 
     crossBucketSelection:
