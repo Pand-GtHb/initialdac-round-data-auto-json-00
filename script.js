@@ -1060,7 +1060,10 @@ function ensureReloadViewerTime() {
     timeEl.id = "reloadViewerTime";
     timeEl.setAttribute("aria-live", "polite");
     button.appendChild(timeEl);
-    button.appendChild(document.createTextNode("　🔄 RELOAD"));
+    const labelEl = document.createElement("span");
+    labelEl.className = "reload-button-label";
+    labelEl.textContent = "　🔄 RELOAD";
+    button.appendChild(labelEl);
   }
   updateReloadViewerTime();
 }
@@ -11181,6 +11184,24 @@ function ensureAreaSummaryStyles() {
         padding-left: 2px !important;
         padding-right: 2px !important;
         font-size: 11px !important;
+      }
+
+      .matching-primary-row {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) 48px;
+      }
+
+      .matching-primary-row > button {
+        font-size: 13px !important;
+      }
+
+      .matching-primary-row > #reloadBtn {
+        padding-top: 6px;
+        padding-bottom: 6px;
+        line-height: 18px;
+      }
+
+      .reload-button-label {
+        display: block;
       }
 
       .area-summary-row {
