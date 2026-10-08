@@ -11186,11 +11186,13 @@ function ensureAreaSummaryStyles() {
         font-size: 11px !important;
       }
 
-      .matching-primary-row {
+      .matching-primary-row,
+      .summary-mode-nav {
         grid-template-columns: repeat(3, minmax(0, 1fr)) 48px;
       }
 
-      .matching-primary-row > button {
+      .matching-primary-row > button,
+      .summary-mode-nav > button {
         font-size: 13px !important;
       }
 
@@ -11202,6 +11204,10 @@ function ensureAreaSummaryStyles() {
 
       .reload-button-label {
         display: block;
+      }
+
+      #reloadViewerTime {
+        font-size: 16px;
       }
 
       .area-summary-row {
