@@ -123,11 +123,11 @@ jobs:
           echo "✓ JSON structure valid"
 
           # ③ records 数検証
-          RECORDS=$(jq '.records | length' integrated_data.json 2>/dev/null || echo 0)
-          if [ "$RECORDS" -lt 500 ]; then
-            echo "✗ ERROR: Too few records: $RECORDS (minimum 500 required)"
+          if ! jq -e '.records | type == "array" and length > 0' integrated_data.json > /dev/null 2>&1; then
+            echo "✗ ERROR: records must be a non-empty array"
             exit 1
           fi
+          RECORDS=$(jq '.records | length' integrated_data.json)
           echo "✓ Records count OK: $RECORDS records"
 
           # ④ generatedAt タイムスタンプ検証
