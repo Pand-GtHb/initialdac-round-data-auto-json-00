@@ -51,7 +51,7 @@ const LOG_STORAGE_LIMITS = {
  * allCandidatesは、時間・ランクUIフィルターおよびPink cooldown適用後の
  * スコア対象候補を、列固定の軽量配列形式で全件保存する。
  */
-const ANALYSIS_SCRIPT_VERSION = "softmax-15-analysis-v1";
+const ANALYSIS_SCRIPT_VERSION = "softmax-16-analysis-v1";
 const DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP = 0.03;
 const DEFAULT_RELATIVE_POPULATION_ADJUSTMENT = Object.freeze({
   enabled: false,
@@ -1031,6 +1031,38 @@ function formatClockHm(ms) {
     String(d.getMinutes()).padStart(2, "0");
 
   return `${hh}:${mm}`;
+}
+
+function updateReloadViewerTime() {
+  const timeEl = document.getElementById("reloadViewerTime");
+  if (!timeEl) return;
+  const parsed = parseDateJST(State.generatedAt);
+  timeEl.textContent = parsed
+    ? parsed.toLocaleTimeString("ja-JP", {
+        timeZone: "Asia/Tokyo",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      })
+    : "--:--";
+  timeEl.title = parsed
+    ? `Viewer読込済み更新時刻: ${State.generatedAt}`
+    : "Viewer読込済み更新時刻: 未取得";
+  timeEl.setAttribute("aria-label", timeEl.title);
+}
+
+function ensureReloadViewerTime() {
+  const button = document.getElementById("reloadBtn");
+  if (!button) return;
+  if (!document.getElementById("reloadViewerTime")) {
+    button.textContent = "⌚ ";
+    const timeEl = document.createElement("span");
+    timeEl.id = "reloadViewerTime";
+    timeEl.setAttribute("aria-live", "polite");
+    button.appendChild(timeEl);
+    button.appendChild(document.createTextNode("　🔄 RELOAD"));
+  }
+  updateReloadViewerTime();
 }
 
 /* =========================================================
@@ -2072,6 +2104,7 @@ function applyRoundDataJson(
 
   State.generatedAt =
     json?.generatedAt ?? "";
+  updateReloadViewerTime();
 
   const timeEl =
     document.getElementById(
@@ -10907,6 +10940,12 @@ function ensureAreaSummaryStyles() {
       white-space: nowrap;
     }
 
+    #reloadViewerTime {
+      white-space: nowrap;
+      font-size: inherit;
+      font-variant-numeric: tabular-nums;
+    }
+
     #searchRow {
       align-items: stretch;
       display: flex;
@@ -16095,6 +16134,8 @@ document.addEventListener(
     /* =====================================
      * Matching Back
      * ===================================== */
+
+    ensureReloadViewerTime();
 
     if (
       matchingBackBtn &&
