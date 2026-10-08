@@ -159,10 +159,10 @@ function buildSummaryPopulationText(total, rankCounts) {
     Number(rankCounts.R7 ?? 0) + Number(rankCounts.R8 ?? 0);
   const prideTotal = total - (lowRubyCount + highRubyCount);
   const percent = count => total ? Math.round(count / total * 100) : 0;
-  return `合計 ${fmt(total)}人： ` +
-    `R1～6＝${fmt(lowRubyCount)}人[${percent(lowRubyCount)}%] ＋ ` +
-    `R7～8＝${fmt(highRubyCount)}人[${percent(highRubyCount)}%] ＋ ` +
-    `PRIDE帯＝${fmt(prideTotal)}人[${percent(prideTotal)}%]`;
+  return `計${fmt(total)}人：` +
+    `R1～6＝${fmt(lowRubyCount)}人/${percent(lowRubyCount)}%・` +
+    `R7～8＝${fmt(highRubyCount)}人/${percent(highRubyCount)}%・` +
+    `PRIDE帯＝${fmt(prideTotal)}人/${percent(prideTotal)}%`;
 }
 
 function applyPhaseTieBreak(selectedCandidates, candidates, slotPlan, relativeGap) {
