@@ -30,6 +30,10 @@ const STATE = {
  [0020] Persistence Keys【永続化】（旧 [0030][1000][7140]）
 ========================================================= */
 const PERSIST_STATE_KEY = "initialdac_viewer_pink_state_v1";
+// R6の実予測は新しい読込世代ごとにhistorical率を蓄積（上限1）。
+// PRIDE人口40%以上かつ人口補正の増枠対象のときだけ使用し、同世代は再消費しない。
+const R6_PRIDE_FREQUENCY_STORAGE_KEY = "initialdac_r6_pride_frequency_v1";
+const R6_PRIDE_POPULATION_THRESHOLD = 0.4;
 
 const LOG_STORAGE_KEYS = {
   copyEvents: "initialdac_copy_events_"
@@ -51,7 +55,7 @@ const LOG_STORAGE_LIMITS = {
  * allCandidatesは、時間・ランクUIフィルターおよびPink cooldown適用後の
  * スコア対象候補を、列固定の軽量配列形式で全件保存する。
  */
-const ANALYSIS_SCRIPT_VERSION = "softmax-16-analysis-v1";
+const ANALYSIS_SCRIPT_VERSION = "softmax-16-analysis-v4";
 const DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP = 0.03;
 const DEFAULT_RELATIVE_POPULATION_ADJUSTMENT = Object.freeze({
   enabled: false,
@@ -7633,11 +7637,85 @@ function buildMatchingSlotPlan(
   }));
 }
 
+function prepareR6PrideFrequency(populationShare, advanceBudget) {
+  const distribution = getHistoricalDistribution("R6");
+  const historicalRate = distribution.prideProbabilityTotal;
+  const generationMs = parseDateJST(State.generatedAt)?.getTime();
+  const diagnostics = {
+    historicalRate,
+    populationShare,
+    populationThreshold: R6_PRIDE_POPULATION_THRESHOLD,
+    countingBasis: "saved-matching-new-data-generation",
+    maxCredit: 1,
+    countedGeneration: false,
+    creditBefore: null,
+    creditAfter: null,
+    granted: false,
+    reason: "historical-unavailable"
+  };
+  if (!(distribution.total > 0) || !Number.isFinite(historicalRate) ||
+      historicalRate < 0 || historicalRate > 1) {
+    log("R6 PRIDE頻度管理: historicalの対戦率が未取得または不正のためPRIDE増枠を見送り");
+    return { diagnostics, allowPride: false, ledger: null };
+  }
+  if (!Number.isFinite(generationMs)) {
+    diagnostics.reason = "generation-unavailable";
+    log("R6 PRIDE頻度管理: 読込データのgeneratedAtが不正のためPRIDE増枠を見送り");
+    return { diagnostics, allowPride: false, ledger: null };
+  }
+  let ledger;
+  try {
+    const raw = localStorage.getItem(R6_PRIDE_FREQUENCY_STORAGE_KEY);
+    ledger = raw ? JSON.parse(raw) : {
+      version: 1, lastGenerationMs: null, credit: 0, granted: false,
+      countedGenerations: 0, grantedGenerations: 0
+    };
+    if (ledger?.version !== 1 ||
+        !(ledger.lastGenerationMs === null || Number.isFinite(ledger.lastGenerationMs)) ||
+        !Number.isFinite(ledger.credit) || ledger.credit < 0 || ledger.credit > 1 ||
+        typeof ledger.granted !== "boolean" ||
+        !Number.isSafeInteger(ledger.countedGenerations) || ledger.countedGenerations < 0 ||
+        !Number.isSafeInteger(ledger.grantedGenerations) || ledger.grantedGenerations < 0 ||
+        ledger.grantedGenerations > ledger.countedGenerations) {
+      throw new Error("invalid R6 PRIDE frequency ledger");
+    }
+  } catch (error) {
+    console.warn("[R6 PRIDE frequency] restore failed", error);
+    log("R6 PRIDE頻度管理: 保存状態の読込に失敗したためPRIDE増枠を見送り");
+    diagnostics.reason = "storage-read-failed";
+    return { diagnostics, allowPride: false, ledger: null };
+  }
+  diagnostics.creditBefore = ledger.credit;
+  diagnostics.countedGenerationsBefore = ledger.countedGenerations;
+  diagnostics.grantedGenerationsBefore = ledger.grantedGenerations;
+  const isNewGeneration =
+    ledger.lastGenerationMs === null || generationMs > ledger.lastGenerationMs;
+  if (advanceBudget && isNewGeneration) {
+    ledger = {
+      ...ledger, lastGenerationMs: generationMs,
+      credit: Math.min(1, ledger.credit + historicalRate),
+      granted: false, countedGenerations: ledger.countedGenerations + 1
+    };
+    diagnostics.countedGeneration = true;
+  }
+  const sameGeneration = generationMs === ledger.lastGenerationMs;
+  const highPopulation = populationShare >= R6_PRIDE_POPULATION_THRESHOLD;
+  const allowPride = sameGeneration && highPopulation &&
+    (ledger.granted || (advanceBudget && ledger.credit >= 1 - 1e-12));
+  diagnostics.reason =
+    !sameGeneration ? "generation-not-counted" :
+    !highPopulation ? "pride-population-below-threshold" :
+    allowPride ? "eligible" : "credit-below-one";
+  diagnostics.creditAfter = ledger.credit;
+  return { diagnostics, allowPride, ledger };
+}
+
 function adjustSlotsByRelativePopulation(
   slotPlan,
   population,
   enabledRankKeys,
-  viewerTier
+  viewerTier,
+  { advancePrideBudget = false } = {}
 ) {
   const config = getRelativePopulationAdjustmentConfig();
   const before =
@@ -7674,6 +7752,7 @@ function adjustSlotsByRelativePopulation(
   const multipliers = { lower: 1, same: 1, higher: 1 };
   const transfers = [];
   let target = null;
+  let prideFrequency = null;
   const allRanksSelected =
     enabledRankKeys?.length === POPULATION_RANK_KEYS.length &&
     POPULATION_RANK_KEYS.every(key => enabledRankKeys.includes(key));
@@ -7720,6 +7799,21 @@ function adjustSlotsByRelativePopulation(
       entry.probability = adjusted.probability;
       entry.rawQuota = adjusted.rawQuota;
     }
+    // R6はRuby優先。PRIDE増枠は高人口時のみ、historical率で蓄積した権利を使う。
+    if (viewerTier === "R6") {
+      prideFrequency = prepareR6PrideFrequency(
+        bucketCounts.PRIDE / total,
+        advancePrideBudget
+      );
+    }
+    const recipientAllowed = entry =>
+      viewerTier !== "R6" || /^R[1-8]$/.test(entry.bucket) ||
+      (prideFrequency.allowPride && !transfers.some(transfer => transfer.to === "PRIDE"));
+    const hasEligibleRecipient = after.some(entry =>
+      recipientAllowed(entry) &&
+      entry.slots < targets.get(entry.bucket).slots &&
+      entry.slots < entry.capacity
+    );
     for (let i = 0; i < config.maxTransferredSlots; i++) {
       const donors = after.filter(entry =>
         entry.slots > targets.get(entry.bucket).slots &&
@@ -7730,9 +7824,13 @@ function adjustSlotsByRelativePopulation(
         a.bucket.localeCompare(b.bucket)
       );
       const recipients = after.filter(entry =>
+        recipientAllowed(entry) &&
         entry.slots < targets.get(entry.bucket).slots &&
         entry.slots < entry.capacity
       ).sort((a, b) =>
+        (prideFrequency?.allowPride
+          ? Number(b.bucket === "PRIDE") - Number(a.bucket === "PRIDE")
+          : 0) ||
         (b.rawQuota - b.slots) - (a.rawQuota - a.slots) ||
         b.probability - a.probability ||
         a.bucket.localeCompare(b.bucket)
@@ -7742,8 +7840,47 @@ function adjustSlotsByRelativePopulation(
       recipients[0].slots++;
       transfers.push({ from: donors[0].bucket, to: recipients[0].bucket });
     }
+    if (prideFrequency?.ledger) {
+      const frequency = prideFrequency.diagnostics;
+      const ledger = prideFrequency.ledger;
+      const prideTransfers = transfers.filter(transfer => transfer.to === "PRIDE");
+      const newGrant = prideTransfers.length > 0 && !ledger.granted;
+      if (newGrant) {
+        ledger.credit = Math.max(0, ledger.credit - 1);
+        ledger.granted = true;
+        ledger.grantedGenerations++;
+      }
+      if (frequency.countedGeneration || newGrant) {
+        try {
+          localStorage.setItem(R6_PRIDE_FREQUENCY_STORAGE_KEY, JSON.stringify(ledger));
+        } catch (error) {
+          console.warn("[R6 PRIDE frequency] save failed", error);
+          log("R6 PRIDE頻度管理: 保存に失敗したためPRIDE増枠を見送り");
+          for (const transfer of prideTransfers) {
+            after.find(entry => entry.bucket === transfer.from).slots++;
+            after.find(entry => entry.bucket === transfer.to).slots--;
+            transfers.splice(transfers.indexOf(transfer), 1);
+          }
+          frequency.reason = "storage-write-failed";
+        }
+      }
+      frequency.creditAfter = frequency.reason === "storage-write-failed"
+        ? frequency.creditBefore : ledger.credit;
+      frequency.granted = transfers.some(transfer => transfer.to === "PRIDE");
+      frequency.countedGeneration &&= frequency.reason !== "storage-write-failed";
+      frequency.countedGenerations = frequency.reason === "storage-write-failed"
+        ? frequency.countedGenerationsBefore : ledger.countedGenerations;
+      frequency.grantedGenerations = frequency.reason === "storage-write-failed"
+        ? frequency.grantedGenerationsBefore : ledger.grantedGenerations;
+      if (frequency.granted) {
+        frequency.reason = newGrant ? "granted" : "same-generation-grant";
+      } else if (frequency.reason === "eligible") {
+        frequency.reason = "no-pride-transfer";
+      }
+    }
     reason = transfers.length ? "relative-population" :
-      hasSlotChanges ? "no-transferable-donor" : "integer-plan-unchanged";
+      !hasSlotChanges ? "integer-plan-unchanged" :
+      !hasEligibleRecipient ? "no-eligible-recipient" : "no-transferable-donor";
   }
 
   return {
@@ -7766,6 +7903,8 @@ function adjustSlotsByRelativePopulation(
       transferredSlots: transfers.length,
       transfers,
       donorSelectionBasis: "filtered-candidate-count",
+      recipientSelectionScope: viewerTier === "R6" ? "ruby-with-pride-frequency-gate" : "all-buckets",
+      r6PrideFrequency: prideFrequency?.diagnostics ?? null,
       bucketCandidateCounts: bucketCounts,
       reason,
       slotPlanBeforeAdjustment: before,
@@ -8194,10 +8333,10 @@ function calcMatchingScoreDetail(
      * ならず、実績分析でも「Phase不一致(63.2%)時の平均realtimeBoostが
      * 1.19倍とまだ高いまま」という不十分な減衰が確認された。
      *
-     * ここでは phaseError（秒）の大きさに応じて
+     * PinkPhase一致時は追加減衰を掛けず、既存のPhase評価だけを残す。
+     * 不一致時は phaseError（秒）の大きさに応じて
      * exp(-phaseError / decaySec) で連続的に減衰させ、
      * floor（下限）を下回らないようにする。
-     * phaseError が 0 に近い（＝一致）ほど 1 に近づき、
      * ズレが大きいほど floor へ漸近する。
      */
     const pinkMismatchFloor =
@@ -8226,7 +8365,7 @@ function calcMatchingScoreDetail(
         );
 
     const pinkMismatchBoostFactor =
-        isPinkManaged
+        isPinkManaged && !pinkPhaseMatched
             ? Math.max(
                 pinkMismatchFloor,
                 Math.exp(
@@ -9094,7 +9233,8 @@ function buildMatchingCandidates(
       originalSlotPlan,
       filteredPopulation,
       enabledRankKeys,
-      mapRankKeyToTierKey(State.myRankKey)
+      mapRankKeyToTierKey(State.myRankKey),
+      { advancePrideBudget: saveEvent && mode === "matching" }
     );
   State.matchingSlotAllocationDiagnostics =
     adjustedSlotPlan.diagnostics;
