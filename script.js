@@ -55,8 +55,7 @@ const LOG_STORAGE_LIMITS = {
  * allCandidatesは、時間・ランクUIフィルターおよびPink cooldown適用後の
  * スコア対象候補を、列固定の軽量配列形式で全件保存する。
  */
-const ANALYSIS_SCRIPT_VERSION = "softmax-16-analysis-v4";
-const DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP = 0.03;
+const ANALYSIS_SCRIPT_VERSION = "softmax-18-analysis-v1";
 const DEFAULT_RELATIVE_POPULATION_ADJUSTMENT = Object.freeze({
   enabled: false,
   viewerTiers: Object.freeze(["R6", "R7", "R8"]),
@@ -87,20 +86,6 @@ function analysisChecksum(value) {
     hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-function getPhaseTieBreakRelativeGap() {
-  const configuredGap = Number(
-    State.scoringConfig
-      ?.candidateSelection
-      ?.slotAllocation
-      ?.phaseTieBreakRelativeGap ??
-    DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP
-  );
-
-  return Number.isFinite(configuredGap)
-    ? clamp(configuredGap, 0, 1)
-    : DEFAULT_PHASE_TIEBREAK_RELATIVE_GAP;
 }
 
 function getRelativePopulationAdjustmentConfig(
@@ -169,75 +154,10 @@ function buildSummaryPopulationText(total, rankCounts) {
     `PRIDE帯＝${fmt(prideTotal)}人[${percent(prideTotal)}%]`;
 }
 
-function applyPhaseTieBreak(selectedCandidates, candidates, slotPlan, relativeGap) {
-  const selected = [...selectedCandidates];
-  const swaps = [];
-  const phaseError = player => {
-    const value = player.__detail?.phaseError;
-    return typeof value === "number" && Number.isFinite(value)
-      ? Math.abs(value)
-      : Infinity;
-  };
-
-  for (const entry of slotPlan ?? []) {
-    if (entry.bucket === "PRIDE" || entry.slots <= 0) continue;
-
-    const bucket = (candidates ?? []).filter(player =>
-      player.__detail?.slotBucket === entry.bucket &&
-      !player.__detail?.isPinkManaged
-    );
-    const anchors = selected.filter(player =>
-      player.__detail?.slotBucket === entry.bucket &&
-      !player.__crossBucket &&
-      !player.__detail?.isPinkManaged
-    ).sort((a, b) =>
-      getCandidateSlotScore(b) - getCandidateSlotScore(a)
-    );
-
-    for (const anchor of anchors) {
-      const boundary =
-        getCandidateSlotScore(anchor) * (1 - relativeGap);
-      const alternatives = bucket.filter(player =>
-        !selected.includes(player) &&
-        getCandidateSlotScore(player) >= boundary &&
-        phaseError(player) < 60 &&
-        phaseError(player) < phaseError(anchor)
-      ).sort((a, b) =>
-        phaseError(a) - phaseError(b) ||
-        getCandidateSlotScore(b) - getCandidateSlotScore(a)
-      );
-
-      if (alternatives.length === 0) continue;
-
-      const replacement = alternatives[0];
-      selected[selected.indexOf(anchor)] = replacement;
-      swaps.push({
-        bucket: entry.bucket,
-        removed: {
-          name: anchor.name,
-          shopname: anchor.shopname ?? "",
-          slotScore: getCandidateSlotScore(anchor),
-          phaseError: phaseError(anchor)
-        },
-        added: {
-          name: replacement.name,
-          shopname: replacement.shopname ?? "",
-          slotScore: getCandidateSlotScore(replacement),
-          phaseError: phaseError(replacement)
-        }
-      });
-    }
-  }
-
-  return { selected, swaps };
-}
-
 function buildAnalysisDiagnostics() {
   const startedAt = performance.now();
   const pool = State.matchingRankedAll;
-  const current =
-    State.matchingPrePhaseTieBreak ??
-    State.matchingList;
+  const current = State.matchingList;
   const identify = p => ({
     name: p.name,
     shopname: p.shopname ?? "",
@@ -285,50 +205,6 @@ function buildAnalysisDiagnostics() {
     };
   };
   const comparisons = [];
-  for (const relativeGap of [0.01, 0.03, 0.05]) {
-    const selected = current.slice();
-    const phaseSwaps = [];
-    for (const entry of State.matchingSlotPlan) {
-      if (entry.bucket === "PRIDE" || entry.slots <= 0) continue;
-      const bucket = pool.filter(p =>
-        p.__detail?.slotBucket === entry.bucket &&
-        !p.__detail?.isPinkManaged
-      );
-      const anchors = current.filter(p =>
-        p.__detail?.slotBucket === entry.bucket &&
-        !p.__crossBucket && !p.__detail?.isPinkManaged
-      ).sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a));
-      for (const anchor of anchors) {
-        const boundary = getCandidateSlotScore(anchor) * (1 - relativeGap);
-        const error = p => {
-          const value = p.__detail?.phaseError;
-          return typeof value === "number" && Number.isFinite(value)
-            ? Math.abs(value) : Infinity;
-        };
-        const alternatives = bucket.filter(p =>
-          !selected.includes(p) &&
-          getCandidateSlotScore(p) >= boundary && error(p) < 60 &&
-          error(p) < error(anchor)
-        ).sort((a, b) =>
-          error(a) - error(b) ||
-          getCandidateSlotScore(b) - getCandidateSlotScore(a)
-        );
-        if (alternatives.length) {
-          const replacement = alternatives[0];
-          selected[selected.indexOf(anchor)] = replacement;
-          phaseSwaps.push({
-            removed: identify(anchor), added: identify(replacement)
-          });
-        }
-      }
-    }
-    comparisons.push(finish(
-      `phase-tiebreak-${relativeGap}`, {
-        relativeGap, phaseLimitSec: 60, sameBucketOnly: true,
-        excludePride: true, excludePinkManaged: true
-      }, selected, { phaseSwaps }
-    ));
-  }
 
   const rescuePool = pool.filter(p =>
     p.__detail?.slotBucket === "PRIDE" &&
@@ -364,8 +240,6 @@ function buildAnalysisDiagnostics() {
     phasePopulationSource: "scoredCandidates",
     phasePopulation,
     comparisons,
-    appliedPhaseTieBreak:
-      State.matchingPhaseTieBreakDiagnostics,
     computationMs: performance.now() - startedAt,
     provenance: {
       historicalMeta: State.historicalMatchupDistribution?.meta ?? null,
@@ -739,8 +613,6 @@ const State = {
   currentDetailLabel: "",
   currentDetailIcon: "",
   matchingList: [],
-  matchingPrePhaseTieBreak: null,
-  matchingPhaseTieBreakDiagnostics: null,
   matchingFilteredPopulationCount: 0,
   matchingCooldownExcludedCandidates: [],
   matchingRankedAll: [],
@@ -869,8 +741,6 @@ function syncMyRankSelection(
     State.activeCandidateEventId = null;
     State.latestCandidateEventIdForCopy = null;
     State.matchingList = [];
-    State.matchingPrePhaseTieBreak = null;
-    State.matchingPhaseTieBreakDiagnostics = null;
     State.matchingFilteredPopulationCount = 0;
     State.matchingCooldownExcludedCandidates = [];
     State.matchingScoredAll = [];
@@ -9266,30 +9136,6 @@ function buildMatchingCandidates(
     ...normalSelected,
     ...crossBucketSelected
   ];
-  State.matchingPrePhaseTieBreak =
-    selected.slice();
-  const phaseTieBreakRelativeGap =
-    getPhaseTieBreakRelativeGap();
-  const phaseTieBreakResult =
-    applyPhaseTieBreak(
-      selected,
-      scoreEligible,
-      State.matchingSlotPlan,
-      phaseTieBreakRelativeGap
-    );
-  selected.splice(
-    0,
-    selected.length,
-    ...phaseTieBreakResult.selected
-  );
-  State.matchingPhaseTieBreakDiagnostics = {
-    relativeGap: phaseTieBreakRelativeGap,
-    phaseLimitSec: 60,
-    sameBucketOnly: true,
-    excludePride: true,
-    excludePinkManaged: true,
-    swaps: phaseTieBreakResult.swaps
-  };
 
   /*
    * 【2026-09 改善6】Pink管理対象の最終表示枠占有数キャップ適用
@@ -16368,8 +16214,6 @@ document.addEventListener(
           ) {
 
             State.matchingList = [];
-            State.matchingPrePhaseTieBreak = null;
-            State.matchingPhaseTieBreakDiagnostics = null;
             State.matchingFilteredPopulationCount = 0;
             State.matchingCooldownExcludedCandidates = [];
 
