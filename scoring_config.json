@@ -1,9 +1,9 @@
 {
   "meta": {
-    "version": "scoring_config_v28_relative_population_adjustment_20261006",
+    "version": "scoring_config_v29_phase_tiebreak_removed_20261012",
     "createdAt": "2026-09-26T09:15:11+09:00",
-    "modifiedAt": "2026-10-06T12:00:00+09:00",
-    "description": "ViewerのFilter既定値と自ランク既定値はviewerDefaultsで管理する。通常9枠はhistoricalの自ランク別確率を基本とし、relativePopulationAdjustmentで下位・同格・上位の現在人口構成を補正する。時間・全ランクフィルター後、Pink cooldown除外前のRuby＋PRIDE分類人数を母数とする。下位・上位の係数は((現在群比率/現在同格比率)/(基準群比率/基準同格比率))^exponentをminMultiplier～maxMultiplierに制限し、同格係数は1とする。係数をhistoricalのバケット確率へ乗算して再配分するが、現行の未補正配分からmaxTransferredSlotsまでの移動に制限する。寄付元は補正目標より枠が多く、通常枠が1以上かつ容量に余裕があるバケットのうち、フィルター後人口が最少のものを選ぶ。同数なら補正後確率、バケット名順。人口基準は10/1～10/5のコピー時スナップショットを自ランクに依存せず重複除外した57件の比率平均で、R8の基準も同じランク人数から算出した暫定値。基準は固定、現在人口は予測ごとに更新する。全ランク選択かつ最小母数・同格最小人数を満たすR6/R7/R8のみ対象。旧PRIDE専用枠調整は廃止し重ね掛けしない。枠内順位、横断1枠、Phase、AREA、Yellow/Pink、softmaxBacktestは変更しない。ランク・エリアサマリはR1～6、R7～8、PRIDEの3帯表示を維持する。発動ログの人口枠調整は黄色表示、candidate eventのrelativePopulationSlotAdjustmentに基準・現在人口・係数・補正前/目標/補正後配分・移動理由を保存する。候補人口はゲーム全体の待機人数ではない。phaseTieBreakRelativeGapは通常Ruby枠のPhase優先設定、prideBandPriorExponentとprideBandDiversityGapThresholdはPRIDE枠内の既存選出設定であり維持する。areaBoost.recentMatchは直近コピーのエリア頻度による既存加点。Pink管理上限、Phase不一致減衰、experimental.softmaxBacktestの診断専用動作も維持する。新版Script -15と併用する。"
+    "modifiedAt": "2026-10-12T13:38:00+09:00",
+    "description": "ViewerのFilter既定値と自ランク既定値はviewerDefaultsで管理する。通常9枠はhistoricalの自ランク別確率を基本とし、relativePopulationAdjustmentで下位・同格・上位の現在人口構成を補正する。時間・全ランクフィルター後、Pink cooldown除外前のRuby＋PRIDE分類人数を母数とする。下位・上位の係数は((現在群比率/現在同格比率)/(基準群比率/基準同格比率))^exponentをminMultiplier～maxMultiplierに制限し、同格係数は1とする。係数をhistoricalのバケット確率へ乗算して再配分するが、現行の未補正配分からmaxTransferredSlotsまでの移動に制限する。寄付元は補正目標より枠が多く、通常枠が1以上かつ容量に余裕があるバケットのうち、フィルター後人口が最少のものを選ぶ。同数なら補正後確率、バケット名順。人口基準は10/1～10/5のコピー時スナップショットを自ランクに依存せず重複除外した57件の比率平均で、R8の基準も同じランク人数から算出した暫定値。基準は固定、現在人口は予測ごとに更新する。全ランク選択かつ最小母数・同格最小人数を満たすR6/R7/R8のみ対象。旧PRIDE専用枠調整は廃止し重ね掛けしない。Phase枠内入替は廃止し、通常枠と横断1枠は既存の各選出スコア順を維持する。AREA、Yellow/Pink、softmaxBacktestは変更しない。ランク・エリアサマリはR1～6、R7～8、PRIDEの3帯表示を維持する。発動ログの人口枠調整は黄色表示、candidate eventのrelativePopulationSlotAdjustmentに基準・現在人口・係数・補正前/目標/補正後配分・移動理由を保存する。候補人口はゲーム全体の待機人数ではない。prideBandPriorExponentとprideBandDiversityGapThresholdはPRIDE枠内の既存選出設定として維持する。areaBoost.recentMatchは直近コピーのエリア頻度による既存加点。Pink管理上限、Phase判定・不一致減衰、experimental.softmaxBacktestの診断専用動作も維持する。新版Script -18と併用する。"
   },
   "viewerDefaults": {
     "filterMinutes": 30,
@@ -14,7 +14,6 @@
     "slotAllocation": {
       "prideBandPriorExponent": 0.5,
       "prideBandDiversityGapThreshold": 0.08,
-      "phaseTieBreakRelativeGap": 0.03,
       "relativePopulationAdjustment": {
         "enabled": true,
         "viewerTiers": [
