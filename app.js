@@ -1,0 +1,16030 @@
+(function (root, factory) {
+  if (typeof define === "function" && define.amd) {
+    define([
+      "./utils.js",
+      "./domain.js",
+      "./persistence.js",
+      "./data.js",
+      "./matching.js",
+      "./ui.js"
+    ], factory);
+  } else if (typeof module === "object" && module.exports) {
+    module.exports = factory(
+      require("./utils.js"),
+      require("./domain.js"),
+      require("./persistence.js"),
+      require("./data.js"),
+      require("./matching.js"),
+      require("./ui.js")
+    );
+  } else {
+    root.ViewerApp = factory(
+      root.ViewerUtils,
+      root.ViewerDomain,
+      root.ViewerPersistence,
+      root.ViewerData,
+      root.ViewerMatching,
+      root.ViewerUI
+    );
+  }
+})(typeof globalThis !== "undefined" ? globalThis : this, function (
+  ViewerUtils,
+  ViewerDomain,
+  ViewerPersistence,
+  ViewerData,
+  ViewerMatching,
+  ViewerUI
+) {
+  "use strict";
+
+
+/* #################################################################
+ [LAYER 0000] Configuration / Constants
+ ################################################################# */
+
+/* =========================================================
+ [0000] Core Config（旧 [0000]）
+========================================================= */
+const BASE_URL =
+  "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
+
+const DEFAULT_UPDATE_WATCH_CONFIG = Object.freeze({
+  enabled: true,
+  unrestricted: true,
+  timezoneOffsetMinutes: 540,
+  intervalSeconds: 30,
+  windows: Object.freeze([])
+});
+
+/* =========================================================
+ [0010] View State Enum（旧 [0010]）
+========================================================= */
+const STATE = {
+  SUMMARY: "summary",
+  DETAIL: "detail",
+  MATCHING: "matching"
+};
+
+/* =========================================================
+ [0020] Persistence Keys【永続化】（旧 [0030][1000][7140]）
+========================================================= */
+const PERSIST_STATE_KEY = "initialdac_viewer_pink_state_v1";
+// R6の実予測は新しい読込世代ごとにhistorical率を蓄積（上限1）。
+// PRIDE人口40%以上かつ人口補正の増枠対象のときだけ使用し、同世代は再消費しない。
+const R6_PRIDE_FREQUENCY_STORAGE_KEY = "initialdac_r6_pride_frequency_v1";
+const R6_PRIDE_POPULATION_THRESHOLD = 0.4;
+
+const LOG_STORAGE_KEYS = {
+  copyEvents: "initialdac_copy_events_"
+};
+
+const LOG_STORAGE_LIMITS = {
+  copyEvents: 200,
+  /*
+   * 【2026-09 ログ量対策】candidateEvents（IndexedDB）は
+   * 従来、件数上限・自動整理が無く無制限に蓄積されていた。
+   * copyEvents 1件あたり平均 candidateEvents 約2.5件が
+   * 記録される実測値から、100戦分の履歴を保持できる
+   * 余裕を見て上限を設定する。
+   */
+  candidateEvents: 300
+};
+
+/*
+ * allCandidatesは、時間・ランクUIフィルターおよびPink cooldown適用後の
+ * スコア対象候補を、列固定の軽量配列形式で全件保存する。
+ */
+const ANALYSIS_SCRIPT_VERSION = "softmax-18-analysis-v1";
+const DEFAULT_RELATIVE_POPULATION_ADJUSTMENT = Object.freeze({
+  enabled: false,
+  viewerTiers: Object.freeze(["R6", "R7", "R8"]),
+  exponent: 0.5,
+  minMultiplier: 0.8,
+  maxMultiplier: 1.25,
+  minFilteredCandidateCount: 50,
+  minSameRankCandidateCount: 5,
+  maxTransferredSlots: 1,
+  baselineByViewerTier: Object.freeze({})
+});
+const POPULATION_RANK_KEYS = Object.freeze([
+  "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8",
+  "P_A", "P_B", "P_C", "P_D", "P_E", "P_F", "P_G"
+]);
+
+/*
+ * -10: 本番選出・学習・保存上限は維持する。
+ * 候補外記録のsearchMemoは部分文字列でもよく、相手名ではない。
+ * CSVの自ランク・店舗・前後の実績と照合し、曖昧なら未確定を維持する。
+ * 比較案は完全な選出可能候補で計算し、結果だけ保存する。
+ * phase-tiebreakは通常Ruby枠のみ、PRIDE救済は既存横断枠を置換する仮説。
+ */
+function analysisChecksum(value) {
+  const text = JSON.stringify(value);
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function getRelativePopulationAdjustmentConfig(
+  configured = State.scoringConfig
+    ?.candidateSelection
+    ?.slotAllocation
+    ?.relativePopulationAdjustment ?? {}
+) {
+  const config = {
+    ...DEFAULT_RELATIVE_POPULATION_ADJUSTMENT,
+    ...configured,
+    enabled: configured.enabled === true,
+  };
+  const invalid = message => {
+    throw new Error(`candidateSelection.slotAllocation.relativePopulationAdjustment: ${message}`);
+  };
+  if (!Array.isArray(config.viewerTiers) ||
+      config.viewerTiers.some(tier => !["R6", "R7", "R8"].includes(tier))) {
+    invalid("viewerTiers はR6/R7/R8を指定してください");
+  }
+  for (const key of ["exponent", "minMultiplier", "maxMultiplier"]) {
+    if (typeof config[key] !== "number" || !Number.isFinite(config[key])) {
+      invalid(`${key} は有限の数値を指定してください`);
+    }
+  }
+  if (config.exponent < 0 || config.exponent > 1 ||
+      config.minMultiplier <= 0 || config.minMultiplier > 1 ||
+      config.maxMultiplier < 1) {
+    invalid("exponent は0～1、minMultiplier は0超～1、maxMultiplier は1以上を指定してください");
+  }
+  for (const key of ["minFilteredCandidateCount", "minSameRankCandidateCount", "maxTransferredSlots"]) {
+    if (!Number.isInteger(config[key]) || config[key] < 0) {
+      invalid(`${key} は0以上の整数を指定してください`);
+    }
+  }
+  if (config.minSameRankCandidateCount < 1 || config.maxTransferredSlots > 9) {
+    invalid("minSameRankCandidateCount は1以上、maxTransferredSlots は9以下を指定してください");
+  }
+  if (config.enabled) {
+    for (const tier of config.viewerTiers) {
+      const baseline = config.baselineByViewerTier?.[tier];
+      if (!baseline ||
+          ["lower", "same", "higher"].some(key =>
+            typeof baseline[key] !== "number" ||
+            !Number.isFinite(baseline[key]) || baseline[key] <= 0) ||
+          Math.abs(baseline.lower + baseline.same + baseline.higher - 1) > 0.000001) {
+        invalid(`${tier} の基準人口比率は正の数値で合計1にしてください`);
+      }
+    }
+  }
+  return config;
+}
+
+function buildSummaryPopulationText(total, rankCounts) {
+  let lowRubyCount = 0;
+  for (let rank = 1; rank <= 6; rank++) {
+    lowRubyCount += Number(rankCounts[`R${rank}`] ?? 0);
+  }
+  const highRubyCount =
+    Number(rankCounts.R7 ?? 0) + Number(rankCounts.R8 ?? 0);
+  const prideTotal = total - (lowRubyCount + highRubyCount);
+  const percent = count => total ? Math.round(count / total * 100) : 0;
+  return `計${fmt(total)}人：` +
+    `R1～6＝${fmt(lowRubyCount)}人[${percent(lowRubyCount)}%]・` +
+    `R7～8＝${fmt(highRubyCount)}人[${percent(highRubyCount)}%]・` +
+    `PRIDE帯＝${fmt(prideTotal)}人[${percent(prideTotal)}%]`;
+}
+
+function buildAnalysisDiagnostics() {
+  const startedAt = performance.now();
+  const pool = State.matchingRankedAll;
+  const current = State.matchingList;
+  const identify = p => ({
+    name: p.name,
+    shopname: p.shopname ?? "",
+    rankKey: p.__rankKey,
+    slotScore: getCandidateSlotScore(p)
+  });
+  const phasePopulation = {};
+  for (const p of State.matchingScoredAll) {
+    const key = p.__rankKey;
+    const group = phasePopulation[key] ??= {
+      count: 0, phaseUnknown: 0, phaseUnder30: 0,
+      phase30To60: 0, phase60OrMore: 0, pinkManaged: 0
+    };
+    group.count++;
+    if (p.__detail?.isPinkManaged) group.pinkManaged++;
+    const error = p.__detail?.phaseError;
+    if (typeof error !== "number" || !Number.isFinite(error)) {
+      group.phaseUnknown++;
+    } else if (Math.abs(error) < 30) {
+      group.phaseUnder30++;
+    } else if (Math.abs(error) < 60) {
+      group.phase30To60++;
+    } else {
+      group.phase60OrMore++;
+    }
+  }
+
+  const finish = (id, parameters, selected, extra = {}) => {
+    const clones = new Map(pool.map(p => [
+      p, { ...p, __detail: { ...p.__detail } }
+    ]));
+    const originals = new Map([...clones].map(([p, clone]) => [clone, p]));
+    const capped = applyPinkManagedSlotCap(
+      selected.map(p => clones.get(p)), pool.map(p => clones.get(p)),
+      State.matchingPinkCapDiagnostics?.maxPinkManagedSlots ??
+        DEFAULT_MAX_PINK_MANAGED_SLOTS
+    ).finalSelected.map(p => originals.get(p));
+    return {
+      id, parameters, status: "computed",
+      evaluatedCandidateCount: pool.length,
+      candidates: capped.map(identify),
+      added: capped.filter(p => !current.includes(p)).map(identify),
+      removed: current.filter(p => !capped.includes(p)).map(identify),
+      ...extra
+    };
+  };
+  const comparisons = [];
+
+  const rescuePool = pool.filter(p =>
+    p.__detail?.slotBucket === "PRIDE" &&
+    !current.includes(p) && !p.__detail?.isPinkManaged &&
+    typeof p.__detail?.phaseError === "number" &&
+    Number.isFinite(p.__detail.phaseError) &&
+    Math.abs(p.__detail.phaseError) < 60 &&
+    Number(p.__detail?.prideBandPriorWeight) > 0
+  );
+  const rescueScore = p =>
+    getCandidateSlotScore(p) / p.__detail.prideBandPriorWeight;
+  rescuePool.sort((a, b) => rescueScore(b) - rescueScore(a));
+  const rescue = rescuePool[0];
+  const cross = current.find(p => p.__crossBucket);
+  const selected = current.slice();
+  const eligibleViewer = /^R[78]$/.test(mapRankKeyToTierKey(State.myRankKey));
+  if (eligibleViewer && rescue && cross) {
+    selected[selected.indexOf(cross)] = rescue;
+  }
+  comparisons.push(finish("pride-rescue-cross-slot", {
+    phaseLimitSec: 60, excludePinkManaged: true,
+    eligibleViewerTiers: ["R7", "R8"],
+    replacementRule: "replace-existing-cross-slot",
+    removeBandPriorForRescueOnly: true
+  }, selected, {
+    applied: Boolean(eligibleViewer && rescue && cross),
+    rescue: rescue ? { ...identify(rescue), rescueScore: rescueScore(rescue) } : null,
+    replacement: eligibleViewer && rescue && cross ? identify(cross) : null
+  }));
+  return {
+    version: ANALYSIS_SCRIPT_VERSION,
+    evaluatedAt: State.matchingContext.evaluationTimeMs,
+    phasePopulationSource: "scoredCandidates",
+    phasePopulation,
+    comparisons,
+    computationMs: performance.now() - startedAt,
+    provenance: {
+      historicalMeta: State.historicalMatchupDistribution?.meta ?? null,
+      historicalChecksum: analysisChecksum(State.historicalMatchupDistribution),
+      scoringConfigChecksum: analysisChecksum(State.scoringConfig),
+      historicalSampleCount: pool[0]?.__detail?.ownSampleCount ?? null,
+      scoringConfig: State.scoringConfig
+    }
+  };
+}
+
+function recordUnmatchedSearchMemo() {
+  const input = document.getElementById("searchInput");
+  const searchMemo = String(input?.value ?? "").trim();
+  if (!searchMemo) {
+    logWarn("候補外記録：検索欄に照合用メモを入力してください");
+    return;
+  }
+  const id = State.latestCandidateEventIdForCopy ?? State.activeCandidateEventId;
+  const candidateEventId =
+    id && State.matchingContext?.mode !== "preview"
+      ? id
+      : null;
+  const t = Date.now();
+  const record = {
+    t, dk: buildDailyKey(), logSchemaVersion: ANALYSIS_SCRIPT_VERSION,
+    recordKind: "unmatched-search-memo",
+    matchEventId: `manual-${crypto.randomUUID()}`,
+    searchMemo, n: null, shopname: null, opponentTier: null,
+    identityStatus: "unresolved", linkSource: candidateEventId
+      ? "automatic-latest-prediction" : "no-prediction-available",
+    candidateEventId, viewerTier: mapRankKeyToTierKey(State.myRankKey),
+    matchStartedAt: null, wasInTop10: null,
+    predictionSnapshotAvailable: false, unmatchedPlayer: true,
+    scoreSource: "unavailable",
+    populationAtCopy: {
+      integratedData: buildRankPopulationSnapshot(State.all),
+      filteredData: buildRankPopulationSnapshot(State.filtered)
+    },
+    integratedDataGeneratedAtAtCopy: State.generatedAt || null,
+    dataPresenceStatus: "user-reported-absent-not-verified",
+    dataPresenceObservedAt: t
+  };
+  const key = LOG_STORAGE_KEYS.copyEvents + record.dk;
+  const records = readStoredArraySafe(key);
+  try {
+    localStorage.setItem(
+      key, JSON.stringify([record, ...records].slice(0, LOG_STORAGE_LIMITS.copyEvents))
+    );
+  } catch (error) {
+    console.error("候補外記録の保存失敗", error);
+    logError(`候補外記録の保存失敗：${error.message}`);
+    return;
+  }
+  logEvent("copy", record);
+  log(`候補外対戦メモを保存：${searchMemo}（相手名未確定）`);
+  let temporaryInput = null;
+  try {
+    temporaryInput = document.createElement("textarea");
+    temporaryInput.value = searchMemo;
+    temporaryInput.setAttribute("readonly", "");
+    temporaryInput.style.position = "fixed";
+    temporaryInput.style.opacity = "0";
+    document.body.appendChild(temporaryInput);
+    temporaryInput.select();
+    temporaryInput.setSelectionRange(0, temporaryInput.value.length);
+    const copied = document.execCommand("copy");
+    temporaryInput.remove();
+
+    if (copied) {
+      log(`候補外メモをクリップボードにコピー：${searchMemo}`);
+      return;
+    }
+
+    if (!navigator.clipboard?.writeText) {
+      throw new Error("Clipboard APIを利用できません");
+    }
+    navigator.clipboard.writeText(searchMemo)
+      .then(() => log(`候補外メモをクリップボードにコピー：${searchMemo}`))
+      .catch(error =>
+        logError(`候補外メモのクリップボードコピー失敗：${error.message}`)
+      );
+  } catch (error) {
+    temporaryInput?.remove();
+    logError(`候補外メモのクリップボードコピー失敗：${error.message}`);
+  }
+}
+
+
+/*
+ * 【2026-09 ログ量対策②】allCandidates 配列化フォーマット
+ *
+ * 従来は候補1件ごとに { globalScoreRank: ..., name: ..., ... }
+ * というキー名付きオブジェクトで保存しており、候補数が
+ * 100～300件規模になるとキー名の重複だけでファイルサイズの
+ * 大きな割合を占めていた。
+ *
+ * ここでは同じ情報を「列の並び順を固定した配列（行）」として
+ * 保存し、列名は candidateEvent 1件につき1回だけ
+ * allCandidatesColumns として記録する（自己記述的で、
+ * 後から列の意味が分かるようにする）。
+ *
+ * 追加項目（2026-09 予測精度改善策の検証用）:
+ *   isPinkManaged     : historicalScore/リアルタイムブーストの
+ *                        適用条件検証用
+ *   historicalBackoff : historicalScoreがバックオフ値かどうか
+ *                        （historicalScoreの信頼性検証用）
+ *   decay             : Phase周期減衰。これが無いと
+ *                        「実際の周期ズレ」と「経過周期数による
+ *                        減衰」を区別できず、Matchingボタンの
+ *                        最適タイミング分析ができなかったため追加。
+ *
+ * 除外した項目（イベント側へ統合）:
+ *   ownSampleCount / adjacentSampleCount / minOwnSamplesForNoBackoff は
+ *   同一candidateEvent内で全候補共通値（viewerTierのみに依存し
+ *   opponentTierに依存しないことを実データで確認済み）のため、
+ *   候補ごとの重複記録をやめ、candidateEventレコード側に
+ *   1回だけ記録する。
+ */
+const ALL_CANDIDATES_COLUMNS = [
+  "globalScoreRank",
+  "name",
+  "shopname",
+  "rankKey",
+  "area",
+  "score",
+  "wasDisplayed",
+  "displayRank",
+  "isCrossBucket",
+  "crossBucketRank",
+  "crossBucketScore",
+  "crossBucketSelectionReason",
+  "isPinkManaged",
+  "pinkPhaseMatched",
+  "pinkMismatchBoostFactor",
+  "historicalScore",
+  "historicalBackoff",
+  "tierProbability",
+  "playerBoost",
+  "rankBoost",
+  "realtimeBoost",
+  "playerActivitySignal",
+  "rankActivitySignal",
+  "playerRealtimeBonus",
+  "rankRealtimeBonus",
+  "realtimeBonusBeforeCap",
+  "realtimeBonusCap",
+  "slotScore",
+  "slotBucket",
+  "slotRank",
+  "prideBandPriorWeight",
+  "areaBucketCount",
+  "areaTotalCount",
+  "areaDensity",
+  "areaBoost",
+  "recentAreaMatchCount5",
+  "recentAreaMatchCount10",
+  "recentAreaMatchCount20",
+  "recentAreaMatchCountWindow",
+  "loggedAreaMatchCount",
+  "loggedAreaMatchSampleCount",
+  "loggedAreaMatchRate",
+  "recentAreaMatchDensityWindow",
+  "recentAreaCounterfactualBoostWindow",
+  "recentAreaCounterfactualSlotScore",
+  "recentAreaCounterfactualSlotRank",
+  "areaBucketScoredCandidateCount",
+  "areaBucketPhaseMatchedCount",
+  "areaBucketPhaseMatchCount30",
+  "areaBucketPhaseMatchCount60",
+  "areaBucketPhaseScoreSum",
+  "areaBucketPeerPhaseMatchedCount",
+  "areaBucketPeerPhaseMatchCount30",
+  "areaBucketPeerPhaseScoreSum",
+  "areaBucketTop3BaseScoreSum",
+  "areaPhaseDensity30",
+  "areaPhaseCounterfactualBoost",
+  "areaPhaseCounterfactualSlotScore",
+  "areaPhaseCounterfactualSlotRank",
+  "phaseError",
+  "signedPhaseError",
+  "peakDirection",
+  "phaseBucket",
+  "phaseScore",
+  "decay",
+  "finalPhaseScore",
+  "effectivePhaseScore",
+  "phaseWeight",
+  "phaseSampleCount",
+  "phaseTrust",
+  "phaseAdjustValue"
+];
+
+const MAX_YELLOW_PHASE_WEIGHT = 0.55;
+
+/*
+ * 【2026-09 改善6：C-3ハイブリッド計画 フェーズA】
+ * Pinkリアルタイムブースト過大問題の実績分析
+ * （viewer_analysis_20260919.json, 母集団n=8,786・実績n=25）により、
+ * 以下が判明した：
+ *   ・Pink管理対象は母集団の7.18%しか存在しないのに、
+ *     最終表示10枠の21.00%を占有（母比2.92倍）。
+ *   ・realtimeBoostを1.0に固定（＝ブースト無効化）した反実仮想では
+ *     占有率が9.43%まで低下＝超過占有の大半はブースト自体が原因。
+ *   ・実績25件中、コピー時点で既にPink管理対象だったのは1件(4%)のみ、
+ *     かつそのケースも表示枠に入らなかった（PRIDE72位）。
+ *   ・Phase不一致(63.2%)時でも平均realtimeBoostは1.19倍と高いまま＝
+ *     旧来の一律0.5倍減衰(PINK_MISMATCH_BOOST_FACTOR)では不十分。
+ * 上記の裏付けに基づき、cap/weightの引き下げと、
+ * Phase不一致減衰の段階化（phaseErrorに応じた指数減衰）、
+ * および最終表示枠でのPink管理対象占有数キャップを導入する。
+ * 【2026-09 改善8：Phase専用枠からバケット横断枠への置換】
+ * 2026/09/20ログの反実仮想検証では、Phase救済枠からの的中は0件。
+ * 一方で通常9枠のバケット内Phase補正を除くと的中が4件から2件へ
+ * 低下したため、バケット内Phase補正は維持し、Phase専用1枠だけを
+ * 個人推定マッチング確率によるバケット横断1枠へ置き換える。
+ * 通常枠を9から10へ増やすと最大剰余法の非単調性によりR4枠が
+ * 1から0へ減る事例があったため、通常9枠の配分は変更しない。
+ *
+ * 【2026-09 改善7：PRIDEバンド多様性の閾値緩和】
+ * 実績11件（PRIDEバケツ）の反実仮想比較で、多様性ルールにより
+ * 機会損失2件・恩恵0件という非対称な結果が確認された
+ * （東雲水夏だぁ・ＫＯＴＯＫＯの両名は、自身より明確にスコアが
+ * 低い別バンド候補に枠を譲る形で落選）。
+ * 「同バンド上位者とのスコア差が僅少な場合のみ多様性を適用しない」
+ * という閾値付き緩和（prideBandDiversityGapThreshold）を導入する。
+ *
+ * 【将来検討：ソフトマックス選択モデル（C-3ハイブリッドのフェーズB）】
+ * 上記フェーズAとは独立に、本番の表示選出（State.matchingList）には
+ * 一切影響を与えない「バックテスト用プレビュー」として、
+ * Plackett-Luce型のソフトマックス重み付き逐次サンプリングを
+ * candidateEvent ログにのみ記録する（computeSoftmaxBacktestPreview）。
+ * 温度パラメータ等の妥当性は現時点のデータ量（1日・実績25件）では
+ * 検証できないため、本番選出ロジックの置き換えは行わない。
+ */
+const DEFAULT_PINK_MISMATCH_FLOOR = 0.3;
+const DEFAULT_PINK_MISMATCH_DECAY_SEC = 60;
+const DEFAULT_PHASE_ERROR_SCALE_SEC = 90;
+const DEFAULT_AREA_BOOST_WEIGHT = 0.05;
+const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
+const DEFAULT_RECENT_AREA_BOOST_ENABLED = true;
+const DEFAULT_RECENT_AREA_BOOST_WEIGHT = 0.1;
+const MAX_RECENT_AREA_BOOST_WEIGHT = 0.1;
+const DEFAULT_RECENT_AREA_MATCH_WINDOW_SIZE = 10;
+const DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT = 0.05;
+const DEFAULT_PRIDE_BAND_PRIOR_EXPONENT = 0.5;
+const DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD = 0.08;
+const DEFAULT_REALTIME_PLAYER_WEIGHT = 0.35;
+const DEFAULT_REALTIME_RANK_WEIGHT = 0.03;
+const DEFAULT_REALTIME_MAX_BONUS = 0.25;
+const DEFAULT_MAX_PINK_MANAGED_SLOTS = 3;
+const DEFAULT_FILTER_MINUTES = 30;
+const DEFAULT_MY_RANK_KEY = "R7";
+const NORMAL_SLOT_COUNT = 9;
+const CROSS_BUCKET_SLOT_COUNT = 1;
+const DEFAULT_SOFTMAX_BACKTEST_ENABLED = true;
+const DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE = 0.15;
+
+const MAX_LOG_LINES = 100;
+
+const REALTIME_ACTIVITY_STORAGE_KEY =
+  "matchingRealtimeActivity_v1";
+
+/* =========================================================
+ [0030] IndexedDB Schema【永続化】（旧 [9600]）
+========================================================= */
+const LOG_DB_NAME =
+  "viewer_logs_db";
+
+const LOG_DB_VERSION =
+  3;
+
+const LOG_STORE = {
+
+  events:
+    "events",
+
+  copyEvents:
+    "copyEvents",
+
+  candidateEvents:
+    "candidateEvents"
+
+};
+
+let logDB = null;
+
+/* =========================================================
+ [0040] Rank Master（旧 [0040]）
+========================================================= */
+const RUBY_ID =
+  "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
+
+const PRIDE_LEVELS = [
+  { key: "P_A", level: "A=～99", min: 1, max: 99, icon: "ef788ee816773c454495ebf83e5ac380" },
+  { key: "P_B", level: "B=100～", min: 100, max: 499, icon: "3c8cc917bb7a97d46ba35c93d898491c" },
+  { key: "P_C", level: "C=500～", min: 500, max: 999, icon: "ec8f805c9de95c65c858d2e1341f76ab" },
+  { key: "P_D", level: "D=1000～", min: 1000, max: 4999, icon: "58446a29e6c496139963728eea887349" },
+  { key: "P_E", level: "E=5000～", min: 5000, max: 9999, icon: "5f88cb6a33355e7bc890d92576e36c94" },
+  { key: "P_F", level: "F=10000～", min: 10000, max: 49999, icon: "807b2b796691b862d667448a3918edd7" },
+  { key: "P_G", level: "G=50000～", min: 50000, max: Infinity, icon: "dfff542ae4eee8e95ea61a665dd8ce8e" }
+];
+
+const RANKS = [
+
+  ...Array.from({ length: 8 }, (_, i) => ({
+
+    key: `R${i + 1}`,
+
+    type: "ruby",
+
+    star: i + 1,
+
+    label: `★${i + 1}`,
+
+    badgeId: RUBY_ID,
+
+    icon:
+      `https://initiald.sega.jp/inidac/ranking-images/online/${RUBY_ID}.png`,
+
+    order: i
+
+  })),
+
+  ...PRIDE_LEVELS.map((p, idx) => ({
+
+    key: p.key,
+
+    type: "pride",
+
+    min: p.min,
+
+    max: p.max,
+
+    label: p.level,
+
+    badgeId: p.icon,
+
+    icon:
+      `https://initiald.sega.jp/inidac/ranking-images/pride/${p.icon}.png`,
+
+    order: 8 + idx
+
+  }))
+
+];
+
+
+/* #################################################################
+ [LAYER 1000] Application State
+ ################################################################# */
+
+/* =========================================================
+ [1000] Application State（旧 [0020]）
+========================================================= */
+const State = {
+  all: [],
+  filtered: [],
+  summary: [],
+  detailOriginal: [],
+  generatedAt: "",
+  latestRound: null,
+  latestUpdateAt: "",
+  searchText: "",
+  currentView: STATE.SUMMARY,
+  summaryMode: "rank",
+  areaSortKey: "total",
+  areaSortDir: "desc",
+  currentDetailType: "rank",
+  currentDetailKey: "",
+  currentDetailLabel: "",
+  currentDetailIcon: "",
+  matchingList: [],
+  matchingFilteredPopulationCount: 0,
+  matchingCooldownExcludedCandidates: [],
+  matchingRankedAll: [],
+  matchingScoredAll: [],
+  matchingTierCounts: {},
+  matchingSlotPlan: [],
+  matchingSlotAllocationDiagnostics: null,
+  matchingFilteredPopulationSnapshot: null,
+  matchingCrossBucketDiagnostics: null,
+  matchingPinkCapDiagnostics: null,
+  matchingSoftmaxBacktestPreview: null,
+  matchingOffsetSec: 0,
+  previewOffsetSec: 0,
+  matchingContext: {
+    mode: "matching",
+    clickedAtMs: null,
+    evaluationTimeMs: null,
+    offsetSec: 0
+  },
+  copyAreaHistory: [],
+  myRankKey: DEFAULT_MY_RANK_KEY,
+  recentClicks: [],
+  recentClickSet: null,
+  historicalMatchupDistribution: null,
+  playerActivity: {},
+  rankActivity: {},
+  scoringConfig: null,
+  updateWatchConfig: null,
+  updateWatchTimer: null,
+  updateCheckRunning: false,
+  updateWatchVisibilityHandler: null,
+  updateWatchActiveWindowKey: "",
+  pendingPrefetchForUpdateAt: "",
+  prefetchedRoundData: null,
+  prefetchedForUpdateAt: "",
+  prefetchInFlight: null,
+
+  phaseAdjust: {
+    yellow: 0,
+    pink: 0
+  },
+
+  /*
+   * Phase学習の診断情報（分析用）
+   *
+   * calcYellowCycle/calcPinkCycle が learn:true で
+   * 実行された際に更新される。読み取り専用モードの
+   * 呼び出しでも最新の診断値を参照できるようにする。
+   */
+  phaseDiag: {
+    yellow: {
+      sampleCount: 0,
+      trust: 1,
+      adjustValue: 0
+    },
+    pink: {
+      sampleCount: 0,
+      trust: 1,
+      adjustValue: 0
+    }
+  },
+
+  activeCandidateEventId: null,
+  latestCandidateEventIdForCopy: null,
+
+  /* --- 新仕様追加（Fact） --- */
+  pinkTargets: {},
+  encounterHistory: {},
+
+  /*
+   * Yellow周期学習用
+   * copiedAt - updateDate
+   * の実績サンプルを保存
+   */
+  yellowSamples: []
+};
+
+/* =========================================================
+ [1100] View State:isCurrentView【State】（旧 [0200]）
+========================================================= */
+function isCurrentView(view) {
+  return State.currentView === view;
+}
+
+/* =========================================================
+ [1110] View State:setCurrentView【State】（旧 [0210]）
+========================================================= */
+function setCurrentView(view) {
+  State.currentView = view;
+}
+
+/* =========================================================
+ [1200] My Rank State:syncMyRankSelection【State】（旧 [7020]）
+========================================================= */
+function syncMyRankSelection(
+  rankValue
+) {
+
+  const previousMyRank =
+    State.myRankKey;
+
+  const selectedMyRank =
+    rankValue ||
+    State.scoringConfig
+      ?.viewerDefaults
+      ?.myRankKey ||
+    DEFAULT_MY_RANK_KEY;
+
+  const num =
+    Number(
+      String(selectedMyRank)
+        .replace("R", "")
+    );
+
+  if (
+    num >= 1 &&
+    num <= 8
+  ) {
+    State.myRankKey = `R${num}`;
+
+  } else {
+    State.myRankKey = selectedMyRank;
+  }
+
+  if (State.myRankKey !== previousMyRank) {
+    State.activeCandidateEventId = null;
+    State.latestCandidateEventIdForCopy = null;
+    State.matchingList = [];
+    State.matchingFilteredPopulationCount = 0;
+    State.matchingCooldownExcludedCandidates = [];
+    State.matchingScoredAll = [];
+    State.matchingRankedAll = [];
+    State.matchingTierCounts = {};
+    State.matchingSlotPlan = [];
+    State.matchingSlotAllocationDiagnostics = null;
+    State.matchingFilteredPopulationSnapshot = null;
+    State.matchingCrossBucketDiagnostics = null;
+    State.matchingPinkCapDiagnostics = null;
+    State.matchingSoftmaxBacktestPreview = null;
+    State.matchingContext = {
+      mode: "matching",
+      clickedAtMs: null,
+      evaluationTimeMs: null,
+      offsetSec: 0
+    };
+  }
+
+  return State.myRankKey;
+}
+
+
+/* #################################################################
+ [LAYER 2000] Pure Utilities（DOM・State・永続化に触れない層）
+ ################################################################# */
+
+/* =========================================================
+ [2000] Date Utility:getNowLabelJa（旧 [2000]）
+========================================================= */
+function getNowLabelJa() {
+
+  const now = new Date();
+
+  return now.toLocaleString(
+    "ja-JP",
+    {
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    }
+  );
+}
+
+/* =========================================================
+ [2030] Date Utility:buildDailyKey（旧 [2030]）
+ ※ ゲーム運用日に合わせた日付けキー（午前4時＝28時切替）
+ ========================================================= */
+function buildDailyKey() {
+
+  const d = new Date();
+
+  // 午前4時(4:00)未満は前日扱いにする（28時締め）
+  if (d.getHours() < 4) {
+    d.setDate(d.getDate() - 1);
+  }
+
+  const y = d.getFullYear();
+  const m = ("0" + (d.getMonth() + 1)).slice(-2);
+  const day = ("0" + d.getDate()).slice(-2);
+
+  return `${y}${m}${day}`;
+}
+
+/* =========================================================
+ [2040] Date Utility:parseDateJST（旧 [2030] 内）
+========================================================= */
+const parseDateJST = str => {
+
+  if (str == null) {
+    return null;
+  }
+
+  let s = String(str).trim();
+
+  s = s.replace(/\//g, "-");
+
+  // 複数空白や改行を T に置換
+  s = s.replace(/\s+/, "T");
+
+  // 秒が無ければ補完
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) {
+    s += ":00";
+  }
+
+  // 既にタイムゾーン表記があれば追加しない（Z または +HH or +HH:MM など）
+  if (!/(?:Z|z|[+\-]\d{2}(?::\d{2})?)$/.test(s)) {
+    s += "+09:00";
+  }
+
+  const d = new Date(s);
+
+  return isNaN(d.getTime()) ? null : d;
+};
+
+/* =========================================================
+ [2050] Date Utility:formatYMDHM（旧 [2040]）
+========================================================= */
+function formatYMDHM(date) {
+
+  if (
+    !date ||
+    isNaN(date.getTime())
+  ) {
+    return "--/-- --:--";
+  }
+
+  const y = date.getFullYear();
+  const m = ("0" + (date.getMonth() + 1)).slice(-2);
+  const d = ("0" + date.getDate()).slice(-2);
+  const hh = ("0" + date.getHours()).slice(-2);
+  const mm = ("0" + date.getMinutes()).slice(-2);
+
+  return `${y}/${m}/${d} ${hh}:${mm}`;
+}
+
+/* =========================================================
+ [2060] Date Utility:formatClockHms（旧 [6150]）
+========================================================= */
+/*
+ * 学習中のYellow/Pink周期を「現在時刻」を起点として
+ * 1〜3周期前（過去方向）の窓（許容誤差帯）で可視化するための
+ * 汎用モニターバー。
+ *
+ * 左端＝現在時刻で固定し、右にいくほど過去
+ * （1周期前・2周期前・3周期前）を表す。
+ *
+ * 特定プレイヤーの実測値ではなく、学習済みの
+ * 周期長・調整値・サンプル信頼度・許容誤差幅を
+ * 一目で確認できるようにする目的の表示。
+ */
+
+function formatClockHms(ms) {
+
+  return new Date(ms).toLocaleTimeString(
+    "ja-JP",
+    { hour12: false }
+  );
+}
+
+/* =========================================================
+ [2070] Date Utility:formatClockHm（旧 [6150b]）
+========================================================= */
+/*
+ * バー内の時刻表示用（秒なし・時:分のみ）。
+ * 帯自体がある程度の幅（許容誤差）を持つ表示のため、
+ * 秒単位の厳密性は不要という判断による。
+ */
+
+function formatClockHm(ms) {
+
+  const d = new Date(ms);
+
+  const hh =
+    String(d.getHours()).padStart(2, "0");
+
+  const mm =
+    String(d.getMinutes()).padStart(2, "0");
+
+  return `${hh}:${mm}`;
+}
+
+function updateReloadViewerTime() {
+  const timeEl = document.getElementById("reloadViewerTime");
+  if (!timeEl) return;
+  const parsed = parseDateJST(State.generatedAt);
+  timeEl.textContent = parsed
+    ? parsed.toLocaleTimeString("ja-JP", {
+        timeZone: "Asia/Tokyo",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      })
+    : "--:--";
+  timeEl.title = parsed
+    ? `Viewer読込済み更新時刻: ${State.generatedAt}`
+    : "Viewer読込済み更新時刻: 未取得";
+  timeEl.setAttribute("aria-label", timeEl.title);
+}
+
+function ensureReloadViewerTime() {
+  const button = document.getElementById("reloadBtn");
+  if (!button) return;
+  if (!document.getElementById("reloadViewerTime")) {
+    button.textContent = "⌚ ";
+    const timeEl = document.createElement("span");
+    timeEl.id = "reloadViewerTime";
+    timeEl.setAttribute("aria-live", "polite");
+    button.appendChild(timeEl);
+    const labelEl = document.createElement("span");
+    labelEl.className = "reload-button-label";
+    labelEl.textContent = "　🔄 RELOAD";
+    button.appendChild(labelEl);
+  }
+  updateReloadViewerTime();
+}
+
+/* =========================================================
+ [2100] String Utility:normalize（旧 [2100]）
+========================================================= */
+function normalize(s) {
+  if (s == null) {
+    return "";
+  }
+
+  s = String(s).trim();
+
+  // 全角スペースを半角に
+  s = s.replace(/\u3000/g, " ");
+
+  // 先に小文字化してから英数字を全角化する（toLowerCase が無効化されるのを防止）
+  s = s.toLowerCase();
+
+  s = s.replace(
+    /[A-Za-z0-9]/g,
+    ch => String.fromCharCode(ch.charCodeAt(0) + 0xFEE0)
+  );
+
+  // ひらがなをカタカナ相当に変換（既存ロジック維持）
+  s = s.replace(
+    /[\u3041-\u3096]/g,
+    ch => String.fromCharCode(ch.charCodeAt(0) + 0x60)
+  );
+
+  // 空白を除去
+  s = s.replace(/\s+/g, "");
+
+  return s;
+}
+
+/* =========================================================
+ [2110] String Utility:normalizePlayerName（旧 [2110]）
+========================================================= */
+function normalizePlayerName(str) {
+
+  return String(str ?? "")
+    .normalize("NFKC");
+}
+
+/* =========================================================
+ [2200] Number Utility:fmt（旧 [2200]）
+========================================================= */
+const fmt =
+  n => Number(n)
+    .toLocaleString();
+
+/* =========================================================
+ [2300] Text Width Utility:getZenkakuLength（旧 [2400]）
+========================================================= */
+function getZenkakuLength(str) {
+
+  if (!str) {
+    return 0;
+  }
+
+  const len =
+    str.replace(
+      /[^\x00-\x7F]/g,
+      "xx"
+    ).length;
+
+  return len / 2;
+}
+
+/* =========================================================
+ [2310] Text Width Utility:isMostlyAscii（旧 [2410]）
+========================================================= */
+function isMostlyAscii(str) {
+
+  if (!str) {
+    return true;
+  }
+
+  const asciiCount =
+    (str.match(/[\x00-\x7F]/g) || [])
+      .length;
+
+  return (
+    asciiCount / str.length >= 0.7
+  );
+}
+
+/* =========================================================
+ [2400] Math Utility:foldToCycle（旧 [7240]）
+========================================================= */
+function foldToCycle(
+  diff,
+  cycle
+) {
+
+  const mod =
+    diff % cycle;
+
+  const half =
+    cycle / 2;
+
+  return (
+    mod <= half
+  )
+    ? mod
+    : mod - cycle;
+}
+
+/* =========================================================
+ [2410] Math Utility:updateAdjust（旧 [7250]）
+========================================================= */
+function updateAdjust(
+  prev,
+  value,
+  alpha
+) {
+
+  return (
+    (1 - alpha) * prev +
+    alpha * value
+  );
+}
+
+/* =========================================================
+ [2420] Math Utility:clamp（旧 [7260]）
+========================================================= */
+function clamp(
+  v,
+  min,
+  max
+) {
+
+  return Math.max(
+    min,
+    Math.min(max, v)
+  );
+}
+
+/* =========================================================
+ [2430] Math Utility:rejectFoldedOutliers（周期学習：外れ値除去）
+ ※ 立ち上がり強化（sqrtカーブ）で少数サンプルの影響力を上げる分、
+   中央値算出前に「明らかに調整幅を超える」折り畳み値を除外し、
+   1件の異常値がそのまま採用されるリスクを抑える。
+========================================================= */
+function rejectFoldedOutliers(
+  values,
+  maxShiftSec
+) {
+
+  const limit =
+    Number(maxShiftSec);
+
+  if (
+    !isFinite(limit) ||
+    limit <= 0
+  ) {
+    return values;
+  }
+
+  const filtered =
+    values.filter(
+      v => Math.abs(v) <= limit
+    );
+
+  /*
+   * 全件が外れ値扱いになった場合は、
+   * データ消失（trust=0扱い）を避けるため
+   * 元の配列をそのまま使う。
+   */
+  return filtered.length > 0
+    ? filtered
+    : values;
+}
+
+/* =========================================================
+ [2440] Math Utility:computeSampleTrust（周期学習：サンプル数信頼度）
+ ※ 従来の線形カーブ（count/minSamples）から平方根カーブに変更し、
+   少数サンプル時の立ち上がりを強化する。
+   例（minSamples=8）：1件→35.4%／2件→50.0%／4件→70.7%／8件→100%
+========================================================= */
+function computeSampleTrust(
+  sampleCount,
+  minSamples
+) {
+
+  const count =
+    Number(sampleCount);
+
+  const min =
+    Number(minSamples);
+
+  if (
+    !isFinite(min) ||
+    min <= 0
+  ) {
+    return 1;
+  }
+
+  if (
+    !isFinite(count) ||
+    count <= 0
+  ) {
+    return 0;
+  }
+
+  return Math.min(
+    1,
+    Math.sqrt(count / min)
+  );
+}
+
+/* =========================================================
+ [2500] Phase Metrics:computePhaseMetrics（旧 [7300] 内）
+========================================================= */
+/* =====================================
+ * Yellow強度評価
+ * 戻り値: 0.0 ～ 1.0
+ * ===================================== */
+
+/* =====================================
+ * PhaseError → PhaseScore → CycleDecay
+ * → FinalPhaseScore の一本化評価
+ * ===================================== */
+function computePhaseMetrics(
+  diffSec,
+  cycleSec,
+  lambda,
+  phaseErrorScaleSec = DEFAULT_PHASE_ERROR_SCALE_SEC
+) {
+
+  const safeCycleSec =
+    Number(cycleSec);
+
+  const safeDiffSec =
+    Number(diffSec);
+
+  const safeLambda =
+    Number.isFinite(Number(lambda))
+      ? Number(lambda)
+      : 0.03;
+
+  const safePhaseErrorScaleSec =
+    Number.isFinite(Number(phaseErrorScaleSec)) &&
+    Number(phaseErrorScaleSec) > 0
+      ? Number(phaseErrorScaleSec)
+      : DEFAULT_PHASE_ERROR_SCALE_SEC;
+
+  if (
+    !isFinite(safeCycleSec) ||
+    safeCycleSec <= 0 ||
+    !isFinite(safeDiffSec) ||
+    safeDiffSec < 0
+  ) {
+    return {
+      cycleCount: 0,
+      phaseError: 0,
+      phaseScore: 0,
+      decay: 0,
+      finalPhaseScore: 0
+    };
+  }
+
+  const phasePos =
+    safeDiffSec % safeCycleSec;
+
+  const phaseError =
+    Math.min(
+      phasePos,
+      safeCycleSec - phasePos
+    );
+
+  const phaseScore =
+    Math.exp(
+      -0.5 *
+      Math.pow(
+        phaseError /
+        safePhaseErrorScaleSec,
+        2
+      )
+    );
+
+  const cycleCount =
+    Math.floor(
+      safeDiffSec / safeCycleSec
+    );
+
+  const decay =
+    Math.exp(
+      -safeLambda * cycleCount
+    );
+
+  const finalPhaseScore =
+    phaseScore * decay;
+
+  return {
+    cycleCount,
+    phaseError,
+    phaseScore,
+    decay,
+    finalPhaseScore
+  };
+}
+
+function buildPhaseDirectionDetail(
+  diffSec,
+  cycleSec,
+  phaseError
+) {
+
+  const safeDiffSec =
+    Number(diffSec);
+
+  const safeCycleSec =
+    Number(cycleSec);
+
+  const safePhaseError =
+    Number(phaseError);
+
+  if (
+    !Number.isFinite(safeDiffSec) ||
+    safeDiffSec < 0 ||
+    !Number.isFinite(safeCycleSec) ||
+    safeCycleSec <= 0 ||
+    !Number.isFinite(safePhaseError)
+  ) {
+    return {
+      diffSec: 0,
+      phasePos: 0,
+      peakDirection: "unknown",
+      signedPhaseError: 0,
+      phaseBucket: "unknown"
+    };
+  }
+
+  const phasePos =
+    safeDiffSec % safeCycleSec;
+
+  const peakDirection =
+    phasePos < safeCycleSec / 2
+      ? "past"
+      : "upcoming";
+
+  const signedPhaseError =
+    peakDirection === "past"
+      ? safePhaseError
+      : -safePhaseError;
+
+  const absError =
+    Math.abs(signedPhaseError);
+
+  const bucketRange =
+    absError < 30
+      ? "0_30"
+      : absError < 60
+      ? "30_60"
+      : absError < 120
+      ? "60_120"
+      : "120_plus";
+
+  return {
+    diffSec: safeDiffSec,
+    phasePos,
+    peakDirection,
+    signedPhaseError,
+    phaseBucket:
+      `${peakDirection}_${bucketRange}`
+  };
+}
+
+/* =========================================================
+ [2510] Phase Metrics:getPhaseWindowHalfWidthSec（旧 [6152a]）
+========================================================= */
+function getPhaseWindowHalfWidthSec(
+  cycleSec,
+  cycleCount,
+  threshold,
+  lambda,
+  phaseErrorScaleSec = DEFAULT_PHASE_ERROR_SCALE_SEC
+) {
+  const decay =
+    Math.exp(
+      -Number(lambda) *
+      Number(cycleCount)
+    );
+
+  const requiredPhaseScore =
+    decay > 0
+      ? Number(threshold) / decay
+      : Infinity;
+
+  if (
+    !isFinite(requiredPhaseScore) ||
+    requiredPhaseScore >= 1
+  ) {
+    return 0;
+  }
+
+  if (requiredPhaseScore <= 0) {
+    return Math.max(
+      0,
+      Number(cycleSec) / 2
+    );
+  }
+
+  const safePhaseErrorScaleSec =
+    Number.isFinite(Number(phaseErrorScaleSec)) &&
+    Number(phaseErrorScaleSec) > 0
+      ? Number(phaseErrorScaleSec)
+      : DEFAULT_PHASE_ERROR_SCALE_SEC;
+
+  return Math.max(
+    0,
+    Math.min(
+      cycleSec / 2,
+      safePhaseErrorScaleSec *
+      Math.sqrt(
+        -2 *
+        Math.log(requiredPhaseScore)
+      )
+    )
+  );
+}
+
+function getPhaseErrorScaleSec(
+  mode = "yellow"
+) {
+  const config =
+    State.scoringConfig?.phaseError ?? {};
+
+  const value =
+    Number(
+      config[
+        mode === "pink"
+          ? "pinkScaleSec"
+          : "yellowScaleSec"
+      ] ??
+      config.scaleSec ??
+      DEFAULT_PHASE_ERROR_SCALE_SEC
+    );
+
+  return Number.isFinite(value) &&
+    value > 0
+      ? value
+      : DEFAULT_PHASE_ERROR_SCALE_SEC;
+}
+
+/* =========================================================
+ [2600] Statistics Utility:calcStats（旧 [5100]）
+========================================================= */
+function calcStats(
+  list,
+  total
+) {
+
+  const cnt =
+    list.length;
+
+  const percent =
+    total
+      ? Math.round(
+          (cnt / total) * 100
+        )
+      : 0;
+
+  const points =
+    list.map(
+      p => Number(
+        p.point ?? 0
+      )
+    );
+
+  const avg =
+    cnt
+      ? Math.round(
+          points.reduce(
+            (a, b) => a + b,
+            0
+          ) / cnt
+        )
+      : 0;
+
+  const min =
+    cnt
+      ? Math.min(
+          ...points
+        )
+      : 0;
+
+  const max =
+    cnt
+      ? Math.max(
+          ...points
+        )
+      : 0;
+
+  return {
+    cnt,
+    percent,
+    avg,
+    min,
+    max
+  };
+}
+
+
+/* #################################################################
+ [LAYER 3000] Domain Models / Normalizers
+ ################################################################# */
+
+/* =========================================================
+ [3000] Rank Utility:getRankIndex（旧 [0100]）
+========================================================= */
+function getRankIndex(key) {
+  return RANKS.findIndex(r => r.key === key);
+}
+
+/* =========================================================
+ [3010] Rank Utility:getRankInfo（旧 [0110]）
+========================================================= */
+function getRankInfo(key) {
+  return RANKS.find(r => r.key === key) || null;
+}
+
+/* =========================================================
+ [3020] Rank Classification:getPrideBandKey（旧 [7000]）
+========================================================= */
+function getPrideBandKey(pridePoint) {
+
+  const pt =
+    Number(pridePoint ?? 0);
+
+  if (pt <= 0) {
+    return null;
+  }
+
+  const band =
+    PRIDE_LEVELS.find(
+      p =>
+        pt >= p.min &&
+        pt <= p.max
+    );
+
+  return band
+    ? band.key
+    : null;
+}
+
+/* =========================================================
+ [3030] Rank Classification:getPlayerRankKey（旧 [7010]）
+========================================================= */
+function getPlayerRankKey(player) {
+
+  if (
+    player.onlineBattleRankId === RUBY_ID &&
+    Number(player.starCnt) >= 1 &&
+    Number(player.starCnt) <= 8
+  ) {
+    return `R${player.starCnt}`;
+  }
+
+  const prideBandKey =
+    getPrideBandKey(
+      player.pridePoint
+    );
+
+  if (prideBandKey) {
+    return prideBandKey;
+  }
+
+  return null;
+}
+
+/* =========================================================
+ [3040] Rank Classification:mapRankKeyToTierKey（旧 [7015]）
+========================================================= */
+function mapRankKeyToTierKey(rankKey) {
+
+  if (!rankKey) return null;
+
+  if (rankKey.startsWith("R")) {
+    return rankKey;
+  }
+
+  if (rankKey.startsWith("P_")) {
+    return `PRIDE_${rankKey.slice(2)}`;
+  }
+
+  return rankKey;
+}
+
+function buildRankPopulationSnapshot(players) {
+  const rankKeys = [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "P_A",
+    "P_B",
+    "P_C",
+    "P_D",
+    "P_E",
+    "P_F",
+    "P_G"
+  ];
+
+  const rankCounts =
+    Object.fromEntries(
+      rankKeys.map(key => [key, 0])
+    );
+
+  let sourceCount = 0;
+  let unclassifiedCount = 0;
+
+  for (const player of players ?? []) {
+    sourceCount++;
+
+    const rankKey =
+      player?.__rankKey ??
+      getPlayerRankKey(player);
+
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        rankCounts,
+        rankKey
+      )
+    ) {
+      unclassifiedCount++;
+      continue;
+    }
+
+    rankCounts[rankKey]++;
+  }
+
+  const classifiedCount =
+    sourceCount - unclassifiedCount;
+
+  const rankShares = {};
+
+  for (const rankKey of rankKeys) {
+    rankShares[rankKey] =
+      classifiedCount > 0
+        ? Number(
+            (
+              rankCounts[rankKey] /
+              classifiedCount
+            ).toFixed(6)
+          )
+        : 0;
+  }
+
+  const groupCounts = {
+    ruby1To6:
+      rankCounts.R1 +
+      rankCounts.R2 +
+      rankCounts.R3 +
+      rankCounts.R4 +
+      rankCounts.R5 +
+      rankCounts.R6,
+    ruby7:
+      rankCounts.R7,
+    ruby8:
+      rankCounts.R8,
+    pride:
+      rankCounts.P_A +
+      rankCounts.P_B +
+      rankCounts.P_C +
+      rankCounts.P_D +
+      rankCounts.P_E +
+      rankCounts.P_F +
+      rankCounts.P_G
+  };
+
+  const groupShares = {};
+
+  for (const [group, count] of Object.entries(groupCounts)) {
+    groupShares[group] =
+      classifiedCount > 0
+        ? Number(
+            (count / classifiedCount).toFixed(6)
+          )
+        : 0;
+  }
+
+  return {
+    sourceCount,
+    classifiedCount,
+    unclassifiedCount,
+    denominator: "classifiedCount",
+    rankCounts,
+    rankShares,
+    groupCounts,
+    groupShares
+  };
+}
+
+/* =========================================================
+ [3050] Player Identity:buildPlayerIdentityKey（旧 [7070]）
+========================================================= */
+function buildPlayerIdentityKey(player) {
+  const name =
+    normalizePlayerName(
+      player?.name ?? ""
+    );
+
+  const shop =
+    normalizePlayerName(
+      player?.shopname ?? ""
+    );
+
+  const parts = [
+    name,
+    shop
+  ].filter(Boolean);
+
+  if (parts.length > 0) {
+    return parts.join("@@");
+  }
+
+  return "__empty__";
+}
+
+/* =========================================================
+ [3100] Historical Matchup Normalizer:normalizeHistoricalMatchupDistribution（旧 [6800]）
+========================================================= */
+function normalizeHistoricalMatchupDistribution(json) {
+
+  const viewerTiers =
+    json?.viewerTiers;
+
+  if (
+    !viewerTiers ||
+    typeof viewerTiers !== "object"
+  ) {
+    return null;
+  }
+
+  const byViewerTier = {};
+  const opponentTierSet = new Set();
+
+  for (const viewerTier in viewerTiers) {
+
+    const entry =
+      viewerTiers[viewerTier];
+
+    const opponents =
+      entry?.opponents ?? {};
+
+    const total =
+      Object.values(opponents)
+        .reduce(
+          (a, c) => a + Number(c ?? 0),
+          0
+        ) || 1;
+
+    const probList = [];
+    const opponentTierMap = {};
+    let prideProbabilityTotal = 0;
+
+    for (const key in opponents) {
+
+      const lastSep =
+        key.lastIndexOf("_");
+
+      if (lastSep < 0) continue;
+
+      const opponentTier =
+        key.slice(0, lastSep);
+
+      const area =
+        key.slice(lastSep + 1);
+
+      opponentTierSet.add(
+        opponentTier
+      );
+
+      const count =
+        Number(opponents[key] ?? 0);
+
+      const prob =
+        count / total;
+
+      probList.push({
+        opponentTier,
+        area,
+        count,
+        prob
+      });
+
+      opponentTierMap[opponentTier] =
+        (opponentTierMap[opponentTier] || 0) + prob;
+
+      if (opponentTier.startsWith("PRIDE_")) {
+        prideProbabilityTotal += prob;
+      }
+    }
+
+    byViewerTier[viewerTier] = {
+      probList,
+      opponentTierMap,
+      total,
+      prideProbabilityTotal
+    };
+  }
+
+  const historicalSupportSize =
+    opponentTierSet.size;
+
+  return {
+    byViewerTier,
+    usesAreaWildcard: true,
+    historicalOpponentTierCount:
+      opponentTierSet.size,
+    historicalAreaCount: 1,
+    historicalSupportSize
+  };
+}
+
+/* =========================================================
+ [3200] Data Applier:applyAreaListJson【State】（旧 [3120]）
+========================================================= */
+function applyAreaListJson(json) {
+
+  AreaList = {};
+  AreaIsoAlpha3 = {};
+
+  if (
+    json?.areas &&
+    Array.isArray(json.areas)
+  ) {
+
+    json.areas.forEach(a => {
+
+      AreaList[
+        String(a.area)
+      ] = a.areaName;
+
+      if (a.isoAlpha3) {
+        AreaIsoAlpha3[
+          String(a.area)
+        ] = String(a.isoAlpha3).toUpperCase();
+      }
+
+    });
+  }
+
+  log(
+    "areaList.json 読み込み完了"
+  );
+}
+
+/* =========================================================
+ [3210] Data Applier:applyLatestRoundJson【State】【DOM】（旧 [3220]）
+========================================================= */
+function applyLatestRoundJson(
+  json
+) {
+
+  if (
+    !json?.latestRound
+  ) {
+
+    throw new Error(
+      "latestRound が存在しません"
+    );
+  }
+
+  State.latestRound =
+    json.latestRound;
+
+  const el =
+    document.getElementById(
+      "latestRound"
+    );
+
+  if (el) {
+
+    el.textContent =
+      State.latestRound;
+  }
+
+  log(
+    "latest_round.json 読み込み完了"
+  );
+}
+
+/* =========================================================
+ [3220] Data Applier:applyLatestUpdateJson【State】（旧 [3320]）
+========================================================= */
+function applyLatestUpdateJson(
+  json
+) {
+
+  let latest =
+    json?.lastUpdated ??
+    json?.latestUpdateAt ??
+    "";
+
+  if (
+    typeof latest !==
+    "string"
+  ) {
+    latest =
+      String(latest ?? "");
+  }
+
+  State.latestUpdateAt =
+    latest;
+
+  if (!latest) {
+
+    logWarn(
+      "latest_update.json に更新時刻が存在しません"
+    );
+
+    return;
+  }
+
+  const parsed =
+    parseDateJST(latest);
+
+  const label =
+    parsed
+      ? formatYMDHM(parsed)
+      : latest;
+
+  log(
+    "latest_update.json 読み込み完了 (" +
+    label +
+    ")"
+  );
+}
+
+/* =========================================================
+ [3230] Data Applier:applyHistoricalMatchupDistributionJson【State】（旧 [3420]）
+========================================================= */
+function applyHistoricalMatchupDistributionJson(
+  json
+) {
+
+  State.historicalMatchupDistribution =
+    normalizeHistoricalMatchupDistribution(
+      json
+    );
+
+  log(
+    "historical_matchup_distribution.json 読み込み完了"
+  );
+}
+
+/* =========================================================
+ [3240] Data Applier:applyScoringConfigJson【State】（旧 [3520]）
+========================================================= */
+function applyScoringConfigJson(
+  json
+) {
+
+  getRelativePopulationAdjustmentConfig(
+    json?.candidateSelection?.slotAllocation?.relativePopulationAdjustment ?? {}
+  );
+  State.scoringConfig = json;
+
+  const viewerDefaults =
+    json?.viewerDefaults ?? {};
+
+  const filterMinutes =
+    Number(
+      viewerDefaults.filterMinutes ??
+      DEFAULT_FILTER_MINUTES
+    );
+
+  const filterSelect =
+    document.getElementById(
+      "rangeSelect"
+    );
+
+  if (
+    filterSelect &&
+    Number.isFinite(filterMinutes) &&
+    filterMinutes > 0 &&
+    [...filterSelect.options].some(
+      option =>
+        Number(option.value) === filterMinutes
+    )
+  ) {
+    filterSelect.value =
+      String(filterMinutes);
+  }
+
+  const myRankKey =
+    String(
+      viewerDefaults.myRankKey ??
+      DEFAULT_MY_RANK_KEY
+    );
+
+  const normalizedMyRankKey =
+    syncMyRankSelection(
+      myRankKey
+    );
+
+  const myRankSelect =
+    document.getElementById(
+      "myRankSelect"
+    );
+
+  if (
+    myRankSelect &&
+    [...myRankSelect.options].some(
+      option =>
+        option.value === normalizedMyRankKey
+    )
+  ) {
+    myRankSelect.value =
+      normalizedMyRankKey;
+  }
+
+  log(
+    "scoring_config.json 読み込み完了"
+  );
+}
+
+/* =========================================================
+ [3250] Data Applier:applyRoundDataJson【State】【DOM】（旧 [3610]）
+========================================================= */
+function applyRoundDataJson(
+  json,
+  options = {}
+) {
+
+  State.latestCandidateEventIdForCopy =
+    null;
+
+  const {
+    resetReloadButton = true
+  } = options;
+
+  State.generatedAt =
+    json?.generatedAt ?? "";
+  updateReloadViewerTime();
+
+  const timeEl =
+    document.getElementById(
+      "jsonUpdateTime"
+    );
+
+  if (
+    timeEl &&
+    State.generatedAt
+  ) {
+
+    timeEl.textContent =
+      formatYMDHM(
+        parseDateJST(
+          State.generatedAt
+        )
+      );
+  }
+
+  const records =
+    json?.records || [];
+
+  State.all =
+    records.map(p => ({
+      ...p,
+
+      normalizedName:
+        normalize(p.name),
+
+      areaName:
+        getAreaDisplayName(p.area)
+    }));
+
+  State.filtered =
+    [...State.all];
+
+  const genTime =
+    State.generatedAt
+      ? formatYMDHM(
+          parseDateJST(
+            State.generatedAt
+          )
+        )
+      : "-";
+
+  log(
+    `integrated_data.json 読み込み完了 (${State.all.length}件：${genTime})`
+  );
+
+  if (
+    resetReloadButton
+  ) {
+
+    const btn =
+      document.getElementById(
+        "reloadBtn"
+      );
+
+    if (btn) {
+
+      btn.classList.remove(
+        "update-alert"
+      );
+
+      btn.style.cssText = "";
+    }
+  }
+}
+
+
+/* #################################################################
+ [LAYER 4000] Persistence（localStorage / IndexedDB）
+ ################################################################# */
+
+/* =========================================================
+ [4000] Daily State Cleanup:checkAndCleanDailyState【State】（旧 [7070b]）
+========================================================= */
+function checkAndCleanDailyState() {
+  const today = buildDailyKey();
+  let cleaned = false;
+  if (State.pinkTargets && typeof State.pinkTargets === "object") {
+    for (const [key, entry] of Object.entries(State.pinkTargets)) {
+      if (entry && entry.dailyKey !== today) {
+        delete State.pinkTargets[key];
+        cleaned = true;
+      }
+    }
+  }
+  if (cleaned) {
+    if (typeof log === "function") {
+      log("日付変更を検知：前日のPink管理ターゲットを自動クリーンアップしました");
+    }
+  }
+}
+
+/* =========================================================
+ [4010] Daily State Cleanup:isPinkTargetStale（旧 [7073b]）
+========================================================= */
+function isPinkTargetStale(entry) {
+
+  if (!entry) {
+    return true;
+  }
+
+  const today =
+    buildDailyKey();
+
+  if (!entry.dailyKey) {
+    return false;
+  }
+
+  return entry.dailyKey !== today;
+}
+
+/* =========================================================
+ [4100] Learning State Storage:savePinkStateToStorage【State】【永続化】（旧 [7071]）
+========================================================= */
+function savePinkStateToStorage() {
+  try {
+    checkAndCleanDailyState();
+    const payload = {
+      /*
+       * Pink対象は当日分のみ復元対象とする
+       * （dailyKeyで翌日以降は自動失効）
+       */
+      pinkTargets:
+        State.pinkTargets || {},
+
+      encounterHistory:
+        State.encounterHistory || {},
+
+      phaseAdjust:
+        State.phaseAdjust || {
+          yellow: 0,
+          pink: 0
+        },
+
+      /*
+       * Yellow周期学習用サンプル
+       */
+      yellowSamples:
+        State.yellowSamples || [],
+
+      savedAt:
+        Date.now()
+    };
+
+    localStorage.setItem(
+      PERSIST_STATE_KEY,
+      JSON.stringify(payload)
+    );
+
+  } catch (e) {
+
+    console.warn(
+      "[persist] save failed",
+      e
+    );
+
+  }
+}
+
+/* =========================================================
+ [4110] Learning State Storage:restorePinkStateFromStorage【State】【永続化】（旧 [7072]）
+========================================================= */
+function restorePinkStateFromStorage() {
+  try {
+
+    const raw =
+      localStorage.getItem(
+        PERSIST_STATE_KEY
+      );
+
+    if (!raw) {
+      return;
+    }
+
+    const parsed =
+      JSON.parse(raw);
+
+    /*
+     * Pink対象復元
+     * 当日分（dailyKey一致）のみ有効とし、
+     * 前日以前のエントリは復元時に除外する。
+     */
+    State.pinkTargets = {};
+
+    if (
+      parsed?.pinkTargets &&
+      typeof parsed.pinkTargets ===
+        "object"
+    ) {
+
+      const today =
+        buildDailyKey();
+
+      for (
+        const [key, entry]
+          of Object.entries(parsed.pinkTargets)
+      ) {
+
+        if (
+          entry &&
+          entry.dailyKey === today
+        ) {
+          State.pinkTargets[key] = entry;
+        }
+
+      }
+
+    }
+
+    if (
+      parsed?.encounterHistory &&
+      typeof parsed.encounterHistory ===
+        "object"
+    ) {
+
+      State.encounterHistory =
+        parsed.encounterHistory;
+
+    }
+
+    if (
+      parsed?.phaseAdjust &&
+      typeof parsed.phaseAdjust ===
+        "object"
+    ) {
+
+      State.phaseAdjust = {
+        yellow:
+          Number(
+            parsed.phaseAdjust.yellow ??
+            State.phaseAdjust.yellow ??
+            0
+          ),
+
+        pink:
+          Number(
+            parsed.phaseAdjust.pink ??
+            State.phaseAdjust.pink ??
+            0
+          )
+      };
+
+    }
+
+    /*
+     * Yellow周期学習サンプル復元
+     */
+    if (
+      Array.isArray(
+        parsed?.yellowSamples
+      )
+    ) {
+
+      State.yellowSamples =
+        parsed.yellowSamples;
+
+    }
+
+  } catch (e) {
+
+    console.warn(
+      "[persist] restore failed",
+      e
+    );
+
+  }
+}
+
+/* =========================================================
+ [4200] Realtime Activity Storage:saveRealtimeActivityToStorage【State】【永続化】（旧 [7140] 内）
+========================================================= */
+function saveRealtimeActivityToStorage() {
+
+  try {
+
+    localStorage.setItem(
+      REALTIME_ACTIVITY_STORAGE_KEY,
+      JSON.stringify({
+        playerActivity:
+          State.playerActivity,
+        rankActivity:
+          State.rankActivity
+      })
+    );
+
+  } catch (e) {
+    /* storage unavailable: ignore */
+  }
+}
+
+/* =========================================================
+ [4210] Realtime Activity Storage:restoreRealtimeActivityFromStorage【State】【永続化】（旧 [7140] 内）
+========================================================= */
+function restoreRealtimeActivityFromStorage() {
+
+  try {
+
+    const raw =
+      localStorage.getItem(
+        REALTIME_ACTIVITY_STORAGE_KEY
+      );
+
+    if (!raw) return;
+
+    const parsed =
+      JSON.parse(raw);
+
+    State.playerActivity =
+      parsed?.playerActivity || {};
+
+    State.rankActivity =
+      parsed?.rankActivity || {};
+
+  } catch (e) {
+    /* storage unavailable or corrupt: ignore */
+  }
+}
+
+/* =========================================================
+ [4300] Stored Array Helpers:pushStoredRecord【永続化】（旧 [9100]）
+========================================================= */
+function pushStoredRecord(
+  key,
+  record,
+  limit = 200,
+  daily = false
+) {
+
+  let finalKey =
+    key;
+
+  if (daily) {
+
+    const dk =
+      record.dk ||
+      buildDailyKey();
+
+    finalKey =
+      key + dk;
+  }
+
+  const arr =
+    readStoredArraySafe(
+      finalKey
+    );
+
+  arr.unshift(
+    record
+  );
+
+  const trimmed =
+    arr.slice(
+      0,
+      limit
+    );
+
+  writeStoredArraySafe(
+    finalKey,
+    trimmed
+  );
+}
+
+/* =========================================================
+ [4310] Stored Array Helpers:readStoredArraySafe【永続化】（旧 [9120]）
+========================================================= */
+function readStoredArraySafe(
+  key
+) {
+
+  try {
+
+    const raw =
+      localStorage.getItem(
+        key
+      );
+
+    if (!raw) {
+      return [];
+    }
+
+    const parsed =
+      JSON.parse(raw);
+
+    return Array.isArray(
+      parsed
+    )
+      ? parsed
+      : [];
+
+  } catch (e) {
+
+    console.warn(
+      "readStoredArraySafe error:",
+      key,
+      e
+    );
+
+    return [];
+  }
+}
+
+/* =========================================================
+ [4320] Stored Array Helpers:writeStoredArraySafe【永続化】（旧 [9130]）
+========================================================= */
+function writeStoredArraySafe(
+  key,
+  arr
+) {
+
+  try {
+
+    localStorage.setItem(
+      key,
+      JSON.stringify(arr)
+    );
+
+  } catch (e) {
+
+    console.error(
+      "writeStoredArraySafe error:",
+      key,
+      e
+    );
+  }
+}
+
+/* =========================================================
+ [4400] IndexedDB Core:initLogDB【永続化】（旧 [9700]）
+========================================================= */
+function initLogDB() {
+
+  return new Promise(
+    (resolve, reject) => {
+
+      const req =
+        indexedDB.open(
+          LOG_DB_NAME,
+          LOG_DB_VERSION
+        );
+
+      req.onupgradeneeded =
+        (e) => {
+
+          const db =
+            e.target.result;
+
+          if (
+            !db.objectStoreNames.contains(
+              LOG_STORE.events
+            )
+          ) {
+
+            db.createObjectStore(
+              LOG_STORE.events,
+              {
+                keyPath: "id",
+                autoIncrement: true
+              }
+            );
+
+          }
+
+          if (
+            !db.objectStoreNames.contains(
+              LOG_STORE.copyEvents
+            )
+          ) {
+
+            db.createObjectStore(
+              LOG_STORE.copyEvents,
+              {
+                keyPath: "id",
+                autoIncrement: true
+              }
+            );
+
+          }
+
+          if (
+            db.objectStoreNames.contains(
+              "cycleEvents"
+            )
+          ) {
+            db.deleteObjectStore(
+              "cycleEvents"
+            );
+          }
+
+          if (
+            !db.objectStoreNames.contains(
+              LOG_STORE.candidateEvents
+            )
+          ) {
+
+            db.createObjectStore(
+              LOG_STORE.candidateEvents,
+              {
+                keyPath: "id"
+              }
+            );
+
+          }
+
+        };
+
+      req.onsuccess =
+        (e) => {
+
+          logDB =
+            e.target.result;
+
+          pruneLogStore(
+            LOG_STORE.copyEvents,
+            LOG_STORAGE_LIMITS.copyEvents
+          );
+
+          pruneCandidateEventsStore(
+            LOG_STORAGE_LIMITS.candidateEvents
+          );
+
+          console.log(
+            "[LOG] IndexedDB ready"
+          );
+
+          resolve();
+
+        };
+
+      req.onerror =
+        (e) => {
+
+          console.error(
+            "[LOG] DB init failed",
+            e
+          );
+
+          reject(e);
+
+        };
+
+    }
+  );
+
+}
+
+/* =========================================================
+ [4410] IndexedDB Core:putLog【永続化】（旧 [9710]）
+========================================================= */
+function putLog(
+  storeName,
+  data
+) {
+
+  if (!logDB) {
+    return null;
+  }
+
+  const tx =
+    logDB.transaction(
+      storeName,
+      "readwrite"
+    );
+
+  const store =
+    tx.objectStore(
+      storeName
+    );
+
+  store.put(data);
+
+  return tx;
+}
+
+/* =========================================================
+ [4420] IndexedDB Core:logEvent【永続化】（旧 [9720]）
+========================================================= */
+function logEvent(
+  type,
+  payload = {}
+) {
+
+  if (!logDB) {
+    if (type === "candidate" && payload.analysisDiagnostics) {
+      logError("IndexedDB未初期化：候補分析ログを保存できません");
+      alert("候補分析ログを保存できません。IndexedDBの初期化状態を確認してください。");
+    }
+    return;
+  }
+
+  const record = {
+
+    t:
+      Date.now(),
+
+    e:
+      type,
+
+    ...(payload || {})
+
+  };
+
+  if (
+    type === "pink-trigger"
+  ) {
+
+    putLog(
+      LOG_STORE.events,
+      record
+    );
+
+    return;
+
+  }
+
+  if (
+    type === "copy" ||
+    type === "top"
+  ) {
+
+    const tx =
+      putLog(
+      LOG_STORE.copyEvents,
+      record
+    );
+
+    if (tx) {
+      tx.oncomplete =
+        () =>
+          pruneLogStore(
+            LOG_STORE.copyEvents,
+            LOG_STORAGE_LIMITS.copyEvents
+          );
+    }
+
+    return;
+
+  }
+
+  if (
+    type === "candidate"
+  ) {
+
+    const startedAt = performance.now();
+    let tx;
+    try {
+      tx = putLog(LOG_STORE.candidateEvents, record);
+    } catch (error) {
+      logError(`候補ログの保存開始失敗：${error.message}`);
+      alert("候補ログの保存に失敗しました。分析ログを確認してください。");
+      return;
+    }
+    if (tx && record.analysisDiagnostics) {
+      tx.oncomplete = () => logEvent("runtime", {
+        severity: "info",
+        message: "analysis-candidate-save",
+        candidateEventId: record.id,
+        storageTransactionMs: performance.now() - startedAt,
+        jsonUtf8BytesBeforeMetrics:
+          record.analysisDiagnostics.storageMetrics?.jsonUtf8BytesBeforeMetrics
+      });
+      tx.onabort = () => {
+        logError(`候補ログの保存失敗：${tx.error?.message ?? "transaction aborted"}`);
+        alert("候補ログの保存に失敗しました。分析ログを確認してください。");
+      };
+    }
+
+    return;
+
+  }
+
+  putLog(
+    LOG_STORE.events,
+    record
+  );
+
+}
+
+
+/* #################################################################
+ [LAYER 5000] Data Access / Fetch
+ ################################################################# */
+
+/* =========================================================
+ [5000] Fetch Core:fetchJSON（旧 [3000]）
+========================================================= */
+async function fetchJSON(
+  path,
+  options = {}
+) {
+
+  const {
+    cache = "no-store"
+  } = options;
+
+  const MAX_RETRY = 3;
+
+  // タイムアウト値の設定
+  // 注: Viewer 運用環境のネットワークが不安定（WiFi 途切れ頻発）
+  // かつ SEGA データが 15 分ごと更新という制約を考慮
+  // DNS 解決 1-2秒 + 接続確立 1-2秒 + ファイル取得を考慮した時間設定
+  const TIMEOUT_MS =
+    path === 'latest_update.json'
+      ? 8000    // 1KB 程度のファイル（ただしネットワーク遅延を想定）
+      : path === 'integrated_data.json'
+      ? 20000   // 複数 MB の大きいファイル
+      : 10000;  // その他（標準）
+
+  let lastError = null;
+
+  for (
+    let attempt = 1;
+    attempt <= MAX_RETRY;
+    attempt++
+  ) {
+
+    const controller =
+      new AbortController();
+
+    const timeoutTimer =
+      setTimeout(() => {
+        controller.abort();
+      }, TIMEOUT_MS);
+
+    const startedAt =
+      performance.now();
+
+    try {
+
+      const res = await fetch(
+        `${BASE_URL}/${path}?t=${Date.now()}`,
+        {
+          cache,
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          },
+          signal: controller.signal
+        }
+      );
+
+      clearTimeout(timeoutTimer);
+
+      if (!res.ok) {
+        throw new Error(
+          "HTTP " + res.status
+        );
+      }
+
+      const json =
+        await res.json();
+
+      const elapsed =
+        Math.round(
+          performance.now() -
+          startedAt
+        );
+
+      if (
+        path !==
+          "latest_update.json" ||
+        elapsed >= 1000
+      ) {
+        log(
+          `${path} 通信時間:${elapsed}ms`
+        );
+      }
+
+      return json;
+
+    } catch (e) {
+
+      clearTimeout(timeoutTimer);
+
+      lastError = e;
+
+      if (
+        e.name === "AbortError"
+      ) {
+        logWarn(
+          `${path} Timeout (${TIMEOUT_MS}ms)`
+        );
+      }
+
+      if (
+        attempt < MAX_RETRY
+      ) {
+        await new Promise(
+          resolve =>
+            setTimeout(
+              resolve,
+              attempt * 1000
+            )
+        );
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+/* =========================================================
+ [5100] Endpoint Fetcher:fetchAreaListJson（旧 [3110]）
+========================================================= */
+async function fetchAreaListJson() {
+  return fetchJSON(
+    "areaList.json"
+  );
+}
+
+/* =========================================================
+ [5110] Endpoint Fetcher:fetchLatestRoundJson（旧 [3210]）
+========================================================= */
+async function fetchLatestRoundJson() {
+
+  return fetchJSON(
+    "latest_round.json"
+  );
+}
+
+/* =========================================================
+ [5120] Endpoint Fetcher:fetchLatestUpdateJson（旧 [3310]）
+========================================================= */
+async function fetchLatestUpdateJson() {
+
+  return fetchJSON(
+    "latest_update.json"
+  );
+}
+
+/* =========================================================
+ [5130] Endpoint Fetcher:fetchHistoricalMatchupDistributionJson（旧 [3410]）
+========================================================= */
+async function fetchHistoricalMatchupDistributionJson() {
+
+  return fetchJSON(
+    "historical_matchup_distribution.json"
+  );
+}
+
+/* =========================================================
+ [5140] Endpoint Fetcher:fetchScoringConfigJson（旧 [3510]）
+========================================================= */
+async function fetchScoringConfigJson() {
+
+  return fetchJSON(
+    "scoring_config.json"
+  );
+}
+
+async function fetchUpdateWatchConfigJson() {
+
+  return fetchJSON(
+    "update_watch_config.json"
+  );
+}
+
+/* =========================================================
+ [5150] Endpoint Fetcher:fetchRoundDataJson（旧 [3600]）
+========================================================= */
+async function fetchRoundDataJson() {
+
+  return fetchJSON(
+    "integrated_data.json"
+  );
+}
+
+/* =========================================================
+ [5200] Data Loader:loadAreaList【State】（旧 [3100]）
+========================================================= */
+let AreaList = {};
+
+let AreaIsoAlpha3 = {};
+
+function getAreaDisplayName(area) {
+  const areaKey = String(area ?? "");
+  return AreaIsoAlpha3[areaKey] ||
+    AreaList[areaKey] ||
+    areaKey;
+}
+
+async function loadAreaList() {
+
+  try {
+
+    const json =
+      await fetchAreaListJson();
+
+    applyAreaListJson(json);
+
+  } catch (e) {
+
+    logError(
+      "areaList.json の取得に失敗：" +
+      e.message
+    );
+
+    AreaList = {};
+    AreaIsoAlpha3 = {};
+  }
+}
+
+/* =========================================================
+ [5210] Data Loader:loadLatestRound【State】（旧 [3200]）
+========================================================= */
+async function loadLatestRound() {
+
+  log(
+    "latest_round.json 取得準備中"
+  );
+
+  try {
+
+    const json =
+      await fetchLatestRoundJson();
+
+    applyLatestRoundJson(
+      json
+    );
+
+  } catch (e) {
+
+    logError(
+      "latest_round.json の取得に失敗：" +
+      e.message
+    );
+  }
+}
+
+/* =========================================================
+ [5220] Data Loader:loadLatestUpdate【State】（旧 [3300]）
+========================================================= */
+async function loadLatestUpdate() {
+
+  try {
+
+    const json =
+      await fetchLatestUpdateJson();
+
+    applyLatestUpdateJson(
+      json
+    );
+
+  } catch (e) {
+
+    logWarn(
+      "latest_update.json 未取得：" +
+      e.message
+    );
+  }
+}
+
+/* =========================================================
+ [5230] Data Loader:loadHistoricalMatchupDistribution【State】（旧 [3400]）
+========================================================= */
+async function loadHistoricalMatchupDistribution() {
+
+  log(
+    "historical_matchup_distribution.json 取得準備中"
+  );
+
+  try {
+
+    const json =
+      await fetchHistoricalMatchupDistributionJson();
+
+    applyHistoricalMatchupDistributionJson(
+      json
+    );
+
+  } catch (e) {
+
+    State.historicalMatchupDistribution = null;
+
+    logWarn(
+      "historical_matchup_distribution.json 未取得：" +
+      e.message
+    );
+  }
+}
+
+/* =========================================================
+ [5240] Data Loader:loadScoringConfig【State】（旧 [3500]）
+========================================================= */
+async function loadScoringConfig() {
+
+  try {
+
+    const json =
+      await fetchJSON(
+        "scoring_config.json"
+      );
+
+    applyScoringConfigJson(
+      json
+    );
+
+  } catch (e) {
+
+    logWarn(
+      "scoring_config.json 未取得：" +
+      e.message
+    );
+  }
+}
+
+function applyUpdateWatchConfigJson(json) {
+  if (
+    typeof json?.enabled !== "boolean" ||
+    (
+      json?.unrestricted !== undefined &&
+      typeof json.unrestricted !== "boolean"
+    ) ||
+    !Number.isInteger(json?.timezoneOffsetMinutes) ||
+    json.timezoneOffsetMinutes < -720 ||
+    json.timezoneOffsetMinutes > 840 ||
+    !Number.isInteger(json?.intervalSeconds) ||
+    json.intervalSeconds < 5 ||
+    json.intervalSeconds > 3600 ||
+    !Array.isArray(json?.windows) ||
+    (
+      json.unrestricted !== true &&
+      json.windows.length === 0
+    ) ||
+    (
+      json.unrestricted === true &&
+      json.windows.length > 0
+    )
+  ) {
+    throw new Error("設定の必須項目または値が不正です");
+  }
+
+  const windows = json.windows.map(window => {
+    if (
+      !Number.isInteger(window?.startMinute) ||
+      window.startMinute < 0 ||
+      window.startMinute > 59 ||
+      !Number.isInteger(window?.durationMinutes) ||
+      window.durationMinutes < 1 ||
+      window.durationMinutes > 15 ||
+      window.startMinute + window.durationMinutes > 60
+    ) {
+      throw new Error("監視窓の開始分または長さが不正です");
+    }
+
+    return {
+      startMinute: window.startMinute,
+      durationMinutes: window.durationMinutes
+    };
+  });
+
+  windows.sort(
+    (a, b) => a.startMinute - b.startMinute
+  );
+
+  for (let i = 1; i < windows.length; i++) {
+    if (
+      windows[i].startMinute <
+      windows[i - 1].startMinute +
+        windows[i - 1].durationMinutes
+    ) {
+      throw new Error("監視窓同士が重複しています");
+    }
+  }
+
+  State.updateWatchConfig = {
+    enabled: json.enabled,
+    unrestricted: json.unrestricted === true,
+    timezoneOffsetMinutes: json.timezoneOffsetMinutes,
+    intervalSeconds: json.intervalSeconds,
+    windows
+  };
+
+  const windowLabels = windows.map(
+    window =>
+      `${window.startMinute}～` +
+      `${window.startMinute + window.durationMinutes}分`
+  );
+  const offsetHours =
+    json.timezoneOffsetMinutes / 60;
+  const timezoneLabel =
+    `UTC${offsetHours >= 0 ? "+" : ""}${offsetHours}`;
+
+  log(
+    `update_watch_config.json 読み込み完了：` +
+    `${timezoneLabel}、` +
+    `${json.unrestricted === true ? "終日監視" : `毎時${windowLabels.join(" / ")}`}、` +
+    `${json.intervalSeconds}秒間隔` +
+    (json.enabled ? "" : "（監視無効）")
+  );
+}
+
+async function loadUpdateWatchConfig() {
+  try {
+    const json =
+      await fetchUpdateWatchConfigJson();
+
+    applyUpdateWatchConfigJson(json);
+  } catch (e) {
+    State.updateWatchConfig = {
+      enabled: DEFAULT_UPDATE_WATCH_CONFIG.enabled,
+      unrestricted: DEFAULT_UPDATE_WATCH_CONFIG.unrestricted,
+      timezoneOffsetMinutes:
+        DEFAULT_UPDATE_WATCH_CONFIG.timezoneOffsetMinutes,
+      intervalSeconds:
+        DEFAULT_UPDATE_WATCH_CONFIG.intervalSeconds,
+      windows:
+        DEFAULT_UPDATE_WATCH_CONFIG.windows.map(
+          window => ({ ...window })
+        )
+    };
+
+    logWarn(
+      "update_watch_config.json を適用できません。" +
+      "既定の監視条件（時間帯制限なし）を使用します：" +
+      e.message
+    );
+  }
+}
+
+/* =========================================================
+ [5300] Prefetch:prefetchLatestRoundData【State】（旧 [3710]）
+========================================================= */
+async function prefetchLatestRoundData(
+  lastUpdatedValue
+) {
+
+  if (
+    !lastUpdatedValue
+  ) {
+    return;
+  }
+
+  if (
+    State.prefetchedForUpdateAt ===
+      lastUpdatedValue &&
+    State.prefetchedRoundData
+  ) {
+    return;
+  }
+
+  if (
+    State.prefetchInFlight
+  ) {
+    return State.prefetchInFlight;
+  }
+
+  State.prefetchInFlight =
+    (async () => {
+
+      const startedAt =
+        performance.now();
+
+      try {
+
+        log(
+          "先読み開始"
+        );
+
+        const json =
+          await fetchRoundDataJson();
+
+        const expectedTime =
+          parseDateJST(lastUpdatedValue)?.getTime();
+        const generatedTime =
+          parseDateJST(json?.generatedAt)?.getTime();
+
+        if (
+          !Number.isFinite(expectedTime) ||
+          !Number.isFinite(generatedTime) ||
+          generatedTime !== expectedTime
+        ) {
+          logWarn(
+            `先読み世代不一致：期待=${lastUpdatedValue} / ` +
+            `取得=${json?.generatedAt ?? "none"}。監視窓内で再試行します`
+          );
+          return;
+        }
+
+        State.prefetchedRoundData =
+          json;
+
+        State.prefetchedForUpdateAt =
+          lastUpdatedValue;
+        State.pendingPrefetchForUpdateAt =
+          "";
+
+        const elapsed =
+          Math.round(
+            performance.now() -
+            startedAt
+          );
+
+        const count =
+          json?.records?.length ??
+          0;
+
+        log(
+          `先読み成功:${count}件 通信時間:${elapsed}ms`
+        );
+
+      } catch (e) {
+
+        logWarn(
+          "先読み失敗:" +
+          e.message
+        );
+
+        console.warn(
+          "prefetch failed:",
+          e.message
+        );
+
+      } finally {
+
+        State.prefetchInFlight =
+          null;
+      }
+
+    })();
+
+  return State.prefetchInFlight;
+}
+
+/* =========================================================
+ [5310] Reload:reloadLatestDataPreferPrefetch【State】（旧 [3700]）
+========================================================= */
+async function reloadLatestDataPreferPrefetch() {
+
+  startProgress();
+
+  try {
+
+    const maxAttempts = 3;
+    let latestObserved = "";
+    let verifiedRoundData = null;
+    let verifiedLatestAt = "";
+    let verifiedFromPrefetch = false;
+
+    for (
+      let attempt = 1;
+      attempt <= maxAttempts;
+      attempt++
+    ) {
+      const beforeJson =
+        await fetchLatestUpdateJson();
+      const beforeValue =
+        beforeJson?.lastUpdated ??
+        beforeJson?.latestUpdateAt ??
+        "";
+      const beforeLatest =
+        String(beforeValue || "");
+      const beforeTime =
+        parseDateJST(beforeLatest)?.getTime();
+
+      if (!Number.isFinite(beforeTime)) {
+        throw new Error(
+          "最新更新時刻を取得または解析できません"
+        );
+      }
+      latestObserved = beforeLatest;
+
+      const prefetchedData =
+        State.prefetchedRoundData;
+      const prefetchedTime =
+        parseDateJST(
+          prefetchedData?.generatedAt
+        )?.getTime();
+      const prefetchedVersionTime =
+        parseDateJST(
+          State.prefetchedForUpdateAt
+        )?.getTime();
+      const usePrefetch =
+        prefetchedData &&
+        Number.isFinite(prefetchedTime) &&
+        prefetchedTime === beforeTime &&
+        Number.isFinite(prefetchedVersionTime) &&
+        prefetchedVersionTime === beforeTime;
+
+      log(
+        `Reload 世代確認 ${attempt}/${maxAttempts}：` +
+        `最新=${beforeLatest}、取得元=${usePrefetch ? "Prefetch" : "Network"}`
+      );
+
+      const roundDataJson =
+        usePrefetch
+          ? prefetchedData
+          : await fetchRoundDataJson();
+      const roundDataTime =
+        parseDateJST(
+          roundDataJson?.generatedAt
+        )?.getTime();
+
+      const afterJson =
+        await fetchLatestUpdateJson();
+      const afterValue =
+        afterJson?.lastUpdated ??
+        afterJson?.latestUpdateAt ??
+        "";
+      const afterLatest =
+        String(afterValue || "");
+      const afterTime =
+        parseDateJST(afterLatest)?.getTime();
+
+      if (!Number.isFinite(afterTime)) {
+        throw new Error(
+          "Reload後の最新更新時刻を取得または解析できません"
+        );
+      }
+      latestObserved = afterLatest;
+
+      const stateLatestTime =
+        parseDateJST(State.latestUpdateAt)?.getTime();
+      const generationMatches =
+        Number.isFinite(roundDataTime) &&
+        roundDataTime === beforeTime &&
+        beforeTime === afterTime &&
+        (
+          !Number.isFinite(stateLatestTime) ||
+          stateLatestTime <= afterTime
+        );
+
+      if (generationMatches) {
+        verifiedRoundData = roundDataJson;
+        verifiedLatestAt = afterLatest;
+        verifiedFromPrefetch = Boolean(usePrefetch);
+        log(
+          `Reload 世代確認成功：generatedAt=${roundDataJson.generatedAt}`
+        );
+        break;
+      }
+
+      if (
+        State.prefetchedRoundData &&
+        (
+          State.prefetchedRoundData === roundDataJson ||
+          prefetchedTime !== afterTime
+        )
+      ) {
+        State.prefetchedRoundData = null;
+        State.prefetchedForUpdateAt = "";
+      }
+
+      State.pendingPrefetchForUpdateAt =
+        afterLatest;
+      logWarn(
+        `Reload 世代不一致：公開=${beforeLatest}→${afterLatest} / ` +
+        `取得=${roundDataJson?.generatedAt ?? "none"}。再試行します`
+      );
+
+      if (attempt < maxAttempts) {
+        await new Promise(
+          resolve => setTimeout(resolve, 1000)
+        );
+      }
+    }
+
+    if (!verifiedRoundData) {
+      throw new Error(
+        `最新世代を確認できませんでした（最新=${latestObserved || "不明"}）。` +
+        "表示中のデータを維持します"
+      );
+    }
+
+    log(
+      `Reload 利用元：${verifiedFromPrefetch ? "Prefetch" : "Network"}`
+    );
+    applyRoundDataJson(
+      verifiedRoundData,
+      {
+        resetReloadButton: true
+      }
+    );
+    State.latestUpdateAt = verifiedLatestAt;
+    State.pendingPrefetchForUpdateAt = "";
+    State.prefetchedRoundData = null;
+    State.prefetchedForUpdateAt = "";
+
+    /* =====================================
+     * 再集計
+     * ===================================== */
+
+    applyFilters();
+
+    buildSummary();
+
+    renderSummary();
+
+    State.activeCandidateEventId =
+      null;
+
+    setCurrentView(
+      STATE.SUMMARY
+    );
+
+    switchDisplayView(
+      STATE.SUMMARY
+    );
+
+    /* =====================================
+     * 完了ログ
+     * ===================================== */
+
+    log(
+      "Reload完了：generatedAt=" +
+      (
+        State.generatedAt ||
+        "none"
+      )
+    );
+
+    return true;
+
+  } catch (e) {
+
+    logError(
+      "Reload失敗：既存データを保持します：" +
+      e.message
+    );
+
+    return false;
+
+  } finally {
+
+    stopProgress();
+  }
+}
+
+/* =========================================================
+ [5400] Update Watch:checkUpdate【State】【DOM】（旧 [3800]）
+========================================================= */
+async function checkUpdate() {
+
+  const windowKey =
+    getJstUpdateWatchWindow();
+
+  if (!windowKey) {
+    State.updateWatchActiveWindowKey = "";
+    return;
+  }
+
+  if (
+    windowKey !==
+    State.updateWatchActiveWindowKey
+  ) {
+    State.updateWatchActiveWindowKey =
+      windowKey;
+
+    const config =
+      State.updateWatchConfig ??
+      DEFAULT_UPDATE_WATCH_CONFIG;
+    const localDate = new Date(
+      Date.now() +
+      config.timezoneOffsetMinutes * 60 * 1000
+    );
+    const minute = localDate.getUTCMinutes();
+    const activeWindow =
+      config.unrestricted
+        ? null
+        : config.windows.find(
+            window => {
+              const secondOfHour =
+                minute * 60 + localDate.getUTCSeconds();
+              return (
+                secondOfHour >= window.startMinute * 60 &&
+                secondOfHour <
+                  (window.startMinute + window.durationMinutes) * 60
+              );
+            }
+          );
+    const windowLabel =
+      config.unrestricted
+        ? "終日"
+        : activeWindow
+          ? `毎時${activeWindow.startMinute}～` +
+            `${activeWindow.startMinute + activeWindow.durationMinutes}分`
+          : "設定窓";
+
+    log(
+      `更新監視中：${windowLabel}（${config.intervalSeconds}秒間隔）`
+    );
+  }
+
+  if (State.updateCheckRunning) {
+    return;
+  }
+
+  State.updateCheckRunning = true;
+
+  try {
+
+    const prev =
+      State.latestUpdateAt || "";
+
+    const json =
+      await fetchLatestUpdateJson();
+
+    let latest =
+      json?.lastUpdated ??
+      json?.latestUpdateAt ??
+      "";
+
+    if (
+      typeof latest !==
+      "string"
+    ) {
+      latest =
+        String(latest || "");
+    }
+
+    if (!latest) {
+      return;
+    }
+
+    const changed =
+      prev &&
+      prev !== latest;
+
+    const latestTime =
+      parseDateJST(latest)?.getTime();
+    const generatedTime =
+      parseDateJST(State.generatedAt)?.getTime();
+    const integratedDataBehind =
+      Number.isFinite(latestTime) &&
+      (
+        !Number.isFinite(generatedTime) ||
+        generatedTime < latestTime
+      );
+
+    if (integratedDataBehind) {
+      State.pendingPrefetchForUpdateAt = latest;
+    } else if (
+      State.pendingPrefetchForUpdateAt &&
+      !State.prefetchedRoundData
+    ) {
+      State.pendingPrefetchForUpdateAt = "";
+    }
+
+    if (changed) {
+      if (
+        State.prefetchedForUpdateAt !== latest
+      ) {
+        State.prefetchedRoundData = null;
+        State.prefetchedForUpdateAt = "";
+      }
+    }
+    State.latestUpdateAt = latest;
+
+    /* =====================================
+     * 更新検知
+     * ===================================== */
+
+    if (changed) {
+
+      const btn =
+        document.getElementById(
+          "reloadBtn"
+        );
+
+      if (btn) {
+
+        btn.classList.add(
+          "update-alert"
+        );
+
+        btn.style.cssText =
+          "background:#ff4081;color:#fff;font-weight:bold;";
+      }
+
+      logWarn(
+        "新しいデータが公開されています。更新時刻: " + latest
+      );
+
+    }
+
+    if (
+      State.pendingPrefetchForUpdateAt &&
+      !State.prefetchedRoundData &&
+      !State.prefetchInFlight &&
+      isWithinUpdateWatchWindow()
+    ) {
+      prefetchLatestRoundData(
+        State.pendingPrefetchForUpdateAt
+      );
+    }
+
+  } catch (e) {
+
+    logError(
+      "latest_update.json の取得に失敗：" +
+      e.message
+    );
+
+  } finally {
+    State.updateCheckRunning = false;
+  }
+}
+
+function getJstUpdateWatchWindow(nowMs = Date.now()) {
+  const config =
+    State.updateWatchConfig ??
+    DEFAULT_UPDATE_WATCH_CONFIG;
+  if (!config.enabled) {
+    return null;
+  }
+
+  const localDate = new Date(
+    nowMs +
+    config.timezoneOffsetMinutes * 60 * 1000
+  );
+  const dateKey = [
+    localDate.getUTCFullYear(),
+    String(localDate.getUTCMonth() + 1).padStart(2, "0"),
+    String(localDate.getUTCDate()).padStart(2, "0")
+  ].join("");
+  const hourKey =
+    String(localDate.getUTCHours()).padStart(2, "0");
+
+  if (config.unrestricted) {
+    return `${dateKey}-${hourKey}:all`;
+  }
+
+  const minute = localDate.getUTCMinutes();
+  const secondOfHour =
+    minute * 60 + localDate.getUTCSeconds();
+  const matchingWindow = config.windows.find(
+    window => {
+      const startSecond =
+        window.startMinute * 60;
+      const endSecond =
+        startSecond + window.durationMinutes * 60;
+      return (
+        secondOfHour >= startSecond &&
+        secondOfHour < endSecond
+      );
+    }
+  );
+
+  if (!matchingWindow) {
+    return null;
+  }
+
+  return (
+    `${dateKey}-${hourKey}:` +
+    String(matchingWindow.startMinute).padStart(2, "0")
+  );
+}
+
+function isWithinUpdateWatchWindow(nowMs = Date.now()) {
+  return getJstUpdateWatchWindow(nowMs) !== null;
+}
+
+/* =========================================================
+ [5410] Update Watch:startUpdateWatch【State】（旧 [4300]）
+========================================================= */
+function startUpdateWatch() {
+
+  if (
+    State.updateWatchTimer
+  ) {
+
+    clearInterval(
+      State.updateWatchTimer
+    );
+  }
+
+  if (
+    State.updateWatchVisibilityHandler
+  ) {
+    document.removeEventListener(
+      "visibilitychange",
+      State.updateWatchVisibilityHandler
+    );
+    State.updateWatchVisibilityHandler = null;
+  }
+
+  const config =
+    State.updateWatchConfig ??
+    DEFAULT_UPDATE_WATCH_CONFIG;
+
+  if (!config.enabled) {
+    log("更新監視はConfigで無効化されています");
+    return;
+  }
+
+  const watchDescription =
+    config.unrestricted
+      ? "終日"
+      : config.windows.map(
+          window =>
+            `${window.startMinute}～` +
+            `${window.startMinute + window.durationMinutes}分`
+        ).join("、");
+
+  log(
+    `✓ 更新監視を開始しました：${watchDescription}、` +
+    `${config.intervalSeconds}秒間隔、` +
+    `UTC${config.timezoneOffsetMinutes >= 0 ? "+" : ""}` +
+    `${config.timezoneOffsetMinutes / 60}`
+  );
+
+  State.updateWatchTimer =
+    setInterval(
+      () => {
+        checkUpdate();
+      },
+      config.intervalSeconds * 1000
+    );
+
+  State.updateWatchVisibilityHandler = () => {
+    if (
+      document.visibilityState === "visible" &&
+      isWithinUpdateWatchWindow()
+    ) {
+      checkUpdate();
+    }
+  };
+  document.addEventListener(
+    "visibilitychange",
+    State.updateWatchVisibilityHandler
+  );
+
+  if (isWithinUpdateWatchWindow()) {
+    checkUpdate();
+  }
+}
+
+
+/* #################################################################
+ [LAYER 6000] Learning State Operations
+ ################################################################# */
+
+/* =========================================================
+ [6000] Pink Target:getPinkTarget【State】（旧 [7073]）
+========================================================= */
+function getPinkTarget(player) {
+
+  /*
+   * 【設計メモ：参照系の自己修復】
+   * 本関数は参照（read）だが、以下の「自己修復」を意図的に行う。
+   *  - stale（前日以前）エントリの削除
+   *  - 旧キー（legacyKey）で登録されたエントリの正式キーへの移行
+   * これはデータ整合性維持のための公式な副作用であり、
+   * 削除すると旧データが残り続ける。State への書き込みは許容する。
+   */
+  if (!player) {
+    return null;
+  }
+
+  const directKey =
+    buildPlayerIdentityKey(player);
+
+  const directTarget =
+    State.pinkTargets?.[
+      directKey
+    ];
+
+  if (directTarget) {
+
+    if (isPinkTargetStale(directTarget)) {
+      delete State.pinkTargets[directKey];
+      return null;
+    }
+
+    return directTarget;
+  }
+
+  const normalizedName =
+    normalizePlayerName(
+      player?.name ?? ""
+    );
+
+  const normalizedShop =
+    normalizePlayerName(
+      player?.shopname ?? ""
+    );
+
+  const fallbackEntry =
+    Object.entries(
+      State.pinkTargets || {}
+    ).find(
+      ([, entry]) => {
+
+        if (!entry) {
+          return false;
+        }
+
+        const entryName =
+          normalizePlayerName(
+            entry?.name ?? ""
+          );
+
+        const entryShop =
+          normalizePlayerName(
+            entry?.shopname ?? ""
+          );
+
+        return (
+          entryName ===
+            normalizedName &&
+          entryShop ===
+            normalizedShop
+        );
+
+      }
+    );
+
+  if (fallbackEntry) {
+
+    const [
+      legacyKey,
+      resolvedEntry
+    ] = fallbackEntry;
+
+    if (isPinkTargetStale(resolvedEntry)) {
+      delete State.pinkTargets[legacyKey];
+      return null;
+    }
+
+    if (
+      legacyKey !== directKey
+    ) {
+
+      State.pinkTargets[
+        directKey
+      ] = resolvedEntry;
+
+      delete State.pinkTargets[
+        legacyKey
+      ];
+
+    }
+
+    return resolvedEntry;
+
+  }
+
+  return null;
+
+}
+
+/* =========================================================
+ [6010] Pink Target:registerPinkTarget【State】【永続化】（旧 [7074]）
+========================================================= */
+function registerPinkTarget(
+  player,
+  copiedAt = Date.now()
+) {
+
+  if (!player) {
+    return null;
+  }
+
+  const now =
+    Number(copiedAt) ||
+    Date.now();
+
+  const key =
+    buildPlayerIdentityKey(
+      player
+    );
+
+  const existing =
+    getPinkTarget(player);
+
+  const entry =
+    existing || {
+
+      key,
+
+      name:
+        player.name ?? "",
+
+      shopname:
+        player.shopname ?? "",
+
+      rankKey:
+        getPlayerRankKey(
+          player
+        ),
+
+      copyCount: 0,
+
+      firstCopiedAt:
+        now,
+
+      lastCopiedAt:
+        now,
+
+      dailyKey:
+        buildDailyKey(),
+
+      history: []
+
+    };
+
+  entry.copyCount =
+    (entry.copyCount || 0) + 1;
+
+  entry.lastCopiedAt =
+    now;
+
+  entry.history = [
+    ...(entry.history || []),
+    now
+  ].slice(-5);
+
+  entry.rankKey =
+    getPlayerRankKey(player)
+    || entry.rankKey;
+
+  entry.name =
+    player.name ??
+    entry.name;
+
+  entry.shopname =
+    player.shopname ??
+    entry.shopname;
+
+  entry.key =
+    key;
+
+  State.pinkTargets[key] =
+    entry;
+
+  savePinkStateToStorage();
+
+  /*
+   * 新しいPink履歴間隔（区間）が追加された直後（history.length >= 2）のみ
+   * 明示的に学習（EMA更新）を行う。
+   */
+  if (entry.history && entry.history.length >= 2) {
+    try {
+      calcPinkCycle({ learn: true });
+      savePinkStateToStorage();
+    } catch (e) {
+      console.warn("[pink] calcPinkCycle failed:", e);
+    }
+  }
+
+  return entry;
+
+}
+
+/* =========================================================
+ [6020] Pink Target:isCopiedPlayer【State】（旧 [7270]）
+========================================================= */
+function isCopiedPlayer(
+  player
+) {
+
+  return Boolean(
+    getPinkTarget(player)
+  );
+}
+
+/* =========================================================
+ [6100] Encounter History:getEncounterHistory【State】【永続化】（旧 [7076]）
+========================================================= */
+function getEncounterHistory(
+  player
+) {
+
+  /*
+   * 【設計メモ：参照系の自己修復】
+   * 本関数は参照（read）だが、旧キーで登録されたエントリを
+   * 正式キーへ移行する「自己修復」を意図的に行う（保存も発火）。
+   * これはデータ整合性維持のための公式な副作用であり、
+   * State への書き込みと savePinkStateToStorage() を許容する。
+   */
+  if (!player) {
+    return null;
+  }
+
+  const directKey =
+    buildPlayerIdentityKey(
+      player
+    );
+
+  const directEntry =
+    State.encounterHistory?.[
+      directKey
+    ];
+
+  if (directEntry) {
+    return directEntry;
+  }
+
+  const normalizedName =
+    normalizePlayerName(
+      player?.name ?? ""
+    );
+
+  const normalizedShop =
+    normalizePlayerName(
+      player?.shopname ?? ""
+    );
+
+  const fallbackEntry =
+    Object.entries(
+      State.encounterHistory || {}
+    ).find(
+      ([, entry]) => {
+
+        if (!entry) {
+          return false;
+        }
+
+        const entryName =
+          normalizePlayerName(
+            entry?.name ?? ""
+          );
+
+        const entryShop =
+          normalizePlayerName(
+            entry?.shopname ?? ""
+          );
+
+        return (
+          entryName ===
+            normalizedName &&
+          entryShop ===
+            normalizedShop
+        );
+
+      }
+    );
+
+  if (fallbackEntry) {
+
+    const [
+      legacyKey,
+      resolvedEntry
+    ] = fallbackEntry;
+
+    if (
+      legacyKey !== directKey
+    ) {
+
+      State.encounterHistory[
+        directKey
+      ] = resolvedEntry;
+
+      delete State.encounterHistory[
+        legacyKey
+      ];
+
+      savePinkStateToStorage();
+
+    }
+
+    return resolvedEntry;
+
+  }
+
+  return null;
+
+}
+
+/* =========================================================
+ [6110] Encounter History:updateEncounterHistory【State】【永続化】（旧 [7075]）
+========================================================= */
+function updateEncounterHistory(
+  player,
+  copiedAt = Date.now()
+) {
+
+  if (!player) {
+    return null;
+  }
+
+  const now =
+    Number(copiedAt) ||
+    Date.now();
+
+  const key =
+    buildPlayerIdentityKey(
+      player
+    );
+
+  const existing =
+    getEncounterHistory(
+      player
+    );
+
+  const entry =
+    existing || {
+
+      key,
+
+      name:
+        player.name ?? "",
+
+      shopname:
+        player.shopname ?? "",
+
+      count: 0,
+
+      firstSeenAt:
+        now,
+
+      lastSeenAt:
+        now,
+
+      lastUpdateDate:
+        player.updateDate ?? ""
+
+    };
+
+  entry.count =
+    (entry.count || 0) + 1;
+
+  entry.lastSeenAt =
+    now;
+
+  entry.lastUpdateDate =
+    player.updateDate ??
+    entry.lastUpdateDate;
+
+  entry.key = key;
+
+  State.encounterHistory[key] =
+    entry;
+
+  savePinkStateToStorage();
+
+  return entry;
+
+}
+
+/*
+ * 【2026-09 削除】getEncounterBonus は常に1.0を返す
+ * 無効化済み関数だったため、呼び出し箇所とあわせて削除した。
+ * encounterHistory 自体は undo 等の管理情報として引き続き利用する。
+ */
+
+/* =========================================================
+ [6200] Yellow Samples:registerYellowSample【State】【永続化】（旧 [7078]）
+========================================================= */
+function registerYellowSample(
+  player,
+  copiedAt = Date.now()
+) {
+
+  if (
+    !player ||
+    !player.updateDate
+  ) {
+    return null;
+  }
+
+  const updateMs =
+    parseDateJST(
+      player.updateDate
+    )?.getTime();
+
+  if (
+    !updateMs ||
+    !isFinite(updateMs)
+  ) {
+    return null;
+  }
+
+  const diffSec =
+    (
+      copiedAt -
+      updateMs
+    ) / 1000;
+
+  if (
+    !isFinite(diffSec) ||
+    diffSec < 0
+  ) {
+    return null;
+  }
+
+  /*
+   * フィルタ対象期間（45分＝2700秒）を超える古すぎるデータは
+   * 周期学習のノイズ・過学習・矛盾の原因となるためサンプルから除外する
+   */
+  const maxAllowableDiffSec = 45 * 60;
+  if (diffSec > maxAllowableDiffSec) {
+    return null;
+  }
+
+  /*
+   * Yellow基準周期
+   *
+   * 現在の学習処理は
+   * 345±45秒を前提としているため
+   * 保存時も345秒基準で折り畳み
+   */
+  const baseCycleSec = 345;
+
+  /*
+   * 周期ズレ
+   *
+   * 302 → 2
+   * 598 → -2
+   * 905 → 5
+   * 1198 → -2
+   */
+  const foldedSec =
+    foldToCycle(
+      diffSec,
+      baseCycleSec
+    );
+
+  /*
+   * 経過周期数
+   *
+   * 302 → 1
+   * 598 → 1
+   * 905 → 3
+   * 1198 → 3
+   */
+  const cycleCount =
+    Math.max(
+      1,
+      Math.round(
+        diffSec /
+        baseCycleSec
+      )
+    );
+
+  const sample = {
+
+    copiedAt,
+
+    updateMs,
+
+    diffSec,
+
+    /*
+     * 周期ズレ
+     */
+    foldedSec,
+
+    /*
+     * おおよその経過周期数
+     */
+    cycleCount
+
+  };
+
+  State.yellowSamples = [
+    sample,
+    ...State.yellowSamples
+  ].slice(0, 50);
+
+  savePinkStateToStorage();
+
+  // Immediately update learned yellow adjustment so
+  // subsequent candidate generation uses the new sample.
+  try {
+    calcYellowCycle({ learn: true });
+    savePinkStateToStorage();
+  } catch (e) {
+    console.warn("[yellow] calcYellowCycle failed:", e);
+  }
+
+  return sample;
+}
+
+/* =========================================================
+ [6300] Realtime Boost:recordRealtimeActivity【State】【永続化】（旧 [7105] 内）
+========================================================= */
+function recordRealtimeActivity(
+  player,
+  rankKey,
+  timestamp
+) {
+
+  if (!player) return;
+
+  const now =
+    Number(timestamp) ||
+    Date.now();
+
+  const playerId =
+    normalizePlayerName(
+      player.name ?? ""
+    );
+
+  if (playerId) {
+
+    const prev =
+      State.playerActivity[
+        playerId
+      ] || { count: 0 };
+
+    State.playerActivity[
+      playerId
+    ] = {
+      count:
+        Number(prev.count ?? 0) + 1,
+      lastSeen: now
+    };
+  }
+
+  const rk =
+    String(rankKey ?? "");
+
+  if (rk) {
+
+    const prev =
+      State.rankActivity[rk] ||
+      { count: 0 };
+
+    State.rankActivity[rk] = {
+      count:
+        Number(prev.count ?? 0) + 1,
+      lastSeen: now
+    };
+  }
+
+  saveRealtimeActivityToStorage();
+}
+
+/* =========================================================
+ [6310] Realtime Boost:getBoostDecayHalfLifeSec（旧 [7105] 内）
+========================================================= */
+function getBoostDecayHalfLifeSec() {
+
+  return Number(
+    State.scoringConfig
+      ?.realtimeBoost
+      ?.decaySec ?? 3600
+  );
+}
+
+function computeActivitySignal(
+  entry,
+  nowMs = Date.now()
+) {
+
+  if (!entry) {
+    return 0;
+  }
+
+  const count =
+    Number(entry.count ?? 0);
+
+  const lastSeen =
+    Number(entry.lastSeen ?? 0);
+
+  if (
+    !count ||
+    !lastSeen ||
+    !isFinite(lastSeen)
+  ) {
+    return 0;
+  }
+
+  const deltaSec =
+    (nowMs - lastSeen) / 1000;
+
+  if (
+    !isFinite(deltaSec) ||
+    deltaSec < 0
+  ) {
+    return 0;
+  }
+
+  const T =
+    getBoostDecayHalfLifeSec();
+
+  const decay =
+    Math.exp(-deltaSec / T);
+
+  return Math.log(1 + count) *
+    decay;
+}
+
+/*
+ * コピー履歴から作る旧Realtime Area Boostは廃止済み。
+ * 現在のアクティブ人数から作るArea Boostは、Matching Calculation層で
+ * 通常枠内スコアにだけ適用する。
+ */
+
+/* =========================================================
+ [6400] Recent Clicks:rebuildRecentClickIndex【State】（旧 [7105] 内）
+========================================================= */
+function rebuildRecentClickIndex() {
+  const set = new Set();
+
+  for (const r of State.recentClicks) {
+    if (!r) continue;
+
+    const nameKey =
+      normalizePlayerName(r.name ?? "");
+
+    if (!nameKey) continue;
+
+    const dateKey =
+      String(r.updateDate ?? "");
+
+    set.add(`${nameKey}|${dateKey}`);
+  }
+
+  State.recentClickSet = set;
+}
+
+/* =========================================================
+ [6410] Recent Clicks:hasSamePlayerRecentClick【State】（旧 [7500] 内）
+========================================================= */
+function hasSamePlayerRecentClick(player) {
+
+  if (!player || !State.recentClicks?.length) {
+    return false;
+  }
+
+  const targetName =
+    normalizePlayerName(player.name);
+
+  const targetUpdateDate =
+    String(player.updateDate ?? "");
+
+  const lookupKey =
+    `${targetName}|${targetUpdateDate}`;
+
+  return State.recentClickSet?.has(lookupKey) ?? false;
+}
+
+
+/* #################################################################
+ [LAYER 7000] Phase Calculation
+ ################################################################# */
+
+/* =========================================================
+ [7000] Cycle Learning:calcYellowCycle【State】（旧 [7220]）
+========================================================= */
+function calcYellowCycle(opts = {}) {
+
+  const learn =
+    Boolean(opts.learn);
+
+  const cfg =
+    State.scoringConfig?.phase?.yellow ?? {};
+
+  const base =
+    cfg.baseCycleSec ?? 345;
+
+  const maxShift =
+    cfg.maxShiftSec ?? 45;
+
+  /*
+   * 読み取り専用モード（既定）
+   *
+   * getCurrentCycle経由の参照（行ハイライト・スコアリング等）は
+   * 1回の描画で何十〜何百回も呼ばれる。そのたびにここで
+   * EMA更新（学習）を行うと、同じサンプル集合に対して
+   * 呼び出し回数分だけ学習が繰り返し進んでしまい、
+   * 本来「新しいサンプルが増えた時だけ」働くはずの学習が
+   * 実質的に毎描画で暴走する不具合になる。
+   *
+   * そのため、新しいサンプル登録直後（registerYellowSample）で
+   * learn:true を明示した時だけ学習・上書きを行い、
+   * それ以外（既定）は現在保持している adjust を
+   * そのまま読むだけの純粋な参照とする。
+   */
+  if (!learn) {
+    return (
+      base +
+      clamp(
+        State.phaseAdjust?.yellow ?? 0,
+        -maxShift,
+        maxShift
+      )
+    );
+  }
+
+  const samples =
+    State.yellowSamples ?? [];
+
+  if (samples.length === 0) {
+    return (
+      base +
+      clamp(
+        State.phaseAdjust?.yellow ?? 0,
+        -maxShift,
+        maxShift
+      )
+    );
+  }
+
+  const values =
+    samples
+      .map(s => {
+        const diffSec =
+          Number(s.diffSec ?? 0);
+
+        if (
+          !isFinite(diffSec) ||
+          diffSec <= 0
+        ) {
+          return null;
+        }
+
+        /*
+         * 複数周期分を折り畳む
+         *
+         * 例
+         * 302 → 2
+         * 598 → -2
+         * 902 → 2
+         * 1198 → -2
+         */
+        const folded =
+          foldToCycle(
+            diffSec,
+            base
+          );
+
+        /*
+         * 【2026-09 改善3】1周期当たりの誤差へ正規化
+         *
+         * 従来は複数周期分の折り畳み誤差（foldedSec）を
+         * そのまま1周期分の誤差として学習していたため、
+         * 経過周期数が多いサンプルほど誤差が実際より
+         * 大きく（あるいは小さく）評価されるおそれがあった。
+         *
+         * 保存済みの cycleCount（経過周期数）で割ることで、
+         * 1周期当たりの誤差に正規化してから学習する。
+         * 旧データ等で cycleCount が未保存の場合は、
+         * diffSec / base から後方互換的に導出する。
+         */
+        const cycleCount =
+          Number.isFinite(
+            Number(s.cycleCount)
+          ) &&
+          Number(s.cycleCount) > 0
+            ? Number(s.cycleCount)
+            : Math.max(
+                1,
+                Math.round(
+                  diffSec / base
+                )
+              );
+
+        return (
+          folded /
+          Math.max(1, cycleCount)
+        );
+      })
+      .filter(
+        v =>
+          v !== null &&
+          isFinite(v)
+      )
+      .sort(
+        (a, b) => a - b
+      );
+
+  if (values.length === 0) {
+    return (
+      base +
+      clamp(
+        State.phaseAdjust?.yellow ?? 0,
+        -(cfg.maxShiftSec ?? 45),
+        (cfg.maxShiftSec ?? 45)
+      )
+    );
+  }
+
+  /*
+   * 外れ値除去
+   *
+   * 立ち上がり強化（sqrtカーブ）により少数サンプルでも
+   * adjust への反映率が上がるため、中央値算出前に
+   * maxShiftSec を超える折り畳み値（明らかな異常値）を除外する。
+   */
+  const trimmedValues =
+    rejectFoldedOutliers(
+      values,
+      maxShift
+    );
+
+  /*
+   * 中央値算出
+   */
+  const mid =
+    Math.floor(
+      trimmedValues.length / 2
+    );
+
+  const median =
+    (trimmedValues.length % 2)
+      ? trimmedValues[mid]
+      : (
+          trimmedValues[mid - 1] +
+          trimmedValues[mid]
+        ) / 2;
+
+  /*
+   * median は
+   * 「周期からのズレ秒数」
+   *
+   * +10 → 周期を延ばした方がよい
+   * -10 → 周期を短くした方がよい
+   */
+  const folded = median;
+
+  const prev =
+    Number(
+      State.phaseAdjust?.yellow ?? 0
+    );
+
+  const updated =
+    updateAdjust(
+      prev,
+      folded,
+      cfg.alpha ?? 0.2
+    );
+
+  const clampedRaw =
+    clamp(
+      updated,
+      -maxShift,
+      maxShift
+    );
+
+  /*
+   * サンプル数ガード
+   *
+   * 少数サンプル（外れ値1件など）による
+   * 急激な周期シフト・発振を防ぐため、
+   * minSamples に対するサンプル数の割合を
+   * 信頼度として adjust に乗算する。
+   *
+   * 立ち上がり強化のため線形ではなくsqrtカーブを採用。
+   * サンプルが十分（minSamples以上）
+   * であれば信頼度1.0（そのまま採用）。
+   */
+  const minSamples =
+    cfg.minSamples ?? 8;
+
+  const trust =
+    computeSampleTrust(
+      values.length,
+      minSamples
+    );
+
+  const clamped =
+    clampedRaw * trust;
+
+  State.phaseAdjust.yellow =
+    clamped;
+
+  /*
+   * 分析用診断情報の記録
+   * （trust強化・外れ値除去の効果検証のため）
+   */
+  State.phaseDiag.yellow = {
+    sampleCount: values.length,
+    trust,
+    adjustValue: clamped
+  };
+
+  return base + clamped;
+}
+
+/* =========================================================
+ [7010] Cycle Learning:calcPinkCycle【State】（旧 [7230]）
+========================================================= */
+function calcPinkCycle(
+  opts = {}
+) {
+
+  const learn =
+    Boolean(opts.learn);
+
+  const cfg =
+    State.scoringConfig
+      ?.phase?.pink || {};
+
+  const base =
+    cfg.baseCycleSec || 345;
+
+  const maxShift =
+    cfg.maxShiftSec || 45;
+
+  /*
+   * 読み取り専用モード（既定）
+   *
+   * Yellowと同様、getCurrentCycle経由の参照で
+   * 毎回EMA更新してしまう不具合を避けるため、
+   * learn:true が明示された時（新規Pinkサンプル登録直後）
+   * だけ学習・上書きを行う。
+   */
+  if (!learn) {
+    return (
+      base +
+      clamp(
+        State.phaseAdjust?.pink ?? 0,
+        -maxShift,
+        maxShift
+      )
+    );
+  }
+
+  const foldedList = [];
+
+  const targets =
+    Object.values(
+      State.pinkTargets || {}
+    );
+
+  for (const entry of targets) {
+
+    const history =
+      entry.history || [];
+
+    if (history.length < 2) {
+      continue;
+    }
+
+    /* Pink対象ごとの全過去マッチング間隔（隣接ペア）をすべて折りたたんで登録 */
+    for (let i = 1; i < history.length; i++) {
+      const latest =
+        Number(history[i] || 0);
+
+      const prev =
+        Number(history[i - 1] || 0);
+
+      if (!latest || !prev || latest <= prev) {
+        continue;
+      }
+
+      const interval =
+        (latest - prev) / 1000;
+
+      const folded =
+        foldToCycle(
+          interval,
+          base
+        );
+
+      if (isFinite(folded)) {
+        const cycleCount = Math.max(1, Math.round(interval / base));
+        foldedList.push(folded / cycleCount);
+      }
+    }
+  }
+
+  if (
+    foldedList.length === 0
+  ) {
+
+    return (
+      base +
+      clamp(
+        State.phaseAdjust
+          ?.pink ?? 0,
+        -maxShift,
+        maxShift
+      )
+    );
+  }
+
+  /* 中央値算出（外れ値に強い収束処理） */
+  const values =
+    [...foldedList].sort(
+      (a, b) => a - b
+    );
+
+  /*
+   * 外れ値除去
+   *
+   * 立ち上がり強化（sqrtカーブ）により少数サンプルでも
+   * adjust への反映率が上がるため、中央値算出前に
+   * maxShiftSec を超える折り畳み値（明らかな異常値）を除外する。
+   */
+  const trimmedValues =
+    rejectFoldedOutliers(
+      values,
+      maxShift
+    );
+
+  const mid =
+    Math.floor(
+      trimmedValues.length / 2
+    );
+
+  const median =
+    (trimmedValues.length % 2)
+      ? trimmedValues[mid]
+      : (
+          trimmedValues[mid - 1] +
+          trimmedValues[mid]
+        ) / 2;
+
+  const prev =
+    Number(
+      State.phaseAdjust
+        ?.pink ?? 0
+    );
+
+  const updated =
+    updateAdjust(
+      prev,
+      median,
+      cfg.alpha || 0.3
+    );
+
+  const clampedRaw =
+    clamp(
+      updated,
+      -maxShift,
+      maxShift
+    );
+
+  /*
+   * サンプル数ガード
+   *
+   * 少数サンプル（外れ値1件など）による
+   * 急激な周期シフト・発振を防ぐため、
+   * minSamples に対するサンプル数の割合を
+   * 信頼度として adjust に乗算する。
+   *
+   * 立ち上がり強化のため線形ではなくsqrtカーブを採用。
+   */
+  const minSamples =
+    cfg.minSamples ?? 8;
+
+  const trust =
+    computeSampleTrust(
+      foldedList.length,
+      minSamples
+    );
+
+  const clamped =
+    clampedRaw * trust;
+
+  State.phaseAdjust.pink =
+    clamped;
+
+  /*
+   * 分析用診断情報の記録
+   * （trust強化・外れ値除去の効果検証のため）
+   */
+  State.phaseDiag.pink = {
+    sampleCount: foldedList.length,
+    trust,
+    adjustValue: clamped
+  };
+
+  return base + clamped;
+}
+
+/* =========================================================
+ [7020] Cycle Learning:getCurrentCycle【State】（旧 [7210]）
+========================================================= */
+function getCurrentCycle(
+  player
+) {
+
+  return isCopiedPlayer(player)
+    ? calcPinkCycle()
+    : calcYellowCycle();
+}
+
+/* =========================================================
+ [7030] Cycle Learning:seedPhaseAdjustFromCopyHistory【State】【永続化】
+ ※【2026-09 改善：Phaseバイアス収束の高速化】
+
+ calcYellowCycle / calcPinkCycle は EMA
+ （yellow: alpha=0.05／pink: alpha=0.1）で
+ State.phaseAdjust を少しずつ真値へ近づけるが、
+ localStorageが空の状態（初回起動・ブラウザデータ削除後・
+ 別端末）では0から再学習が始まり、実績ログ解析で
+ 確認された系統的なズレ
+ （実際にコピーされた相手は周期予測のピークより
+ やや早いタイミングに偏る＝signedPhaseErrorが
+ 負に偏る傾向。1周期あたり数秒〜十数秒程度）を
+ 補正しきるまでに数十件規模のサンプル蓄積を要してしまう。
+
+ 起動時、IndexedDBに蓄積済みの copyEvents（実績ログ）から
+ signedPhaseError を経過周期数（cycleCountAtCopy）で
+ 正規化した「1周期あたりのズレ」の中央値を求め、
+ ローカルの学習がまだ十分に進んでいない場合に限り、
+ その値を State.phaseAdjust.yellow / .pink の初期値として
+ 適用する（十分学習済みなら上書きしない）。
+
+ ※ calcYellowCycle/calcPinkCycle 側の学習ロジック・
+ 　 EMA・クランプ・信頼度計算には一切手を加えない。
+ 　 あくまで「初期値の種（シード）」を与えるだけであり、
+ 　 以降の学習は従来どおり進む。
+========================================================= */
+async function seedPhaseAdjustFromCopyHistory() {
+
+  if (!logDB) {
+    return;
+  }
+
+  try {
+
+    const tx =
+      logDB.transaction(
+        [LOG_STORE.copyEvents],
+        "readonly"
+      );
+
+    const store =
+      tx.objectStore(
+        LOG_STORE.copyEvents
+      );
+
+    const records =
+      await new Promise(
+        (resolve, reject) => {
+          const req = store.getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = reject;
+        }
+      );
+
+    if (
+      !Array.isArray(records) ||
+      records.length === 0
+    ) {
+      return;
+    }
+
+    const yellowCfg =
+      State.scoringConfig?.phase?.yellow ?? {};
+
+    const pinkCfg =
+      State.scoringConfig?.phase?.pink ?? {};
+
+    const yellowMinSamples =
+      Number(yellowCfg.minSamples ?? 8);
+
+    const pinkMinSamples =
+      Number(pinkCfg.minSamples ?? 8);
+
+    /*
+     * すでにローカルで十分サンプルが蓄積・学習済みの場合は
+     * ログからの再シードで学習結果を後退させないよう上書きしない。
+     */
+    const yellowAlreadyLearned =
+      (State.yellowSamples?.length ?? 0) >= yellowMinSamples;
+
+    const pinkAlreadyLearned =
+      (State.phaseDiag?.pink?.sampleCount ?? 0) >= pinkMinSamples;
+
+    const yellowPerCycleErrors = [];
+    const pinkPerCycleErrors = [];
+
+    for (const rec of records) {
+
+      const sb = rec?.scoreBreakdown;
+
+      const signedPhaseError =
+        Number(sb?.signedPhaseError);
+
+      if (!Number.isFinite(signedPhaseError)) {
+        continue;
+      }
+
+      const cycleCount =
+        Math.max(
+          1,
+          Number(rec.cycleCountAtCopy) || 1
+        );
+
+      const perCycle =
+        signedPhaseError / cycleCount;
+
+      if (!Number.isFinite(perCycle)) {
+        continue;
+      }
+
+      if (rec.isPinkManaged || rec.isPink) {
+        pinkPerCycleErrors.push(perCycle);
+      } else {
+        yellowPerCycleErrors.push(perCycle);
+      }
+
+    }
+
+    const median = values => {
+
+      if (!values.length) {
+        return null;
+      }
+
+      const sorted =
+        [...values].sort((a, b) => a - b);
+
+      const mid =
+        Math.floor(sorted.length / 2);
+
+      return (sorted.length % 2)
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2;
+
+    };
+
+    /*
+     * 3件未満（外れ値1件で全体が偏るリスクが高い）は
+     * シードを見送る。
+     */
+    const MIN_SEED_SAMPLES = 3;
+
+    let seeded = false;
+
+    if (
+      !yellowAlreadyLearned &&
+      yellowPerCycleErrors.length >= MIN_SEED_SAMPLES
+    ) {
+
+      const m = median(yellowPerCycleErrors);
+
+      const maxShift =
+        Number(yellowCfg.maxShiftSec ?? 45);
+
+      State.phaseAdjust.yellow =
+        clamp(m, -maxShift, maxShift);
+
+      seeded = true;
+
+      log(
+        `[phase] Yellow位相バイアスを実績ログから初期化：${Math.round(State.phaseAdjust.yellow)}秒（サンプル${yellowPerCycleErrors.length}件）`
+      );
+
+    }
+
+    if (
+      !pinkAlreadyLearned &&
+      pinkPerCycleErrors.length >= MIN_SEED_SAMPLES
+    ) {
+
+      const m = median(pinkPerCycleErrors);
+
+      const maxShift =
+        Number(pinkCfg.maxShiftSec ?? 45);
+
+      State.phaseAdjust.pink =
+        clamp(m, -maxShift, maxShift);
+
+      seeded = true;
+
+      log(
+        `[phase] Pink位相バイアスを実績ログから初期化：${Math.round(State.phaseAdjust.pink)}秒（サンプル${pinkPerCycleErrors.length}件）`
+      );
+
+    }
+
+    if (seeded) {
+      savePinkStateToStorage();
+    }
+
+  } catch (e) {
+
+    console.warn(
+      "[phase] seedPhaseAdjustFromCopyHistory failed:",
+      e
+    );
+
+  }
+
+}
+
+function normalizeCopyAreaHistory(
+  records
+) {
+  const result = [];
+
+  for (
+    const record of
+    [...(records ?? [])].sort(
+      (a, b) =>
+        Number(a?.t ?? 0) -
+        Number(b?.t ?? 0)
+    )
+  ) {
+    if (
+      record?.e !== "copy" ||
+      record?.unmatchedPlayer ||
+      String(record?.area ?? "") === ""
+    ) {
+      continue;
+    }
+
+    const previous =
+      result[result.length - 1];
+    const samePlayer =
+      previous &&
+      normalizePlayerName(
+        previous.name ?? ""
+      ) ===
+        normalizePlayerName(
+          record.n ?? ""
+        ) &&
+      normalizePlayerName(
+        previous.shopname ?? ""
+      ) ===
+        normalizePlayerName(
+          record.shopname ?? ""
+        );
+    const withinDuplicateGuard =
+      samePlayer &&
+      Number(record.t ?? 0) -
+        Number(previous.t ?? 0) <
+        15000;
+
+    if (withinDuplicateGuard) {
+      continue;
+    }
+
+    result.push({
+      t:
+        Number(record.t ?? 0),
+      name:
+        record.n ?? "",
+      shopname:
+        record.shopname ?? "",
+      area:
+        String(record.area)
+    });
+  }
+
+  return result.slice(
+    -LOG_STORAGE_LIMITS.copyEvents
+  );
+}
+
+async function loadCopyAreaHistory() {
+  if (!logDB) {
+    State.copyAreaHistory = [];
+    return;
+  }
+
+  const tx =
+    logDB.transaction(
+      [LOG_STORE.copyEvents],
+      "readonly"
+    );
+  const store =
+    tx.objectStore(
+      LOG_STORE.copyEvents
+    );
+  const records =
+    await new Promise(
+      (resolve, reject) => {
+        const req = store.getAll();
+        req.onsuccess = () =>
+          resolve(req.result || []);
+        req.onerror = reject;
+      }
+    );
+
+  State.copyAreaHistory =
+    normalizeCopyAreaHistory(records);
+}
+
+function appendCopyAreaHistory(
+  record
+) {
+  if (
+    record?.unmatchedPlayer ||
+    String(record?.area ?? "") === ""
+  ) {
+    return;
+  }
+
+  const nextRecord = {
+    t:
+      Number(record.t ?? Date.now()),
+    name:
+      record.n ?? "",
+    shopname:
+      record.shopname ?? "",
+    area:
+      String(record.area)
+  };
+  const previous =
+    State.copyAreaHistory[
+      State.copyAreaHistory.length - 1
+    ];
+  const isDuplicate =
+    previous &&
+    normalizePlayerName(
+      previous.name ?? ""
+    ) ===
+      normalizePlayerName(
+        nextRecord.name
+      ) &&
+    normalizePlayerName(
+      previous.shopname ?? ""
+    ) ===
+      normalizePlayerName(
+        nextRecord.shopname
+      ) &&
+    nextRecord.t -
+      Number(previous.t ?? 0) <
+      15000;
+
+  if (isDuplicate) {
+    return;
+  }
+
+  State.copyAreaHistory.push(
+    nextRecord
+  );
+  State.copyAreaHistory =
+    State.copyAreaHistory.slice(
+      -LOG_STORAGE_LIMITS.copyEvents
+    );
+}
+
+/* =========================================================
+ [7100] Phase Distance:getRoundedDiffMinAndPhaseDistance（旧 [7200]）
+========================================================= */
+function getRoundedDiffMinAndPhaseDistance(
+    copiedAtMs,
+    cycleMin = 5,
+    nowMs = Date.now()
+) {
+    const emptyResult = {
+        diffMin: Infinity,
+        d: Infinity,
+        rSec: Infinity,
+        inYellowWindow: false,
+        isInitialCooldown: false,
+        cooldownRemainingSec: 0
+    };
+
+    const anchor =
+        Number(copiedAtMs);
+
+    if (
+        !anchor ||
+        !isFinite(anchor)
+    ) {
+        return emptyResult;
+    }
+
+    const now =
+        nowMs;
+
+    const diffSec =
+        (now - anchor) / 1000;
+
+    if (
+        !isFinite(diffSec) ||
+        diffSec < 0
+    ) {
+        return emptyResult;
+    }
+
+    const cycleSec =
+        Number(cycleMin) * 60;
+
+    const toleranceSec =
+        45;
+
+    /*
+     * 修正
+     * コピー後は
+     * 1.5YellowCycle完全除外
+     */
+    const initialCooldownSec =
+        cycleSec * 1.5;
+
+    const rSec =
+        diffSec % cycleSec;
+
+    if (
+        diffSec <
+        initialCooldownSec
+    ) {
+        return {
+            diffMin:
+                diffSec / 60,
+            d: Infinity,
+            rSec,
+            inYellowWindow: false,
+            isInitialCooldown: true,
+            cooldownRemainingSec:
+                initialCooldownSec - diffSec
+        };
+    }
+
+    const distToNearest =
+        Math.min(
+            rSec,
+            cycleSec - rSec
+        );
+
+    const inYellowWindow =
+        distToNearest <=
+        toleranceSec;
+
+    return {
+        diffMin:
+            diffSec / 60,
+        d:
+            distToNearest / 60,
+        rSec,
+        inYellowWindow,
+        isInitialCooldown: false,
+        cooldownRemainingSec: 0
+    };
+}
+
+/* =========================================================
+ [7110] Phase Distance:getPhaseDistanceMin（旧 [7280]）
+========================================================= */
+function getPhaseDistanceMin(
+  copiedAtMs,
+  cycleMin = 5,
+  nowMs = Date.now()
+) {
+
+  return getRoundedDiffMinAndPhaseDistance(
+    copiedAtMs,
+    cycleMin,
+    nowMs
+  );
+}
+
+/* =========================================================
+ [7200] Phase Signal:computePhaseSignal【State】（旧 [7330]）
+========================================================= */
+
+/* =====================================
+ * Pink強度評価
+ * 戻り値: 0.0 ～ 1.0
+ * ===================================== */
+function computePhaseSignal(player, mode = "pink", nowMs = Date.now()) {
+ if (!player) {
+   return {
+     cycleSec: 0,
+     diffSec: 0,
+     phaseError: 0,
+     phaseScore: 0,
+     decay: 0,
+     finalPhaseScore: 0,
+     threshold: 0,
+     active: false
+   };
+ }
+
+ const target =
+   mode === "pink"
+     ? getPinkTarget(player)
+     : null;
+
+ if (mode === "pink" && !target) {
+   return {
+     cycleSec: 0,
+     diffSec: 0,
+     phaseError: 0,
+     phaseScore: 0,
+     decay: 0,
+     finalPhaseScore: 0,
+     threshold: 0,
+     active: false
+   };
+ }
+
+ const cycleSec =
+   getCurrentCycle(player);
+
+ if (
+   !cycleSec ||
+   !isFinite(cycleSec)
+ ) {
+   return {
+     cycleSec: 0,
+     diffSec: 0,
+     phaseError: 0,
+     phaseScore: 0,
+     decay: 0,
+     finalPhaseScore: 0,
+     threshold: 0,
+     active: false
+   };
+ }
+
+ const diffSec =
+   mode === "pink"
+     ? (nowMs - (target.lastCopiedAt || 0)) / 1000
+     : (nowMs - ((player.lastCopiedAt || player.copiedAt || 0))) / 1000;
+
+ if (diffSec < cycleSec) {
+   return {
+     cycleSec,
+     diffSec,
+     phaseError: 0,
+     phaseScore: 0,
+     decay: 0,
+     finalPhaseScore: 0,
+     threshold: 0,
+     active: false
+   };
+ }
+
+ const lambda =
+   Number(
+     State.scoringConfig
+       ?.phaseError
+       ?.pinkLambda ?? 0.03
+   );
+
+ const metrics =
+   computePhaseMetrics(
+     diffSec,
+     cycleSec,
+     lambda,
+     getPhaseErrorScaleSec(mode)
+   );
+
+ const threshold =
+   Number(
+     State.scoringConfig
+       ?.phaseError
+       ?.pinkThreshold ??
+     State.scoringConfig
+       ?.phase
+       ?.display
+       ?.pinkThreshold ?? 0.5
+   );
+
+ return {
+   cycleSec,
+   diffSec,
+   cycleCount: metrics.cycleCount,
+   phaseError: metrics.phaseError,
+   phaseScore: metrics.phaseScore,
+   decay: metrics.decay,
+   finalPhaseScore: metrics.finalPhaseScore,
+   threshold,
+   active: metrics.finalPhaseScore > threshold
+ };
+}
+
+/* =========================================================
+ [7205] Phase Detail:getPlayerPhaseDetail【State】
+========================================================= */
+function getPlayerPhaseDetail(
+ player,
+ nowMs = Date.now()
+) {
+ if (!player) {
+   return {
+     error: "Phase：計算できません"
+   };
+ }
+
+ const isPink =
+   isCopiedPlayer(player);
+
+ const mode =
+   isPink ? "pink" : "yellow";
+
+ const cycleSec =
+   getCurrentCycle(player);
+
+ if (
+   !isFinite(cycleSec) ||
+   cycleSec <= 0
+ ) {
+   return {
+     error: "Phase：周期を計算できません"
+   };
+ }
+
+ const anchorMs =
+   isPink
+     ? Number(
+         getPinkTarget(player)
+           ?.lastCopiedAt
+       )
+     : parseDateJST(
+         player.updateDate
+       )?.getTime();
+
+ if (
+   !isFinite(anchorMs) ||
+   anchorMs <= 0
+ ) {
+   return {
+     error: `Phase（${isPink ? "Pink" : "Yellow"}）：基準時刻を取得できません`
+   };
+ }
+
+ const diffSec =
+   (nowMs - anchorMs) / 1000;
+
+ if (diffSec < 0) {
+   return {
+     error: `Phase（${isPink ? "Pink" : "Yellow"}）：基準時刻が現在時刻より後です`
+   };
+ }
+
+ const lambda =
+   Number(
+     State.scoringConfig
+       ?.phaseError?.[
+         isPink
+           ? "pinkLambda"
+           : "yellowLambda"
+       ] ?? 0.03
+   );
+
+ const metrics =
+   computePhaseMetrics(
+     diffSec,
+     cycleSec,
+     lambda,
+     getPhaseErrorScaleSec(mode)
+   );
+
+ /*
+  * ピーク方向判定（表示専用）
+  *
+  * phasePos：直前の周期境界（ピーク）からの経過秒数（0〜cycleSec未満）。
+  * 半周期未満＝直前のピークからまだ日が浅い＝ピークを「過ぎた」直後。
+  * 半周期以上＝次のピークの方が近い＝ピークが「これから」来る。
+  *
+  * ※ isMatchingCandidateByPhase 等の判定・スコアリングは
+  *   引き続き絶対値の phaseError / finalPhaseScore を用いるため、
+  *   本判定を追加しても既存の候補選出ロジックには影響しない。
+  */
+ const directionDetail =
+   buildPhaseDirectionDetail(
+     diffSec,
+     cycleSec,
+     metrics.phaseError
+   );
+
+ return {
+   mode,
+   cycleSec,
+   cycleCount: metrics.cycleCount,
+   phaseError: metrics.phaseError,
+   diffSec: directionDetail.diffSec,
+   phasePos: directionDetail.phasePos,
+   peakDirection: directionDetail.peakDirection,
+   signedPhaseError:
+     directionDetail.signedPhaseError,
+   phaseBucket:
+     directionDetail.phaseBucket
+ };
+}
+
+/* =========================================================
+ [7206] Phase Detail:buildPlayerPhaseSummaryText【State】
+========================================================= */
+function buildPlayerPhaseSummaryText(
+ player,
+ nowMs = Date.now()
+) {
+ const detail =
+   getPlayerPhaseDetail(
+     player,
+     nowMs
+   );
+
+ if (detail.error) {
+   return detail.error;
+ }
+
+ const signedError =
+   detail.peakDirection === "past"
+     ? Math.round(detail.phaseError)
+     : -Math.round(detail.phaseError);
+
+ const signedLabel =
+   signedError >= 0
+     ? `＋${signedError}秒`
+     : `－${Math.abs(signedError)}秒`;
+
+ return `${detail.mode === "pink" ? "Pink" : "Yellow"}=${detail.cycleSec.toFixed(1)}秒　${detail.cycleCount}サイクル／${signedLabel}`;
+}
+
+/* =========================================================
+ [7207] Phase Detail:showPlayerPhaseDetailDialog【DOM】
+========================================================= */
+function showPlayerPhaseDetailDialog(
+ player
+) {
+ const overlay =
+   document.createElement("div");
+
+ const dialog =
+   document.createElement("div");
+
+ const closeButton =
+   document.createElement("button");
+
+ const detail =
+   document.createElement("div");
+
+ overlay.style.cssText =
+   "position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,0.35);box-sizing:border-box;";
+
+ dialog.style.cssText =
+   "width:min(420px,100%);padding:20px;border-radius:10px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,0.28);font-size:20px;font-weight:bold;line-height:1.6;color:#222;";
+
+ closeButton.type = "button";
+ closeButton.textContent = "閉じる";
+ closeButton.style.cssText =
+   "display:block;margin:16px 0 0 auto;padding:8px 14px;border:1px solid #999;border-radius:5px;background:#f5f5f5;font-size:16px;cursor:pointer;";
+
+ const updateDetail = () => {
+   detail.textContent =
+     buildPlayerPhaseSummaryText(
+       player,
+       Date.now()
+     );
+ };
+
+ updateDetail();
+ const timerId = setInterval(updateDetail, 1000);
+
+ const close = () => {
+   clearInterval(timerId);
+   overlay.remove();
+ };
+
+ closeButton.addEventListener(
+   "click",
+   close
+ );
+
+ overlay.addEventListener(
+   "click",
+   event => {
+     if (event.target === overlay) {
+       close();
+     }
+   }
+ );
+
+ dialog.append(
+   detail,
+   closeButton
+ );
+ overlay.append(dialog);
+ document.body.append(overlay);
+}
+
+/* =========================================================
+ [7210] Phase Signal:getYellowPhaseScore【State】（旧 [7300] 内）
+========================================================= */
+function getYellowPhaseScore(player, nowMs = Date.now()) {
+
+  if (
+    !player ||
+    !player.updateDate
+  ) {
+    return 0;
+  }
+
+  const cycleSec =
+    getCurrentCycle(player);
+
+  if (
+    !cycleSec ||
+    !isFinite(cycleSec)
+  ) {
+    return 0;
+  }
+
+  const anchor =
+    parseDateJST(
+      player.updateDate
+    )?.getTime();
+
+  if (!anchor) {
+    return 0;
+  }
+
+  const diffSec =
+    (nowMs - anchor) / 1000;
+
+  const lambda =
+    Number(
+      State.scoringConfig
+        ?.phaseError
+        ?.yellowLambda ?? 0.03
+    );
+
+  return computePhaseMetrics(
+    diffSec,
+    cycleSec,
+    lambda,
+    getPhaseErrorScaleSec("yellow")
+  ).finalPhaseScore;
+}
+
+/* =========================================================
+ [7300] Phase Judgement:isMatchingCandidateByPhase【State】（旧 [7310]）
+========================================================= */
+
+/* =====================================
+ * Yellow判定
+ * ===================================== */
+function isMatchingCandidateByPhase(
+  player,
+  nowMs = Date.now()
+) {
+  if (
+    !player ||
+    !player.updateDate
+  ) {
+    return false;
+  }
+
+  /* =====================================
+   * Pink管理対象はYellow対象外
+   * ===================================== */
+  if (isCopiedPlayer(player)) {
+    return false;
+  }
+
+  const phaseCfg =
+    State.scoringConfig?.phase ?? {};
+
+  const threshold =
+    Number(
+      State.scoringConfig
+        ?.phaseError
+        ?.yellowThreshold ??
+      phaseCfg.display
+        ?.yellowThreshold ?? 0.5
+    );
+
+  const score =
+    getYellowPhaseScore(
+      player,
+      nowMs
+    );
+
+  return score > threshold;
+}
+
+/* =========================================================
+ [7310] Phase Judgement:isMatchingCandidateByCopyPhase【State】（旧 [7340]）
+========================================================= */
+function isMatchingCandidateByCopyPhase(player, nowMs = Date.now()) {
+   const signal =
+     computePhaseSignal(player, "pink", nowMs);
+   return signal.active;
+}
+
+/* =========================================================
+ [7400] Phase Context:getFilterToMs【State】（旧 [6150c]）
+========================================================= */
+function getFilterToMs(nowMs = Date.now()) {
+
+  const generatedAt =
+    parseDateJST(
+      State.generatedAt
+    );
+
+  if (
+    generatedAt &&
+    isFinite(generatedAt.getTime())
+  ) {
+    return generatedAt.getTime();
+  }
+
+  const latestUpdateAt =
+    parseDateJST(
+      State.latestUpdateAt
+    );
+
+  if (
+    latestUpdateAt &&
+    isFinite(latestUpdateAt.getTime())
+  ) {
+    return latestUpdateAt.getTime();
+  }
+
+  return nowMs;
+}
+
+/* =========================================================
+ [7410] Phase Context:getPinkSampleCount【State】（旧 [6151]）
+========================================================= */
+function getPinkSampleCount() {
+
+  const targets =
+    Object.values(
+      State.pinkTargets || {}
+    );
+
+  let count = 0;
+
+  for (const entry of targets) {
+
+    const history =
+      entry.history || [];
+
+    if (history.length < 2) {
+      continue;
+    }
+
+    /* Pink対象ごとの有効な履歴間隔（ペア）数を正しく累計 */
+    for (let i = 1; i < history.length; i++) {
+      const latest = Number(history[i] || 0);
+      const prev = Number(history[i - 1] || 0);
+      if (latest && prev && latest > prev) {
+        count++;
+      }
+    }
+  }
+
+  return count;
+}
+
+/* =========================================================
+ [7420] Phase Context:computePhaseContext【State】（旧 [7500] 内）
+========================================================= */
+function computePhaseContext(player, nowMs = Date.now()) {
+  const isPinkManaged = isCopiedPlayer(player);
+  let metrics = null;
+  let cycleSec = 0;
+  let diffSec = 0;
+
+  if (isPinkManaged) {
+   metrics = computePhaseSignal(player, "pink", nowMs);
+   cycleSec = Number(metrics?.cycleSec ?? 0);
+   diffSec = Number(metrics?.diffSec ?? 0);
+  } else {
+   const anchor =
+     parseDateJST(player?.updateDate)?.getTime();
+   cycleSec =
+     getCurrentCycle(player);
+   const lambda =
+     Number(
+       State.scoringConfig
+         ?.phaseError
+         ?.yellowLambda ?? 0.03
+     );
+
+   diffSec =
+     anchor
+       ? (nowMs - anchor) / 1000
+       : 0;
+
+   metrics =
+     anchor && cycleSec
+       ? computePhaseMetrics(
+           diffSec,
+           cycleSec,
+           lambda,
+           getPhaseErrorScaleSec("yellow")
+         )
+       : null;
+  }
+
+  const phaseError =
+   Number(metrics?.phaseError ?? 0);
+
+  const phaseScore =
+   Number(metrics?.phaseScore ?? 0);
+
+  const decay =
+   Number(metrics?.decay ?? 0);
+
+  const finalPhaseScore =
+   Number(metrics?.finalPhaseScore ?? 0);
+
+  const pinkThreshold =
+   Number(
+     State.scoringConfig
+       ?.phaseError
+       ?.pinkThreshold ??
+     State.scoringConfig
+       ?.phase
+       ?.display
+       ?.pinkThreshold ?? 0.5
+   );
+
+  const yellowThreshold =
+   Number(
+     State.scoringConfig
+       ?.phaseError
+       ?.yellowThreshold ?? 0.5
+   );
+
+  const isPinkPhase =
+   isPinkManaged &&
+   finalPhaseScore > pinkThreshold;
+
+  const isYellowPhase =
+   !isPinkManaged &&
+   finalPhaseScore > yellowThreshold;
+
+  const directionDetail =
+   buildPhaseDirectionDetail(
+     diffSec,
+     cycleSec,
+     phaseError
+   );
+
+  const phaseDiag =
+   isPinkManaged
+     ? State.phaseDiag?.pink
+     : State.phaseDiag?.yellow;
+
+  return {
+   isPinkManaged,
+   isPinkPhase,
+   isYellowPhase,
+   cycleCount: Number(metrics?.cycleCount ?? 0),
+   cycleSec,
+   diffSec: directionDetail.diffSec,
+   phasePos: directionDetail.phasePos,
+   peakDirection: directionDetail.peakDirection,
+   signedPhaseError:
+     directionDetail.signedPhaseError,
+   phaseBucket:
+     directionDetail.phaseBucket,
+   phaseError,
+   phaseScore,
+   decay,
+   finalPhaseScore,
+   yellowThreshold,
+   pinkThreshold,
+   phaseSampleCount:
+     Number(phaseDiag?.sampleCount ?? 0),
+   phaseTrust:
+     Number(phaseDiag?.trust ?? 1),
+   phaseAdjustValue:
+     Number(phaseDiag?.adjustValue ?? 0),
+   phaseSurge:
+     Number.isFinite(finalPhaseScore) &&
+     finalPhaseScore > 0.9,
+   samePlayerHit:
+     hasSamePlayerRecentClick(player)
+  };
+}
+
+/* =========================================================
+ [7430] Phase Context:getPlayerCycleCount【State】（旧 [7500] 内）
+========================================================= */
+function getPlayerCycleCount(player, nowMs = Date.now()) {
+
+  if (!player) return 0;
+
+  if (isCopiedPlayer(player)) {
+
+    const signal =
+      computePhaseSignal(
+        player,
+        "pink",
+        nowMs
+      );
+
+    return Math.round(
+      (signal?.diffSec ?? 0) /
+      (signal?.cycleSec || 1)
+    );
+  }
+
+  if (!player.updateDate) return 0;
+
+  const cycleSec =
+    getCurrentCycle(player);
+
+  const anchor =
+    parseDateJST(
+      player.updateDate
+    )?.getTime();
+
+  if (
+    !cycleSec ||
+    !anchor
+  ) {
+    return 0;
+  }
+
+  const diffSec =
+    (nowMs - anchor) / 1000;
+
+  return Math.round(
+    diffSec / cycleSec
+  );
+}
+
+/* #################################################################
+ [LAYER 8000] Matching Calculation
+ ################################################################# */
+
+/* =========================================================
+ [8005] Historical Score:Adjacent Tier Pooling【State】
+========================================================= */
+const HISTORICAL_RELIABILITY_K = 100;
+const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
+
+function getHistoricalMinOwnSamplesForNoBackoff() {
+
+  const value =
+    Number(
+      State.scoringConfig
+        ?.historical
+        ?.minOwnSamplesForNoBackoff ?? 100
+    );
+
+  return Number.isFinite(value)
+    ? Math.max(0, value)
+    : 100;
+}
+
+function getHistoricalTierCandidateCount(
+  tierCounts,
+  opponentTier
+) {
+
+  const countKey =
+    String(opponentTier ?? "");
+
+  const count =
+    Number(
+      tierCounts?.[countKey] ?? 1
+    );
+
+  return Number.isFinite(count) &&
+    count > 0
+      ? count
+      : 1;
+}
+
+function getHistoricalDistribution(
+  viewerTier
+) {
+
+  const entry =
+    State.historicalMatchupDistribution?.byViewerTier?.[
+      viewerTier
+    ];
+
+  if (!entry) {
+    return {
+      probList: [],
+      opponentTierMap: {},
+      total: 0,
+      prideProbabilityTotal: 0
+    };
+  }
+
+  if (Array.isArray(entry)) {
+    const total =
+      entry.reduce(
+        (sum, item) => sum + Number(item.count ?? 0),
+        0
+      );
+
+    const prideProbabilityTotal =
+      entry.reduce(
+        (sum, item) =>
+          String(item.opponentTier ?? "").startsWith("PRIDE_")
+            ? sum + Number(item.prob ?? 0)
+            : sum,
+        0
+      );
+
+    const opponentTierMap = {};
+    entry.forEach(item => {
+      opponentTierMap[item.opponentTier] =
+        (opponentTierMap[item.opponentTier] || 0) + item.prob;
+    });
+
+    return {
+      probList: entry,
+      opponentTierMap,
+      total,
+      prideProbabilityTotal
+    };
+  }
+
+  return entry;
+}
+
+function getDistributionCellScore(
+  distribution,
+  opponentTier,
+  supportSize,
+  tierCandidateCount
+) {
+
+  const oppKey = String(opponentTier ?? "");
+
+  const hitProb = distribution.opponentTierMap
+    ? distribution.opponentTierMap[oppKey]
+    : distribution.probList?.find(
+        item => item.opponentTier === oppKey
+      )?.prob;
+
+  const matched = hitProb !== undefined;
+
+  const backoffScore =
+    distribution.total > 0 &&
+    supportSize > 0
+      ? 1 / (
+          distribution.total +
+          supportSize
+        )
+      : 0.0001;
+
+  const tierProbability =
+    matched
+      ? hitProb
+      : backoffScore;
+
+  /*
+   * 【2026-09 修正】バンド別モデル確率と個別人数補正の適用
+   * historical_matchup_distribution.json には自ランクに応じた
+   * 各相手ランク（R1〜R8、PRIDE_A〜G）の対戦確率（hitProb / tierProbability）が
+   * バンド別に正確に記録されている。
+   * 各バンドの対戦確率を、該当バンドの候補人数（tierCandidateCount）に
+   * 応じた補正（count^-alpha）で減衰させてスコアを算出することで、
+   * PRIDE全体が独占することなく、実績確率通りの自然な構成で各ランク・PRIDEが選出される。
+   */
+  const pooledTierProbability = tierProbability;
+
+  /*
+   * 【2026-09 候補人数補正調整】
+   * 従来: pooledTierProbability / tierCandidateCount (alpha = 1.0相当)
+   * 変更: 候補人数(count)による減衰を過度に強くしすぎないよう
+   *       count^-alpha (alpha = 0.25〜0.5, デフォルト0.35) へ緩和。
+   */
+  const candidateCountAlpha =
+    clamp(
+      Number(
+        State.scoringConfig?.historical?.candidateCountAlpha ??
+        HISTORICAL_CANDIDATE_COUNT_ALPHA ??
+        0.35
+      ),
+      0.0,
+      1.0
+    );
+
+  const countFactor =
+    Math.pow(
+      Math.max(1, tierCandidateCount),
+      candidateCountAlpha
+    );
+
+  return {
+    score:
+      pooledTierProbability /
+      countFactor,
+    tierProbability,
+    pooledTierProbability,
+    tierCandidateCount,
+    candidateCountAlpha,
+    matched
+  };
+}
+
+function getAdjacentTierDistribution(
+  viewerTier
+) {
+
+  if (!/^R[1-8]$/.test(viewerTier)) {
+    return null;
+  }
+
+  const currentRank =
+    Number(viewerTier.slice(1));
+
+  const availableRanks =
+    Object.keys(
+      State.historicalMatchupDistribution?.byViewerTier ?? {}
+    )
+      .filter(
+        tier => /^R[1-8]$/.test(tier)
+      )
+      .map(
+        tier => Number(tier.slice(1))
+      )
+      .filter(
+        rank => rank !== currentRank
+      );
+
+  const lowerRanks =
+    availableRanks.filter(
+      rank => rank < currentRank
+    );
+
+  const higherRanks =
+    availableRanks.filter(
+      rank => rank > currentRank
+    );
+
+  const adjacentRanks = [
+    lowerRanks.length
+      ? Math.max(...lowerRanks)
+      : null,
+    higherRanks.length
+      ? Math.min(...higherRanks)
+      : null
+  ].filter(
+    Number.isFinite
+  );
+
+  const distributions =
+    adjacentRanks.map(
+      rank => ({
+        viewerTier: `R${rank}`,
+        ...getHistoricalDistribution(
+          `R${rank}`
+        )
+      })
+    )
+      .filter(
+        distribution =>
+          distribution.total > 0
+      );
+
+  const total =
+    distributions.reduce(
+      (sum, distribution) =>
+        sum + distribution.total,
+      0
+    );
+
+  return total > 0
+    ? {
+        distributions,
+        total
+      }
+    : null;
+}
+
+/* =========================================================
+ [8010] Historical Score:getHistoricalScoreDetail【State】（旧 [6810] 内）
+========================================================= */
+function buildViewerHistoricalContext(viewerRankKey) {
+  if (!viewerRankKey || !State.historicalMatchupDistribution) {
+    return null;
+  }
+
+  const viewerTier =
+    mapRankKeyToTierKey(viewerRankKey);
+
+  const ownDistribution =
+    getHistoricalDistribution(viewerTier);
+
+  const minOwnSamplesForNoBackoff =
+    getHistoricalMinOwnSamplesForNoBackoff();
+
+  const ownDistributionIsReliable =
+    ownDistribution.total > 0 &&
+    ownDistribution.total >= minOwnSamplesForNoBackoff;
+
+  const adjacentDistribution =
+    ownDistributionIsReliable
+      ? null
+      : getAdjacentTierDistribution(viewerTier);
+
+  const supportSize =
+    Number(State.historicalMatchupDistribution.historicalSupportSize ?? 0);
+
+  return {
+    viewerTier,
+    ownDistribution,
+    minOwnSamplesForNoBackoff,
+    ownDistributionIsReliable,
+    adjacentDistribution,
+    supportSize
+  };
+}
+
+function getHistoricalScoreDetail(
+  viewerRankKey,
+  opponentRankKey,
+  tierCounts = State.matchingTierCounts,
+  viewerContext = null
+) {
+
+  if (
+    !viewerRankKey ||
+    !State.historicalMatchupDistribution
+  ) {
+    return {
+      score: 1.0,
+      matched: false,
+      backoff: false,
+      viewerTier: null,
+      opponentTier: null
+    };
+  }
+
+  const ctx =
+    viewerContext ||
+    buildViewerHistoricalContext(viewerRankKey);
+
+  if (!ctx) {
+    return {
+      score: 1.0,
+      matched: false,
+      backoff: false,
+      viewerTier: null,
+      opponentTier: null
+    };
+  }
+
+  const opponentTier =
+    mapRankKeyToTierKey(opponentRankKey);
+
+  const tierCandidateCount =
+    getHistoricalTierCandidateCount(
+      tierCounts,
+      opponentTier
+    );
+
+  if (
+    ctx.ownDistribution.total <= 0 &&
+    !ctx.adjacentDistribution
+  ) {
+    return {
+      score: 1.0,
+      matched: false,
+      backoff: false,
+      tierProbability: 1.0,
+      tierCandidateCount,
+      minOwnSamplesForNoBackoff: ctx.minOwnSamplesForNoBackoff,
+      viewerTier: ctx.viewerTier,
+      opponentTier
+    };
+  }
+
+  const ownCell =
+    ctx.ownDistribution.total > 0
+      ? getDistributionCellScore(
+          ctx.ownDistribution,
+          opponentTier,
+          ctx.supportSize,
+          tierCandidateCount
+        )
+      : null;
+
+  const adjacentCells =
+    ctx.adjacentDistribution?.distributions.map(
+      distribution => ({
+        viewerTier:
+          distribution.viewerTier,
+        total:
+          distribution.total,
+        ...getDistributionCellScore(
+          distribution,
+          opponentTier,
+          ctx.supportSize,
+          tierCandidateCount
+        )
+      })
+    ) ?? [];
+
+  const adjacentScore =
+    ctx.adjacentDistribution
+      ? adjacentCells.reduce(
+          (sum, cell) =>
+            sum +
+            cell.score *
+            cell.total /
+            ctx.adjacentDistribution.total,
+          0
+        )
+      : 0;
+
+  const adjacentMatched =
+    adjacentCells.some(
+      cell => cell.matched
+    );
+
+  const ownReliability =
+    ctx.ownDistributionIsReliable
+      ? 1
+      : ctx.ownDistribution.total > 0
+      ? ctx.ownDistribution.total /
+        (
+          ctx.ownDistribution.total +
+          HISTORICAL_RELIABILITY_K
+        )
+      : 0;
+
+  const score =
+    ctx.adjacentDistribution
+      ? ownCell
+        ? ownCell.score *
+            ownReliability +
+          adjacentScore *
+            (1 - ownReliability)
+        : adjacentScore
+      : ownCell?.score ?? 1.0;
+
+  return {
+    score,
+    matched:
+      Boolean(ownCell?.matched) ||
+      adjacentMatched,
+    backoff:
+      !ownCell?.matched &&
+      !adjacentMatched,
+    tierProbability:
+      ctx.ownDistributionIsReliable
+        ? ownCell?.tierProbability ?? 1.0
+        : ctx.adjacentDistribution
+        ? ownCell
+          ? ownCell.tierProbability *
+              ownReliability +
+            adjacentCells.reduce(
+              (sum, cell) =>
+                sum +
+                cell.tierProbability *
+                cell.total /
+                ctx.adjacentDistribution.total,
+              0
+            ) *
+              (1 - ownReliability)
+          : adjacentCells.reduce(
+              (sum, cell) =>
+                sum +
+                cell.tierProbability *
+                cell.total /
+                ctx.adjacentDistribution.total,
+              0
+            )
+        : ownCell?.tierProbability ?? 1.0,
+    pooledTierProbability:
+      ctx.ownDistributionIsReliable
+        ? ownCell?.pooledTierProbability ?? 1.0
+        : ctx.adjacentDistribution
+        ? ownCell
+          ? ownCell.pooledTierProbability *
+              ownReliability +
+            adjacentCells.reduce(
+              (sum, cell) =>
+                sum +
+                cell.pooledTierProbability *
+                cell.total /
+                ctx.adjacentDistribution.total,
+              0
+            ) *
+              (1 - ownReliability)
+          : adjacentCells.reduce(
+              (sum, cell) =>
+                sum +
+                cell.pooledTierProbability *
+                cell.total /
+                ctx.adjacentDistribution.total,
+              0
+            )
+        : ownCell?.pooledTierProbability ?? 1.0,
+    tierCandidateCount,
+    minOwnSamplesForNoBackoff: ctx.minOwnSamplesForNoBackoff,
+    ownReliability,
+    ownSampleCount:
+      ctx.ownDistribution.total,
+    adjacentSampleCount:
+      ctx.adjacentDistribution?.total ?? 0,
+    adjacentViewerTiers:
+      adjacentCells.map(
+        cell => cell.viewerTier
+      ),
+    viewerTier: ctx.viewerTier,
+    opponentTier
+  };
+}
+
+function getMatchingSlotBucketKey(
+  rankKey
+) {
+  const key =
+    String(rankKey ?? "");
+
+  if (/^R[1-8]$/.test(key)) {
+    return key;
+  }
+
+  if (key.startsWith("P_")) {
+    return "PRIDE";
+  }
+
+  return null;
+}
+
+function buildAreaDensityContext(
+  players
+) {
+  const overallByArea = {};
+  const bucketByArea = {};
+  const bucketTotals = {};
+
+  for (const player of players ?? []) {
+    const rankKey =
+      getPlayerRankKey(player);
+
+    const bucket =
+      getMatchingSlotBucketKey(
+        rankKey
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    const area =
+      String(player.area ?? "");
+
+    overallByArea[area] =
+      Number(
+        overallByArea[area] ?? 0
+      ) + 1;
+
+    if (!bucketByArea[bucket]) {
+      bucketByArea[bucket] = {};
+    }
+    bucketByArea[bucket][area] =
+      Number(
+        bucketByArea[bucket][area] ?? 0
+      ) + 1;
+
+    bucketTotals[bucket] =
+      Number(
+        bucketTotals[bucket] ?? 0
+      ) + 1;
+  }
+
+  const maxOverallAreaCount =
+    Math.max(
+      1,
+      ...Object.values(
+        overallByArea
+      ).map(Number)
+    );
+
+  const maxBucketAreaCounts = {};
+
+  for (
+    const bucket of
+    Object.keys(bucketByArea)
+  ) {
+    maxBucketAreaCounts[bucket] =
+      Math.max(
+        1,
+        ...Object.values(
+          bucketByArea[bucket]
+        ).map(Number)
+      );
+  }
+
+  return {
+    overallByArea,
+    bucketByArea,
+    bucketTotals,
+    maxOverallAreaCount,
+    maxBucketAreaCounts
+  };
+}
+
+function getAreaBoostDetail(
+  player,
+  context
+) {
+  const config =
+    State.scoringConfig
+      ?.candidateSelection
+      ?.areaBoost ?? {};
+
+  const enabled =
+    config.enabled !== false;
+
+  const configuredWeight =
+    Number(
+      config.weight ??
+      DEFAULT_AREA_BOOST_WEIGHT
+    );
+
+  const weight =
+    enabled
+      ? Number.isFinite(
+          configuredWeight
+        )
+        ? clamp(
+            configuredWeight,
+            0,
+            1
+          )
+        : DEFAULT_AREA_BOOST_WEIGHT
+      : 0;
+
+  const configuredSmoothingSampleSize =
+    Number(
+      config.smoothingSampleSize ??
+      DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE
+    );
+
+  const smoothingSampleSize =
+    Number.isFinite(
+      configuredSmoothingSampleSize
+    )
+      ? Math.max(
+          0,
+          configuredSmoothingSampleSize
+        )
+      : DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE;
+
+  const area =
+    String(player?.area ?? "");
+
+  const bucket =
+    getMatchingSlotBucketKey(
+      getPlayerRankKey(player)
+    );
+
+  const areaTotalCount =
+    Number(
+      context
+        ?.overallByArea
+        ?.[area] ?? 0
+    );
+
+  const areaBucketCount =
+    Number(
+      context
+        ?.bucketByArea
+        ?.[bucket]
+        ?.[area] ?? 0
+    );
+
+  const bucketTotal =
+    Number(
+      context
+        ?.bucketTotals
+        ?.[bucket] ?? 0
+    );
+
+  const bucketDensity =
+    Math.sqrt(
+      areaBucketCount /
+      Math.max(
+        1,
+        Number(
+          context
+            ?.maxBucketAreaCounts
+            ?.[bucket] ?? 1
+        )
+      )
+    );
+
+  const totalDensity =
+    Math.sqrt(
+      areaTotalCount /
+      Math.max(
+        1,
+        Number(
+          context
+            ?.maxOverallAreaCount ?? 1
+        )
+      )
+    );
+
+  const bucketTrust =
+    bucketTotal > 0
+      ? bucketTotal /
+        (
+          bucketTotal +
+          smoothingSampleSize
+        )
+      : 0;
+
+  const areaDensity =
+    clamp(
+      bucketTrust *
+      bucketDensity +
+      (1 - bucketTrust) *
+      totalDensity,
+      0,
+      1
+    );
+
+  return {
+    areaBucketCount,
+    areaTotalCount,
+    bucketTotal,
+    bucketTrust,
+    areaDensity,
+    areaBoost:
+      1 +
+      weight *
+      areaDensity
+  };
+}
+
+function applyCandidateSlotScores(
+  candidates,
+  areaContext,
+  prideReferenceCandidates = candidates
+) {
+  const prideCandidates =
+    (prideReferenceCandidates ?? []).filter(
+      player =>
+        getMatchingSlotBucketKey(
+          player.__rankKey
+        ) === "PRIDE"
+    );
+
+  const maxPrideBandProbability =
+    Math.max(
+      0,
+      ...prideCandidates.map(
+        player => {
+          const probability =
+            Number(
+            player.__detail
+              ?.tierProbability ?? 0
+            );
+
+          return Number.isFinite(
+            probability
+          )
+            ? probability
+            : 0;
+        }
+      )
+    );
+
+  const configuredPrideBandPriorExponent =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.slotAllocation
+        ?.prideBandPriorExponent ??
+      DEFAULT_PRIDE_BAND_PRIOR_EXPONENT
+    );
+  const prideBandPriorExponent =
+    Number.isFinite(
+      configuredPrideBandPriorExponent
+    )
+      ? clamp(
+          configuredPrideBandPriorExponent,
+          0,
+          1
+        )
+      : DEFAULT_PRIDE_BAND_PRIOR_EXPONENT;
+
+  for (const player of candidates ?? []) {
+    const detail =
+      player.__detail ?? {};
+
+    const areaDetail =
+      getAreaBoostDetail(
+        player,
+        areaContext
+      );
+
+    const isPride =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      ) === "PRIDE";
+
+    const prideBandProbability =
+      Number(
+        detail.tierProbability ?? 0
+      );
+
+    const prideBandPriorWeight =
+      isPride &&
+      maxPrideBandProbability > 0
+        ? Math.pow(
+            prideBandProbability /
+            maxPrideBandProbability,
+            prideBandPriorExponent
+          )
+        : 1;
+
+    const slotScore =
+      Number(
+        detail.realtimeBoost ?? 1
+      ) *
+      Number(
+        detail.pinkMismatchBoostFactor ?? 1
+      ) *
+      Number(
+        detail.effectivePhaseScore ?? 0
+      ) *
+      areaDetail.areaBoost *
+      prideBandPriorWeight;
+    detail.slotBucket =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      );
+    detail.prideBandPriorWeight =
+      prideBandPriorWeight;
+    detail.areaBucketCount =
+      areaDetail.areaBucketCount;
+    detail.areaTotalCount =
+      areaDetail.areaTotalCount;
+    detail.areaBucketTotal =
+      areaDetail.bucketTotal;
+    detail.areaBucketTrust =
+      areaDetail.bucketTrust;
+    detail.areaDensity =
+      areaDetail.areaDensity;
+    detail.areaBoost =
+      areaDetail.areaBoost;
+    detail.slotScore =
+      Number.isFinite(slotScore) &&
+      slotScore > 0
+        ? slotScore
+        : 0;
+    player.__slotScore =
+      detail.slotScore;
+  }
+}
+
+function buildCopyAreaHistoryContext() {
+  const history =
+    (State.copyAreaHistory ?? [])
+      .filter(record =>
+        String(record?.area ?? "") !== ""
+      );
+
+  const buildCounts = records => {
+    const counts = {};
+
+    for (const record of records) {
+      const area =
+        String(record.area);
+
+      counts[area] =
+        Number(counts[area] ?? 0) + 1;
+    }
+
+    return counts;
+  };
+
+  const windowSize =
+    getRecentAreaBoostConfig().windowSize;
+  const recent5 =
+    history.slice(-5);
+  const recent10 =
+    history.slice(-10);
+  const recent20 =
+    history.slice(-20);
+  const recentWindow =
+    history.slice(-windowSize);
+  const allCounts =
+    buildCounts(history);
+  const recent5Counts =
+    buildCounts(recent5);
+
+  return {
+    sampleCount:
+      history.length,
+    allCounts,
+    recent5Counts,
+    recent10Counts:
+      buildCounts(recent10),
+    recent20Counts:
+      buildCounts(recent20),
+    recentWindowCounts:
+      buildCounts(recentWindow)
+  };
+}
+
+function getRecentAreaBoostConfig() {
+  const config =
+    State.scoringConfig
+      ?.candidateSelection
+      ?.areaBoost
+      ?.recentMatch ?? {};
+  const enabled =
+    config.enabled ??
+    DEFAULT_RECENT_AREA_BOOST_ENABLED;
+  const configuredWeight =
+    Number(
+      config.weight ??
+      DEFAULT_RECENT_AREA_BOOST_WEIGHT
+    );
+  const weight =
+    enabled &&
+    Number.isFinite(configuredWeight)
+      ? Math.min(
+          MAX_RECENT_AREA_BOOST_WEIGHT,
+          clamp(configuredWeight, 0, 1)
+        )
+      : enabled
+        ? DEFAULT_RECENT_AREA_BOOST_WEIGHT
+        : 0;
+  const windowSize =
+    config.windowSize === undefined
+      ? DEFAULT_RECENT_AREA_MATCH_WINDOW_SIZE
+      : config.windowSize;
+
+  if (
+    !Number.isInteger(windowSize) ||
+    windowSize < 1 ||
+    windowSize > LOG_STORAGE_LIMITS.copyEvents
+  ) {
+    throw new Error(
+      "candidateSelection.areaBoost.recentMatch.windowSize は1～" +
+      LOG_STORAGE_LIMITS.copyEvents +
+      "の整数を指定してください"
+    );
+  }
+
+  return {
+    enabled: Boolean(enabled),
+    weight,
+    windowSize,
+    includePinkManaged: true,
+    maxMultiplier: 1 + weight
+  };
+}
+
+function applyCandidateAreaHistoryBoost(
+  candidates,
+  { assignSlotRanks = false } = {}
+) {
+  const context =
+    buildCopyAreaHistoryContext();
+  const boostConfig =
+    getRecentAreaBoostConfig();
+
+  for (const player of candidates ?? []) {
+    const detail =
+      player.__detail ?? {};
+    const area =
+      String(player.area ?? "");
+    const recentCount5 =
+      Number(
+        context.recent5Counts[area] ?? 0
+      );
+    const recentCount10 =
+      Number(
+        context.recent10Counts[area] ?? 0
+      );
+    const recentCountWindow =
+      Number(
+        context.recentWindowCounts[area] ?? 0
+      );
+    const recentDensityWindow =
+      Math.sqrt(
+        recentCountWindow /
+        boostConfig.windowSize
+      );
+    const recentAreaBoost =
+      1 +
+      boostConfig.weight *
+      recentDensityWindow;
+    const previousRecentAreaBoost =
+      Math.max(
+        Number(
+          detail.recentAreaAppliedBoost ?? 1
+        ),
+        Number.EPSILON
+      );
+    const baseSlotScore =
+      getCandidateSlotScore(player) /
+      previousRecentAreaBoost;
+    const boostedSlotScore =
+      baseSlotScore *
+      recentAreaBoost;
+
+    detail.recentAreaMatchCount5 =
+      recentCount5;
+    detail.recentAreaMatchCount10 =
+      recentCount10;
+    detail.recentAreaMatchCountWindow =
+      recentCountWindow;
+    detail.recentAreaMatchCount20 =
+      Number(
+        context.recent20Counts[area] ?? 0
+      );
+    detail.loggedAreaMatchCount =
+      Number(
+        context.allCounts[area] ?? 0
+      );
+    detail.loggedAreaMatchSampleCount =
+      context.sampleCount;
+    detail.loggedAreaMatchRate =
+      context.sampleCount > 0
+        ? detail.loggedAreaMatchCount /
+          context.sampleCount
+        : 0;
+    detail.recentAreaMatchDensityWindow =
+      recentDensityWindow;
+    detail.recentAreaCounterfactualBoostWindow =
+      recentAreaBoost;
+    detail.recentAreaCounterfactualSlotScore =
+      boostedSlotScore;
+    detail.recentAreaAppliedBoost =
+      recentAreaBoost;
+    detail.slotScore =
+      boostedSlotScore;
+    player.__slotScore =
+      boostedSlotScore;
+  }
+
+  assignCandidateSlotRanks(candidates, {
+    assignSlotRanks,
+    assignRecentAreaRanks: true
+  });
+}
+
+function applyCandidateAreaPhaseDiagnostics(
+  candidates
+) {
+  const configuredWeight =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.areaBoost
+        ?.diagnosticPhaseWeight ??
+      DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT
+    );
+  const diagnosticWeight =
+    Number.isFinite(configuredWeight)
+      ? clamp(configuredWeight, 0, 1)
+      : DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT;
+  const groups = {};
+  const bucketPlayers = {};
+
+  for (const player of candidates ?? []) {
+    const detail =
+      player.__detail ?? {};
+    const bucket =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    const area =
+      String(player.area ?? "");
+    const groupKey =
+      `${bucket}\u0000${area}`;
+    const group =
+      groups[groupKey] ?? {
+        players: [],
+        phaseMatchedCount: 0,
+        phaseMatchCount30: 0,
+        phaseMatchCount60: 0,
+        phaseScoreSum: 0,
+        baseScores: []
+      };
+    const phaseError =
+      Number(
+        detail.phaseError ?? Infinity
+      );
+    const hasPhaseSignal =
+      Number(
+        detail.phaseScore ?? 0
+      ) > 0;
+    const phaseMatched =
+      Boolean(
+        detail.isYellow ||
+        detail.isPink
+      );
+    const baseSlotScore =
+      getCandidateSlotScore(player) /
+      Math.max(
+        Number(detail.areaBoost ?? 1),
+        Number.EPSILON
+      );
+
+    group.players.push(player);
+    group.phaseMatchedCount +=
+      phaseMatched ? 1 : 0;
+    group.phaseMatchCount30 +=
+      hasPhaseSignal &&
+      phaseError <= 30
+        ? 1
+        : 0;
+    group.phaseMatchCount60 +=
+      hasPhaseSignal &&
+      phaseError <= 60
+        ? 1
+        : 0;
+    group.phaseScoreSum +=
+      Number(
+        detail.finalPhaseScore ?? 0
+      );
+    group.baseScores.push(
+      baseSlotScore
+    );
+    groups[groupKey] = group;
+
+    if (!bucketPlayers[bucket]) {
+      bucketPlayers[bucket] = [];
+    }
+
+    bucketPlayers[bucket].push(player);
+  }
+
+  const maxPeerPhaseCount30 = {};
+
+  for (
+    const [groupKey, group] of
+    Object.entries(groups)
+  ) {
+    const bucket =
+      groupKey.split("\u0000")[0];
+
+    for (const player of group.players) {
+      const detail =
+        player.__detail;
+      const selfMatches30 =
+        Number(detail.phaseScore ?? 0) > 0 &&
+        Number(detail.phaseError ?? Infinity) <= 30
+          ? 1
+          : 0;
+      const peerCount30 =
+        Math.max(
+          0,
+          group.phaseMatchCount30 -
+            selfMatches30
+        );
+
+      maxPeerPhaseCount30[bucket] =
+        Math.max(
+          Number(
+            maxPeerPhaseCount30[bucket] ?? 0
+          ),
+          peerCount30
+        );
+    }
+  }
+
+  for (
+    const [groupKey, group] of
+    Object.entries(groups)
+  ) {
+    const bucket =
+      groupKey.split("\u0000")[0];
+    const top3BaseScoreSum =
+      [...group.baseScores]
+        .sort((a, b) => b - a)
+        .slice(0, 3)
+        .reduce(
+          (sum, value) =>
+            sum + value,
+          0
+        );
+
+    for (const player of group.players) {
+      const detail =
+        player.__detail;
+      const selfPhaseMatched =
+        detail.isYellow ||
+        detail.isPink
+          ? 1
+          : 0;
+      const selfMatches30 =
+        Number(detail.phaseScore ?? 0) > 0 &&
+        Number(detail.phaseError ?? Infinity) <= 30
+          ? 1
+          : 0;
+      const peerPhaseMatchCount30 =
+        Math.max(
+          0,
+          group.phaseMatchCount30 -
+            selfMatches30
+        );
+      const peerPhaseDensity30 =
+        maxPeerPhaseCount30[bucket] > 0
+          ? Math.sqrt(
+              peerPhaseMatchCount30 /
+              maxPeerPhaseCount30[bucket]
+            )
+          : 0;
+      const counterfactualBoost =
+        1 +
+        diagnosticWeight *
+        peerPhaseDensity30;
+
+      detail.areaBucketScoredCandidateCount =
+        group.players.length;
+      detail.areaBucketPhaseMatchedCount =
+        group.phaseMatchedCount;
+      detail.areaBucketPhaseMatchCount30 =
+        group.phaseMatchCount30;
+      detail.areaBucketPhaseMatchCount60 =
+        group.phaseMatchCount60;
+      detail.areaBucketPhaseScoreSum =
+        group.phaseScoreSum;
+      detail.areaBucketPeerPhaseMatchedCount =
+        Math.max(
+          0,
+          group.phaseMatchedCount -
+            selfPhaseMatched
+        );
+      detail.areaBucketPeerPhaseMatchCount30 =
+        peerPhaseMatchCount30;
+      detail.areaBucketPeerPhaseScoreSum =
+        Math.max(
+          0,
+          group.phaseScoreSum -
+            Number(
+              detail.finalPhaseScore ?? 0
+            )
+        );
+      detail.areaBucketTop3BaseScoreSum =
+        top3BaseScoreSum;
+      detail.areaPhaseDensity30 =
+        peerPhaseDensity30;
+      detail.areaPhaseCounterfactualBoost =
+        counterfactualBoost;
+      detail.areaPhaseCounterfactualSlotScore =
+        getCandidateSlotScore(player) *
+        counterfactualBoost;
+    }
+  }
+
+  for (
+    const players of
+    Object.values(bucketPlayers)
+  ) {
+    players
+      .sort(
+        (a, b) =>
+          Number(
+            b.__detail
+              ?.areaPhaseCounterfactualSlotScore ?? 0
+          ) -
+          Number(
+            a.__detail
+              ?.areaPhaseCounterfactualSlotScore ?? 0
+          )
+      )
+      .forEach((player, index) => {
+        player.__detail
+          .areaPhaseCounterfactualSlotRank =
+          index + 1;
+      });
+  }
+}
+
+function getCandidateSlotScore(
+  player
+) {
+  return Number(
+    player?.__slotScore ??
+    player?.__detail?.slotScore ??
+    0
+  );
+}
+
+function assignCandidateSlotRanks(
+  candidates,
+  { assignSlotRanks = true, assignRecentAreaRanks = false } = {}
+) {
+  const buckets = {};
+
+  for (const player of candidates ?? []) {
+    const bucket =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    if (!buckets[bucket]) {
+      buckets[bucket] = [];
+    }
+
+    buckets[bucket].push(player);
+  }
+
+  for (
+    const players of
+    Object.values(buckets)
+  ) {
+    players
+      .sort(
+        (a, b) =>
+          getCandidateSlotScore(b) -
+          getCandidateSlotScore(a)
+      )
+      .forEach(
+        (player, index) => {
+          const slotRank =
+            index + 1;
+
+          if (assignSlotRanks) {
+            player.__slotRank = slotRank;
+          }
+          if (assignSlotRanks && player.__detail) {
+            player.__detail.slotRank =
+              slotRank;
+          }
+          if (assignRecentAreaRanks && player.__detail) {
+            player.__detail.recentAreaCounterfactualSlotRank = slotRank;
+          }
+        }
+      );
+  }
+
+}
+
+function buildMatchingSlotBucketProbabilities(
+  viewerContext,
+  tierCounts,
+  enabledRankKeys
+) {
+  if (!viewerContext) {
+    return {};
+  }
+
+  const enabled =
+    new Set(
+      enabledRankKeys ?? []
+    );
+
+  const probabilities = {};
+
+  for (const rank of RANKS) {
+    if (
+      enabled.size > 0 &&
+      !enabled.has(rank.key)
+    ) {
+      continue;
+    }
+
+    const detail =
+      getHistoricalScoreDetail(
+        State.myRankKey,
+        rank.key,
+        tierCounts,
+        viewerContext
+      );
+
+    const probability =
+      Number(
+        detail.tierProbability ?? 0
+      );
+
+    if (
+      !Number.isFinite(probability) ||
+      probability <= 0
+    ) {
+      continue;
+    }
+
+    const bucket =
+      getMatchingSlotBucketKey(
+        rank.key
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    probabilities[bucket] =
+      Number(
+        probabilities[bucket] ?? 0
+      ) +
+      probability;
+  }
+
+  return probabilities;
+}
+
+function buildMatchingSlotPlan(
+  candidates,
+  slotCount,
+  bucketProbabilities,
+  existingCapacities = null
+) {
+  const bucketOrder = [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "PRIDE"
+  ];
+
+  const capacities = existingCapacities ? { ...existingCapacities } : {};
+
+  for (const player of existingCapacities ? [] : candidates ?? []) {
+    const bucket =
+      getMatchingSlotBucketKey(
+        player.__rankKey
+      );
+
+    if (!bucket) {
+      continue;
+    }
+
+    capacities[bucket] =
+      Number(
+        capacities[bucket] ?? 0
+      ) + 1;
+  }
+
+  const entries =
+    bucketOrder
+      .map((bucket, order) => ({
+        bucket,
+        order,
+        probability:
+          Number(
+            bucketProbabilities
+              ?.[bucket] ?? 0
+          ),
+        capacity:
+          Number(
+            capacities[bucket] ?? 0
+          ),
+        rawQuota: 0,
+        slots: 0
+      }))
+      .filter(
+        entry =>
+          entry.capacity > 0 &&
+          entry.probability > 0
+      );
+
+  const totalProbability =
+    entries.reduce(
+      (sum, entry) =>
+        sum + entry.probability,
+      0
+    );
+
+  if (
+    totalProbability <= 0 ||
+    entries.length === 0
+  ) {
+    return [];
+  }
+
+  const targetSlotCount =
+    Math.min(
+      Math.floor(
+        Math.max(
+          0,
+          Number(slotCount) || 0
+        )
+      ),
+      entries.reduce(
+        (sum, entry) =>
+          sum + entry.capacity,
+        0
+      )
+    );
+
+  for (const entry of entries) {
+    entry.rawQuota =
+      targetSlotCount *
+      entry.probability /
+      totalProbability;
+
+    entry.slots =
+      Math.min(
+        entry.capacity,
+        Math.floor(entry.rawQuota)
+      );
+  }
+
+  let remaining =
+    targetSlotCount -
+    entries.reduce(
+      (sum, entry) =>
+        sum + entry.slots,
+      0
+    );
+
+  while (remaining > 0) {
+    const available =
+      entries
+        .filter(
+          entry =>
+            entry.slots <
+            entry.capacity
+        )
+        .sort(
+          (a, b) =>
+            (
+              b.rawQuota -
+              b.slots
+            ) -
+            (
+              a.rawQuota -
+              a.slots
+            ) ||
+            b.probability -
+            a.probability ||
+            a.order -
+            b.order
+        );
+
+    if (available.length === 0) {
+      break;
+    }
+
+    available[0].slots++;
+    remaining--;
+  }
+
+  return entries.map(entry => ({
+    bucket: entry.bucket,
+    probability:
+      entry.probability /
+      totalProbability,
+    rawQuota:
+      entry.rawQuota,
+    slots:
+      entry.slots,
+    capacity:
+      entry.capacity
+  }));
+}
+
+function prepareR6PrideFrequency(populationShare, advanceBudget) {
+  const distribution = getHistoricalDistribution("R6");
+  const historicalRate = distribution.prideProbabilityTotal;
+  const generationMs = parseDateJST(State.generatedAt)?.getTime();
+  const diagnostics = {
+    historicalRate,
+    populationShare,
+    populationThreshold: R6_PRIDE_POPULATION_THRESHOLD,
+    countingBasis: "saved-matching-new-data-generation",
+    maxCredit: 1,
+    countedGeneration: false,
+    creditBefore: null,
+    creditAfter: null,
+    granted: false,
+    reason: "historical-unavailable"
+  };
+  if (!(distribution.total > 0) || !Number.isFinite(historicalRate) ||
+      historicalRate < 0 || historicalRate > 1) {
+    log("R6 PRIDE頻度管理: historicalの対戦率が未取得または不正のためPRIDE増枠を見送り");
+    return { diagnostics, allowPride: false, ledger: null };
+  }
+  if (!Number.isFinite(generationMs)) {
+    diagnostics.reason = "generation-unavailable";
+    log("R6 PRIDE頻度管理: 読込データのgeneratedAtが不正のためPRIDE増枠を見送り");
+    return { diagnostics, allowPride: false, ledger: null };
+  }
+  let ledger;
+  try {
+    const raw = localStorage.getItem(R6_PRIDE_FREQUENCY_STORAGE_KEY);
+    ledger = raw ? JSON.parse(raw) : {
+      version: 1, lastGenerationMs: null, credit: 0, granted: false,
+      countedGenerations: 0, grantedGenerations: 0
+    };
+    if (ledger?.version !== 1 ||
+        !(ledger.lastGenerationMs === null || Number.isFinite(ledger.lastGenerationMs)) ||
+        !Number.isFinite(ledger.credit) || ledger.credit < 0 || ledger.credit > 1 ||
+        typeof ledger.granted !== "boolean" ||
+        !Number.isSafeInteger(ledger.countedGenerations) || ledger.countedGenerations < 0 ||
+        !Number.isSafeInteger(ledger.grantedGenerations) || ledger.grantedGenerations < 0 ||
+        ledger.grantedGenerations > ledger.countedGenerations) {
+      throw new Error("invalid R6 PRIDE frequency ledger");
+    }
+  } catch (error) {
+    console.warn("[R6 PRIDE frequency] restore failed", error);
+    log("R6 PRIDE頻度管理: 保存状態の読込に失敗したためPRIDE増枠を見送り");
+    diagnostics.reason = "storage-read-failed";
+    return { diagnostics, allowPride: false, ledger: null };
+  }
+  diagnostics.creditBefore = ledger.credit;
+  diagnostics.countedGenerationsBefore = ledger.countedGenerations;
+  diagnostics.grantedGenerationsBefore = ledger.grantedGenerations;
+  const isNewGeneration =
+    ledger.lastGenerationMs === null || generationMs > ledger.lastGenerationMs;
+  if (advanceBudget && isNewGeneration) {
+    ledger = {
+      ...ledger, lastGenerationMs: generationMs,
+      credit: Math.min(1, ledger.credit + historicalRate),
+      granted: false, countedGenerations: ledger.countedGenerations + 1
+    };
+    diagnostics.countedGeneration = true;
+  }
+  const sameGeneration = generationMs === ledger.lastGenerationMs;
+  const highPopulation = populationShare >= R6_PRIDE_POPULATION_THRESHOLD;
+  const allowPride = sameGeneration && highPopulation &&
+    (ledger.granted || (advanceBudget && ledger.credit >= 1 - 1e-12));
+  diagnostics.reason =
+    !sameGeneration ? "generation-not-counted" :
+    !highPopulation ? "pride-population-below-threshold" :
+    allowPride ? "eligible" : "credit-below-one";
+  diagnostics.creditAfter = ledger.credit;
+  return { diagnostics, allowPride, ledger };
+}
+
+function adjustSlotsByRelativePopulation(
+  slotPlan,
+  population,
+  enabledRankKeys,
+  viewerTier,
+  { advancePrideBudget = false } = {}
+) {
+  const config = getRelativePopulationAdjustmentConfig();
+  const before =
+    (slotPlan ?? []).map(entry => ({ ...entry }));
+  const after =
+    before.map(entry => ({ ...entry }));
+  const rankCounts =
+    population?.rankCounts ?? {};
+  const ownRank = Number(viewerTier?.slice(1));
+  const groupForBucket = bucket => {
+    if (bucket === "PRIDE") return "higher";
+    const rank = Number(bucket.slice(1));
+    return rank > ownRank ? "higher" : rank === ownRank ? "same" : "lower";
+  };
+  const counts = { lower: 0, same: 0, higher: 0 };
+  const bucketCounts = {};
+  let invalidPopulation = !population?.rankCounts;
+  for (const key of POPULATION_RANK_KEYS) {
+    const count = rankCounts[key] ?? 0;
+    if (!Number.isInteger(count) || count < 0) {
+      invalidPopulation = true;
+      continue;
+    }
+    const bucket = key.startsWith("P_") ? "PRIDE" : key;
+    bucketCounts[bucket] = (bucketCounts[bucket] ?? 0) + count;
+    counts[groupForBucket(bucket)] += count;
+  }
+  const total = counts.lower + counts.same + counts.higher;
+  invalidPopulation ||= total !== population?.classifiedCount;
+  const shares = Object.fromEntries(
+    Object.entries(counts).map(([key, count]) => [key, total > 0 ? count / total : null])
+  );
+  const baseline = config.baselineByViewerTier?.[viewerTier] ?? null;
+  const multipliers = { lower: 1, same: 1, higher: 1 };
+  const transfers = [];
+  let target = null;
+  let prideFrequency = null;
+  const allRanksSelected =
+    enabledRankKeys?.length === POPULATION_RANK_KEYS.length &&
+    POPULATION_RANK_KEYS.every(key => enabledRankKeys.includes(key));
+  let reason = "disabled";
+  if (config.enabled !== true) {
+    reason = "disabled";
+  } else if (!config.viewerTiers.includes(viewerTier)) {
+    reason = "viewer-tier-not-eligible";
+  } else if (!allRanksSelected) {
+    reason = "rank-filter-incomplete";
+  } else if (invalidPopulation) {
+    reason = "invalid-population";
+    log("人口枠調整: ランク別人数とclassifiedCountが不整合のため調整を中止");
+  } else if (total < config.minFilteredCandidateCount) {
+    reason = "population-below-minimum";
+  } else if (counts.same < config.minSameRankCandidateCount) {
+    reason = "same-rank-population-below-minimum";
+  } else if (config.maxTransferredSlots === 0) {
+    reason = "max-transferred-slots-is-zero";
+  } else {
+    for (const group of ["lower", "higher"]) {
+      const relativeChange = (shares[group] / shares.same) /
+        (baseline[group] / baseline.same);
+      multipliers[group] = clamp(
+        Math.pow(relativeChange, config.exponent),
+        config.minMultiplier,
+        config.maxMultiplier
+      );
+    }
+    const weights = Object.fromEntries(before.map(entry => [
+      entry.bucket, entry.probability * multipliers[groupForBucket(entry.bucket)]
+    ]));
+    target = buildMatchingSlotPlan(
+      [],
+      before.reduce((sum, entry) => sum + entry.slots, 0),
+      weights,
+      Object.fromEntries(before.map(entry => [entry.bucket, entry.capacity]))
+    );
+    const targets = new Map(target.map(entry => [entry.bucket, entry]));
+    let hasSlotChanges = false;
+    for (const entry of after) {
+      const adjusted = targets.get(entry.bucket);
+      hasSlotChanges ||= entry.slots !== adjusted.slots;
+      entry.probability = adjusted.probability;
+      entry.rawQuota = adjusted.rawQuota;
+    }
+    // R6はRuby優先。PRIDE増枠は高人口時のみ、historical率で蓄積した権利を使う。
+    if (viewerTier === "R6") {
+      prideFrequency = prepareR6PrideFrequency(
+        bucketCounts.PRIDE / total,
+        advancePrideBudget
+      );
+    }
+    const recipientAllowed = entry =>
+      viewerTier !== "R6" || /^R[1-8]$/.test(entry.bucket) ||
+      (prideFrequency.allowPride && !transfers.some(transfer => transfer.to === "PRIDE"));
+    const hasEligibleRecipient = after.some(entry =>
+      recipientAllowed(entry) &&
+      entry.slots < targets.get(entry.bucket).slots &&
+      entry.slots < entry.capacity
+    );
+    for (let i = 0; i < config.maxTransferredSlots; i++) {
+      const donors = after.filter(entry =>
+        entry.slots > targets.get(entry.bucket).slots &&
+        entry.slots > 0 && entry.capacity > entry.slots
+      ).sort((a, b) =>
+        bucketCounts[a.bucket] - bucketCounts[b.bucket] ||
+        a.probability - b.probability ||
+        a.bucket.localeCompare(b.bucket)
+      );
+      const recipients = after.filter(entry =>
+        recipientAllowed(entry) &&
+        entry.slots < targets.get(entry.bucket).slots &&
+        entry.slots < entry.capacity
+      ).sort((a, b) =>
+        (prideFrequency?.allowPride
+          ? Number(b.bucket === "PRIDE") - Number(a.bucket === "PRIDE")
+          : 0) ||
+        (b.rawQuota - b.slots) - (a.rawQuota - a.slots) ||
+        b.probability - a.probability ||
+        a.bucket.localeCompare(b.bucket)
+      );
+      if (!donors.length || !recipients.length) break;
+      donors[0].slots--;
+      recipients[0].slots++;
+      transfers.push({ from: donors[0].bucket, to: recipients[0].bucket });
+    }
+    if (prideFrequency?.ledger) {
+      const frequency = prideFrequency.diagnostics;
+      const ledger = prideFrequency.ledger;
+      const prideTransfers = transfers.filter(transfer => transfer.to === "PRIDE");
+      const newGrant = prideTransfers.length > 0 && !ledger.granted;
+      if (newGrant) {
+        ledger.credit = Math.max(0, ledger.credit - 1);
+        ledger.granted = true;
+        ledger.grantedGenerations++;
+      }
+      if (frequency.countedGeneration || newGrant) {
+        try {
+          localStorage.setItem(R6_PRIDE_FREQUENCY_STORAGE_KEY, JSON.stringify(ledger));
+        } catch (error) {
+          console.warn("[R6 PRIDE frequency] save failed", error);
+          log("R6 PRIDE頻度管理: 保存に失敗したためPRIDE増枠を見送り");
+          for (const transfer of prideTransfers) {
+            after.find(entry => entry.bucket === transfer.from).slots++;
+            after.find(entry => entry.bucket === transfer.to).slots--;
+            transfers.splice(transfers.indexOf(transfer), 1);
+          }
+          frequency.reason = "storage-write-failed";
+        }
+      }
+      frequency.creditAfter = frequency.reason === "storage-write-failed"
+        ? frequency.creditBefore : ledger.credit;
+      frequency.granted = transfers.some(transfer => transfer.to === "PRIDE");
+      frequency.countedGeneration &&= frequency.reason !== "storage-write-failed";
+      frequency.countedGenerations = frequency.reason === "storage-write-failed"
+        ? frequency.countedGenerationsBefore : ledger.countedGenerations;
+      frequency.grantedGenerations = frequency.reason === "storage-write-failed"
+        ? frequency.grantedGenerationsBefore : ledger.grantedGenerations;
+      if (frequency.granted) {
+        frequency.reason = newGrant ? "granted" : "same-generation-grant";
+      } else if (frequency.reason === "eligible") {
+        frequency.reason = "no-pride-transfer";
+      }
+    }
+    reason = transfers.length ? "relative-population" :
+      !hasSlotChanges ? "integer-plan-unchanged" :
+      !hasEligibleRecipient ? "no-eligible-recipient" : "no-transferable-donor";
+  }
+
+  return {
+    plan: after,
+    diagnostics: {
+      enabled: config.enabled,
+      eligibleViewerTiers: config.viewerTiers,
+      viewerTier,
+      exponent: config.exponent,
+      minMultiplier: config.minMultiplier,
+      maxMultiplier: config.maxMultiplier,
+      minFilteredCandidateCount: config.minFilteredCandidateCount,
+      minSameRankCandidateCount: config.minSameRankCandidateCount,
+      maxTransferredSlots: config.maxTransferredSlots,
+      population: { filteredCandidateCount: total, counts, shares },
+      baseline,
+      baselineMetadata: config.baselineMetadata ?? null,
+      multipliers,
+      applied: transfers.length > 0,
+      transferredSlots: transfers.length,
+      transfers,
+      donorSelectionBasis: "filtered-candidate-count",
+      recipientSelectionScope: viewerTier === "R6" ? "ruby-with-pride-frequency-gate" : "all-buckets",
+      r6PrideFrequency: prideFrequency?.diagnostics ?? null,
+      bucketCandidateCounts: bucketCounts,
+      reason,
+      slotPlanBeforeAdjustment: before,
+      targetSlotPlan: target ?? before.map(entry => ({ ...entry })),
+      slotPlanAfterAdjustment: after
+    }
+  };
+}
+
+function selectPrideSlotCandidates(
+  candidates,
+  slotCount
+) {
+  const ranked =
+    [...(candidates ?? [])]
+      .sort(
+        (a, b) =>
+          getCandidateSlotScore(b) -
+          getCandidateSlotScore(a)
+      );
+
+  /*
+   * 【2026-09 改善7】PRIDEバンド多様性の閾値緩和
+   *
+   * 従来は「同一rankKey帯からは1名まで」を無条件に適用しており、
+   * 実績分析（n=11、PRIDEバケツ）で機会損失2件・恩恵0件という
+   * 非対称な結果が確認された（同バンド2位・3位相当のスコアの方が
+   * 別バンドの選出候補より明確に高いのに、多様性ルールだけで除外
+   * されていた）。
+   *
+   * ここでは、同バンド内で次点となった候補のスコアが、
+   * 「その時点で選出可能な最良の別バンド候補」に対して
+   * gapThreshold（既定8%）以内しか劣らない場合は、
+   * 多様性ルールを適用せず同バンド候補をそのまま採用する
+   * （＝スコア差が僅少な時だけ多様性を緩和し、
+   * 大きく劣る別バンド候補への"救済"は行わない）。
+   */
+  const configuredGapThreshold =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.slotAllocation
+        ?.prideBandDiversityGapThreshold ??
+      DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD
+    );
+
+  const gapThreshold =
+    Number.isFinite(configuredGapThreshold)
+      ? clamp(configuredGapThreshold, 0, 1)
+      : DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD;
+
+  const selected = [];
+  const selectedBands = new Set();
+
+  for (const player of ranked) {
+    if (
+      selected.length >= slotCount
+    ) {
+      break;
+    }
+
+    if (
+      selectedBands.has(
+        player.__rankKey
+      )
+    ) {
+      const ownScore =
+        getCandidateSlotScore(player);
+
+      const alt =
+        ranked.find(
+          candidate =>
+            !selected.includes(candidate) &&
+            !selectedBands.has(
+              candidate.__rankKey
+            )
+        );
+
+      const altScore =
+        alt
+          ? getCandidateSlotScore(alt)
+          : 0;
+
+      const relativeGap =
+        ownScore > 0
+          ? (ownScore - altScore) / ownScore
+          : 0;
+
+      /*
+       * 代替となる別バンド候補が存在しない、または
+       * 自分のスコアが別バンド候補よりgapThresholdを超えて
+       * 高い場合は、多様性より高スコアを優先し同バンドでも採用する。
+       */
+      if (alt && relativeGap <= gapThreshold) {
+        continue;
+      }
+    }
+
+    selected.push(player);
+    selectedBands.add(
+      player.__rankKey
+    );
+  }
+
+  if (selected.length < slotCount) {
+    for (const player of ranked) {
+      if (
+        selected.length >= slotCount
+      ) {
+        break;
+      }
+
+      if (!selected.includes(player)) {
+        selected.push(player);
+      }
+    }
+  }
+
+  return selected;
+}
+
+function selectNormalCandidatesBySlots(
+  candidates,
+  slotCount = 9,
+  bucketProbabilities = {},
+  slotPlanOverride = null
+) {
+  if (!Array.isArray(candidates)) {
+    State.matchingSlotPlan = [];
+    return [];
+  }
+
+  const plan = Array.isArray(slotPlanOverride)
+    ? slotPlanOverride.map(entry => ({ ...entry }))
+    : buildMatchingSlotPlan(
+        candidates,
+        slotCount,
+        bucketProbabilities
+      );
+
+  if (plan.length === 0) {
+    State.matchingSlotPlan = [];
+    return [...candidates]
+      .sort(
+        (a, b) =>
+          getCandidateSlotScore(b) -
+          getCandidateSlotScore(a)
+      )
+      .slice(0, slotCount);
+  }
+
+  const selected = [];
+
+  for (const entry of plan) {
+    if (entry.slots <= 0) {
+      continue;
+    }
+
+    const pool =
+      candidates.filter(
+        player =>
+          getMatchingSlotBucketKey(
+            player.__rankKey
+          ) === entry.bucket
+      );
+
+    const bucketSelected =
+      entry.bucket === "PRIDE"
+        ? selectPrideSlotCandidates(
+            pool,
+            entry.slots
+          )
+        : [...pool]
+            .sort(
+              (a, b) =>
+                getCandidateSlotScore(b) -
+                getCandidateSlotScore(a)
+            )
+            .slice(
+              0,
+              entry.slots
+            );
+
+    for (const player of bucketSelected) {
+      player.__slotBucket =
+        entry.bucket;
+      selected.push(player);
+    }
+  }
+
+  const targetCount =
+    Math.min(
+      slotCount,
+      candidates.length
+    );
+
+  if (selected.length < targetCount) {
+    const fallback =
+      [...candidates]
+        .filter(
+          player =>
+            !selected.includes(player)
+        )
+        .sort(
+          (a, b) =>
+            getCandidateSlotScore(b) -
+            getCandidateSlotScore(a)
+        )
+        .slice(
+          0,
+          targetCount -
+          selected.length
+        );
+
+    for (const player of fallback) {
+      player.__slotBucket =
+        getMatchingSlotBucketKey(
+          player.__rankKey
+        );
+      selected.push(player);
+    }
+  }
+
+  State.matchingSlotPlan =
+    plan;
+
+  return selected.sort(
+    (a, b) =>
+      getCandidateSlotScore(b) -
+      getCandidateSlotScore(a)
+  );
+}
+
+/* =========================================================
+ [8210] Matching Score:calcMatchingScoreDetail【State】（旧 [7410]）
+========================================================= */
+function calcMatchingScoreDetail(
+    player,
+    tierCounts = State.matchingTierCounts,
+    viewerContext = null,
+    evaluationTimeMs = Date.now()
+) {
+    if (!player || !player.updateDate) {
+        return { score: 0 };
+    }
+
+    const phaseCtx =
+        computePhaseContext(
+            player,
+            evaluationTimeMs
+        );
+
+    const finalPhaseScore =
+        Number(
+            phaseCtx?.finalPhaseScore ?? 0
+        );
+
+    const rankKey =
+        getPlayerRankKey(player);
+
+    const viewerRankKey =
+        State.myRankKey;
+
+    const historical =
+        getHistoricalScoreDetail(
+            viewerRankKey,
+            rankKey,
+            tierCounts,
+            viewerContext
+        );
+
+    const historicalScore =
+        historical.score;
+
+    const isPinkManaged =
+        Boolean(phaseCtx?.isPinkManaged);
+
+    const playerId =
+        normalizePlayerName(
+            player.name ?? ""
+        );
+    const playerActivityEntry =
+        State.playerActivity[
+            playerId
+        ];
+    const rankActivityEntry =
+        State.rankActivity[
+            String(rankKey ?? "")
+        ];
+    const playerActivitySignal =
+        isPinkManaged
+            ? computeActivitySignal(
+                playerActivityEntry,
+                evaluationTimeMs
+              )
+            : 0;
+    const rankActivitySignal =
+        isPinkManaged
+            ? computeActivitySignal(
+                rankActivityEntry,
+                evaluationTimeMs
+              )
+            : 0;
+    const playerWeight =
+        clamp(
+            Number(
+                State.scoringConfig
+                    ?.realtimeBoost
+                    ?.playerWeight ??
+                DEFAULT_REALTIME_PLAYER_WEIGHT
+            ),
+            0,
+            1
+        );
+    const rankWeight =
+        clamp(
+            Number(
+                State.scoringConfig
+                    ?.realtimeBoost
+                    ?.rankWeight ??
+                DEFAULT_REALTIME_RANK_WEIGHT
+            ),
+            0,
+            1
+        );
+    const configuredMaxBonus =
+        Number(
+            State.scoringConfig
+                ?.realtimeBoost
+                ?.maxBonus ??
+            DEFAULT_REALTIME_MAX_BONUS
+        );
+    const realtimeBonusCap =
+        Number.isFinite(
+            configuredMaxBonus
+        )
+            ? Math.max(
+                0,
+                configuredMaxBonus
+              )
+            : DEFAULT_REALTIME_MAX_BONUS;
+    const playerRealtimeBonus =
+        playerWeight *
+        playerActivitySignal;
+    const rankRealtimeBonus =
+        rankWeight *
+        rankActivitySignal;
+    const realtimeBonusBeforeCap =
+        playerRealtimeBonus +
+        rankRealtimeBonus;
+    const realtimeBoost =
+        1 +
+        Math.min(
+            realtimeBonusCap,
+            realtimeBonusBeforeCap
+        );
+    const playerBoost =
+        1 +
+        playerRealtimeBonus;
+    const rankBoost =
+        1 +
+        rankRealtimeBonus;
+    /*
+     * 【2026-09 改善2】位相を主要スコアから補助要素へ弱める
+     *
+     * 以前は finalPhaseScore をそのまま乗算していたため、
+     * 位相学習の信頼度（phaseTrust）が低い（サンプル不足）状態でも
+     * 位相ズレの影響がスコアへフルに効いてしまっていた。
+     *
+     * ここでは phaseTrust と設定可能な phaseWeight を用いて
+     * 「1 - phaseWeight * phaseTrust * (1 - finalPhaseScore)」
+     * という信頼度ブレンドに変更する。
+     *
+     * phaseWeight=0 なら位相は無視（常に1.0）、
+     * phaseWeight=1 かつ phaseTrust=1 なら従来同様
+     * finalPhaseScore がそのまま反映される。
+     */
+    const phaseTrust =
+        clamp(
+            Number(
+                phaseCtx?.phaseTrust ?? 1
+            ),
+            0,
+            1
+        );
+
+    const defaultPhaseWeight =
+        clamp(
+            Number(
+                State.scoringConfig
+                    ?.phase?.weight ?? 0.35
+            ),
+            0,
+            1
+        );
+
+    /*
+     * Pink管理対象はRealtimeBoostでも優遇されるため、
+     * Phase不一致時の残留を抑える専用weightを設定可能にする。
+     * 未設定時は従来どおり共通weightへフォールバックする。
+     */
+    const phaseWeight =
+        clamp(
+            Number(
+                isPinkManaged
+                    ? State.scoringConfig
+                        ?.phase?.pink?.weight ??
+                      defaultPhaseWeight
+                    : State.scoringConfig
+                        ?.phase?.yellow?.weight ??
+                      defaultPhaseWeight
+            ),
+            0,
+            1
+        );
+
+    const pinkPhaseMatched =
+        !isPinkManaged ||
+        Boolean(phaseCtx?.isPinkPhase);
+
+    /*
+     * 【2026-09 改善6】Pink不一致減衰の段階化
+     *
+     * 旧来は一致/不一致の二値判定で PINK_MISMATCH_BOOST_FACTOR(0.5)を
+     * 一律適用していたため、ズレが極小でも極大でも同じ0.5倍にしか
+     * ならず、実績分析でも「Phase不一致(63.2%)時の平均realtimeBoostが
+     * 1.19倍とまだ高いまま」という不十分な減衰が確認された。
+     *
+     * PinkPhase一致時は追加減衰を掛けず、既存のPhase評価だけを残す。
+     * 不一致時は phaseError（秒）の大きさに応じて
+     * exp(-phaseError / decaySec) で連続的に減衰させ、
+     * floor（下限）を下回らないようにする。
+     * ズレが大きいほど floor へ漸近する。
+     */
+    const pinkMismatchFloor =
+        clamp(
+            Number(
+                State.scoringConfig
+                    ?.realtimeBoost
+                    ?.pinkMismatch
+                    ?.floor ??
+                DEFAULT_PINK_MISMATCH_FLOOR
+            ),
+            0,
+            1
+        );
+
+    const pinkMismatchDecaySec =
+        Math.max(
+            1,
+            Number(
+                State.scoringConfig
+                    ?.realtimeBoost
+                    ?.pinkMismatch
+                    ?.decaySec ??
+                DEFAULT_PINK_MISMATCH_DECAY_SEC
+            )
+        );
+
+    const pinkMismatchBoostFactor =
+        isPinkManaged && !pinkPhaseMatched
+            ? Math.max(
+                pinkMismatchFloor,
+                Math.exp(
+                    -Number(phaseCtx?.phaseError ?? 0) /
+                    pinkMismatchDecaySec
+                )
+              )
+            : 1;
+
+    const appliedPhaseWeight = isPinkManaged
+        ? phaseWeight
+        : Math.min(
+            phaseWeight,
+            MAX_YELLOW_PHASE_WEIGHT
+        );
+
+    const effectivePhaseScore =
+        clamp(
+            1 -
+                appliedPhaseWeight *
+                phaseTrust *
+                (1 - finalPhaseScore),
+            0,
+            1
+        );
+
+    const rawScore =
+        historicalScore *
+        realtimeBoost *
+        pinkMismatchBoostFactor *
+        effectivePhaseScore;
+
+    const safeScore =
+        Number.isFinite(rawScore) &&
+        rawScore > 0
+            ? rawScore
+            : 0;
+
+    return {
+        score: safeScore,
+
+        historicalScore,
+        historicalMatched: historical.matched,
+        historicalBackoff:
+            Boolean(historical.backoff),
+        tierProbability:
+            Number(historical.tierProbability ?? historical.score),
+        pooledTierProbability:
+            Number(historical.pooledTierProbability ?? historical.score),
+        tierCandidateCount:
+            Number(historical.tierCandidateCount ?? 1),
+        minOwnSamplesForNoBackoff:
+            Number(historical.minOwnSamplesForNoBackoff ?? 100),
+        ownSampleCount:
+            Number(historical.ownSampleCount ?? 0),
+        adjacentSampleCount:
+            Number(historical.adjacentSampleCount ?? 0),
+        adjacentViewerTiers:
+            historical.adjacentViewerTiers ?? [],
+        viewerTier: historical.viewerTier,
+        opponentTier: historical.opponentTier,
+        area: String(player.area ?? ""),
+        isPinkManaged,
+        playerBoost,
+        rankBoost,
+        realtimeBoost,
+        playerActivitySignal,
+        rankActivitySignal,
+        playerRealtimeBonus,
+        rankRealtimeBonus,
+        realtimeBonusBeforeCap,
+        realtimeBonusCap,
+        phaseError: phaseCtx?.phaseError ?? 0,
+        signedPhaseError:
+            phaseCtx?.signedPhaseError ?? 0,
+        phasePos:
+            phaseCtx?.phasePos ?? 0,
+        peakDirection:
+            phaseCtx?.peakDirection ?? "unknown",
+        phaseBucket:
+            phaseCtx?.phaseBucket ?? "unknown",
+        diffSec:
+            phaseCtx?.diffSec ?? 0,
+        phaseScore: phaseCtx?.phaseScore ?? 0,
+        cycleCount: phaseCtx?.cycleCount ?? 0,
+        cycleSec: phaseCtx?.cycleSec ?? 0,
+        decay: phaseCtx?.decay ?? 0,
+        finalPhaseScore,
+        effectivePhaseScore,
+        phaseWeight: appliedPhaseWeight,
+        isYellow: Boolean(phaseCtx?.isYellowPhase),
+        isPink: Boolean(phaseCtx?.isPinkPhase),
+        pinkPhaseMatched,
+        pinkMismatchBoostFactor,
+        yellowThreshold: phaseCtx?.yellowThreshold ?? 0,
+        pinkThreshold: phaseCtx?.pinkThreshold ?? 0,
+
+        /*
+         * 分析用診断情報
+         * （周期学習のサンプル数・信頼度・調整量）
+         */
+        phaseSampleCount:
+            phaseCtx?.phaseSampleCount ?? 0,
+        phaseTrust,
+        phaseAdjustValue:
+            phaseCtx?.phaseAdjustValue ?? 0
+    };
+}
+
+/* =========================================================
+ [8230] Candidate Score:buildCandidateScore（旧 [6900]）
+========================================================= */
+function buildCandidateScore(
+    player,
+    tierCounts = State.matchingTierCounts,
+    viewerContext = null,
+    evaluationTimeMs = Date.now()
+) {
+    const detail =
+        calcMatchingScoreDetail(
+            player,
+            tierCounts,
+            viewerContext,
+            evaluationTimeMs
+        );
+
+    const score =
+        Number(
+            detail?.score ?? 0
+        );
+
+    const rankKey =
+        getPlayerRankKey(
+            player
+        );
+
+    return {
+        ...player,
+
+        __score: score,
+
+        __detail: detail,
+
+        __effectiveWeight:
+            score,
+
+        __rankKey:
+            rankKey
+    };
+}
+
+/* =========================================================
+ [8300] Candidate Selection:getCandidateSelectionScore（旧 [7600]）
+========================================================= */
+function getCandidateSelectionScore(player) {
+
+ if (!player) {
+   return 0;
+ }
+
+ return Number(
+   player.__score ??
+   player.__effectiveWeight ??
+   player.__weight ??
+   0
+ );
+}
+
+/*
+ * 【2026-09 改善8】バケット横断比較用の個人推定マッチング確率
+ *
+ * slotScoreはバケット自体の過去マッチング確率を含まないため、
+ * 異なるバケット間の比較には使用しない。過去の相手ランク確率を
+ * 予測時点の同Tier候補数で個人へ配分したうえで、Realtime・
+ * Phase・エリアの現在状態を掛け合わせた横断比較専用スコアとする。
+ */
+function getCandidateCrossBucketScore(
+  player
+) {
+
+  const detail =
+    player?.__detail ?? {};
+
+  const tierProbability =
+    Number(
+      detail.tierProbability ?? 0
+    );
+
+  const tierCandidateCount =
+    Math.max(
+      1,
+      Number(
+        detail.tierCandidateCount ?? 1
+      )
+    );
+
+  const score =
+    (
+      tierProbability /
+      tierCandidateCount
+    ) *
+    Number(
+      detail.realtimeBoost ?? 1
+    ) *
+    Number(
+      detail.pinkMismatchBoostFactor ?? 1
+    ) *
+    Number(
+      detail.effectivePhaseScore ?? 0
+    ) *
+    Number(
+      detail.areaBoost ?? 1
+    ) *
+    Number(
+      detail.recentAreaCounterfactualBoostWindow ?? 1
+    );
+
+  return (
+    Number.isFinite(score) &&
+    score > 0
+  )
+    ? score
+    : 0;
+}
+
+function assignCandidateCrossBucketRanks(
+  candidates
+) {
+
+  [...(candidates ?? [])]
+    .sort(
+      (a, b) =>
+        getCandidateCrossBucketScore(b) -
+        getCandidateCrossBucketScore(a)
+    )
+    .forEach((player, index) => {
+
+      const score =
+        getCandidateCrossBucketScore(
+          player
+        );
+
+      player.__crossBucketScore =
+        score;
+
+      player.__crossBucketRank =
+        index + 1;
+
+      if (player.__detail) {
+        player.__detail.crossBucketScore =
+          score;
+        player.__detail.crossBucketRank =
+          index + 1;
+      }
+    });
+}
+
+function selectCrossBucketCandidates(
+  candidates,
+  excludedCandidates,
+  slotCount
+) {
+
+  const excluded =
+    new Set(
+      excludedCandidates ?? []
+    );
+
+  return [...(candidates ?? [])]
+    .filter(
+      player =>
+        !excluded.has(player)
+    )
+    .sort(
+      (a, b) =>
+        getCandidateCrossBucketScore(b) -
+          getCandidateCrossBucketScore(a) ||
+        getCandidateSelectionScore(b) -
+          getCandidateSelectionScore(a)
+    )
+    .slice(
+      0,
+      Math.max(
+        0,
+        Math.floor(
+          Number(slotCount) || 0
+        )
+      )
+    );
+}
+
+/* =========================================================
+ [8305] Candidate Builder:applyPinkManagedSlotCap（新規・2026-09改善6）
+========================================================= */
+/*
+ * 【2026-09 改善6】Pink管理対象の最終表示枠占有数キャップ
+ *
+ * 実績分析（母集団n=8,786・実績n=25）で、Pink管理対象は
+ * 母集団の7.18%しか存在しないのに最終表示10枠の21.00%を占有し
+ * （母比2.92倍）、しかもその占有が実際の的中にほぼ寄与していない
+ * （実績25件中コピー時点でPink管理対象だったのは1件のみ、かつ
+ * そのケースも表示枠に入らなかった）ことが確認された。
+ *
+ * cap/weight調整（改善案#1・#2・#3）だけでは、ブーストが強く出た
+ * 一部の周期でなお偏りが残りうるため、最終防衛線として
+ * 「10枠中Pink管理対象は最大N枠まで」という機械的な上限を設ける。
+ * 枠の総数（NORMAL_SLOT_COUNT＋CROSS_BUCKET_SLOT_COUNT）自体は
+ * 変更しない：上限超過分だけを、まだ選出されていない候補の中から
+ * スコア順に差し替える。
+ */
+function applyPinkManagedSlotCap(
+  selected,
+  rankedByScore,
+  maxPinkManagedSlots
+) {
+
+  if (
+    !Number.isFinite(maxPinkManagedSlots) ||
+    maxPinkManagedSlots < 0
+  ) {
+    return {
+      finalSelected: selected,
+      pinkManagedSlotsBeforeCap:
+        selected.filter(
+          p => Boolean(p.__detail?.isPinkManaged)
+        ).length,
+      pinkManagedSlotsAfterCap:
+        selected.filter(
+          p => Boolean(p.__detail?.isPinkManaged)
+        ).length,
+      pinkCapDroppedCount: 0
+    };
+  }
+
+  const pinkEntries =
+    selected.filter(
+      p => Boolean(p.__detail?.isPinkManaged)
+    );
+
+  const pinkManagedSlotsBeforeCap =
+    pinkEntries.length;
+
+  if (
+    pinkManagedSlotsBeforeCap <=
+    maxPinkManagedSlots
+  ) {
+    return {
+      finalSelected: selected,
+      pinkManagedSlotsBeforeCap,
+      pinkManagedSlotsAfterCap:
+        pinkManagedSlotsBeforeCap,
+      pinkCapDroppedCount: 0
+    };
+  }
+
+  /*
+   * 超過分＝スコアの低いPink管理対象から間引く。
+   */
+  const sortedPink =
+    [...pinkEntries].sort(
+      (a, b) =>
+        getCandidateSlotScore(b) -
+        getCandidateSlotScore(a)
+    );
+
+  const keptPink =
+    new Set(
+      sortedPink.slice(
+        0,
+        maxPinkManagedSlots
+      )
+    );
+
+  const droppedCount =
+    pinkManagedSlotsBeforeCap -
+    maxPinkManagedSlots;
+
+  const droppedPink =
+    pinkEntries.filter(
+      p => !keptPink.has(p)
+    );
+
+  const kept =
+    selected.filter(
+      p =>
+        !Boolean(p.__detail?.isPinkManaged) ||
+        keptPink.has(p)
+    );
+
+  const keptKeys =
+    new Set(
+      kept.map(
+        p =>
+          normalizePlayerName(p.name) +
+          "|" +
+          normalizePlayerName(p.shopname ?? "")
+      )
+    );
+
+  const eligibleBackfill =
+    rankedByScore
+      .filter(p => {
+
+        const key =
+          normalizePlayerName(p.name) +
+          "|" +
+          normalizePlayerName(p.shopname ?? "");
+
+        return (
+          !keptKeys.has(key) &&
+          !Boolean(
+            p.__detail?.isPinkManaged
+          )
+        );
+      });
+
+  const crossBucketBackfillCount =
+    droppedPink.filter(
+      p => p.__crossBucket
+    ).length;
+
+  const crossBucketBackfill =
+    [...eligibleBackfill]
+      .sort(
+        (a, b) =>
+          getCandidateCrossBucketScore(b) -
+          getCandidateCrossBucketScore(a)
+      )
+      .slice(
+        0,
+        crossBucketBackfillCount
+      );
+
+  crossBucketBackfill.forEach(p => {
+    p.__crossBucket = true;
+    p.__crossBucketSelectionReason =
+      "pink-cap-backfill";
+  });
+
+  const crossBucketBackfillSet =
+    new Set(crossBucketBackfill);
+
+  const normalBackfill =
+    eligibleBackfill
+      .filter(
+        p =>
+          !crossBucketBackfillSet.has(p)
+      )
+      .sort(
+        (a, b) =>
+          getCandidateSlotScore(b) -
+          getCandidateSlotScore(a)
+      )
+      .slice(
+        0,
+        droppedCount -
+          crossBucketBackfill.length
+      );
+
+  const backfill = [
+    ...crossBucketBackfill,
+    ...normalBackfill
+  ];
+
+  backfill.forEach(p => {
+    p.__pinkCapBackfill = true;
+    p.__slotBucket =
+      p.__slotBucket ??
+      getMatchingSlotBucketKey(
+        p.__rankKey
+      );
+  });
+
+  const finalSelected = [
+    ...kept,
+    ...backfill
+  ];
+
+  return {
+    finalSelected,
+    pinkManagedSlotsBeforeCap,
+    pinkManagedSlotsAfterCap:
+      maxPinkManagedSlots,
+    pinkCapDroppedCount: droppedCount
+  };
+}
+
+/* =========================================================
+ [8307] Candidate Builder:computeSoftmaxBacktestPreview（新規・C-3ハイブリッド フェーズB）
+========================================================= */
+/*
+ * 【将来検討：ソフトマックス選択モデル】
+ *
+ * 本番の表示選出（State.matchingList）には一切影響を与えない、
+ * バックテスト評価専用のプレビュー関数。
+ * Plackett-Luce型（softmax重み付き・逐次非復元抽出）で
+ * candidateCount件を確率的に選び、実際の枠配分ロジック（バケツ枠＋
+ * PRIDE多様性＋バケット横断枠）との重複数・差分を candidateEvent ログへ
+ * 記録することで、将来より多くの実績データが蓄積された際に
+ * 温度パラメータ(temperature)や採用可否を事後評価できるようにする。
+ *
+ * 現時点（1日分・実績25件）では温度パラメータの妥当性を検証できる
+ * データ量が無いため、本関数の出力は診断ログにのみ使用し、
+ * 本番の候補表示には使用しない。
+ */
+function computeSoftmaxBacktestPreview(
+  pool,
+  slotCount,
+  temperature
+) {
+
+  const enabled =
+    Boolean(
+      State.scoringConfig
+        ?.experimental
+        ?.softmaxBacktest
+        ?.enabled ??
+      DEFAULT_SOFTMAX_BACKTEST_ENABLED
+    );
+
+  if (
+    !enabled ||
+    !Array.isArray(pool) ||
+    pool.length === 0 ||
+    slotCount <= 0
+  ) {
+    return {
+      enabled,
+      temperature,
+      previewCandidates: []
+    };
+  }
+
+  const items =
+    pool
+      .map(p => ({
+        player: p,
+        score: getCandidateSlotScore(p)
+      }))
+      .filter(x => x.score > 0);
+
+  const remaining = [...items];
+  const picked = [];
+
+  const effectiveSlotCount =
+    Math.min(
+      slotCount,
+      remaining.length
+    );
+
+  for (
+    let i = 0;
+    i < effectiveSlotCount;
+    i++
+  ) {
+
+    const maxScore =
+      Math.max(
+        ...remaining.map(x => x.score)
+      );
+
+    const weights =
+      remaining.map(x =>
+        Math.exp(
+          (x.score - maxScore) /
+          temperature
+        )
+      );
+
+    const totalWeight =
+      weights.reduce(
+        (sum, w) => sum + w,
+        0
+      );
+
+    let r =
+      Math.random() * totalWeight;
+
+    let idx = 0;
+
+    for (; idx < weights.length; idx++) {
+      r -= weights[idx];
+      if (r <= 0) {
+        break;
+      }
+    }
+
+    idx =
+      Math.min(
+        idx,
+        remaining.length - 1
+      );
+
+    picked.push(remaining[idx].player);
+    remaining.splice(idx, 1);
+  }
+
+  return {
+    enabled,
+    temperature,
+    previewCandidates:
+      picked.map(p => ({
+        name: p.name,
+        shopname: p.shopname ?? "",
+        slotScore:
+          Number(
+            getCandidateSlotScore(p).toFixed(6)
+          ),
+        isPinkManaged:
+          Boolean(p.__detail?.isPinkManaged)
+      }))
+  };
+}
+
+/* =========================================================
+ [8310] Candidate Builder:buildMatchingCandidates【State】【DOM】（旧 [7700]）
+========================================================= */
+function buildMatchingCandidates(
+  {
+    evaluationTimeMs = Date.now(),
+    saveEvent = false,
+    clickedAtMs = Date.now(),
+    mode = "matching",
+    offsetSec = 0
+  } = {}
+) {
+
+  if (!saveEvent) {
+    State.latestCandidateEventIdForCopy =
+      null;
+  }
+
+  State.matchingContext = {
+    mode,
+    clickedAtMs,
+    evaluationTimeMs,
+    offsetSec
+  };
+
+  const selectedStars =
+    readSelectedStars();
+
+  const selectedPrides =
+    readSelectedPrides();
+
+  const base =
+    State.filtered;
+
+  const baseWithRank =
+    base.map(p => ({
+      ...p,
+      __rankKey:
+        getPlayerRankKey(
+          p
+        )
+    }));
+
+  /* =====================================
+   * UIフィルタ
+   * ===================================== */
+  const filteredByUi =
+    baseWithRank.filter(p => {
+
+      if (!p.updateDate) {
+        return false;
+      }
+
+      if (!p.__rankKey) {
+        return false;
+      }
+
+      if (
+        p.__rankKey.startsWith("R")
+      ) {
+
+        return selectedStars.includes(
+          Number(p.starCnt)
+        );
+      }
+
+      return selectedPrides.includes(
+        p.__rankKey
+      );
+    });
+
+  /* =====================================
+   * cooldown
+   * Pink管理対象について初回1サイクルは除外する。
+   * ===================================== */
+  const afterCooldown =
+    filteredByUi.filter(p => {
+
+      const pinkTarget =
+        getPinkTarget(p);
+
+      if (!pinkTarget) {
+        return true;
+      }
+
+      const copiedAt =
+        pinkTarget?.lastCopiedAt ||
+        null;
+
+      if (!copiedAt) {
+        return true;
+      }
+
+      const phase =
+        getPhaseDistanceMin(
+          copiedAt,
+          Math.max(
+            1,
+            getCurrentCycle(p) / 60
+          ),
+          evaluationTimeMs
+        );
+
+      /*
+       * Pink管理対象は初回1サイクルは除外
+       */
+      if (
+        phase.isInitialCooldown
+      ) {
+        return false;
+      }
+
+      return true;
+
+    });
+  const afterCooldownSet = new Set(afterCooldown);
+  State.matchingFilteredPopulationCount =
+    filteredByUi.length;
+  State.matchingCooldownExcludedCandidates =
+    filteredByUi
+      .filter(p => !afterCooldownSet.has(p))
+      .map(p => ({
+        name: p.name,
+        shopname: p.shopname ?? "",
+        rankKey: p.__rankKey,
+        area: String(p.area ?? ""),
+        exclusionReason: "pink-initial-cooldown"
+      }));
+
+  const tierCounts = {};
+
+  afterCooldown.forEach(p => {
+
+    const opponentTier =
+      mapRankKeyToTierKey(
+        p.__rankKey
+      );
+
+    if (!opponentTier) {
+      return;
+    }
+
+    tierCounts[opponentTier] =
+      Number(
+        tierCounts[opponentTier] ?? 0
+      ) + 1;
+  });
+
+  State.matchingTierCounts =
+    tierCounts;
+
+  /* =====================================
+   * STEP3〜6: 候補集合確定後に履歴スコアを
+   * 個人priorへ変換し、Realtime/Phaseと合成する。
+   * ===================================== */
+  const viewerContext =
+    buildViewerHistoricalContext(
+      State.myRankKey
+    );
+
+  const scoredAll =
+    afterCooldown.map(p =>
+      buildCandidateScore(
+        p,
+        tierCounts,
+        viewerContext,
+        evaluationTimeMs
+      )
+    );
+
+  const areaDensityContext =
+    buildAreaDensityContext(
+      State.filtered
+    );
+
+  applyCandidateSlotScores(
+    scoredAll,
+    areaDensityContext
+  );
+
+  applyCandidateAreaHistoryBoost(
+    scoredAll,
+    { assignSlotRanks: true }
+  );
+
+  applyCandidateAreaPhaseDiagnostics(
+    scoredAll
+  );
+
+  assignCandidateCrossBucketRanks(
+    scoredAll
+  );
+
+  State.matchingScoredAll =
+    scoredAll;
+
+  const scoreEligible =
+    scoredAll.filter(
+      p =>
+        getCandidateSelectionScore(p) > 0 &&
+        getCandidateSlotScore(p) > 0
+    );
+
+  const rankedByScore =
+    [...scoreEligible].sort(
+      (a, b) =>
+        getCandidateSelectionScore(b) -
+        getCandidateSelectionScore(a)
+    );
+
+  State.matchingRankedAll =
+    rankedByScore;
+
+  State.matchingRankedAll.forEach(
+    (p, i) => {
+      p.__scoreRank = i + 1;
+    }
+  );
+
+  /* =====================================
+   * STEP7: 履歴分布を通常9枠へ配分し、自ランク基準の人口構成で補正
+   * STEP8: 個人推定確率によるバケット横断1枠を追加
+   * ===================================== */
+  const enabledRankKeys = [
+    ...selectedStars.map(
+      star => `R${star}`
+    ),
+    ...selectedPrides
+  ];
+  const filteredPopulation =
+    buildRankPopulationSnapshot(
+      filteredByUi
+    );
+  State.matchingFilteredPopulationSnapshot =
+    filteredPopulation;
+
+  const slotBucketProbabilities =
+    buildMatchingSlotBucketProbabilities(
+      viewerContext,
+      tierCounts,
+      enabledRankKeys
+    );
+  const originalSlotPlan =
+    buildMatchingSlotPlan(
+      scoreEligible,
+      NORMAL_SLOT_COUNT,
+      slotBucketProbabilities
+    );
+  const adjustedSlotPlan =
+    adjustSlotsByRelativePopulation(
+      originalSlotPlan,
+      filteredPopulation,
+      enabledRankKeys,
+      mapRankKeyToTierKey(State.myRankKey),
+      { advancePrideBudget: saveEvent && mode === "matching" }
+    );
+  State.matchingSlotAllocationDiagnostics =
+    adjustedSlotPlan.diagnostics;
+
+  const normalSelected =
+    selectNormalCandidatesBySlots(
+      scoreEligible,
+      NORMAL_SLOT_COUNT,
+      slotBucketProbabilities,
+      adjustedSlotPlan.plan
+    );
+
+  const crossBucketSelected =
+    selectCrossBucketCandidates(
+      scoreEligible,
+      normalSelected,
+      CROSS_BUCKET_SLOT_COUNT
+    );
+
+  crossBucketSelected.forEach(
+    p => {
+      p.__crossBucket = true;
+      p.__crossBucketSelectionReason =
+        "individual-probability";
+    }
+  );
+
+  const selected = [
+    ...normalSelected,
+    ...crossBucketSelected
+  ];
+
+  /*
+   * 【2026-09 改善6】Pink管理対象の最終表示枠占有数キャップ適用
+   * 枠の総数は変えず、上限超過分だけをスコア順の次点候補と
+   * 差し替える。診断値は saveCandidateEvent() でログへ記録する。
+   */
+  const configuredMaxPinkManagedSlots =
+    Number(
+      State.scoringConfig
+        ?.candidateSelection
+        ?.maxPinkManagedSlots ??
+      DEFAULT_MAX_PINK_MANAGED_SLOTS
+    );
+
+  const maxPinkManagedSlots =
+    Number.isFinite(
+      configuredMaxPinkManagedSlots
+    )
+      ? Math.max(
+          0,
+          Math.floor(
+            configuredMaxPinkManagedSlots
+          )
+        )
+      : DEFAULT_MAX_PINK_MANAGED_SLOTS;
+
+  const pinkCapResult =
+    applyPinkManagedSlotCap(
+      selected,
+      rankedByScore,
+      maxPinkManagedSlots
+    );
+
+  const finalSelected =
+    pinkCapResult.finalSelected;
+
+  State.matchingCrossBucketDiagnostics = {
+    crossBucketSlotCount:
+      CROSS_BUCKET_SLOT_COUNT,
+    selectedBeforePinkCap:
+      crossBucketSelected.map(
+        p => ({
+          name: p.name,
+          shopname: p.shopname ?? "",
+          bucket:
+            p.__detail?.slotBucket ?? null,
+          crossBucketRank:
+            p.__crossBucketRank ?? null,
+          crossBucketScore:
+            getCandidateCrossBucketScore(p)
+        })
+      ),
+    selectedAfterPinkCap:
+      finalSelected
+        .filter(p => p.__crossBucket)
+        .map(
+          p => ({
+            name: p.name,
+            shopname: p.shopname ?? "",
+            bucket:
+              p.__detail?.slotBucket ?? null,
+            crossBucketRank:
+              p.__crossBucketRank ?? null,
+            crossBucketScore:
+              getCandidateCrossBucketScore(p)
+          })
+        )
+  };
+
+  State.matchingPinkCapDiagnostics = {
+    maxPinkManagedSlots,
+    pinkManagedSlotsBeforeCap:
+      pinkCapResult.pinkManagedSlotsBeforeCap,
+    pinkManagedSlotsAfterCap:
+      pinkCapResult.pinkManagedSlotsAfterCap,
+    pinkCapDroppedCount:
+      pinkCapResult.pinkCapDroppedCount
+  };
+
+  /*
+   * 【将来検討：ソフトマックス選択モデル（C-3ハイブリッド フェーズB）】
+   * 本番選出（finalSelected）には影響を与えない診断専用プレビュー。
+   * 温度パラメータは scoring_config.json
+   * experimental.softmaxBacktest.temperature で調整可能。
+   */
+  const softmaxTemperature =
+    Number(
+      State.scoringConfig
+        ?.experimental
+        ?.softmaxBacktest
+        ?.temperature ??
+      DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE
+    ) || DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE;
+
+  State.matchingSoftmaxBacktestPreview =
+    computeSoftmaxBacktestPreview(
+      rankedByScore,
+      finalSelected.length,
+      softmaxTemperature
+    );
+
+  finalSelected.forEach(
+    (p, i) => {
+
+      p.displayRank =
+        i + 1;
+    }
+  );
+
+  State.matchingList =
+    finalSelected;
+
+  log(
+    `候補生成: Base=${base.length} / Selected=${finalSelected.length}` +
+    `（通常${normalSelected.length}＋バケット横断${crossBucketSelected.length}` +
+    `／Pink上限${maxPinkManagedSlots}枠：${pinkCapResult.pinkManagedSlotsBeforeCap}→${pinkCapResult.pinkManagedSlotsAfterCap}）` +
+    ` Slot=${State.matchingSlotPlan
+      .filter(entry => entry.slots > 0)
+      .map(entry => `${entry.bucket}:${entry.slots}`)
+      .join(",") || "fallback"}` +
+    `${State.matchingSlotAllocationDiagnostics?.applied
+      ? ` 人口枠調整=${State.matchingSlotAllocationDiagnostics.transfers
+          .map(transfer => `${transfer.from}→${transfer.to}(+1)`).join(",")}` +
+        ` population=${JSON.stringify(State.matchingSlotAllocationDiagnostics.population.shares)}`
+      : ""}` +
+    `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
+  );
+
+  if (saveEvent) {
+    saveCandidateEvent({
+      clickedAtMs,
+      evaluationTimeMs,
+      offsetSec
+    });
+  } else {
+    State.activeCandidateEventId =
+      null;
+  }
+}
+
+
+/* #################################################################
+ [LAYER 9000] Filtering / Summary
+ ################################################################# */
+
+/* =========================================================
+ [9000] Filter Engine:applyFilters【State】【DOM】（旧 [5000]）
+========================================================= */
+function applyFilters() {
+
+  const minutes =
+    readRangeMinutes();
+
+  /* =====================================
+   * ガード
+   * ===================================== */
+
+  if (
+    !isFinite(minutes) ||
+    minutes <= 0
+  ) {
+
+    logWarn(
+      "rangeSelect 不正値"
+    );
+
+    return;
+  }
+
+  let baseDate =
+    parseDateJST(
+      State.generatedAt
+    );
+
+  if (
+    !baseDate ||
+    isNaN(
+      baseDate.getTime()
+    )
+  ) {
+
+    baseDate =
+      parseDateJST(
+        State.latestUpdateAt
+      );
+
+    if (
+      !baseDate ||
+      isNaN(
+        baseDate.getTime()
+      )
+    ) {
+
+      baseDate =
+        new Date();
+
+      logWarn(
+        "generatedAt / latestUpdateAt 未取得 → 現在時刻使用"
+      );
+
+    } else {
+
+      log(
+        "フィルタ基準(latestUpdateAt fallback): " +
+        formatYMDHM(
+          baseDate
+        )
+      );
+    }
+
+  } else {
+
+    log(
+      "フィルタ基準(generatedAt): " +
+      formatYMDHM(
+        baseDate
+      )
+    );
+  }
+
+  const filterBaseMs =
+    baseDate.getTime();
+
+  const filterStartMs =
+    filterBaseMs -
+    (
+      minutes *
+      60 *
+      1000
+    );
+
+  const startDate =
+    new Date(
+      filterStartMs
+    );
+
+  const startLabel =
+    formatYMDHM(
+      startDate
+    );
+
+  const el =
+    document.getElementById(
+      "filterStartTime"
+    );
+
+  if (el) {
+    el.textContent =
+      startLabel;
+  }
+
+  let validCount = 0;
+  let invalidCount = 0;
+
+  State.filtered =
+    State.all.filter(
+      p => {
+
+        if (
+          !p.updateDate
+        ) {
+
+          invalidCount++;
+
+          return false;
+        }
+
+        const date =
+          parseDateJST(
+            p.updateDate
+          );
+
+        if (
+          !date ||
+          isNaN(
+            date.getTime()
+          )
+        ) {
+
+          invalidCount++;
+
+          return false;
+        }
+
+        validCount++;
+
+        return (
+          date.getTime() >=
+          filterStartMs
+        );
+      }
+    );
+
+  log(
+    "フィルタ結果: "
+    + State.filtered.length
+    + "件 / 有効:"
+    + validCount
+    + "件 / 無効:"
+    + invalidCount
+    + "件"
+  );
+
+  log(
+    "フィルタ開始時刻: " +
+    startLabel
+  );
+}
+
+/* =========================================================
+ [9100] Summary Builder:buildSummary【State】【DOM】（旧 [5300]）
+========================================================= */
+function buildSummary() {
+  const selectedStars =
+    readSelectedStars();
+
+  const selectedPrides =
+    readSelectedPrides();
+
+  const base =
+    State.filtered;
+
+  const selectedRanks =
+    RANKS
+      .filter(rank => {
+
+        if (rank.type === "ruby") {
+
+          return selectedStars.includes(
+            rank.star
+          );
+        }
+
+        if (rank.type === "pride") {
+
+          return selectedPrides.includes(
+            rank.key
+          );
+        }
+
+        return false;
+      });
+  const listsByRank =
+    new Map(selectedRanks.map(rank => [rank.key, []]));
+  const rubyRanksByStar =
+    new Map(selectedRanks
+      .filter(rank => rank.type === "ruby")
+      .map(rank => [rank.star, rank]));
+  const prideRanks =
+    selectedRanks.filter(rank => rank.type === "pride");
+
+  for (const player of base) {
+    if (player.onlineBattleRankId === RUBY_ID) {
+      const rank = rubyRanksByStar.get(player.starCnt);
+      if (rank) {
+        listsByRank.get(rank.key).push(player);
+      }
+    }
+    const pridePoint = Number(player.pridePoint ?? 0);
+    for (const rank of prideRanks) {
+      if (pridePoint >= rank.min && pridePoint <= rank.max) {
+        listsByRank.get(rank.key).push(player);
+      }
+    }
+  }
+
+  State.summary = selectedRanks.map(rank => ({
+    key: rank.key,
+    label: rank.label,
+    icon: rank.icon,
+    list: listsByRank.get(rank.key)
+  }));
+}
+
+/* =========================================================
+ [9200] Search Filter:filterSummaryBySearch【State】（旧 [5400]）
+========================================================= */
+function filterSummaryBySearch() {
+
+  const norm =
+    normalize(
+      State.searchText
+    );
+
+  if (!norm) {
+    return State.summary;
+  }
+
+  const filtered =
+    State.summary
+      .map(r => {
+
+        const filteredList =
+          r.list.filter(
+            p =>
+              (
+                p.normalizedName || ""
+              ).includes(norm)
+          );
+
+        return {
+          ...r,
+          list: filteredList
+        };
+      })
+      .filter(
+        r => r.list.length > 0
+      );
+
+  return filtered;
+}
+
+/* =========================================================
+ [9210] Search Filter:applyPlayerFilter【State】（旧 [6700]）
+========================================================= */
+function applyPlayerFilter(
+  keyword,
+  keepOriginalOrder = false
+) {
+
+  const normKey =
+    normalize(keyword);
+
+  let base =
+    State.detailOriginal.slice();
+
+  /* =====================================
+   * ソート制御
+   * ===================================== */
+
+  if (!keepOriginalOrder) {
+
+    base = base.sort(
+      (a, b) =>
+        parseDateJST(
+          b.updateDate
+        ) -
+        parseDateJST(
+          a.updateDate
+        )
+    );
+  }
+
+  /* =====================================
+   * 検索フィルタ
+   * ===================================== */
+
+  if (!normKey) {
+    return base;
+  }
+
+  return base.filter(
+    p =>
+      (
+        p.normalizedName || ""
+      ).includes(normKey)
+  );
+}
+
+/* =========================================================
+ [9300] Matching Filter:applyMatchingFilter【State】【DOM】
+ ※ 呼び出し側（[15100] Entry Point）は searchInput の input イベント
+    で State.searchText を渡す。DETAIL 側の applyPlayerFilter と同様に
+    normalizedName の前方一致（normalize 済み includes）で絞り込み、
+    マッチング候補テーブルの行だけを再描画する。
+========================================================= */
+function applyMatchingFilter(
+  keyword
+) {
+
+  const norm =
+     normalize(keyword);
+
+  const base =
+     State.matchingList || [];
+
+  const list =
+     !norm
+       ? base
+       : base.filter(
+           p =>
+             (
+               p.normalizedName || ""
+             ).includes(norm)
+         );
+
+  renderMatchingRows(list);
+}
+
+
+/* #################################################################
+ [LAYER 10000] View Templates（HTML文字列を返す層）
+ ################################################################# */
+
+/* =========================================================
+ [10000] Render Utility:renderStars（旧 [2500]）
+========================================================= */
+function renderStars(starCount) {
+
+  if (
+    !starCount ||
+    starCount < 1
+  ) {
+    return "";
+  }
+
+  const stars =
+    "★".repeat(starCount);
+
+  return stars.length > 4
+    ? (
+        stars.slice(0, 4) +
+        "<br>" +
+        stars.slice(4)
+      )
+    : stars;
+}
+
+/* =========================================================
+ [10100] Filter UI Template:buildFilterGroupHTML（旧 [5200]）
+========================================================= */
+function buildFilterGroupHTML(
+  items,
+  options
+) {
+
+  const {
+    labelClass,
+    inputClass,
+    getValue,
+    getText
+  } = options;
+
+  const itemHtml =
+    items
+      .map(
+        item => `
+      <label class="${labelClass}">
+        <input
+          type="checkbox"
+          class="${inputClass}"
+          value="${getValue(item)}"
+          checked
+        >
+        ${getText(item)}
+      </label>
+    `
+      )
+      .join("");
+
+  return `
+    <div class="filter-row">
+      <div class="filter-label"></div>
+      <div class="filter-items">
+        ${itemHtml}
+      </div>
+    </div>
+  `;
+}
+
+/* =========================================================
+ [10200] Shop Name Display:getTextWidth【DOM】（旧 [2420]）
+========================================================= */
+function getTextWidth(text, font) {
+
+  const canvas =
+    getTextWidth.canvas ||
+    (
+      getTextWidth.canvas =
+      document.createElement(
+        "canvas"
+      )
+    );
+
+  const ctx =
+    canvas.getContext("2d");
+
+  ctx.font = font;
+
+  return ctx.measureText(text)
+    .width;
+}
+
+/* =========================================================
+ [10210] Shop Name Display:shortenStoreName【DOM】（旧 [2430]）
+========================================================= */
+function shortenStoreName(full) {
+
+  if (!full) {
+    return "";
+  }
+
+  if (!isMostlyAscii(full)) {
+
+    const zLen =
+      getZenkakuLength(full);
+
+    if (zLen <= 18) {
+      return full;
+    }
+
+    const head = 6;
+    const tail = 6;
+
+    if (
+      full.length <=
+      head + tail
+    ) {
+      return full;
+    }
+
+    return (
+      full.slice(0, head) +
+      "…" +
+      full.slice(-tail)
+    );
+  }
+
+  const font =
+    "14px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
+  const maxWidth = 220;
+
+  if (
+    getTextWidth(full, font) <=
+    maxWidth
+  ) {
+    return full;
+  }
+
+  let head = 10;
+  let tail = 10;
+
+  while (
+    head + tail > 2
+  ) {
+
+    const candidate =
+      full.slice(0, head) +
+      "…" +
+      full.slice(-tail);
+
+    if (
+      getTextWidth(
+        candidate,
+        font
+      ) <= maxWidth
+    ) {
+      return candidate;
+    }
+
+    if (head >= tail) {
+      head--;
+    } else {
+      tail--;
+    }
+  }
+
+  return (
+    full.slice(0, 1) +
+    "…" +
+    full.slice(-1)
+  );
+}
+
+/* =========================================================
+ [10300] Phase Cycle Monitor:buildPhaseCycleWindowHTML（旧 [6152]）
+========================================================= */
+function buildPhaseCycleWindowHTML(
+  cycleSec,
+  n,
+  halfWidthSec,
+  filterFromMs,
+  filterToMs,
+  colorBg,
+  borderColor,
+  textColor,
+  referenceMs,
+  phaseOffsetPct,
+  phaseWidthPct
+) {
+
+  const centerSec =
+    cycleSec * n;
+
+  const centerMs =
+    referenceMs - centerSec * 1000;
+
+  const windowFromMs =
+    centerMs - halfWidthSec * 1000;
+
+  const windowToMs =
+    centerMs + halfWidthSec * 1000;
+
+  const clippedFromMs =
+    Math.max(
+      filterFromMs,
+      windowFromMs
+    );
+
+  const clippedToMs =
+    Math.min(
+      filterToMs,
+      windowToMs
+    );
+
+  const centerIsInFilterRange =
+    centerMs >= filterFromMs &&
+    centerMs <= filterToMs;
+
+  if (
+    clippedFromMs > clippedToMs ||
+    (
+      clippedFromMs === clippedToMs &&
+      !centerIsInFilterRange
+    )
+  ) {
+    return "";
+  }
+
+  const rangeMs =
+    filterToMs - filterFromMs;
+
+  const leftPct =
+    phaseOffsetPct +
+    (
+      ((filterToMs - clippedToMs) / rangeMs) *
+      phaseWidthPct
+    );
+
+  const availableWidthPct =
+    phaseOffsetPct +
+    phaseWidthPct -
+    leftPct;
+
+  /*
+   * decay により許容幅が 0 になった古い周期も、
+   * Filter範囲内の中心時刻は細いマーカーとして残す。
+   */
+  const widthPct =
+    Math.min(
+      availableWidthPct,
+      Math.max(
+        0.5,
+        ((clippedToMs - clippedFromMs) / rangeMs) *
+          phaseWidthPct
+      )
+    );
+
+  if (widthPct <= 0) {
+    return "";
+  }
+
+  /*
+   * 表のYellow/Pink判定と同じく現在時刻を起点として
+   * n周期前の中心時刻を表示する。
+   * 表示範囲だけをFilter From〜Toに合わせ、帯の両端を
+   * その範囲内にクリップする。周期計算の基準時刻は変えない。
+   *
+   * バー内表示は秒単位の厳密性を求めないため
+   * 時:分のみ（formatClockHm）。
+   * ツールチップ（title）は詳細確認用に秒まで表示する。
+   */
+  const centerClockShort =
+    formatClockHm(
+      referenceMs - centerSec * 1000
+    );
+
+  const centerClockFull =
+    formatClockHms(
+      referenceMs - centerSec * 1000
+    );
+
+  /*
+   * 範囲端に掛かる帯は描画するが、中心時刻がFilter Toより
+   * 新しい、またはFilter Fromより古い場合は時刻文字を表示しない。
+   */
+  const centerLabel =
+    centerIsInFilterRange
+      ? `
+        <span
+          style="
+            font-size:14px;
+            font-weight:bold;
+            color:${textColor};
+            white-space:nowrap;
+          "
+        >${centerClockShort}</span>
+      `
+      : "";
+
+  return `
+    <div
+      style="
+        position:absolute;
+        left:${leftPct}%;
+        width:${widthPct}%;
+        top:0;
+        bottom:0;
+        background:${colorBg};
+        border:1px solid ${borderColor};
+        border-radius:3px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        box-sizing:border-box;
+      "
+      title="${n}周期前：${centerClockFull} 頃（許容 ±${Math.round(halfWidthSec)}秒）"
+    >
+      ${centerLabel}
+    </div>
+  `;
+}
+
+/* =========================================================
+ [10310] Phase Cycle Monitor:buildPhaseCycleRowHTML【State】（旧 [6153]）
+========================================================= */
+function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
+
+  const isPink =
+    mode === "pink";
+
+  const cfg =
+    State.scoringConfig
+      ?.phase?.[mode] ?? {};
+
+  const errCfg =
+    State.scoringConfig
+      ?.phaseError ?? {};
+
+  const cycleSec =
+    isPink
+      ? calcPinkCycle()
+      : calcYellowCycle();
+
+  const adjust =
+    Number(
+      (
+        isPink
+          ? State.phaseAdjust?.pink
+          : State.phaseAdjust?.yellow
+      ) ?? 0
+    );
+
+  const threshold =
+    Number(
+      errCfg[
+        isPink ? "pinkThreshold" : "yellowThreshold"
+      ] ?? (isPink ? 0.55 : 0.7)
+    );
+
+  const lambda =
+    Number(
+      errCfg[
+        isPink ? "pinkLambda" : "yellowLambda"
+      ] ?? 0.03
+    );
+
+  const samples =
+    isPink
+      ? getPinkSampleCount()
+      : (State.yellowSamples?.length ?? 0);
+
+  const minSamples =
+    Number(cfg.minSamples ?? 8);
+
+  const trustPct =
+    minSamples > 0
+      ? Math.min(
+          100,
+          Math.round((samples / minSamples) * 100)
+        )
+      : 100;
+
+  const filterToMs =
+    getFilterToMs(nowMs);
+
+  const rangeMinutes =
+    readRangeMinutes();
+
+  if (
+    !isFinite(rangeMinutes) ||
+    rangeMinutes <= 0
+  ) {
+    return "";
+  }
+
+  const filterFromMs =
+    filterToMs -
+    rangeMinutes * 60 * 1000;
+
+  const phaseReferenceMs =
+    nowMs;
+
+  const staleSec =
+    Math.max(
+      0,
+      (nowMs - filterToMs) / 1000
+    );
+
+  /*
+   * 左端＝現在時刻、右方向＝過去。
+   * 黒領域は現在時刻からFilterのTo時刻までを示す。
+   * Filter To〜From の位相軸は残りの領域に収める。
+   */
+  const staleMaxSec =
+    45 * 60;
+
+  const stalePct =
+    Math.min(
+      20,
+      (staleSec / staleMaxSec) * 20
+    );
+
+  const phaseOffsetPct =
+    stalePct;
+
+  const phaseWidthPct =
+    100 - stalePct;
+
+  const maxCycleIndex =
+    Math.max(
+      0,
+      Math.ceil(
+        (phaseReferenceMs - filterFromMs) /
+        (cycleSec * 1000)
+      ) + 1
+    );
+
+  /*
+   * 詳細表示・候補表示の行ハイライトと同じ色に統一
+   * .match-row-yellow { background-color:#FFFFCC }
+   * .match-row-pink   { background-color:#FFE4EC }
+   */
+  const colorBg =
+    isPink
+      ? "rgba(255, 228, 236, 0.58)"
+      : "rgba(255, 255, 204, 0.58)";
+
+  const borderColor =
+    isPink
+      ? "rgba(173, 20, 87, 0.52)"
+      : "rgba(102, 92, 0, 0.4)";
+
+  const textColor =
+    isPink
+      ? "#ad1457"
+      : "#665c00";
+
+  const windows =
+    Array.from(
+      { length: maxCycleIndex + 1 },
+      (_, n) => n
+    )
+      .map(n => {
+
+        return buildPhaseCycleWindowHTML(
+          cycleSec,
+          n,
+          getPhaseWindowHalfWidthSec(
+            cycleSec,
+            n,
+            threshold,
+            lambda,
+            getPhaseErrorScaleSec(mode)
+          ),
+          filterFromMs,
+          filterToMs,
+          colorBg,
+          borderColor,
+          textColor,
+          phaseReferenceMs,
+          phaseOffsetPct,
+          phaseWidthPct
+        );
+      })
+      .join("");
+
+  const label =
+    isPink ? "Pink" : "Yellow";
+
+  const labelColor =
+    isPink ? "#c2185b" : "#a67c00";
+
+  return `
+    <div style="margin-bottom:14px;">
+
+      <div style="font-size:12px; color:#555; margin-bottom:4px;">
+        <strong style="color:${labelColor};">${label}</strong>
+        ：周期 ${cycleSec.toFixed(1)}秒（基準345秒 ${adjust >= 0 ? "+" : ""}${adjust.toFixed(1)}秒）
+        ／信頼度${trustPct}%
+        ／許容幅はdecay反映（しきい値${threshold}）
+      </div>
+
+      <div
+        style="
+          position:relative;
+          height:26px;
+          background:#eee;
+          border-radius:4px;
+          overflow:hidden;
+        "
+      >
+        <div
+          style="
+            position:absolute;
+            left:0;
+            top:0;
+            bottom:0;
+            width:${stalePct}%;
+            background:#111;
+            color:#fff;
+            display:flex;
+            align-items:center;
+            justify-content:flex-start;
+            padding-left:4px;
+            box-sizing:border-box;
+            font-size:14px;
+            font-weight:bold;
+            white-space:nowrap;
+            z-index:2;
+          "
+          title="現在時刻：${formatClockHms(nowMs)} ／ FilterのTo：${formatClockHms(filterToMs)}"
+        >
+          ${formatClockHm(nowMs)}
+        </div>
+        <div
+          style="
+            position:absolute;
+            left:0;
+            top:-2px;
+            bottom:-2px;
+            width:2px;
+            background:#333;
+            z-index:3;
+          "
+          title="現在時刻 ${formatClockHms(nowMs)}"
+        ></div>
+        ${windows}
+      </div>
+      <div
+        style="
+          display:flex;
+          justify-content:space-between;
+          margin-top:2px;
+          font-size:11px;
+          color:#555;
+          padding-left:${stalePct}%;
+          box-sizing:border-box;
+        "
+      >
+        <span title="Filter To：${formatClockHms(filterToMs)}">
+          To ${formatClockHm(filterToMs)}
+        </span>
+        <span title="Filter From：${formatClockHms(filterFromMs)}">
+          From ${formatClockHm(filterFromMs)}
+        </span>
+      </div>
+
+    </div>
+  `;
+}
+
+/* =========================================================
+ [10320] Phase Cycle Monitor:buildPhaseCycleMonitorHTML（旧 [6154]）
+========================================================= */
+function buildPhaseCycleMonitorHTML(nowMs = Date.now()) {
+
+  return `
+    <div
+      style="
+        border:1px solid #ddd;
+        border-radius:6px;
+        padding:10px 14px;
+        margin-bottom:14px;
+        background:#fafafa;
+      "
+    >
+      ${buildPhaseCycleRowHTML("yellow", nowMs)}
+      ${buildPhaseCycleRowHTML("pink", nowMs)}
+    </div>
+  `;
+}
+
+/* =========================================================
+ [10400] Player Row Template:buildPlayerRowHTML【State】（旧 [6600]）
+========================================================= */
+function buildPlayerRowHTML(
+  p
+) {
+  const titleUrl =
+    p.mytitleId
+      ? `https://initiald.sega.jp/inidac/ranking-images/title/${p.mytitleId}.png`
+      : "";
+
+  const isRuby =
+    p.onlineBattleRankId === RUBY_ID &&
+    p.starCnt;
+
+  const starOrLevel =
+    isRuby
+      ? renderStars(
+          p.starCnt
+        )
+      : p.pridePoint;
+
+  const fullShop =
+    p.shopname ?? "";
+
+  const shortShop =
+    shortenStoreName(
+      fullShop
+    );
+
+  const areaName =
+    getAreaDisplayName(p.area);
+
+  const isPinkManaged =
+    isCopiedPlayer(p);
+
+  const isPinkPhase =
+    isMatchingCandidateByCopyPhase(p);
+
+  const playerNameClass =
+    isPinkPhase
+      ? "pink-phase"
+      : isPinkManaged
+          ? "pink-managed"
+          : "";
+
+  const safeName =
+    String(
+      p.name ?? ""
+    )
+      .replace(
+        /\\/g,
+        "\\\\"
+      )
+      .replace(
+        /'/g,
+        "\\'"
+      )
+      .replace(
+        /"/g,
+        '\\"'
+      );
+
+  const safeShop =
+    String(
+      fullShop ?? ""
+    )
+      .replace(
+        /\\/g,
+        "\\\\"
+      )
+      .replace(
+        /'/g,
+        "\\'"
+      )
+      .replace(
+        /"/g,
+        "&quot;"
+      );
+
+  const copyValue =
+    [
+      isRuby
+        ? `★${"★".repeat(p.starCnt - 1)}`
+        : p.pridePoint,
+      p.name ?? "",
+      areaName,
+      fullShop
+    ]
+      .join("\t")
+      .replace(
+        /\\/g,
+        "\\\\"
+      )
+      .replace(
+        /'/g,
+        "\\'"
+      )
+      .replace(
+        /\r?\n/g,
+        " "
+      );
+
+  const rowStateClass =
+    isPinkPhase
+      ? "pink-phase"
+      : isPinkManaged
+          ? "pink-managed"
+          : "";
+
+  const crossBucketClass =
+    p.__crossBucket
+      ? " cross-bucket"
+      : "";
+
+  return `
+    <tr
+      class="${rowStateClass}${crossBucketClass}"
+      data-updated="${p.updateDate}"
+      data-name="${safeName}"
+      data-shopname="${safeShop}"
+    >
+      <td
+        class="center clickable"
+        onclick="copyToClipboard(
+          '${copyValue}',
+          '${safeName}',
+          '${safeShop}'
+        )"
+      >
+        ${starOrLevel}
+      </td>
+
+      <td
+        class="left player-name clickable ${playerNameClass}"
+        onclick="copyToClipboard(
+          '${safeName}',
+          '${safeName}',
+          '${safeShop}'
+        )"
+      >
+        ${p.name}${
+          p.__crossBucket
+            ? ' <span style="background:#e8f5e9;color:#246b2d;border-radius:3px;padding:0 4px;font-size:0.8em;" title="バケット横断枠：過去バケット確率を現在候補数で個人へ配分した推定確率により選出">X↑</span>'
+            : ""
+        }
+      </td>
+
+      <td class="center">
+        ${areaName}
+      </td>
+
+      <td
+        class="left clickable"
+        data-fullname="${safeShop}"
+        onclick="copyToClipboard(
+          '${safeShop}',
+          '${safeName}',
+          '${safeShop}'
+        )"
+      >
+        <div class="store-name">
+          ${shortShop}
+        </div>
+      </td>
+
+      <td class="right">
+        ${fmt(p.point)}
+      </td>
+      
+      <td class="left phase-last-update">
+        <button
+          type="button"
+          class="phase-detail-trigger"
+          style="
+            border:0;
+            padding:0;
+            background:transparent;
+            color:inherit;
+            font:inherit;
+            text-align:left;
+            cursor:pointer;
+          "
+          title="タップしてPhaseを表示"
+        >${p.updateDate}</button>
+      </td>
+
+      <td class="center">
+        ${
+          titleUrl
+            ? `<img src="${titleUrl}" height="24">`
+            : ""
+        }
+      </td>
+    </tr>
+  `;
+}
+
+/* =========================================================
+ [10500] Matching Header Template:buildMatchingRankCountsHTML【State】（旧 [7800]）
+========================================================= */
+function buildRankCountBadgesHTML(list) {
+  const counts = {};
+
+  RANKS.forEach(rank => {
+    counts[rank.key] = 0;
+  });
+
+  (list || []).forEach(player => {
+    const rankKey =
+      player.__rankKey || getPlayerRankKey(player);
+
+    if (rankKey && Object.prototype.hasOwnProperty.call(counts, rankKey)) {
+      counts[rankKey] += 1;
+    }
+  });
+
+  return RANKS
+    .filter(rank => counts[rank.key] > 0)
+    .map(rank => `
+      <span
+        class="rank-count-badge"
+        title="${rank.label}: ${counts[rank.key]}人"
+        style="
+          display:inline-flex;
+          align-items:center;
+          gap:4px;
+          background:rgba(255,255,255,0.92);
+          border:1px solid rgba(148,163,184,0.45);
+          border-radius:999px;
+          padding:4px 10px;
+          white-space:nowrap;
+        "
+      >
+        <img src="${rank.icon}" width="20">
+        ${rank.label}：${fmt(counts[rank.key])}人
+      </span>
+    `)
+    .join("");
+}
+
+function buildMatchingRankCountsHTML() {
+
+  if (
+    !State.matchingList.length
+  ) {
+    return "<span>マッチング候補は現在 0人です。</span>";
+  }
+
+  return buildRankCountBadgesHTML(State.matchingList);
+}
+
+
+/* #################################################################
+ [LAYER 11000] DOM Renderers（DOMを書き換える層）
+ ################################################################# */
+
+/* =========================================================
+ [11000] View Switching:switchDisplayView【DOM】（旧 [0220]）
+========================================================= */
+function switchDisplayView(view) {
+
+  const summaryView =
+    document.getElementById("summaryView");
+
+  const detailView =
+    document.getElementById("detailView");
+
+  const matchingView =
+    document.getElementById("matchingView");
+
+  if (summaryView) {
+    summaryView.style.display =
+      view === STATE.SUMMARY
+        ? "block"
+        : "none";
+  }
+
+  if (detailView) {
+    detailView.style.display =
+      view === STATE.DETAIL
+        ? "block"
+        : "none";
+  }
+
+  if (matchingView) {
+    matchingView.style.display =
+      view === STATE.MATCHING
+        ? "block"
+        : "none";
+  }
+}
+
+/* =========================================================
+ [11100] Progress Utility:state【DOM】（旧 [2300]）
+========================================================= */
+let progressTimer = null;
+
+let progressPos = 0;
+
+let progressLine = null;
+
+/* =========================================================
+ [11110] Progress Utility:startProgress【DOM】（旧 [2310]）
+========================================================= */
+function startProgress() {
+  const box = document.getElementById("logBox");
+
+  // logBox が存在しない環境では何もしない
+  if (!box) return;
+
+  if (progressLine && progressLine.parentNode) {
+    progressLine.remove();
+  }
+
+  progressPos = 0;
+
+  progressLine = document.createElement("div");
+
+  progressLine.style.color = "#ffeb3b";
+
+  box.prepend(progressLine);
+
+  updateProgressBar();
+
+  progressTimer = setInterval(() => {
+    progressPos = (progressPos + 1) % 20;
+    updateProgressBar();
+  }, 120);
+}
+
+/* =========================================================
+ [11120] Progress Utility:updateProgressBar【DOM】（旧 [2320]）
+========================================================= */
+function updateProgressBar() {
+  if (!progressLine) return;
+
+  const total = 20;
+
+  const filled = "■".repeat(Math.max(0, Math.min(total, progressPos)));
+
+  const empty = "□".repeat(Math.max(0, total - progressPos));
+
+  progressLine.textContent = `進行中：${filled}${empty}`;
+}
+
+/* =========================================================
+ [11130] Progress Utility:stopProgress【DOM】（旧 [2330]）
+========================================================= */
+function stopProgress() {
+
+  if (progressTimer) {
+    clearInterval(progressTimer);
+  }
+
+  progressTimer = null;
+
+  if (progressLine) {
+
+    progressLine.remove();
+
+    progressLine = null;
+  }
+
+  log("Viewer フィルタ完了");
+}
+
+/* =========================================================
+ [11200] Filter UI Renderer:buildRubyFilters【DOM】（旧 [5210]）
+========================================================= */
+function buildRubyFilters() {
+
+  const area =
+    document.getElementById(
+      "rubyFilters"
+    );
+
+  if (!area) {
+    return;
+  }
+
+  const stars =
+    Array.from(
+      { length: 8 },
+      (_, i) => i + 1
+    );
+
+  area.innerHTML =
+    buildFilterGroupHTML(
+      stars,
+      {
+        labelClass: "ruby-btn",
+
+        inputClass:
+          "ruby-filter",
+
+        getValue:
+          star => star,
+
+        getText:
+          star => `★${star}`
+      }
+    );
+}
+
+/* =========================================================
+ [11210] Filter UI Renderer:buildPrideFilters【DOM】（旧 [5220]）
+========================================================= */
+function buildPrideFilters() {
+
+  const area =
+    document.getElementById(
+      "prideFilters"
+    );
+
+  if (!area) {
+    return;
+  }
+
+  area.innerHTML =
+    buildFilterGroupHTML(
+      PRIDE_LEVELS,
+      {
+        labelClass:
+          "pride-btn",
+
+        inputClass:
+          "pride-filter",
+
+        getValue:
+          p => p.key,
+
+        getText:
+          p => p.key.replace(
+            "P_",
+            ""
+          )
+      }
+    );
+}
+
+/* =========================================================
+ [11300] Summary Renderer:renderSummary【DOM】【State】（旧 [5410]）
+========================================================= */
+function buildSummaryModeNavHTML(activeMode) {
+  const modes = [
+    {
+      key: "rank",
+      label: "🏆 RANK"
+    },
+    {
+      key: "area",
+      label: "🗺️ AREA"
+    }
+  ];
+
+  /*
+   * どの画面からも RankSummary / AreaSummary
+   * 両方に常時遷移できるようにするため、
+   * ボタンは常に有効（非活性にしない）。
+   */
+  return `
+    <div class="summary-mode-nav">
+      ${modes.map(mode => `
+        <button
+          type="button"
+          class="summary-mode-btn summary-mode-btn-${mode.key}${mode.key === activeMode ? " active" : ""}"
+          data-summary-mode="${mode.key}"
+        >${mode.label}</button>
+      `).join("")}
+      <button
+        type="button"
+        class="summary-mode-btn summary-mode-btn-preview${State.matchingContext?.mode === "preview" && activeMode === "both" ? " active" : ""}"
+        data-matching-preview
+      >🔭 PREVIEW</button>
+      ${buildMatchingOffsetSelectHTML(
+        "previewOffsetSelect",
+        State.previewOffsetSec,
+        "PREVIEWの予測時刻"
+      )}
+    </div>
+  `;
+}
+
+function buildMatchingOffsetSelectHTML(
+  id,
+  selectedValue,
+  ariaLabel
+) {
+  const options = [
+    { value: 0, label: "NOW" },
+    { value: 5, label: "5秒後" },
+    { value: 10, label: "10秒後" },
+    { value: 15, label: "15秒後" }
+  ];
+
+  return `
+    <select
+      id="${id}"
+      class="matching-offset-select"
+      aria-label="${ariaLabel}"
+    >
+      ${options.map(option => `
+        <option
+          value="${option.value}"
+          ${Number(selectedValue) === option.value ? "selected" : ""}
+        >${option.label}</option>
+      `).join("")}
+    </select>
+  `;
+}
+
+function ensureAreaSummaryStyles() {
+  if (document.getElementById("area-summary-view-styles")) {
+    return;
+  }
+
+  const style = document.createElement("style");
+  style.id = "area-summary-view-styles";
+  style.textContent = `
+    .area-summary-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin-top: 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 0;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .summary-mode-btn-rank,
+    .summary-mode-btn-rank.active {
+      background: #168a45;
+      border-color: #116f37;
+      color: #fff;
+    }
+
+    .summary-mode-btn-area,
+    .summary-mode-btn-area.active {
+      background: #7c3fb3;
+      border-color: #643191;
+      color: #fff;
+    }
+
+    .summary-mode-btn-rank:hover {
+      background: #116f37;
+    }
+
+    .summary-mode-btn-area:hover {
+      background: #643191;
+    }
+
+    .summary-mode-btn-preview,
+    .summary-mode-btn-preview.active {
+      background: #2563a6;
+      border-color: #1d4f84;
+      color: #fff;
+    }
+
+    .summary-mode-btn-preview:hover {
+      background: #1d4f84;
+    }
+
+    .summary-mode-btn.active {
+      box-shadow:
+        inset 0 0 0 2px rgba(255, 255, 255, 0.5),
+        0 2px 4px rgba(0, 0, 0, 0.15);
+    }
+
+    .summary-mode-btn:disabled {
+      background: #edf2f7;
+      border-color: #d4dbe5;
+      color: #5d6775;
+      cursor: default;
+      opacity: 0.8;
+    }
+
+    .summary-mode-nav {
+      width: 100%;
+      margin-top: 8px;
+      margin-bottom: 0;
+      display: grid;
+      grid-template-columns:
+        minmax(0, 1fr)
+        minmax(0, 0.85fr)
+        minmax(0, 1.15fr)
+        minmax(0, 0.85fr);
+      gap: 5px;
+    }
+
+    .summary-mode-btn,
+    .matching-offset-select {
+      box-sizing: border-box;
+      width: 100%;
+      min-width: 0;
+      height: 48px;
+      padding: 12px 6px;
+      font-size: 15px;
+      font-weight: bold;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    #analysisLogBtn {
+      box-sizing: border-box;
+      width: calc((100% - 16px) / 3);
+      flex: 0 0 calc((100% - 16px) / 3);
+      height: 48px;
+      padding: 12px 6px;
+      font-size: 15px;
+      font-weight: bold;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    .matching-offset-select {
+      background: #fff;
+      color: #222;
+      border: 1px solid #aeb7c2;
+      text-align: center;
+      padding: 8px 2px;
+    }
+
+    #matchingHeader {
+      display: block;
+      box-sizing: border-box;
+      width: 100%;
+      margin: 12px 0;
+      padding: 10px 14px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    #matchingHeader.matching-header-matching {
+      background: rgba(233, 30, 99, 0.94);
+      border: 1px solid #c2185b;
+    }
+
+    #matchingHeader.matching-header-preview {
+      background: rgba(37, 99, 166, 0.94);
+      border: 1px solid #1d4f84;
+    }
+
+    #matchingHeader:hover {
+      filter: brightness(0.92);
+    }
+
+    #matchingHeader:focus-visible,
+    .summary-action-header:focus-visible {
+      outline: 3px solid rgba(14, 165, 233, 0.45);
+      outline-offset: 2px;
+    }
+
+    .summary-action-header {
+      display: block;
+      box-sizing: border-box;
+      width: 100%;
+      margin: 12px 0;
+      padding: 10px 14px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .summary-action-header-rank {
+      background: #168a45;
+      border: 1px solid #116f37;
+    }
+
+    .summary-action-header-area {
+      background: #7c3fb3;
+      border: 1px solid #643191;
+    }
+
+    .summary-action-header:hover {
+      filter: brightness(0.92);
+    }
+
+    .matching-primary-row {
+      display: grid !important;
+      grid-template-columns:
+        minmax(0, 1fr)
+        minmax(0, 0.85fr)
+        minmax(0, 1.15fr)
+        minmax(0, 0.85fr);
+      gap: 5px !important;
+      width: 100%;
+    }
+
+    .matching-primary-row > #reloadBtn,
+    .matching-primary-row > #undoCopyBtn,
+    .matching-primary-row > #matchingBtn,
+    .matching-primary-row > #matchingOffsetSelect {
+      box-sizing: border-box;
+      width: 100% !important;
+      min-width: 0;
+      margin: 0 !important;
+      white-space: nowrap;
+    }
+
+    #reloadViewerTime {
+      white-space: nowrap;
+      font-size: inherit;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #searchRow {
+      align-items: stretch;
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 4px;
+      min-width: 0;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    #searchInput {
+      flex: 1 1 0;
+      min-width: 0;
+      width: 0 !important;
+    }
+
+    #unmatchedMemoBtn {
+      flex: 0 0 auto;
+      height: 36px;
+      padding: 0 6px;
+      margin: 0;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    #myRankSelect,
+    #searchInput {
+      box-sizing: border-box;
+      height: 36px;
+    }
+
+    #logExportDate {
+      box-sizing: border-box;
+      height: 48px;
+      padding: 12px 8px !important;
+      font-size: 15px !important;
+      border-radius: 6px;
+    }
+
+    .area-summary-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      margin: 8px 0 12px;
+      padding: 8px 10px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+
+    .area-summary-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      white-space: nowrap;
+      color: #334155;
+    }
+
+    .area-summary-legend-swatch {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      border: 1px solid rgba(15, 23, 42, 0.18);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.24);
+    }
+
+    /*
+     * 【表示修正】ランクサマリ／エリアサマリ共通の
+     * Rubyの設定範囲2帯とPRIDE帯を表示する合計見出しの背景。
+     * ランク・エリア別バッジ（rank-count-badge）と同じ
+     * 半透明白ピル背景に揃えることで、写真背景の上でも
+     * 見出しの視認性を確保する。
+     */
+    .summary-total-badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.92);
+      border: 1px solid rgba(148,163,184,0.45);
+      border-radius: 999px;
+      padding: 10px 20px;
+    }
+
+    /*
+     * 【表示修正】ROUND〜PRIDEのViewer操作パネルを、
+     * summary-total-badgeと同じ背景でまとめる。
+     */
+    #viewer-filter-panel {
+      display: inline-block;
+      max-width: 100%;
+      box-sizing: border-box;
+      background: rgba(255,255,255,0.92);
+      border: 1px solid rgba(148,163,184,0.45);
+      border-radius: 12px;
+      padding: 10px 20px;
+    }
+
+    .area-summary-row {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      min-width: 0;
+      border-top: 1px solid #edf2f7;
+    }
+
+    .area-summary-row:first-child {
+      border-top: none;
+    }
+
+    .area-summary-header-row {
+      display: flex;
+      align-items: stretch;
+      background: #f1f5f9;
+      border-bottom: 1px solid #cbd5e1;
+      font-size: 12px;
+      font-weight: 700;
+      color: #334155;
+    }
+
+    .area-summary-header-row + .area-summary-row {
+      border-top: none;
+    }
+
+    .area-sort-th {
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+      padding: 2px 0;
+    }
+
+    .area-sort-th:hover {
+      color: #0f172a;
+      text-decoration: underline;
+    }
+
+    .area-sort-mark {
+      margin-left: 4px;
+      font-size: 10px;
+    }
+
+    .area-sort-mark.idle {
+      opacity: 0.35;
+      font-weight: 400;
+    }
+
+    .area-summary-header-label {
+      padding-left: 10px;
+      color: #64748b;
+    }
+
+    .area-summary-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 260px;
+      flex: 0 0 260px;
+      padding: 4px 10px;
+      border-right: 1px solid #e2e8f0;
+    }
+
+    .area-summary-name {
+      font-weight: 600;
+      color: #0f172a;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .area-summary-bar-area {
+      display: flex;
+      align-items: center;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .area-summary-bar {
+      display: flex;
+      align-items: stretch;
+      height: 26px;
+      min-width: 40px;
+      overflow: hidden;
+      margin: 0;
+    }
+
+    .area-segment {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-width: 0;
+      position: relative;
+      overflow: visible;
+      color: rgba(255,255,255,0.96);
+      text-shadow: 0 1px 1px rgba(15,23,42,0.22);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .area-segment:hover {
+      z-index: 5;
+    }
+
+    .area-segment-label {
+      position: relative;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .area-segment.pride {
+      color: #111827;
+      text-shadow: 0 1px 1px rgba(255,255,255,0.55);
+    }
+
+    .area-segment.empty {
+      background: repeating-linear-gradient(
+        135deg,
+        #f8fafc 0,
+        #f8fafc 5px,
+        #edf2f7 5px,
+        #edf2f7 10px
+      );
+    }
+
+    @media (max-width: 700px) {
+      .summary-mode-btn,
+      .matching-offset-select,
+      .matching-primary-row > button,
+      .matching-primary-row > select {
+        padding-left: 2px !important;
+        padding-right: 2px !important;
+        font-size: 11px !important;
+      }
+
+      .matching-primary-row,
+      .summary-mode-nav {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) 48px;
+      }
+
+      .matching-primary-row > button,
+      .summary-mode-nav > button {
+        font-size: 13px !important;
+      }
+
+      .matching-primary-row > #reloadBtn {
+        padding-top: 6px;
+        padding-bottom: 6px;
+        line-height: 18px;
+      }
+
+      .reload-button-label {
+        display: block;
+      }
+
+      #reloadViewerTime {
+        font-size: 16px;
+      }
+
+      .area-summary-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .area-summary-head {
+        min-width: 0;
+        width: 100%;
+        flex-basis: auto;
+      }
+
+      .area-summary-header-row {
+        flex-direction: column;
+      }
+
+      .area-summary-header-row .area-summary-bar-area {
+        display: none;
+      }
+    }
+  `;
+
+  document.head.appendChild(style);
+}
+
+function bindSummaryModeButtons(root) {
+  if (!root) return;
+
+  const refreshButton =
+    root.querySelector(
+      "[data-summary-refresh]"
+    );
+
+  if (refreshButton) {
+    refreshButton.addEventListener(
+      "click",
+      () => {
+        renderSummary();
+      }
+    );
+  }
+
+  const detailSummaryButton =
+    root.querySelector(
+      "[data-detail-summary]"
+    );
+
+  if (detailSummaryButton) {
+    detailSummaryButton.addEventListener(
+      "click",
+      () => {
+        if (
+          State.currentDetailType ===
+          "area"
+        ) {
+          showAreaSummary(true);
+          return;
+        }
+
+        showSummaryUI(
+          true,
+          "rank"
+        );
+      }
+    );
+  }
+
+  root.querySelectorAll("[data-summary-mode]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.summaryMode;
+
+      State.searchText = "";
+
+      const searchInput =
+        document.getElementById("searchInput");
+
+      if (searchInput) {
+        searchInput.value = "";
+      }
+
+      if (mode === "area") {
+        showAreaSummary(true);
+      } else {
+        showSummaryUI(true, "rank");
+      }
+    });
+  });
+
+  const previewBtn =
+    root.querySelector(
+      "[data-matching-preview]"
+    );
+
+  if (previewBtn) {
+    previewBtn.addEventListener(
+      "click",
+      () => {
+        State.searchText = "";
+
+        const searchInput =
+          document.getElementById(
+            "searchInput"
+          );
+
+        if (searchInput) {
+          searchInput.value = "";
+        }
+
+        showMatchingCandidates({
+          push: true,
+          mode: "preview",
+          offsetSec:
+            State.previewOffsetSec
+        });
+      }
+    );
+  }
+
+  const previewOffsetSelect =
+    root.querySelector(
+      "#previewOffsetSelect"
+    );
+
+  if (previewOffsetSelect) {
+    previewOffsetSelect.addEventListener(
+      "change",
+      e => {
+        State.previewOffsetSec =
+          Number(e.target.value) || 0;
+      }
+    );
+  }
+
+  const nav =
+    root.querySelector(
+      ".summary-mode-nav"
+    );
+  const searchRow =
+    document.getElementById(
+      "searchRow"
+    );
+
+  if (
+    nav &&
+    searchRow?.parentNode
+  ) {
+    document
+      .querySelectorAll(
+        ".summary-mode-nav"
+      )
+      .forEach(otherNav => {
+        if (otherNav !== nav) {
+          otherNav.remove();
+        }
+      });
+
+    searchRow.parentNode.insertBefore(
+      nav,
+      searchRow
+    );
+  }
+}
+
+function getAreaSummaryRows() {
+  const nowMs = Date.now();
+  const filteredSummary = filterSummaryBySearch();
+
+  const groupedByArea =
+    new Map();
+
+  for (let areaNo = 0; areaNo <= 62; areaNo++) {
+    const counts = {};
+
+    RANKS.forEach(rank => {
+      counts[rank.key] = 0;
+    });
+
+    groupedByArea.set(
+      String(areaNo),
+      {
+        list: [],
+        counts,
+        phaseMatchedTotal: 0
+      }
+    );
+  }
+
+  for (const rank of filteredSummary) {
+    for (const player of rank.list) {
+      const group =
+        groupedByArea.get(
+          String(player.area ?? "")
+        );
+
+      if (!group) {
+        continue;
+      }
+
+      group.list.push(player);
+      group.counts[rank.key] += 1;
+
+      const phaseMatched =
+        isCopiedPlayer(player)
+          ? isMatchingCandidateByCopyPhase(
+              player,
+              nowMs
+            )
+          : isMatchingCandidateByPhase(
+              player,
+              nowMs
+            );
+
+      if (phaseMatched) {
+        group.phaseMatchedTotal += 1;
+      }
+    }
+  }
+
+  const rows = [];
+
+  for (let areaNo = 0; areaNo <= 62; areaNo++) {
+    const areaKey = String(areaNo);
+    const areaName = getAreaDisplayName(areaKey);
+    const group =
+      groupedByArea.get(areaKey);
+    const list =
+      group?.list ?? [];
+    const counts =
+      group?.counts ?? {};
+
+    const total = Object.values(counts).reduce((sum, v) => sum + v, 0);
+
+    rows.push({
+      areaNo,
+      areaKey,
+      areaName,
+      total,
+      phaseMatchedTotal:
+        group?.phaseMatchedTotal ?? 0,
+      counts,
+      list
+    });
+  }
+
+  return rows;
+}
+
+/*
+ * Areaサマリの並び替え。
+ * 集計（getAreaSummaryRows）とは分離し、描画直前にのみ適用する。
+ * 同値の場合は areaNo 昇順で安定させる。
+ */
+function sortAreaSummaryRows(rows) {
+  const key =
+    State.areaSortKey === "total"
+      ? "total"
+      : "areaNo";
+
+  const sign =
+    State.areaSortDir === "desc"
+      ? -1
+      : 1;
+
+  return [...rows].sort((a, b) => {
+    const diff = a[key] - b[key];
+
+    if (diff === 0) {
+      return a.areaNo - b.areaNo;
+    }
+
+    return diff * sign;
+  });
+}
+
+function getAreaNavigationAreaNos() {
+  if (State.areaSortKey !== "total") {
+    return Array.from(
+      { length: 63 },
+      (_, areaNo) => areaNo
+    );
+  }
+
+  return sortAreaSummaryRows(
+    getAreaSummaryRows()
+  ).map(row => row.areaNo);
+}
+
+function buildAreaSummaryHeaderHTML() {
+  const mark = key => {
+    if (State.areaSortKey !== key) {
+      return `<span class="area-sort-mark idle">⇅</span>`;
+    }
+
+    return `<span class="area-sort-mark">${
+      State.areaSortDir === "asc" ? "▲" : "▼"
+    }</span>`;
+  };
+
+  return `
+    <div class="area-summary-header-row">
+      <div class="area-summary-head">
+        <span
+          class="area-sort-th"
+          data-area-sort="areaNo"
+          role="button"
+          tabindex="0"
+        >エリアNo.${mark("areaNo")}</span>
+        <span
+          class="area-sort-th"
+          data-area-sort="total"
+          role="button"
+          tabindex="0"
+        >人数${mark("total")}</span>
+      </div>
+      <div class="area-summary-bar-area">
+        <span class="area-summary-header-label">ランク構成</span>
+      </div>
+    </div>
+  `;
+}
+
+function bindAreaSortHeader(root) {
+  if (!root) return;
+
+  root.querySelectorAll(".area-sort-th").forEach(th => {
+
+    const apply = () => {
+      const key = th.dataset.areaSort;
+      if (!key) return;
+
+      if (State.areaSortKey === key) {
+        State.areaSortDir =
+          State.areaSortDir === "asc" ? "desc" : "asc";
+      } else {
+        State.areaSortKey = key;
+        /*
+         * 人数は「多い順」を見たい場面が多いため降順を既定とする。
+         */
+        State.areaSortDir =
+          key === "total" ? "desc" : "asc";
+      }
+
+      renderAreaSummary();
+    };
+
+    th.addEventListener("click", apply);
+
+    th.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        apply();
+      }
+    });
+  });
+}
+
+function getRankColor(rankKey) {
+  const colors = {
+    R1: "#dc2626",
+    R2: "#f97316",
+    R3: "#facc15",
+    R4: "#84cc16",
+    R5: "#22c55e",
+    R6: "#14b8a6",
+    R7: "#3b82f6",
+    R8: "#8b5cf6",
+    // PRIDE帯の色は、各LEVELのバッジアイコン（画像）の
+    // 実際の配色に近づけたもの。
+    P_A: "#eab308", // バッジ：ゴールド系
+    P_B: "#84cc16", // バッジ：黄緑系
+    P_C: "#65a30d", // バッジ：黄緑系（Bよりやや濃色で区別）
+    P_D: "#16a34a", // バッジ：グリーン系
+    P_E: "#0d9488", // バッジ：ティール系
+    P_F: "#1d4ed8", // バッジ：ブルー系
+    P_G: "#c026d3"  // バッジ：マゼンタ系
+  };
+
+  return colors[rankKey] || "#999";
+}
+
+/*
+ * PRIDE帯は「透過」ではなく斜線パターンで
+ * RUBY帯（単色塗り）と区別する。
+ * さらに、隣り合うPRIDE帯（P_A→P_B→…）で斜線の向きを
+ * 交互（45deg / -45deg）に変えることで、隣接する帯同士の
+ * 境界がわかりやすくなるようにする。
+ */
+const PRIDE_ORDER = ["P_A", "P_B", "P_C", "P_D", "P_E", "P_F", "P_G"];
+
+function getRankFillStyle(rankKey) {
+  const base = getRankColor(rankKey);
+
+  if (String(rankKey).startsWith("P_")) {
+    const idx = PRIDE_ORDER.indexOf(rankKey);
+    const angle = idx % 2 === 0 ? 45 : -45;
+    // 色のついた線自体を細くし、白地部分を広めにすることで、
+    // ランク色の識別と中央の文字表記の可読性を両立させる。
+    return `background: repeating-linear-gradient(${angle}deg, ${base} 0px, ${base} 3px, rgba(255,255,255,0.75) 3px, rgba(255,255,255,0.75) 10px);`;
+  }
+
+  return `background: ${base};`;
+}
+
+function getRankLegendStyle(rankKey) {
+  const base = getRankColor(rankKey);
+  return `${getRankFillStyle(rankKey)} border:1px solid ${base};`;
+}
+
+/*
+ * グラフ内の人数表記を「ルビー帯なら★1=1」「PRIDE帯ならA=1」のように
+ * ランク判別しやすい短縮ラベル付きにするためのヘルパー。
+ */
+function getRankShortLabel(rankKey) {
+  if (String(rankKey).startsWith("P_")) {
+    return String(rankKey).replace("P_", "");
+  }
+  return `★${String(rankKey).replace("R", "")}`;
+}
+
+function renderAreaSummary() {
+  const area = document.getElementById("summaryArea");
+  if (!area) return;
+
+  ensureAreaSummaryStyles();
+
+  const rows = sortAreaSummaryRows(getAreaSummaryRows());
+  const total = rows.reduce((sum, row) => sum + row.total, 0);
+  const rankCounts = Object.fromEntries(
+    RANKS.map(rank => [
+      rank.key,
+      rows.reduce((sum, row) => sum + (row.counts[rank.key] || 0), 0)
+    ])
+  );
+
+  const maxAreaTotal = Math.max(1, ...rows.map(r => r.total));
+  const legendHTML = RANKS.map(rank => `
+    <span class="area-summary-legend-item">
+      <span class="area-summary-legend-swatch" style="${getRankLegendStyle(rank.key)}"></span>
+      ${rank.label}
+    </span>
+  `).join("");
+
+  area.innerHTML = `
+    ${buildSummaryModeNavHTML("area")}
+    <button
+      type="button"
+      class="summary-action-header summary-action-header-area"
+      data-summary-refresh
+      title="AREAを再表示"
+    >🗺️ AREA</button>
+    <h3 class="summary-total-badge">
+      ${buildSummaryPopulationText(total, rankCounts)}
+    </h3>
+
+    <div class="area-summary-legend">${legendHTML}</div>
+
+    <div class="area-summary-list">
+      ${buildAreaSummaryHeaderHTML()}
+      ${rows.map(row => {
+        const segments = [];
+
+        RANKS.forEach(rank => {
+          const count = row.counts[rank.key] || 0;
+          if (!count) return;
+
+          // 全エリア共通のスケール（maxAreaTotal基準）で幅を算出することで、
+          // 「1人」の幅がエリアごとにばらつかないようにする。
+          const pctOfScale = (count / maxAreaTotal) * 100;
+
+          segments.push(`
+            <div
+              class="area-segment${String(rank.key).startsWith("P_") ? " pride" : ""}"
+              title="${rank.label}: ${count}人"
+              style="width:${pctOfScale}%; ${getRankFillStyle(rank.key)}"
+            ><span class="area-segment-label"><b>${getRankShortLabel(rank.key)}=${count}</b></span></div>
+          `);
+        });
+
+        const barContent = segments.length ? segments.join("") : "";
+
+        return `
+          <div class="area-summary-row">
+            <div class="area-summary-head">
+              <span class="area-summary-name clickable" data-area="${row.areaNo}">No.${row.areaNo} ${row.areaName}：Phase ${fmt(row.phaseMatchedTotal)}／${fmt(row.total)}人</span>
+            </div>
+            <div class="area-summary-bar-area">
+              <div class="area-summary-bar" style="width:100%;">
+                ${barContent}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+
+  bindSummaryModeButtons(area);
+  bindAreaSortHeader(area);
+
+  area.querySelectorAll(".area-summary-name").forEach(el => {
+    el.addEventListener("click", () => {
+      const areaNo = Number(el.dataset.area);
+      if (!Number.isNaN(areaNo)) {
+        showAreaDetail(areaNo);
+      }
+    });
+  });
+
+  State.currentDetailKey = "";
+  State.currentDetailLabel = "";
+  State.currentDetailIcon = "";
+}
+
+function renderSummary() {
+  ensureAreaSummaryStyles();
+
+  if (State.summaryMode === "area") {
+    renderAreaSummary();
+    return;
+  }
+
+  const area =
+    document.getElementById(
+      "summaryArea"
+    );
+
+  const filteredSummary =
+    filterSummaryBySearch();
+
+  const total =
+    filteredSummary.reduce(
+      (sum, r) =>
+        sum + r.list.length,
+      0
+    );
+
+  const rankCounts = Object.fromEntries(
+    filteredSummary.map(row => [row.key, row.list.length])
+  );
+
+  area.innerHTML = `
+    ${buildSummaryModeNavHTML("rank")}
+    <button
+      type="button"
+      class="summary-action-header summary-action-header-rank"
+      data-summary-refresh
+      title="RANKを再表示"
+    >🏆 RANK</button>
+    <h3 class="summary-total-badge">
+      ${buildSummaryPopulationText(total, rankCounts)}
+    </h3>
+
+    <div style="overflow-x:auto;">
+      <table>
+
+        <tr>
+          <th>ランク</th>
+          <th>★・Lv</th>
+          <th>人数</th>
+          <th>%</th>
+          <th>Bar</th>
+          <th>RP:Avg</th>
+          <th>RP:Min</th>
+          <th>RP:Max</th>
+        </tr>
+
+        ${filteredSummary.map(r => {
+
+          const {
+            cnt,
+            percent,
+            avg,
+            min,
+            max
+          } = calcStats(
+            r.list,
+            total
+          );
+
+          return `
+            <tr
+              class="clickable"
+              data-key="${r.key}"
+            >
+
+              <td class="center">
+                <img src="${r.icon}" width="32">
+              </td>
+
+              <td class="left">
+                ${r.label}
+              </td>
+
+              <td class="right">
+                ${fmt(cnt)}
+              </td>
+
+              <td class="right">
+                ${percent}%
+              </td>
+
+              <td class="center">
+                <div class="bar-wrap">
+                  <div
+                    class="bar"
+                    style="width:${percent}%;"
+                  ></div>
+                </div>
+              </td>
+
+              <td class="right">
+                ${fmt(avg)}
+              </td>
+
+              <td class="right">
+                ${fmt(min)}
+              </td>
+
+              <td class="right">
+                ${fmt(max)}
+              </td>
+
+            </tr>
+          `;
+
+        }).join("")}
+
+      </table>
+    </div>
+  `;
+
+  bindSummaryModeButtons(area);
+
+  document
+    .querySelectorAll(
+      "#summaryArea .clickable"
+    )
+    .forEach(tr => {
+
+      tr.addEventListener(
+        "click",
+        () => {
+
+          const key =
+            tr.dataset.key;
+
+          State.currentDetailType = "rank";
+          showDetail(
+            key
+          );
+        }
+      );
+    });
+
+  State.currentDetailKey = "";
+  State.currentDetailLabel = "";
+  State.currentDetailIcon = "";
+}
+
+/* =========================================================
+ [11400] Detail Renderer:renderDetailTable【DOM】【State】（旧 [6200]）
+========================================================= */
+function renderDetailTable() {
+
+  const area =
+    document.getElementById(
+      "detailArea"
+    );
+
+  const list =
+    applyPlayerFilter(
+      State.searchText,
+      true
+    );
+
+  area.innerHTML = `
+    ${buildSummaryModeNavHTML()}
+
+    <button
+      type="button"
+      class="summary-action-header summary-action-header-rank"
+      data-detail-summary
+      title="RANKサマリへ戻る"
+    >🏆 RANK 詳細</button>
+
+    ${buildPhaseCycleMonitorHTML()}
+
+    <div class="rank-nav-box">
+        <button id="prevRankBtn" class="rank-nav-btn">　◀◀◀　</button>
+        <button id="nextRankBtn" class="rank-nav-btn">　▶▶▶　</button>
+    </div>
+
+    <div
+      class="rank-count-badges"
+      style="display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px;"
+    >
+      ${buildRankCountBadgesHTML(list)}
+    </div>
+
+    <div style="overflow-x:auto;">
+
+      <table>
+
+        <thead>
+
+          <tr>
+            <th>★・PRIDE</th>
+            <th>プレイヤー名</th>
+            <th>エリア</th>
+            <th>店舗名</th>
+            <th>RP</th>
+            <th>Last Update</th>
+            <th>称号</th>
+          </tr>
+
+        </thead>
+
+        <tbody id="detailTableBody"></tbody>
+
+      </table>
+
+    </div>
+  `;
+
+  bindSummaryModeButtons(area);
+  setupRankNavigation(
+    State.currentDetailKey
+  );
+
+  renderPlayerRowsToBody(
+    "detailTableBody",
+    list
+  );
+}
+
+function renderAreaDetailTable(areaNo) {
+  const area = document.getElementById("detailArea");
+  if (!area) return;
+
+  const areaKey = String(areaNo);
+  const areaName = getAreaDisplayName(areaKey);
+  const list = (State.searchText ? applyPlayerFilter(State.searchText, true) : (State.detailOriginal || []).slice())
+    .filter(p => String(p.area ?? "") === areaKey)
+    .filter(isPlayerIncludedInRankFilters);
+  area.innerHTML = `
+    ${buildSummaryModeNavHTML()}
+
+    <button
+      type="button"
+      class="summary-action-header summary-action-header-area"
+      data-detail-summary
+      title="AREAサマリへ戻る"
+    >🗺️ AREA 詳細</button>
+
+    ${buildPhaseCycleMonitorHTML()}
+
+    <div class="rank-nav-box">
+        <button id="prevAreaBtn" class="rank-nav-btn">　◀◀◀　</button>
+        <button id="nextAreaBtn" class="rank-nav-btn">　▶▶▶　</button>
+    </div>
+
+    <h3>
+      <span>エリアNo.${areaNo} ${areaName}</span>
+      <span style="margin-left:16px;">（${fmt(list.length)}人）</span>
+    </h3>
+
+    <div
+      class="rank-count-badges"
+      style="display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px;"
+    >
+      ${buildRankCountBadgesHTML(list)}
+    </div>
+
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>★・PRIDE</th>
+            <th>プレイヤー名</th>
+            <th>エリア</th>
+            <th>店舗名</th>
+            <th>RP</th>
+            <th>Last Update</th>
+            <th>称号</th>
+          </tr>
+        </thead>
+        <tbody id="detailTableBody"></tbody>
+      </table>
+    </div>
+  `;
+
+  bindSummaryModeButtons(area);
+  setupAreaNavigation(areaNo);
+  renderPlayerRowsToBody("detailTableBody", list);
+}
+
+/* =========================================================
+ [11500] Player Row Renderer:renderPlayerRowsToBody【DOM】（旧 [6500]）
+========================================================= */
+function renderPlayerRowsToBody(
+  tbodyId,
+  list
+) {
+  const tbody =
+    document.getElementById(
+      tbodyId
+    );
+
+  if (!tbody) return;
+
+  const rows =
+    list
+      .map(p => buildPlayerRowHTML(p))
+      .join("");
+
+  tbody.innerHTML = rows;
+
+  tbody.querySelectorAll(
+    ".phase-detail-trigger"
+  )
+    .forEach(trigger => {
+      trigger.addEventListener(
+        "click",
+        () => {
+          const row =
+            trigger.closest("tr");
+
+          if (!row) {
+            return;
+          }
+
+          const player = {
+            name: row.dataset.name || "",
+            shopname:
+              row.dataset.shopname || "",
+            updateDate:
+              row.dataset.updated || ""
+          };
+
+          showPlayerPhaseDetailDialog(
+            player
+          );
+        }
+      );
+    });
+
+  highlightMatchingRows(
+    tbody
+  );
+}
+
+/* =========================================================
+ [11510] Matching Highlight Renderer:highlightMatchingRows【DOM】【State】（旧 [6400]）
+========================================================= */
+function highlightMatchingRows(
+  tbody
+) {
+
+  if (!tbody) return;
+
+  tbody.querySelectorAll("tr").forEach(tr => {
+
+    const updated =
+      tr.dataset.updated || "";
+
+    const rowName =
+      tr.dataset.name || "";
+
+    const rowShop =
+      tr.dataset.shopname || "";
+
+    const rowPlayer = {
+      name: rowName,
+      shopname: rowShop,
+      updateDate: updated
+    };
+
+    const isYellow =
+      isMatchingCandidateByPhase(
+        rowPlayer
+      );
+
+    const isPink =
+      isMatchingCandidateByCopyPhase(
+        rowPlayer
+      );
+
+    tr.classList.remove(
+      "match-row-yellow"
+    );
+
+    tr.classList.remove(
+      "match-row-pink"
+    );
+
+    if (isPink) {
+
+      tr.classList.add(
+        "match-row-pink"
+      );
+
+    } else if (isYellow) {
+
+      tr.classList.add(
+        "match-row-yellow"
+      );
+
+    }
+
+  });
+
+}
+
+/* =========================================================
+ [11600] Matching Renderer:renderMatchingHeader【DOM】（旧 [7800] 内）
+========================================================= */
+function renderMatchingHeader() {
+
+  const headerEl =
+    document.getElementById(
+      "matchingHeader"
+    );
+
+  if (!headerEl) {
+    return;
+  }
+
+  const context =
+    State.matchingContext || {};
+
+  const offsetSec =
+    Number(context.offsetSec) || 0;
+
+  const modeLabel =
+    context.mode === "preview"
+      ? "🔭 PREVIEW"
+      : "⚔️ MATCHING";
+
+  const isPreview =
+    context.mode === "preview";
+
+  headerEl.classList.toggle(
+    "matching-header-preview",
+    isPreview
+  );
+
+  headerEl.classList.toggle(
+    "matching-header-matching",
+    !isPreview
+  );
+
+  headerEl.setAttribute(
+    "role",
+    "button"
+  );
+
+  headerEl.tabIndex = 0;
+  headerEl.title =
+    `${modeLabel}を現在の時刻設定で再計算`;
+
+  const refreshMatching =
+    () => {
+      const currentOffsetSec =
+        isPreview
+          ? State.previewOffsetSec
+          : State.matchingOffsetSec;
+
+      showMatchingCandidates({
+        push: false,
+        mode:
+          isPreview
+            ? "preview"
+            : "matching",
+        offsetSec:
+          currentOffsetSec,
+        saveEvent: !isPreview
+      });
+    };
+
+  headerEl.onclick =
+    refreshMatching;
+
+  headerEl.onkeydown =
+    event => {
+      if (
+        event.key !== "Enter" &&
+        event.key !== " "
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      refreshMatching();
+    };
+
+  headerEl.textContent =
+    `${modeLabel} — ${offsetSec > 0 ? `${offsetSec}秒後予測` : "NOW"}` +
+    ` ／ 予測ログ：${isPreview ? "記録なし" : "記録あり"}`;
+}
+
+/* =========================================================
+ [11610] Matching Renderer:renderMatchingTable【DOM】【State】（旧 [7810]）
+========================================================= */
+function renderMatchingTable() {
+
+  const area =
+    document.getElementById(
+      "matchingArea"
+    );
+
+  if (!area) return;
+
+  area.innerHTML = `
+    ${buildSummaryModeNavHTML("both")}
+    ${buildPhaseCycleMonitorHTML(
+      State.matchingContext
+        ?.evaluationTimeMs ??
+      Date.now()
+    )}
+
+    <div
+      id="matchingRankCounts"
+      class="mt10"
+      style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;"
+    >
+      ${buildMatchingRankCountsHTML()}
+    </div>
+
+    <div style="overflow-x:auto;">
+
+      <table>
+
+        <thead>
+          <tr>
+            <th>★・PRIDE</th>
+            <th>プレイヤー名</th>
+            <th>エリア</th>
+            <th>店舗名</th>
+            <th>RP</th>
+            <th>Last Update</th>
+                        <th>称号</th>
+          </tr>
+        </thead>
+
+        <tbody id="matchingTableBody"></tbody>
+
+      </table>
+
+    </div>
+  `;
+
+  bindSummaryModeButtons(area);
+
+  renderMatchingRows(
+    State.matchingList
+  );
+}
+
+/* =========================================================
+ [11620] Matching Renderer:renderMatchingRows【DOM】（旧 [7820]）
+========================================================= */
+function renderMatchingRows(
+  list
+) {
+
+  // ✅ 修正：ここでは除外しない
+  // すでに候補生成段階で処理済
+
+  renderPlayerRowsToBody(
+    "matchingTableBody",
+    list
+  );
+
+}
+
+/* =========================================================
+ [11700] Log Output:appendLog【DOM】【永続化】（旧 [9000]）
+========================================================= */
+function appendLog(
+  msg,
+  type = "info"
+) {
+
+  /* =====================================
+   * ログフィルタ
+   * ===================================== */
+
+  if (
+    !allowLog(msg, type)
+  ) {
+    return;
+  }
+
+  const box =
+    document.getElementById(
+      "logBox"
+    );
+
+  const t =
+    getNowLabelJa();
+
+  if (box) {
+
+    const line =
+      document.createElement(
+        "div"
+      );
+
+    line.textContent =
+      `[${t}] ${msg}`;
+
+    line.dataset.type =
+      type;
+
+    if (
+      type === "error"
+    ) {
+
+      line.style.color =
+        "#ff5555";
+
+    } else if (
+      type === "warn" ||
+      String(msg).includes("人口枠調整=")
+    ) {
+
+      line.style.color =
+        "#ffeb3b";
+
+    } else {
+
+      line.style.color =
+        "#00ff00";
+    }
+
+    box.prepend(line);
+
+    while (
+      box.children.length >
+      MAX_LOG_LINES
+    ) {
+
+      box.removeChild(
+        box.lastChild
+      );
+    }
+  }
+
+  if (
+    type === "warn" ||
+    type === "error"
+  ) {
+    logEvent(
+      "runtime",
+      {
+        logSchemaVersion:
+          "phase_score_v2",
+        severity: type,
+        message: String(msg ?? ""),
+        currentView:
+          State.currentView || "",
+        generatedAt:
+          State.generatedAt || "",
+        latestRound:
+          State.latestRound || "",
+        latestUpdateAt:
+          State.latestUpdateAt || ""
+      }
+    );
+  }
+}
+
+/* =========================================================
+ [11710] Log Output:allowLog（旧 [9010]）
+========================================================= */
+function allowLog(
+  message,
+  type
+) {
+
+  if (type === "error") {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "Viewer 初期化中"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "初期データ取得完了"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "フィルタ結果"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "候補生成"
+    )
+  ) {
+
+    return true;
+  }
+
+  if (
+    message.includes("候補外対戦メモ") ||
+    message.includes("候補外メモをクリップボードにコピー")
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "PREVIEWではコピー操作"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.startsWith(
+      "コピー:"
+    ) ||
+    message.includes(
+      "コピー取消"
+    ) ||
+    message.includes(
+      "重複コピー"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.startsWith(
+      "自分ランク変更"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "Reload完了"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "更新監視開始"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes("更新監視を開始しました") ||
+    message.includes("更新監視中：") ||
+    message.includes("update_watch_config.json 読み込み完了")
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes("Reload 世代確認") ||
+    message.includes("Reload 世代不一致") ||
+    message.includes("Reload 利用元")
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "先読み開始"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "先読み成功"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "先読み失敗"
+    )
+  ) {
+    return true;
+  }
+  if (
+    message.includes(
+      "利用元:"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "通信時間"
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes(
+      "Timeout"
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+const log =
+  msg =>
+    appendLog(
+      msg,
+      "info"
+    );
+
+const logWarn =
+  msg =>
+    appendLog(
+      msg,
+      "warn"
+    );
+
+const logError =
+  msg =>
+    appendLog(
+      msg,
+      "error"
+    );
+
+
+/* #################################################################
+ [LAYER 12000] Browser Actions / Export
+ ################################################################# */
+
+/* =========================================================
+ [12000] Clipboard:copyToClipboard【DOM】【State】【永続化】（旧 [6610]）
+========================================================= */
+function copyToClipboard(
+  text,
+  playerName = "",
+  shopName = ""
+) {
+  if (
+    isCurrentView(STATE.MATCHING) &&
+    State.matchingContext?.mode ===
+      "preview"
+  ) {
+    log(
+      "PREVIEWではコピー操作と実績記録を行いません"
+    );
+    return;
+  }
+
+  const afterCopySuccess = () => {
+
+    const copyRecord =
+      saveCopyEventUnified(
+        playerName,
+        shopName
+      );
+
+    logEvent(
+      "copy",
+      copyRecord
+    );
+
+    /*
+     * Pink管理用
+     * 名前＋店舗名を直接渡す
+     */
+    recordClickFromCopiedInfo(
+      playerName,
+      shopName
+    );
+
+    log(
+      `コピー: ${text}`
+    );
+
+    const matchingContext =
+      State.matchingContext || {};
+
+    const clickedAtMs =
+      Date.now();
+
+    const offsetSec =
+      isCurrentView(STATE.MATCHING)
+        ? Number(
+            matchingContext.offsetSec
+          ) || 0
+        : 0;
+
+    buildMatchingCandidates({
+      clickedAtMs,
+      evaluationTimeMs:
+        clickedAtMs +
+        offsetSec * 1000,
+      offsetSec,
+      mode: "matching",
+      saveEvent: false
+    });
+
+    if (
+      isCurrentView(
+        STATE.MATCHING
+      )
+    ) {
+
+      renderMatchingHeader();
+
+      renderMatchingTable();
+
+    } else if (
+      isCurrentView(
+        STATE.DETAIL
+      )
+    ) {
+
+      renderDetailTable();
+
+    } else {
+
+      renderSummary();
+
+    }
+  };
+
+  navigator.clipboard
+    .writeText(text)
+    .then(afterCopySuccess)
+    .catch(
+      () =>
+        logError(
+          "コピー失敗"
+        )
+    );
+}
+
+/* =========================================================
+ [12050] Generic Downloader:downloadBlob【DOM】
+========================================================= */
+function downloadBlob(
+  content,
+  filename,
+  mimeType = "application/json;charset=utf-8"
+) {
+
+  const blob =
+    new Blob(
+      [content],
+      {
+        type: mimeType
+      }
+    );
+
+  const url =
+    URL.createObjectURL(
+      blob
+    );
+
+  const a =
+    document.createElement(
+      "a"
+    );
+
+  a.href = url;
+
+  a.download =
+    filename;
+
+  a.click();
+
+  URL.revokeObjectURL(
+    url
+  );
+}
+
+/* =========================================================
+ [12100] CSV Export:downloadCSV【DOM】（旧 [8000]）
+========================================================= */
+function downloadCSV(
+  filename,
+  header,
+  body
+) {
+
+  const bom =
+    "\uFEFF";
+
+  const csv =
+    bom +
+    header +
+    "\n" +
+    body;
+
+  downloadBlob(
+    csv,
+    filename,
+    "text/csv;charset=utf-8"
+  );
+}
+
+/* =========================================================
+ [12110] CSV Export:exportSummaryCSV【State】【DOM】（旧 [8100]）
+========================================================= */
+function exportSummaryCSV() {
+
+  const header =
+    "帯,人数,%,平均RP,最小RP,最大RP";
+
+  const total =
+    State.summary.reduce(
+      (sum, r) =>
+        sum + r.list.length,
+      0
+    );
+
+  const body =
+    State.summary
+      .map(r => {
+
+        const {
+          cnt,
+          percent,
+          avg,
+          min,
+          max
+        } = calcStats(
+          r.list,
+          total
+        );
+
+        return [
+          r.label,
+          cnt,
+          percent,
+          avg,
+          min,
+          max
+        ].join(",");
+      })
+      .join("\n");
+
+  downloadCSV(
+    "summary.csv",
+    header,
+    body
+  );
+}
+
+/* =========================================================
+ [12120] CSV Export:exportAllCSV【State】【DOM】（旧 [8200]）
+========================================================= */
+function exportAllCSV() {
+
+  const header = [
+    "area",
+    "areaName",
+    "rank",
+    "name",
+    "shopname",
+    "updateDate",
+    "roundPoint",
+    "mytitleId",
+    "prideId",
+    "pridePoint",
+    "onlineBattleRankId",
+    "starCnt"
+  ].join(",");
+
+  const fields = [
+    "area",
+    "areaName",
+    "rank",
+    "name",
+    "shopname",
+    "updateDate",
+    "point",
+    "mytitleId",
+    "prideId",
+    "pridePoint",
+    "onlineBattleRankId",
+    "starCnt"
+  ];
+
+  const body =
+    State.all
+      .map(
+        p =>
+          fields
+            .map(
+              key =>
+                `"${String(
+                  p[key] ?? ""
+                ).replace(
+                  /"/g,
+                  '""'
+                )}"`
+            )
+            .join(",")
+      )
+      .join("\n");
+
+  downloadCSV(
+    "all_records.csv",
+    header,
+    body
+  );
+}
+
+/* =========================================================
+ [12210] JSON Export:exportTodayViewerLogsAsJSON【State】【永続化】【DOM】（旧 [9900]）
+========================================================= */
+async function exportTodayViewerLogsAsJSON() {
+
+  const input =
+    document.getElementById(
+      "logExportDate"
+    );
+
+  const rawDate =
+    String(
+      input?.value ?? ""
+    ).trim();
+
+  let dateKey;
+
+  /*
+   * 日付未指定
+   * → 当日
+   */
+  if (!rawDate) {
+
+    dateKey =
+      buildDailyKey();
+
+  } else {
+
+    /*
+     * 日付指定
+     */
+    dateKey =
+      rawDate.replaceAll(
+        "-",
+        ""
+      );
+
+  }
+
+  log(
+    `[analysis] rawDate=${rawDate} dateKey=${dateKey}`
+  );
+
+  const year =
+    Number(
+      dateKey.slice(
+        0,
+        4
+      )
+    );
+
+  const month =
+    Number(
+      dateKey.slice(
+        4,
+        6
+      )
+    ) - 1;
+
+  const day =
+    Number(
+      dateKey.slice(
+        6,
+        8
+      )
+    );
+
+  const targetDate =
+    `${year}/${String(
+      month + 1
+    ).padStart(
+      2,
+      "0"
+    )}/${String(
+      day
+    ).padStart(
+      2,
+      "0"
+    )}`;
+
+  const startDate =
+    new Date(
+      year,
+      month,
+      day,
+      4,
+      0,
+      0,
+      0
+    );
+
+  const endDate =
+    new Date(
+      year,
+      month,
+      day + 1,
+      3,
+      59,
+      59,
+      999
+    );
+
+  const startTs =
+    startDate.getTime();
+
+  const endTs =
+    endDate.getTime();
+
+  const copyEvents =
+    readStoredArraySafe(
+      LOG_STORAGE_KEYS.copyEvents +
+      dateKey
+    );
+
+  const payload = {
+
+    exportedAt:
+      Date.now(),
+
+    rawDate,
+
+    dateKey,
+
+    targetDate,
+
+    range: {
+      start: startTs,
+      end: endTs
+    },
+
+    copyEvents,
+
+    candidateEvents: [],
+
+    runtimeEvents: []
+
+  };
+
+  if (!logDB) {
+
+    logWarn(
+      "IndexedDB未初期化のため localStorage のみ出力"
+    );
+
+  } else {
+
+    try {
+
+      const tx =
+        logDB.transaction(
+          [
+            LOG_STORE.candidateEvents,
+            LOG_STORE.events
+          ],
+          "readonly"
+        );
+
+      const candidateStore =
+        tx.objectStore(
+          LOG_STORE.candidateEvents
+        );
+
+      const candidates =
+        await new Promise(
+          (
+            resolve,
+            reject
+          ) => {
+
+            const req =
+              candidateStore.getAll();
+
+            req.onsuccess =
+              () =>
+                resolve(
+                  req.result || []
+                );
+
+            req.onerror =
+              reject;
+
+          }
+        );
+
+      payload.candidateEvents =
+        candidates.filter(
+          x => {
+
+            const ts =
+              Number(
+                x?.t ?? 0
+              );
+
+            return (
+              ts >= startTs &&
+              ts <= endTs
+            );
+
+          }
+        );
+
+      const eventStore =
+        tx.objectStore(
+          LOG_STORE.events
+        );
+
+      const events =
+        await new Promise(
+          (
+            resolve,
+            reject
+          ) => {
+
+            const req =
+              eventStore.getAll();
+
+            req.onsuccess =
+              () =>
+                resolve(
+                  req.result || []
+                );
+
+            req.onerror =
+              reject;
+          }
+        );
+
+      payload.runtimeEvents =
+        events.filter(
+          event => {
+
+            const ts =
+              Number(event?.t ?? 0);
+
+            return (
+              event?.e === "runtime" &&
+              ts >= startTs &&
+              ts <= endTs
+            );
+          }
+        );
+
+    } catch (e) {
+
+      logError(
+        "IndexedDB読込失敗"
+      );
+
+      console.error(
+        e
+      );
+
+    }
+
+  }
+
+  const filename =
+    `viewer_analysis_${dateKey}.json`;
+
+  downloadBlob(
+    JSON.stringify(
+      payload,
+      null,
+      2
+    ),
+    filename,
+    "application/json;charset=utf-8"
+  );
+
+  log(
+    `分析JSON出力完了: ${filename}`
+  );
+
+}
+
+
+/* #################################################################
+ [LAYER 13000] Application Use Cases
+ ################################################################# */
+
+/* =========================================================
+ [12990] Log Use Case:buildScoreBreakdownLog【ログ軽量化】
+========================================================= */
+/*
+ * copyEvents / candidateEvents（candidates・allCandidates）で
+ * 重複していた scoreBreakdown 組み立てを1箇所へ集約する。
+ *
+ * slim=false（既定）:
+ *   従来どおりの全項目（バックオフ診断用の詳細項目を含む）。
+ *   Top10表示分（copyEvents本体・candidates）は
+ *   情報量が小さいため、こちらを使う。
+ *
+ * slim=true:
+ *   Phase傾向分析（signedPhaseError・phaseBucket・
+ *   phaseScore系）に必要な項目のみへ絞った軽量版。
+ *   allCandidates（候補全件・件数が多くログ肥大化の主因）で
+ *   使用する。
+ */
+function buildScoreBreakdownLog(
+  detail,
+  slim = false
+) {
+
+  detail = detail || {};
+
+  if (slim) {
+
+    return {
+      historicalScore:
+        Number(detail.historicalScore ?? 0),
+      tierProbability:
+        Number(detail.tierProbability ?? 0),
+      playerBoost:
+        Number(detail.playerBoost ?? 1),
+      rankBoost:
+        Number(detail.rankBoost ?? 1),
+      realtimeBoost:
+        Number(detail.realtimeBoost ?? 1),
+      playerActivitySignal:
+        Number(detail.playerActivitySignal ?? 0),
+      rankActivitySignal:
+        Number(detail.rankActivitySignal ?? 0),
+      playerRealtimeBonus:
+        Number(detail.playerRealtimeBonus ?? 0),
+      rankRealtimeBonus:
+        Number(detail.rankRealtimeBonus ?? 0),
+      realtimeBonusBeforeCap:
+        Number(detail.realtimeBonusBeforeCap ?? 0),
+      realtimeBonusCap:
+        Number(detail.realtimeBonusCap ?? 0),
+      slotScore:
+        Number(detail.slotScore ?? 0),
+      slotBucket:
+        detail.slotBucket ?? null,
+      slotRank:
+        Number(detail.slotRank ?? 0) ||
+        null,
+      crossBucketRank:
+        Number(detail.crossBucketRank ?? 0) ||
+        null,
+      crossBucketScore:
+        Number(detail.crossBucketScore ?? 0),
+      prideBandPriorWeight:
+        Number(detail.prideBandPriorWeight ?? 1),
+      areaDensity:
+        Number(detail.areaDensity ?? 0),
+      areaBoost:
+        Number(detail.areaBoost ?? 1),
+      recentAreaMatchCount5:
+        Number(detail.recentAreaMatchCount5 ?? 0),
+      recentAreaMatchCount10:
+        Number(detail.recentAreaMatchCount10 ?? 0),
+      recentAreaMatchCount20:
+        Number(detail.recentAreaMatchCount20 ?? 0),
+      recentAreaMatchCountWindow:
+        Number(detail.recentAreaMatchCountWindow ?? 0),
+      loggedAreaMatchCount:
+        Number(detail.loggedAreaMatchCount ?? 0),
+      loggedAreaMatchSampleCount:
+        Number(detail.loggedAreaMatchSampleCount ?? 0),
+      loggedAreaMatchRate:
+        Number(detail.loggedAreaMatchRate ?? 0),
+      recentAreaMatchDensityWindow:
+        Number(detail.recentAreaMatchDensityWindow ?? 0),
+      recentAreaCounterfactualBoostWindow:
+        Number(detail.recentAreaCounterfactualBoostWindow ?? 1),
+      recentAreaCounterfactualSlotScore:
+        Number(detail.recentAreaCounterfactualSlotScore ?? 0),
+      recentAreaCounterfactualSlotRank:
+        Number(detail.recentAreaCounterfactualSlotRank ?? 0) ||
+        null,
+      areaBucketPhaseMatchedCount:
+        Number(detail.areaBucketPhaseMatchedCount ?? 0),
+      areaBucketScoredCandidateCount:
+        Number(detail.areaBucketScoredCandidateCount ?? 0),
+      areaBucketPhaseMatchCount30:
+        Number(detail.areaBucketPhaseMatchCount30 ?? 0),
+      areaBucketPhaseMatchCount60:
+        Number(detail.areaBucketPhaseMatchCount60 ?? 0),
+      areaBucketPhaseScoreSum:
+        Number(detail.areaBucketPhaseScoreSum ?? 0),
+      areaBucketPeerPhaseMatchedCount:
+        Number(detail.areaBucketPeerPhaseMatchedCount ?? 0),
+      areaBucketPeerPhaseMatchCount30:
+        Number(detail.areaBucketPeerPhaseMatchCount30 ?? 0),
+      areaBucketPeerPhaseScoreSum:
+        Number(detail.areaBucketPeerPhaseScoreSum ?? 0),
+      areaBucketTop3BaseScoreSum:
+        Number(detail.areaBucketTop3BaseScoreSum ?? 0),
+      areaPhaseDensity30:
+        Number(detail.areaPhaseDensity30 ?? 0),
+      areaPhaseCounterfactualBoost:
+        Number(detail.areaPhaseCounterfactualBoost ?? 1),
+      areaPhaseCounterfactualSlotScore:
+        Number(detail.areaPhaseCounterfactualSlotScore ?? 0),
+      areaPhaseCounterfactualSlotRank:
+        Number(detail.areaPhaseCounterfactualSlotRank ?? 0) ||
+        null,
+      phaseError:
+        Number(detail.phaseError ?? 0),
+      signedPhaseError:
+        Number(detail.signedPhaseError ?? 0),
+      peakDirection:
+        detail.peakDirection ?? "unknown",
+      phaseBucket:
+        detail.phaseBucket ?? "unknown",
+      phaseScore:
+        Number(detail.phaseScore ?? 0),
+      finalPhaseScore:
+        Number(detail.finalPhaseScore ?? 0),
+      effectivePhaseScore:
+        Number(detail.effectivePhaseScore ?? 0),
+      phaseSampleCount:
+        Number(detail.phaseSampleCount ?? 0),
+      phaseTrust:
+        Number(detail.phaseTrust ?? 1),
+      phaseAdjustValue:
+        Number(detail.phaseAdjustValue ?? 0)
+    };
+
+  }
+
+  return {
+    historicalScore:
+      Number(detail.historicalScore ?? 0),
+    historicalMatched:
+      Boolean(detail.historicalMatched),
+    historicalBackoff:
+      Boolean(detail.historicalBackoff),
+    tierProbability:
+      Number(detail.tierProbability ?? 0),
+    pooledTierProbability:
+      Number(detail.pooledTierProbability ?? 0),
+    tierCandidateCount:
+      Number(detail.tierCandidateCount ?? 1),
+    minOwnSamplesForNoBackoff:
+      Number(detail.minOwnSamplesForNoBackoff ?? 100),
+    ownSampleCount:
+      Number(detail.ownSampleCount ?? 0),
+    adjacentSampleCount:
+      Number(detail.adjacentSampleCount ?? 0),
+    adjacentViewerTiers:
+      detail.adjacentViewerTiers ?? [],
+    playerBoost:
+      Number(detail.playerBoost ?? 1),
+    rankBoost:
+      Number(detail.rankBoost ?? 1),
+    realtimeBoost:
+      Number(detail.realtimeBoost ?? 1),
+    playerActivitySignal:
+      Number(detail.playerActivitySignal ?? 0),
+    rankActivitySignal:
+      Number(detail.rankActivitySignal ?? 0),
+    playerRealtimeBonus:
+      Number(detail.playerRealtimeBonus ?? 0),
+    rankRealtimeBonus:
+      Number(detail.rankRealtimeBonus ?? 0),
+    realtimeBonusBeforeCap:
+      Number(detail.realtimeBonusBeforeCap ?? 0),
+    realtimeBonusCap:
+      Number(detail.realtimeBonusCap ?? 0),
+    slotScore:
+      Number(detail.slotScore ?? 0),
+    slotBucket:
+      detail.slotBucket ?? null,
+    slotRank:
+      Number(detail.slotRank ?? 0) ||
+      null,
+    crossBucketRank:
+      Number(detail.crossBucketRank ?? 0) ||
+      null,
+    crossBucketScore:
+      Number(detail.crossBucketScore ?? 0),
+    prideBandPriorWeight:
+      Number(detail.prideBandPriorWeight ?? 1),
+    areaBucketCount:
+      Number(detail.areaBucketCount ?? 0),
+    areaTotalCount:
+      Number(detail.areaTotalCount ?? 0),
+    areaBucketTotal:
+      Number(detail.areaBucketTotal ?? 0),
+    areaBucketTrust:
+      Number(detail.areaBucketTrust ?? 0),
+    areaDensity:
+      Number(detail.areaDensity ?? 0),
+    areaBoost:
+      Number(detail.areaBoost ?? 1),
+    recentAreaMatchCount5:
+      Number(detail.recentAreaMatchCount5 ?? 0),
+    recentAreaMatchCount10:
+      Number(detail.recentAreaMatchCount10 ?? 0),
+    recentAreaMatchCount20:
+      Number(detail.recentAreaMatchCount20 ?? 0),
+    recentAreaMatchCountWindow:
+      Number(detail.recentAreaMatchCountWindow ?? 0),
+    loggedAreaMatchCount:
+      Number(detail.loggedAreaMatchCount ?? 0),
+    loggedAreaMatchSampleCount:
+      Number(detail.loggedAreaMatchSampleCount ?? 0),
+    loggedAreaMatchRate:
+      Number(detail.loggedAreaMatchRate ?? 0),
+    recentAreaMatchDensityWindow:
+      Number(detail.recentAreaMatchDensityWindow ?? 0),
+    recentAreaCounterfactualBoostWindow:
+      Number(detail.recentAreaCounterfactualBoostWindow ?? 1),
+    recentAreaCounterfactualSlotScore:
+      Number(detail.recentAreaCounterfactualSlotScore ?? 0),
+    recentAreaCounterfactualSlotRank:
+      Number(detail.recentAreaCounterfactualSlotRank ?? 0) ||
+      null,
+    areaBucketPhaseMatchedCount:
+      Number(detail.areaBucketPhaseMatchedCount ?? 0),
+    areaBucketScoredCandidateCount:
+      Number(detail.areaBucketScoredCandidateCount ?? 0),
+    areaBucketPhaseMatchCount30:
+      Number(detail.areaBucketPhaseMatchCount30 ?? 0),
+    areaBucketPhaseMatchCount60:
+      Number(detail.areaBucketPhaseMatchCount60 ?? 0),
+    areaBucketPhaseScoreSum:
+      Number(detail.areaBucketPhaseScoreSum ?? 0),
+    areaBucketPeerPhaseMatchedCount:
+      Number(detail.areaBucketPeerPhaseMatchedCount ?? 0),
+    areaBucketPeerPhaseMatchCount30:
+      Number(detail.areaBucketPeerPhaseMatchCount30 ?? 0),
+    areaBucketPeerPhaseScoreSum:
+      Number(detail.areaBucketPeerPhaseScoreSum ?? 0),
+    areaBucketTop3BaseScoreSum:
+      Number(detail.areaBucketTop3BaseScoreSum ?? 0),
+    areaPhaseDensity30:
+      Number(detail.areaPhaseDensity30 ?? 0),
+    areaPhaseCounterfactualBoost:
+      Number(detail.areaPhaseCounterfactualBoost ?? 1),
+    areaPhaseCounterfactualSlotScore:
+      Number(detail.areaPhaseCounterfactualSlotScore ?? 0),
+    areaPhaseCounterfactualSlotRank:
+      Number(detail.areaPhaseCounterfactualSlotRank ?? 0) ||
+      null,
+    phaseError:
+      Number(detail.phaseError ?? 0),
+    signedPhaseError:
+      Number(detail.signedPhaseError ?? 0),
+    phasePos:
+      Number(detail.phasePos ?? 0),
+    peakDirection:
+      detail.peakDirection ?? "unknown",
+    phaseBucket:
+      detail.phaseBucket ?? "unknown",
+    diffSec:
+      Number(detail.diffSec ?? 0),
+    phaseScore:
+      Number(detail.phaseScore ?? 0),
+    decay:
+      Number(detail.decay ?? 0),
+    finalPhaseScore:
+      Number(detail.finalPhaseScore ?? 0),
+    effectivePhaseScore:
+      Number(detail.effectivePhaseScore ?? 0),
+    phaseWeight:
+      Number(detail.phaseWeight ?? 0),
+    phaseSampleCount:
+      Number(detail.phaseSampleCount ?? 0),
+    phaseTrust:
+      Number(detail.phaseTrust ?? 1),
+    phaseAdjustValue:
+      Number(detail.phaseAdjustValue ?? 0)
+  };
+
+}
+
+/* =========================================================
+ [12995] Log Use Case:buildAllCandidateRow【ログ軽量化】
+========================================================= */
+/*
+ * allCandidates 用の行データ（配列）を構築する。
+ * 列の並びは ALL_CANDIDATES_COLUMNS と必ず一致させること。
+ */
+function buildAllCandidateRow(
+  p
+) {
+
+  const d =
+    p.__detail || {};
+
+  return [
+    p.__scoreRank ?? null,
+    p.name,
+    p.shopname ?? "",
+    p.__rankKey ?? null,
+    String(p.area ?? ""),
+    Number(
+      (p.__score ?? 0).toFixed(6)
+    ),
+    p.displayRank ? 1 : 0,
+    p.displayRank ?? null,
+    p.__crossBucket ? 1 : 0,
+    p.__crossBucketRank ?? null,
+    Number(p.__crossBucketScore ?? 0),
+    p.__crossBucketSelectionReason ?? null,
+    d.isPinkManaged ? 1 : 0,
+    d.pinkPhaseMatched ? 1 : 0,
+    Number(d.pinkMismatchBoostFactor ?? 1),
+    Number(d.historicalScore ?? 0),
+    d.historicalBackoff ? 1 : 0,
+    Number(d.tierProbability ?? 0),
+    Number(d.playerBoost ?? 1),
+    Number(d.rankBoost ?? 1),
+    Number(d.realtimeBoost ?? 1),
+    Number(d.playerActivitySignal ?? 0),
+    Number(d.rankActivitySignal ?? 0),
+    Number(d.playerRealtimeBonus ?? 0),
+    Number(d.rankRealtimeBonus ?? 0),
+    Number(d.realtimeBonusBeforeCap ?? 0),
+    Number(d.realtimeBonusCap ?? 0),
+    Number(d.slotScore ?? 0),
+    d.slotBucket ?? null,
+    Number(d.slotRank ?? 0) || null,
+    Number(d.prideBandPriorWeight ?? 1),
+    Number(d.areaBucketCount ?? 0),
+    Number(d.areaTotalCount ?? 0),
+    Number(d.areaDensity ?? 0),
+    Number(d.areaBoost ?? 1),
+    Number(d.recentAreaMatchCount5 ?? 0),
+    Number(d.recentAreaMatchCount10 ?? 0),
+    Number(d.recentAreaMatchCount20 ?? 0),
+    Number(d.recentAreaMatchCountWindow ?? 0),
+    Number(d.loggedAreaMatchCount ?? 0),
+    Number(d.loggedAreaMatchSampleCount ?? 0),
+    Number(d.loggedAreaMatchRate ?? 0),
+    Number(d.recentAreaMatchDensityWindow ?? 0),
+    Number(d.recentAreaCounterfactualBoostWindow ?? 1),
+    Number(d.recentAreaCounterfactualSlotScore ?? 0),
+    Number(d.recentAreaCounterfactualSlotRank ?? 0) || null,
+    Number(d.areaBucketScoredCandidateCount ?? 0),
+    Number(d.areaBucketPhaseMatchedCount ?? 0),
+    Number(d.areaBucketPhaseMatchCount30 ?? 0),
+    Number(d.areaBucketPhaseMatchCount60 ?? 0),
+    Number(d.areaBucketPhaseScoreSum ?? 0),
+    Number(d.areaBucketPeerPhaseMatchedCount ?? 0),
+    Number(d.areaBucketPeerPhaseMatchCount30 ?? 0),
+    Number(d.areaBucketPeerPhaseScoreSum ?? 0),
+    Number(d.areaBucketTop3BaseScoreSum ?? 0),
+    Number(d.areaPhaseDensity30 ?? 0),
+    Number(d.areaPhaseCounterfactualBoost ?? 1),
+    Number(d.areaPhaseCounterfactualSlotScore ?? 0),
+    Number(d.areaPhaseCounterfactualSlotRank ?? 0) || null,
+    Number(d.phaseError ?? 0),
+    Number(d.signedPhaseError ?? 0),
+    d.peakDirection ?? "unknown",
+    d.phaseBucket ?? "unknown",
+    Number(d.phaseScore ?? 0),
+    Number(d.decay ?? 0),
+    Number(d.finalPhaseScore ?? 0),
+    Number(d.effectivePhaseScore ?? 0),
+    Number(d.phaseWeight ?? 0),
+    Number(d.phaseSampleCount ?? 0),
+    Number(d.phaseTrust ?? 1),
+    Number(d.phaseAdjustValue ?? 0)
+  ];
+
+}
+
+/* =========================================================
+ [13000] Copy Use Case:saveCopyEventUnified【State】【永続化】（旧 [9200]）
+========================================================= */
+function saveCopyEventUnified(
+  playerName = "",
+  shopName = ""
+) {
+
+  const candidateEventIdForCopy =
+    State.latestCandidateEventIdForCopy ??
+    State.activeCandidateEventId ??
+    null;
+
+  const normalizedName =
+    normalizePlayerName(
+      playerName
+    );
+
+  const normalizedShop =
+    normalizePlayerName(
+      shopName ?? ""
+    );
+
+  const player =
+    State.all.find(
+      p =>
+        normalizePlayerName(
+          p.name
+        ) === normalizedName
+        &&
+        normalizePlayerName(
+          p.shopname ?? ""
+        ) === normalizedShop
+    );
+
+  if (!player) {
+
+    const record = {
+
+      t:
+        Date.now(),
+
+      logSchemaVersion:
+        "slot_area_v12_pride_population_adjustment",
+
+      dk:
+        buildDailyKey(),
+
+      n:
+        playerName,
+
+      shopname:
+        shopName,
+
+      score:
+        null,
+
+      slotScore:
+        null,
+
+      slotBucket:
+        null,
+
+      slotRankAtPrediction:
+        null,
+
+      crossBucketRankAtPrediction:
+        null,
+
+      crossBucketScoreAtPrediction:
+        null,
+
+      wasSelectedByCrossBucket:
+        false,
+
+      scoreRank:
+        null,
+
+      predictedRank:
+        null,
+
+      wasInTop10:
+        false,
+
+      unmatchedPlayer:
+        true,
+
+      integratedDataGeneratedAtAtCopy:
+        State.generatedAt || null,
+
+      latestUpdateAtAtCopy:
+        State.latestUpdateAt || null,
+
+      populationAtCopy: {
+        integratedData:
+          buildRankPopulationSnapshot(
+            State.all
+          ),
+        filteredData:
+          buildRankPopulationSnapshot(
+            State.filtered
+          )
+      },
+
+      candidateEventId:
+        candidateEventIdForCopy,
+
+      predictionSnapshotAvailable:
+        false,
+
+      scoreSource:
+        "unavailable"
+
+    };
+
+    pushStoredRecord(
+      LOG_STORAGE_KEYS.copyEvents,
+      record,
+      LOG_STORAGE_LIMITS.copyEvents,
+      true
+    );
+
+    return record;
+
+  }
+
+  const scoredAtPrediction =
+    candidateEventIdForCopy
+      ? State.matchingScoredAll.find(
+          candidate =>
+            buildPlayerIdentityKey(
+              candidate
+            ) ===
+            buildPlayerIdentityKey(
+              player
+            )
+        ) ?? null
+      : null;
+
+  let scoredPlayer =
+    scoredAtPrediction;
+
+  if (!scoredPlayer) {
+    scoredPlayer =
+      buildCandidateScore(
+        player,
+        State.matchingTierCounts,
+        buildViewerHistoricalContext(
+          State.myRankKey
+        ),
+        candidateEventIdForCopy
+          ? Number(
+              State.matchingContext
+                ?.evaluationTimeMs
+            ) || Date.now()
+          : Date.now()
+      );
+
+    applyCandidateSlotScores(
+      [scoredPlayer],
+      buildAreaDensityContext(
+        State.filtered
+      ),
+      [
+        ...State.matchingScoredAll,
+        scoredPlayer
+      ]
+    );
+
+    const diagnosticCandidates = [
+      ...State.matchingScoredAll.filter(
+        candidate =>
+          buildPlayerIdentityKey(candidate) !==
+          buildPlayerIdentityKey(scoredPlayer)
+      ),
+      scoredPlayer
+    ];
+
+    applyCandidateAreaHistoryBoost(
+      diagnosticCandidates
+    );
+
+    applyCandidateAreaPhaseDiagnostics(
+      diagnosticCandidates
+    );
+
+  }
+
+  const detail =
+    scoredPlayer.__detail;
+
+  const rankedAll =
+    candidateEventIdForCopy
+      ? State.matchingRankedAll ?? []
+      : [];
+
+  const displayedCandidates =
+    candidateEventIdForCopy
+      ? State.matchingList ?? []
+      : [];
+
+  let candidateRank = -1;
+
+  const idx =
+    rankedAll.findIndex(
+      p =>
+        normalizePlayerName(
+          p.name
+        ) ===
+          normalizePlayerName(
+            player.name
+          )
+        &&
+        String(
+          p.shopname ?? ""
+        ) ===
+          String(
+            player.shopname ?? ""
+          )
+    );
+
+  if (idx >= 0) {
+
+    candidateRank =
+      idx + 1;
+
+  }
+
+  const displayedIndex =
+    displayedCandidates.findIndex(
+      p =>
+        normalizePlayerName(
+          p.name
+        ) ===
+          normalizePlayerName(
+            player.name
+          )
+        &&
+        normalizePlayerName(
+          p.shopname ?? ""
+        ) ===
+          normalizePlayerName(
+            player.shopname ?? ""
+          )
+    );
+
+  const predictedRank =
+    displayedIndex >= 0
+      ? displayedIndex + 1
+      : null;
+
+  /*
+   * Pink管理対象の再登場分析用
+   * ・pinkEntryAgeSec: 初回コピーからの経過秒
+   * ・cycleCountAtCopy: コピー時点での周期経過回数
+   */
+  const pinkTargetAtCopy =
+    getPinkTarget(player);
+
+  const pinkEntryAgeSec =
+    pinkTargetAtCopy?.firstCopiedAt
+      ? Number(
+          (
+            (Date.now() -
+              pinkTargetAtCopy.firstCopiedAt) /
+            1000
+          ).toFixed(1)
+        )
+      : null;
+
+  const cycleCountAtCopy =
+    getPlayerCycleCount(player);
+
+  const record = {
+
+    t:
+      Date.now(),
+
+    logSchemaVersion:
+      "slot_area_v11_recent_area_config",
+
+    dk:
+      buildDailyKey(),
+
+    n:
+      player.name ?? "",
+
+    shopname:
+      player.shopname ?? "",
+
+    score:
+      Number(detail.score ?? 0),
+
+    slotScore:
+      Number(
+        detail.slotScore ?? 0
+      ),
+
+    slotBucket:
+      detail.slotBucket ?? null,
+
+    slotRankAtPrediction:
+      scoredAtPrediction
+        ?.__slotRank ?? null,
+
+    crossBucketRankAtPrediction:
+      scoredAtPrediction
+        ?.__crossBucketRank ?? null,
+
+    crossBucketScoreAtPrediction:
+      scoredAtPrediction
+        ?.__crossBucketScore ?? null,
+
+    wasSelectedByCrossBucket:
+      displayedIndex >= 0 &&
+      Boolean(
+        displayedCandidates[
+          displayedIndex
+        ]?.__crossBucket
+      ),
+
+    scoreRank:
+      candidateRank > 0
+        ? candidateRank
+        : null,
+
+    predictedRank,
+
+    wasInTop10:
+      predictedRank !== null,
+
+    predictionSnapshotAvailable:
+      Boolean(scoredAtPrediction),
+
+    scoreSource:
+      scoredAtPrediction
+        ? "prediction"
+        : "copy-time-recalculation",
+
+    scoreBreakdown:
+      buildScoreBreakdownLog(
+        detail,
+        false
+      ),
+
+    viewerTier:
+      detail.viewerTier ?? null,
+
+    opponentTier:
+      detail.opponentTier ?? null,
+
+    area:
+      detail.area ?? "",
+
+    isYellow:
+      Boolean(detail.isYellow),
+
+    isPink:
+      Boolean(detail.isPink),
+
+    isPinkManaged:
+      Boolean(detail.isPinkManaged),
+
+    yellowThreshold:
+      Number(detail.yellowThreshold ?? 0),
+
+    pinkThreshold:
+      Number(detail.pinkThreshold ?? 0),
+
+    /*
+     * Pink再登場分析用フィールド
+     */
+    pinkEntryAgeSec,
+
+    cycleCountAtCopy,
+
+    integratedDataGeneratedAtAtCopy:
+      State.generatedAt || null,
+
+    latestUpdateAtAtCopy:
+      State.latestUpdateAt || null,
+
+    populationAtCopy: {
+      integratedData:
+        buildRankPopulationSnapshot(
+          State.all
+        ),
+      filteredData:
+        buildRankPopulationSnapshot(
+          State.filtered
+        )
+    },
+
+    candidateEventId:
+      candidateEventIdForCopy
+
+  };
+
+  pushStoredRecord(
+    LOG_STORAGE_KEYS.copyEvents,
+    record,
+    LOG_STORAGE_LIMITS.copyEvents,
+    true
+  );
+
+  appendCopyAreaHistory(record);
+
+  return record;
+
+}
+
+/* =========================================================
+ [13020] Copy Use Case:recordClickFromCopiedInfo【State】【永続化】（旧 [7100]）
+========================================================= */
+function recordClickFromCopiedInfo(
+  playerName,
+  shopName
+) {
+
+  if (!playerName) return;
+
+  const candidateEventIdForCopy =
+    State.latestCandidateEventIdForCopy ??
+    State.activeCandidateEventId ??
+    null;
+
+  const normalizedName =
+    normalizePlayerName(
+      playerName
+    );
+
+  const normalizedShop =
+    normalizePlayerName(
+      shopName ?? ""
+    );
+
+  const player =
+    State.all.find(
+      p =>
+        normalizePlayerName(
+          p.name
+        ) === normalizedName
+        &&
+        normalizePlayerName(
+          p.shopname ?? ""
+        ) === normalizedShop
+    );
+
+  if (!player) return;
+
+  const copiedAt =
+    Date.now();
+
+  /* ----------------------------------------------------
+   * 1. 重複コピーガード（Debounce Guard）
+   * 15秒以内に同一プレイヤーが連続コピーされた場合、
+   * 周期学習データの歪みを防ぐため学習サンプル登録をスキップする
+   * ---------------------------------------------------- */
+  const lastClick = State.recentClicks[0];
+  const isSamePlayerAsLast =
+    lastClick &&
+    normalizePlayerName(lastClick.name ?? "") === normalizedName &&
+    normalizePlayerName(lastClick.shopname ?? "") === normalizedShop;
+
+  const timeDiffSec = lastClick ? (copiedAt - Number(lastClick.time || 0)) / 1000 : Infinity;
+  const isDuplicateGuard = isSamePlayerAsLast && timeDiffSec < 15;
+
+  if (isDuplicateGuard) {
+    if (typeof log === "function") {
+      log(`[重複コピーガード] ${player.name} (直前コピーから ${Math.round(timeDiffSec)}秒): 周期学習登録をスキップしました`);
+    }
+  }
+
+  /* ----------------------------------------------------
+   * 2. 直前予測順位の自動特定
+   * 現在のマッチング候補リスト（State.matchingList）における
+   * このプレイヤーの予測順位（1-indexed）を取得
+   * ---------------------------------------------------- */
+  const candidateIndex =
+    candidateEventIdForCopy
+      ? (State.matchingList || []).findIndex(
+          p =>
+            normalizePlayerName(
+              p.name ?? ""
+            ) === normalizedName &&
+            normalizePlayerName(
+              p.shopname ?? ""
+            ) === normalizedShop
+        )
+      : -1;
+
+  const predictedRank = candidateIndex >= 0 ? candidateIndex + 1 : null;
+  const predictedPlayer =
+    candidateEventIdForCopy
+      ? State.matchingScoredAll.find(
+          candidate =>
+            buildPlayerIdentityKey(
+              candidate
+            ) ===
+            buildPlayerIdentityKey(
+              player
+            )
+        ) ?? null
+      : null;
+
+  const scoreDetail =
+    predictedPlayer?.__detail ??
+    calcMatchingScoreDetail(
+      player,
+      State.matchingTierCounts,
+      buildViewerHistoricalContext(
+        State.myRankKey
+      ),
+      candidateEventIdForCopy
+        ? Number(
+            State.matchingContext
+              ?.evaluationTimeMs
+          ) || copiedAt
+        : copiedAt
+    );
+
+  const areaName =
+    AreaList[
+      String(player.area)
+    ] ||
+    player.areaName ||
+    "";
+
+  const rankKey =
+    getPlayerRankKey(
+      player
+    );
+
+  /* ----------------------------------------------------
+   * 2b. Undo用スナップショット取得
+   * 「コピークリック前の状態」に正確に戻すため、
+   * 変更を加える対象（PinkTarget / EncounterHistory / YellowSamples）の
+   * 現状（クリック前）をディープコピーで保存しておく。
+   * ---------------------------------------------------- */
+  const undoIdentityKey = buildPlayerIdentityKey(player);
+
+  const snapshotBeforeCopy = {
+    pinkEntry: State.pinkTargets[undoIdentityKey]
+      ? JSON.parse(JSON.stringify(State.pinkTargets[undoIdentityKey]))
+      : null,
+    encounterEntry: State.encounterHistory[undoIdentityKey]
+      ? JSON.parse(JSON.stringify(State.encounterHistory[undoIdentityKey]))
+      : null,
+    yellowSamples: JSON.parse(JSON.stringify(State.yellowSamples || [])),
+    phaseAdjust: JSON.parse(JSON.stringify(State.phaseAdjust || { yellow: 0, pink: 0 }))
+  };
+
+  State.recentClicks.unshift({
+
+    name:
+      player.name,
+
+    area:
+      player.area,
+
+    areaName:
+      areaName,
+
+    shopname:
+      player.shopname,
+
+    starCnt:
+      player.starCnt,
+
+    pridePoint:
+      player.pridePoint,
+
+    rankKey:
+      rankKey,
+
+    updateDate:
+      player.updateDate,
+
+    time:
+      copiedAt,
+
+    copiedAt:
+      copiedAt,
+
+    predictedRank:
+      predictedRank,
+
+    /*
+     * コピークリック前の状態に戻すためのスナップショット
+     * （undoLastCopiedInfo から参照）
+     */
+    __undoSnapshot:
+      snapshotBeforeCopy,
+
+    __undoIdentityKey:
+      undoIdentityKey,
+
+    __undoApplied:
+      !isDuplicateGuard
+
+  });
+
+  State.recentClicks =
+    State.recentClicks.slice(
+      0,
+      20
+    );
+
+  rebuildRecentClickIndex();
+
+  /* 重複ガード中でない場合のみ周期学習・履歴に登録 */
+  if (!isDuplicateGuard) {
+    const isPinkManagedBefore =
+      Boolean(snapshotBeforeCopy.pinkEntry);
+
+    registerPinkTarget(
+      player,
+      copiedAt
+    );
+
+    updateEncounterHistory(
+      player,
+      copiedAt
+    );
+
+    /*
+     * 学習の分離
+     * 当日初コピー（＝コピー前時点でPink未管理）の時だけ
+     * Yellow周期学習用サンプルとして登録・学習を行う。
+     * （Pink管理対象の再マッチングデータがYellowに混入するのを防ぐ）
+     */
+    if (!isPinkManagedBefore) {
+      registerYellowSample(
+        player,
+        copiedAt
+      );
+    }
+
+    recordRealtimeActivity(
+      player,
+      rankKey,
+      copiedAt
+    );
+  }
+
+  /* ----------------------------------------------------
+   * 3. マッチング実績＆予測的中の自動ログ記録
+   * ---------------------------------------------------- */
+  logEvent(
+    "match-copied",
+    {
+      player: {
+        name: player.name ?? "",
+        shopname: player.shopname ?? "",
+        area: player.area ?? "",
+        rankKey: rankKey
+      },
+      predictedRank: predictedRank,
+      totalCandidates: (State.matchingList || []).length,
+      score: Number((scoreDetail.score || 0).toFixed(6)),
+      isDuplicateGuard: isDuplicateGuard,
+      timestamp: copiedAt
+    }
+  );
+
+  const pinkTarget =
+    getPinkTarget(
+      player
+    );
+
+  if (pinkTarget && !isDuplicateGuard) {
+
+    logEvent(
+      "pink-trigger",
+      {
+
+        player: {
+
+          name:
+            player.name ?? "",
+
+          shopname:
+            player.shopname ?? "",
+
+          area:
+            player.area ?? "",
+
+          rankKey:
+            rankKey
+
+        },
+
+        pinkCycle:
+          Number(
+            (
+              getCurrentCycle(
+                player
+              ) || 0
+            ).toFixed(2)
+          ),
+
+        encounterCount:
+          Number(
+            getEncounterHistory(
+              player
+            )?.count ||
+            pinkTarget.copyCount ||
+            0
+          ),
+
+        score:
+          Number(
+            (
+              scoreDetail.score || 0
+            ).toFixed(6)
+          ),
+
+        timestamp:
+          copiedAt
+
+      }
+    );
+
+  }
+
+}
+
+/* =========================================================
+ [13030] Copy Use Case:undoLastCopiedInfo【State】【永続化】（旧 [7105]）
+========================================================= */
+function undoLastCopiedInfo() {
+  if (!State.recentClicks || State.recentClicks.length === 0) {
+    if (typeof log === "function") {
+      log("取消対象の直前コピー履歴がありません");
+    }
+    return false;
+  }
+
+  /* 直前のコピー履歴を1件取得して除外 */
+  const lastTarget = State.recentClicks.shift();
+  rebuildRecentClickIndex();
+
+  if (!lastTarget) return false;
+
+  /*
+   * 重複コピーガードによりそもそも学習データへの登録が
+   * 行われていなかった場合は、復元処理自体が不要
+   */
+  if (!lastTarget.__undoApplied) {
+    savePinkStateToStorage();
+    logEvent("match-copied-undo", {
+      player: { name: lastTarget.name, shopname: lastTarget.shopname },
+      wasDuplicateGuardSkip: true,
+      timestamp: Date.now()
+    });
+    if (typeof log === "function") {
+      log(`[コピー取消完了] ${lastTarget.name} （重複ガード対象のため学習データへの影響なし）`);
+    }
+    return true;
+  }
+
+  const snapshot = lastTarget.__undoSnapshot;
+  const identityKey = lastTarget.__undoIdentityKey;
+
+  if (snapshot && identityKey) {
+
+    /* 1. Pinkターゲット：コピー前の状態に完全復元 */
+    if (snapshot.pinkEntry) {
+      /* 元々Pink管理対象だった → その時点の状態にそのまま戻す */
+      State.pinkTargets[identityKey] = snapshot.pinkEntry;
+    } else {
+      /* 誤って「初めて」Pink管理対象になった → 対象から完全に除外 */
+      delete State.pinkTargets[identityKey];
+    }
+
+    /* 2. 遭遇履歴：コピー前の状態に完全復元 */
+    if (snapshot.encounterEntry) {
+      State.encounterHistory[identityKey] = snapshot.encounterEntry;
+    } else {
+      delete State.encounterHistory[identityKey];
+    }
+
+    /* 3. Yellow周期学習サンプル：コピー前の配列にそのまま戻す */
+    State.yellowSamples = snapshot.yellowSamples;
+
+    /* 4. 周期補正値（EMA学習結果）もコピー前の値に戻す */
+    State.phaseAdjust = snapshot.phaseAdjust;
+
+  } else {
+    if (typeof log === "function") {
+      logWarn(`[コピー取消] ${lastTarget.name} のスナップショットが見つからないため、学習データは変更していません`);
+    }
+  }
+
+  savePinkStateToStorage();
+
+  /* 5. 取り消しイベントのログ記録 */
+  logEvent("match-copied-undo", {
+    player: {
+      name: lastTarget.name,
+      shopname: lastTarget.shopname
+    },
+    undoneCopiedAt: Number(lastTarget.time || lastTarget.copiedAt || 0),
+    restoredToPinkManaged: Boolean(snapshot?.pinkEntry),
+    timestamp: Date.now()
+  });
+
+  if (typeof log === "function") {
+    const statusMsg = snapshot?.pinkEntry
+      ? "（Pink管理継続・周期基準を巻き戻し）"
+      : "（Pink管理対象から除外）";
+    log(`[コピー取消完了] ${lastTarget.name} のマッチング記録・学習サンプルをコピー前の状態に復元しました ${statusMsg}`);
+  }
+
+  return true;
+}
+
+/* =========================================================
+ [13005] Log Use Case:pruneCandidateEventsStore【永続化】【ログ量対策】
+========================================================= */
+/*
+ * candidateEvents（IndexedDB）は copyEvents（localStorage）と異なり
+ * 保存時に古いレコードを自動整理する仕組みがなく、無制限に
+ * 蓄積され続けていた。ここで LOG_STORAGE_LIMITS.candidateEvents
+ * を超えた分（最も古いもの）を削除する。
+ *
+ * ストアの主キー昇順を時系列順として、上限超過分を削除する。
+ */
+function pruneLogStore(
+  storeName,
+  limit
+) {
+
+  if (!logDB) {
+    return;
+  }
+
+  const tx =
+    logDB.transaction(
+      storeName,
+      "readwrite"
+    );
+
+  const store =
+    tx.objectStore(
+      storeName
+    );
+
+  const req =
+    store.getAllKeys();
+
+  req.onsuccess =
+    () => {
+
+      const keys =
+        req.result || [];
+
+      if (keys.length <= limit) {
+        return;
+      }
+
+      const sorted =
+        [...keys].sort(
+          (a, b) => a - b
+        );
+
+      const toDelete =
+        sorted.slice(
+          0,
+          sorted.length - limit
+        );
+
+      for (const key of toDelete) {
+        store.delete(key);
+      }
+
+    };
+
+  req.onerror =
+    (e) => {
+
+      console.error(
+        `[LOG] ${storeName} prune failed`,
+        e
+      );
+
+    };
+
+}
+
+function pruneCandidateEventsStore(
+  limit = 300
+) {
+  pruneLogStore(
+    LOG_STORE.candidateEvents,
+    limit
+  );
+}
+
+/* =========================================================
+ [13100] Candidate Event Log:saveCandidateEvent【State】【永続化】（旧 [9500]）
+========================================================= */
+function saveCandidateEvent(
+  {
+    clickedAtMs = Date.now(),
+    evaluationTimeMs = clickedAtMs,
+    offsetSec = 0
+  } = {}
+) {
+
+  const now =
+    clickedAtMs;
+
+  const analysisDiagnostics = buildAnalysisDiagnostics();
+
+  /*
+   * ログ整合性修正
+   *
+   * 以前はここで -45〜45 のハードコード値を
+   * 使っていたため、実際のスコアリングに使う
+   * calcYellowCycle / calcPinkCycle（configの
+   * maxShiftSec を参照）と乖離していた。
+   * ここも同じ config を参照して統一する。
+   */
+  const yellowCfg =
+    State.scoringConfig
+      ?.phase?.yellow ?? {};
+
+  const pinkCfg =
+    State.scoringConfig
+      ?.phase?.pink ?? {};
+
+  const yellowCycle =
+    (yellowCfg.baseCycleSec ?? 345) +
+    clamp(
+      State.phaseAdjust?.yellow ?? 0,
+      -(yellowCfg.maxShiftSec ?? 45),
+      (yellowCfg.maxShiftSec ?? 45)
+    );
+
+  const pinkCycle =
+    (pinkCfg.baseCycleSec ?? 345) +
+    clamp(
+      State.phaseAdjust?.pink ?? 0,
+      -(pinkCfg.maxShiftSec ?? 45),
+      (pinkCfg.maxShiftSec ?? 45)
+    );
+
+  /*
+   * Yellow学習状況
+   */
+  const yellowSamples =
+    State.yellowSamples ?? [];
+
+  const baseCycleSec = 345;
+
+  const yellowValues =
+    yellowSamples
+      .map(s => {
+
+        const diffSec =
+          Number(s.diffSec ?? 0);
+
+        if (
+          !isFinite(diffSec) ||
+          diffSec <= 0
+        ) {
+          return null;
+        }
+
+        /*
+         * 複数周期除去
+         *
+         * 305 → 5
+         * 598 → -2
+         * 905 → 5
+         * 1198 → -2
+         */
+        const folded =
+          foldToCycle(
+            diffSec,
+            baseCycleSec
+          );
+
+        /*
+         * 【2026-09 改善3】学習ロジック（calcYellowCycle）と
+         * 整合させるため、こちらの診断表示も
+         * 1周期当たりの誤差へ正規化する。
+         */
+        const cycleCount =
+          Number.isFinite(
+            Number(s.cycleCount)
+          ) &&
+          Number(s.cycleCount) > 0
+            ? Number(s.cycleCount)
+            : Math.max(
+                1,
+                Math.round(
+                  diffSec / baseCycleSec
+                )
+              );
+
+        return (
+          folded /
+          Math.max(1, cycleCount)
+        );
+
+      })
+      .filter(
+        v =>
+          v !== null &&
+          isFinite(v)
+      )
+      .sort(
+        (a, b) => a - b
+      );
+
+  let yellowMedianOffset = 0;
+
+  if (
+    yellowValues.length > 0
+  ) {
+
+    const mid =
+      Math.floor(
+        yellowValues.length / 2
+      );
+
+    yellowMedianOffset =
+      (yellowValues.length % 2)
+        ? yellowValues[mid]
+        : (
+            yellowValues[mid - 1] +
+            yellowValues[mid]
+          ) / 2;
+  }
+
+  /*
+   * Pink学習状況
+   *
+   * calcPinkCycle(learn:true) と同じロジックで
+   * foldedList（Pink再マッチング間隔サンプル）を
+   * 算出し、学習の信頼度をログへ可視化する。
+   * ここではState.phaseAdjust.pinkを上書きしない
+   * 読み取り専用の再計算とする。
+   */
+  const pinkBaseCycleSec =
+    pinkCfg.baseCycleSec ?? 345;
+
+  const pinkFoldedList = [];
+
+  const pinkTargets =
+    Object.values(
+      State.pinkTargets || {}
+    );
+
+  for (const entry of pinkTargets) {
+
+    const history =
+      entry.history || [];
+
+    if (history.length < 2) {
+      continue;
+    }
+
+    const latest =
+      Number(history[history.length - 1] || 0);
+
+    const prev =
+      Number(history[history.length - 2] || 0);
+
+    if (!latest || !prev) {
+      continue;
+    }
+
+    const interval =
+      (latest - prev) / 1000;
+
+    const folded =
+      foldToCycle(
+        interval,
+        pinkBaseCycleSec
+      );
+
+    if (isFinite(folded)) {
+      pinkFoldedList.push(folded);
+    }
+  }
+
+  const pinkMedianOffset =
+    pinkFoldedList.length > 0
+      ? pinkFoldedList.reduce(
+          (a, b) => a + b,
+          0
+        ) / pinkFoldedList.length
+      : 0;
+
+  const pinkMinSamples =
+    pinkCfg.minSamples ?? 8;
+
+  const pinkTrust =
+    pinkMinSamples > 0
+      ? Math.min(
+          1,
+          pinkFoldedList.length / pinkMinSamples
+        )
+      : 1;
+
+  const pinkAdjustRaw =
+    clamp(
+      pinkMedianOffset,
+      -(pinkCfg.maxShiftSec ?? 45),
+      (pinkCfg.maxShiftSec ?? 45)
+    );
+
+  const record = {
+
+    t: now,
+
+    logSchemaVersion:
+      "slot_area_v11_recent_area_config",
+
+    e: "candidate",
+
+    id: now,
+
+    evaluationOffsetSec:
+      Number(offsetSec) || 0,
+
+    trigger:
+      "matching-button",
+
+    analysisDiagnostics,
+
+    evaluationTimeMs:
+      Number(evaluationTimeMs) || now,
+
+    dk:
+      buildDailyKey(),
+
+    viewerTier:
+      mapRankKeyToTierKey(
+        State.myRankKey
+      ),
+
+    integratedDataGeneratedAt:
+      State.generatedAt || null,
+
+    latestUpdateAt:
+      State.latestUpdateAt || null,
+
+    summaryFilterAtPrediction: {
+      rangeMinutes:
+        readRangeMinutes(),
+      selectedStars:
+        readSelectedStars(),
+      selectedPrides:
+        readSelectedPrides(),
+      searchText:
+        State.searchText
+    },
+
+    populationAtPrediction: {
+      integratedData:
+        buildRankPopulationSnapshot(
+          State.all
+        ),
+      filteredData:
+        buildRankPopulationSnapshot(
+          State.filtered
+        ),
+      filteredDataAfterTimeAndRankFilters:
+        State.matchingFilteredPopulationSnapshot,
+      rankSummary:
+        buildRankPopulationSnapshot(
+          filterSummaryBySearch()
+            .flatMap(rank => rank.list)
+        ),
+      scoredCandidates:
+        buildRankPopulationSnapshot(
+          State.matchingScoredAll
+        ),
+      selectionEligibleCandidates:
+        buildRankPopulationSnapshot(
+          State.matchingRankedAll
+        )
+    },
+
+    recentAreaBoostConfig:
+      getRecentAreaBoostConfig(),
+
+    yellowAdjust:
+      Math.round(
+        State.phaseAdjust?.yellow ?? 0
+      ),
+
+    yellowCycle,
+
+    yellowSampleCount:
+      yellowValues.length,
+
+    /*
+     * 周期中央値ではなく
+     * 周期ズレ中央値
+     */
+    yellowMedianOffset:
+      Number(
+        yellowMedianOffset.toFixed(2)
+      ),
+
+    pinkAdjust:
+      Math.round(
+        State.phaseAdjust?.pink ?? 0
+      ),
+
+    pinkCycle,
+
+    /*
+     * Pink周期学習の可視化用フィールド
+     * （Yellowのyellow*系フィールドに相当）
+     */
+    pinkSampleCount:
+      pinkFoldedList.length,
+
+    pinkMedianOffset:
+      Number(
+        pinkMedianOffset.toFixed(2)
+      ),
+
+    pinkTrust:
+      Number(
+        pinkTrust.toFixed(3)
+      ),
+
+    pinkAdjustRaw:
+      Number(
+        pinkAdjustRaw.toFixed(2)
+      ),
+
+    candidateCount:
+      State.matchingList.length,
+
+    candidatePoolSize:
+      State.filtered.length,
+
+    eligibleCount:
+      State.matchingRankedAll.length,
+
+    scoredCandidateCount:
+      State.matchingScoredAll.length,
+
+    filteredPopulationAfterTimeAndRankFilters: {
+      candidateCount:
+        State.matchingFilteredPopulationCount,
+      scoredCandidateCount:
+        State.matchingScoredAll.length,
+      pinkCooldownExcludedCandidates:
+        State.matchingCooldownExcludedCandidates
+    },
+
+    slotPlan:
+      State.matchingSlotPlan.map(
+        entry => ({
+          bucket: entry.bucket,
+          probability:
+            Number(
+              entry.probability.toFixed(6)
+            ),
+          rawQuota:
+            Number(
+              entry.rawQuota.toFixed(6)
+            ),
+          slots: entry.slots,
+          capacity: entry.capacity
+        })
+      ),
+
+    relativePopulationSlotAdjustment:
+      State.matchingSlotAllocationDiagnostics,
+
+    crossBucketSelection:
+      State.matchingCrossBucketDiagnostics ?? {
+        crossBucketSlotCount:
+          CROSS_BUCKET_SLOT_COUNT,
+        selectedBeforePinkCap: [],
+        selectedAfterPinkCap: []
+      },
+
+    phaseErrorScaleSec: {
+      yellow:
+        getPhaseErrorScaleSec(
+          "yellow"
+        ),
+      pink:
+        getPhaseErrorScaleSec(
+          "pink"
+        )
+    },
+
+    pinkPhaseMismatchCount:
+      State.matchingScoredAll.filter(
+        p =>
+          p.__detail?.isPinkManaged &&
+          !p.__detail?.pinkPhaseMatched
+      ).length,
+
+    /*
+     * 【2026-09 改善6】Pink不一致減衰の段階化パラメータ
+     * （旧: 一律PINK_MISMATCH_BOOST_FACTOR固定 → 新: phaseErrorに
+     * 応じた exp(-phaseError/decaySec) 連続減衰、floor下限あり）
+     */
+    pinkMismatchFloor:
+      Number(
+        State.scoringConfig
+          ?.realtimeBoost
+          ?.pinkMismatch
+          ?.floor ??
+        DEFAULT_PINK_MISMATCH_FLOOR
+      ),
+
+    pinkMismatchDecaySec:
+      Number(
+        State.scoringConfig
+          ?.realtimeBoost
+          ?.pinkMismatch
+          ?.decaySec ??
+        DEFAULT_PINK_MISMATCH_DECAY_SEC
+      ),
+
+    /*
+     * 【2026-09 改善6】Pink管理対象の最終表示枠占有数キャップ診断
+     * buildMatchingCandidates() で適用した結果をそのまま記録する。
+     */
+    maxPinkManagedSlots:
+      Number(
+        State.matchingPinkCapDiagnostics
+          ?.maxPinkManagedSlots ??
+        DEFAULT_MAX_PINK_MANAGED_SLOTS
+      ),
+
+    pinkManagedSlotsBeforeCap:
+      Number(
+        State.matchingPinkCapDiagnostics
+          ?.pinkManagedSlotsBeforeCap ?? 0
+      ),
+
+    pinkManagedSlotsAfterCap:
+      Number(
+        State.matchingPinkCapDiagnostics
+          ?.pinkManagedSlotsAfterCap ?? 0
+      ),
+
+    pinkCapDroppedCount:
+      Number(
+        State.matchingPinkCapDiagnostics
+          ?.pinkCapDroppedCount ?? 0
+      ),
+
+    /*
+     * 【2026-09 改善7】PRIDEバンド多様性の閾値緩和パラメータ
+     */
+    prideBandDiversityGapThreshold:
+      Number(
+        State.scoringConfig
+          ?.candidateSelection
+          ?.slotAllocation
+          ?.prideBandDiversityGapThreshold ??
+        DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD
+      ),
+
+    /*
+     * 【将来検討：ソフトマックス選択モデル（C-3ハイブリッド フェーズB）】
+     * 本番選出には使用しないバックテスト専用プレビュー。
+     * previewCandidatesと実際のcandidates（本番選出）を後から
+     * 突き合わせることで、温度パラメータや採用可否を評価できる。
+     */
+    softmaxBacktest:
+      State.matchingSoftmaxBacktestPreview ?? {
+        enabled: false,
+        temperature: null,
+        previewCandidates: []
+      },
+
+    /*
+     * 【2026-09 ログ拡充】ownSampleCount等は同一candidateEvent内
+     * では全候補共通値（viewerTierのみに依存し、opponentTierには
+     * 依存しないことを実データで確認済み）のため、候補ごとに
+     * 重複させずイベント側へ1回だけ記録する。
+     */
+    ownSampleCount:
+      Number(
+        State.matchingRankedAll[0]
+          ?.__detail
+          ?.ownSampleCount ?? 0
+      ),
+
+    adjacentSampleCount:
+      Number(
+        State.matchingRankedAll[0]
+          ?.__detail
+          ?.adjacentSampleCount ?? 0
+      ),
+
+    minOwnSamplesForNoBackoff:
+      Number(
+        State.matchingRankedAll[0]
+          ?.__detail
+          ?.minOwnSamplesForNoBackoff ?? 100
+      ),
+
+    yellowThreshold:
+      Number(
+        State.scoringConfig
+          ?.phaseError
+          ?.yellowThreshold ?? 0.5
+      ),
+
+    pinkThreshold:
+      Number(
+        State.scoringConfig
+          ?.phaseError
+          ?.pinkThreshold ?? 0.5
+      ),
+
+    candidates:
+      State.matchingList.map(p => ({
+
+        scoreRank:
+          p.displayRank ?? null,
+        globalScoreRank:
+          p.__scoreRank ?? null,
+
+        name:
+          p.name,
+
+        shopname:
+          p.shopname ?? "",
+
+        rankKey:
+          p.__rankKey ?? null,
+
+        area:
+          String(p.area ?? ""),
+
+        score:
+          Number(
+            (p.__score ?? 0)
+              .toFixed(6)
+          ),
+
+        slotScore:
+          Number(
+            (p.__slotScore ?? 0)
+              .toFixed(6)
+          ),
+
+        slotBucket:
+          p.__slotBucket ??
+          p.__detail?.slotBucket ??
+          null,
+
+        slotRank:
+          p.__slotRank ?? null,
+
+        scoreBreakdown:
+          buildScoreBreakdownLog(
+            p.__detail,
+            false
+          ),
+
+        isYellow:
+          Boolean(p.__detail?.isYellow),
+
+        isPink:
+          Boolean(p.__detail?.isPink),
+
+        isPinkManaged:
+          Boolean(p.__detail?.isPinkManaged),
+
+        yellowThreshold:
+          Number(p.__detail?.yellowThreshold ?? 0),
+
+        pinkThreshold:
+          Number(p.__detail?.pinkThreshold ?? 0),
+
+        cycleCount:
+          Number(p.__detail?.cycleCount ?? 0),
+
+        cycleSec:
+          Number(p.__detail?.cycleSec ?? 0),
+
+        isCrossBucket:
+          Boolean(p.__crossBucket),
+        crossBucketRank:
+          p.__crossBucketRank ?? null,
+        crossBucketScore:
+          Number(
+            p.__crossBucketScore ?? 0
+          ),
+        crossBucketSelectionReason:
+          p.__crossBucketSelectionReason ??
+          null,
+
+        encounterCount:
+          getEncounterHistory(p)?.count ?? 0
+
+      })),
+
+    /*
+     * 【2026-09 改善5】スコア対象の全候補を分析ログへ保存
+     *
+     * 表示用 candidates は選出された最大10名分しか
+     * 含まないため、後から任意の実績相手について
+     * 「予測時点でのglobal score rank」「表示選出の有無」を
+     * 特定できない問題があった。
+     *
+     * ここでは matchingScoredAll（時間・ランクUIフィルターおよび
+     * Pink cooldown適用後のスコア計算対象）を全件保存する。
+     * Top10外も含む候補間比較を後日再現できるようにする。
+     *
+     * 1候補あたりの情報量を抑えるため、キー名付きオブジェクト
+     * ではなく列固定の配列（行）として保存する。列の意味は
+     * allCandidatesColumns（＝ALL_CANDIDATES_COLUMNS）を参照。
+     *
+     * candidateEvents ストア自体のレコード数（イベント件数）は
+     * 従来どおり putLog による1イベント1レコードのままで、
+     * LOG_STORAGE_LIMITS.candidateEvents による件数上限・
+     * 自動整理（pruneCandidateEventsStore）で管理する。
+     */
+    allCandidatesColumns:
+      ALL_CANDIDATES_COLUMNS,
+
+    allCandidates:
+      [...State.matchingScoredAll]
+        .sort(
+          (a, b) =>
+            getCandidateSelectionScore(b) -
+            getCandidateSelectionScore(a)
+        )
+        .map(buildAllCandidateRow)
+  };
+
+  State.activeCandidateEventId =
+    now;
+
+  State.latestCandidateEventIdForCopy =
+    now;
+
+  record.analysisDiagnostics.storageCoverage = {
+    scoredCandidateCount: State.matchingScoredAll.length,
+    savedCandidateCount: record.allCandidates.length,
+    filteredCandidateCount:
+      State.matchingFilteredPopulationCount,
+    pinkCooldownExcludedCount:
+      State.matchingCooldownExcludedCandidates.length,
+    complete:
+      record.allCandidates.length === State.matchingScoredAll.length &&
+      record.allCandidates.length +
+        State.matchingCooldownExcludedCandidates.length ===
+        State.matchingFilteredPopulationCount
+  };
+  const serializationStartedAt = performance.now();
+  const serialized = JSON.stringify(record);
+  record.analysisDiagnostics.storageMetrics = {
+    jsonUtf8BytesBeforeMetrics: new TextEncoder().encode(serialized).length,
+    serializationMs: performance.now() - serializationStartedAt
+  };
+
+  logEvent(
+    "candidate",
+    record
+  );
+
+  pruneCandidateEventsStore(
+    LOG_STORAGE_LIMITS.candidateEvents
+  );
+}
+
+/* =========================================================
+ [13200] Navigation Use Case:showSummaryUI【State】【DOM】（旧 [5500]）
+========================================================= */
+function showSummaryUI(
+  push = true,
+  mode = "rank"
+) {
+  State.activeCandidateEventId =
+    null;
+  State.summaryMode = mode;
+  renderSummary();
+
+  State.activeCandidateEventId =
+    null;
+
+  setCurrentView(
+    STATE.SUMMARY
+  );
+
+  switchDisplayView(
+    STATE.SUMMARY
+  );
+
+  if (push) {
+    history.pushState(
+      {
+        page: STATE.SUMMARY,
+        summaryMode: mode
+      },
+      "",
+      ""
+    );
+  }
+}
+
+function showAreaSummary(
+  push = true
+) {
+  State.activeCandidateEventId =
+    null;
+  State.summaryMode = "area";
+  renderSummary();
+
+  State.activeCandidateEventId =
+    null;
+
+  setCurrentView(
+    STATE.SUMMARY
+  );
+
+  switchDisplayView(
+    STATE.SUMMARY
+  );
+
+  if (push) {
+    history.pushState(
+      {
+        page: STATE.SUMMARY,
+        summaryMode: "area"
+      },
+      "",
+      ""
+    );
+  }
+}
+
+/* =========================================================
+ [13210] Navigation Use Case:showDetail【State】【DOM】（旧 [6100]）
+========================================================= */
+function showDetail(
+  key,
+  push = true
+) {
+  State.activeCandidateEventId =
+    null;
+  const row =
+    State.summary.find(
+      r => r.key === key
+    ) || null;
+
+  const rankInfo =
+    getRankInfo(key);
+
+  const bandLabel =
+    rankInfo
+      ? rankInfo.label
+      : (
+          row
+            ? row.label
+            : key
+        );
+
+  const bandIcon =
+    rankInfo
+      ? rankInfo.icon
+      : "";
+
+  State.currentDetailType = "rank";
+
+  if (!row) {
+
+    State.detailOriginal = [];
+
+    setCurrentView(
+      STATE.DETAIL
+    );
+
+    State.currentDetailKey =
+      key;
+
+    State.currentDetailLabel =
+      bandLabel;
+
+    State.currentDetailIcon =
+      bandIcon;
+
+    if (push) {
+
+      history.pushState(
+        {
+          page: STATE.DETAIL,
+          key,
+          label: bandLabel,
+          icon: bandIcon,
+          detailType: "rank"
+        },
+        "",
+        ""
+      );
+    }
+
+    renderDetailTable();
+
+    switchDisplayView(
+      STATE.DETAIL
+    );
+
+    return;
+  }
+
+  State.detailOriginal =
+    row.list
+      .slice()
+      .sort(
+        (a, b) =>
+          parseDateJST(
+            b.updateDate
+          ) -
+          parseDateJST(
+            a.updateDate
+          )
+      );
+
+  setCurrentView(
+    STATE.DETAIL
+  );
+
+  State.currentDetailKey =
+    key;
+
+  State.currentDetailLabel =
+    bandLabel;
+
+  State.currentDetailIcon =
+    bandIcon;
+
+  if (push) {
+
+    history.pushState(
+      {
+        page: STATE.DETAIL,
+        key,
+        label: bandLabel,
+        icon: bandIcon,
+        detailType: "rank"
+      },
+      "",
+      ""
+    );
+  }
+
+  renderDetailTable();
+
+  switchDisplayView(
+    STATE.DETAIL
+  );
+}
+
+function showAreaDetail(
+  areaNo,
+  push = true
+) {
+  State.activeCandidateEventId =
+    null;
+  const areaKey = String(areaNo);
+  const areaName = getAreaDisplayName(areaKey);
+  const list = (State.filtered || []).filter(p => String(p.area ?? "") === areaKey);
+
+  State.currentDetailType = "area";
+  State.currentDetailKey = areaKey;
+  State.currentDetailLabel = areaName;
+  State.currentDetailIcon = "";
+  State.detailOriginal = list.slice().sort((a, b) => parseDateJST(b.updateDate) - parseDateJST(a.updateDate));
+
+  setCurrentView(STATE.DETAIL);
+
+  if (push) {
+    history.pushState(
+      {
+        page: STATE.DETAIL,
+        key: areaKey,
+        label: areaName,
+        icon: "",
+        detailType: "area"
+      },
+      "",
+      ""
+    );
+  }
+
+  renderAreaDetailTable(areaNo);
+  switchDisplayView(STATE.DETAIL);
+}
+
+/* =========================================================
+ [13220] Navigation Use Case:showMatchingCandidates【State】【DOM】（旧 [7900]）
+========================================================= */
+function showMatchingCandidates(
+  options = true
+) {
+
+  const normalizedOptions =
+    typeof options === "boolean"
+      ? {
+          push: options,
+          mode: "matching",
+          offsetSec:
+            State.matchingOffsetSec,
+          saveEvent: false
+        }
+      : options;
+
+  const push =
+    normalizedOptions.push !== false;
+
+  const mode =
+    normalizedOptions.mode === "preview"
+      ? "preview"
+      : "matching";
+
+  const offsetSec =
+    Number(
+      normalizedOptions.offsetSec
+    ) || 0;
+
+  if (mode === "preview") {
+    State.latestCandidateEventIdForCopy =
+      null;
+  }
+
+  const clickedAtMs =
+    Date.now();
+
+  const saveEvent =
+    mode === "matching" &&
+    normalizedOptions.saveEvent ===
+      true;
+
+  buildMatchingCandidates({
+    clickedAtMs,
+    evaluationTimeMs:
+      clickedAtMs +
+      offsetSec * 1000,
+    offsetSec,
+    mode,
+    saveEvent
+  });
+
+  renderMatchingHeader();
+
+  renderMatchingTable();
+
+  setCurrentView(
+    STATE.MATCHING
+  );
+
+  switchDisplayView(
+    STATE.MATCHING
+  );
+
+  if (push) {
+
+    history.pushState(
+      {
+        page: STATE.MATCHING,
+        matchingMode: mode,
+        matchingOffsetSec: offsetSec
+      },
+      "",
+      ""
+    );
+  }
+}
+
+/* =========================================================
+ [13230] Navigation Use Case:backToSummaryFromMatching【State】【DOM】（旧 [7910]）
+========================================================= */
+function backToSummaryFromMatching(
+  push = true
+) {
+  State.activeCandidateEventId =
+    null;
+  State.summaryMode = State.summaryMode === "area" ? "area" : "rank";
+  renderSummary();
+
+  setCurrentView(
+    STATE.SUMMARY
+  );
+
+  switchDisplayView(
+    STATE.SUMMARY
+  );
+
+  if (push) {
+    history.pushState(
+      {
+        page: STATE.SUMMARY,
+        summaryMode: State.summaryMode
+      },
+      "",
+      ""
+    );
+  }
+}
+
+
+/* #################################################################
+ [LAYER 14000] Navigation / Event Binding
+ ################################################################# */
+
+/* =========================================================
+ [14000] Rank Navigation:setupRankNavigation【DOM】（旧 [6000]）
+========================================================= */
+function setupRankNavigation(
+  currentKey
+) {
+
+  const idx =
+    getRankIndex(
+      currentKey
+    );
+
+  const prev =
+    idx > 0
+      ? RANKS[idx - 1].key
+      : null;
+
+  const next =
+    idx >= 0 &&
+    idx < RANKS.length - 1
+      ? RANKS[idx + 1].key
+      : null;
+
+  const prevBtn =
+    document.getElementById(
+      "prevRankBtn"
+    );
+
+  const nextBtn =
+    document.getElementById(
+      "nextRankBtn"
+    );
+
+  if (!prevBtn || !nextBtn) {
+    return;
+  }
+
+  prevBtn.disabled =
+    !prev;
+
+  nextBtn.disabled =
+    !next;
+
+  prevBtn.onclick =
+    () =>
+      prev &&
+      showDetail(prev);
+
+  nextBtn.onclick =
+    () =>
+      next &&
+      showDetail(next);
+}
+
+function setupAreaNavigation(areaNo) {
+  const areaNos =
+    getAreaNavigationAreaNos();
+  const currentIndex =
+    areaNos.indexOf(
+      Number(areaNo)
+    );
+  const prev =
+    currentIndex > 0
+      ? areaNos[currentIndex - 1]
+      : null;
+  const next =
+    currentIndex >= 0 &&
+    currentIndex < areaNos.length - 1
+      ? areaNos[currentIndex + 1]
+      : null;
+
+  const prevBtn = document.getElementById("prevAreaBtn");
+  const nextBtn = document.getElementById("nextAreaBtn");
+
+  if (!prevBtn || !nextBtn) return;
+
+  prevBtn.disabled = prev === null;
+  nextBtn.disabled = next === null;
+
+  prevBtn.onclick = () => prev !== null && showAreaDetail(prev);
+  nextBtn.onclick = () => next !== null && showAreaDetail(next);
+}
+
+/* =========================================================
+ [14100] Search Helpers:clearSearch【DOM】【State】（旧 [7920]）
+========================================================= */
+function clearSearch() {
+
+  const input =
+    document.getElementById(
+      "searchInput"
+    );
+
+  if (input) {
+    input.value = "";
+  }
+
+  State.searchText = "";
+}
+
+/* =========================================================
+ [14200] History Navigation:popstate【DOM】（旧 [4200]）
+========================================================= */
+function handlePopState(e) {
+
+    const state =
+      e.state ||
+      {
+        page: STATE.SUMMARY
+      };
+
+    /* =====================================
+     * DETAIL
+     * ===================================== */
+
+    if (
+      state.page ===
+      STATE.DETAIL
+    ) {
+      const key =
+        state.key ||
+        State.currentDetailKey;
+
+      if (!key) {
+        clearSearch();
+        const input = document.getElementById("searchInput");
+        if (input) input.value = "";
+        showSummaryUI(false, state.summaryMode || "rank");
+        return;
+      }
+
+      if (State.searchText) {
+        clearSearch();
+        const input = document.getElementById("searchInput");
+        if (input) input.value = "";
+      }
+
+      if (state.detailType === "area" || State.currentDetailType === "area") {
+        showAreaDetail(Number(key), false);
+      } else {
+        showDetail(key, false);
+      }
+
+      return;
+    }
+
+    if (
+      state.page ===
+      STATE.MATCHING
+    ) {
+      if (State.searchText) {
+        clearSearch();
+        const input = document.getElementById("searchInput");
+        if (input) input.value = "";
+      }
+
+      showMatchingCandidates({
+        push: false,
+        mode:
+          state.matchingMode ||
+          "matching",
+        offsetSec:
+          Number(
+            state.matchingOffsetSec
+          ) || 0,
+        saveEvent: false
+      });
+      return;
+    }
+
+    clearSearch();
+
+    const input = document.getElementById("searchInput");
+    if (input) input.value = "";
+
+    State.summaryMode = state.summaryMode === "area" ? "area" : "rank";
+    showSummaryUI(false, State.summaryMode);
+}
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("popstate", handlePopState);
+}
+
+
+/* #################################################################
+ [LAYER 16000] DOM Input Readers
+ ※ 計算層・ユースケース層はこの層のリーダー経由でのみDOM入力値を
+   参照する。値の解釈（数値化・既定値）はここに集約する。
+ ################################################################# */
+
+/* =========================================================
+ [16000] DOM Input Reader:readRangeMinutes【DOM】
+========================================================= */
+function readRangeMinutes() {
+
+  const el =
+    document.getElementById(
+      "rangeSelect"
+    );
+
+  const selected =
+    Number(
+      el?.value
+    );
+
+  if (
+    Number.isFinite(selected) &&
+    selected > 0
+  ) {
+    return selected;
+  }
+
+  return Number(
+    State.scoringConfig
+      ?.viewerDefaults
+      ?.filterMinutes ??
+    DEFAULT_FILTER_MINUTES
+  );
+}
+/* =========================================================
+ [16010] DOM Input Reader:readSelectedStars【DOM】
+========================================================= */
+function readSelectedStars() {
+
+  return [
+    ...document.querySelectorAll(
+      ".ruby-filter:checked"
+    )
+  ]
+    .map(
+      x => Number(x.value)
+    );
+}
+/* =========================================================
+ [16020] DOM Input Reader:readSelectedPrides【DOM】
+========================================================= */
+function readSelectedPrides() {
+
+  return [
+    ...document.querySelectorAll(
+      ".pride-filter:checked"
+    )
+  ]
+    .map(
+      x => x.value
+    );
+}
+
+function isPlayerIncludedInRankFilters(player) {
+  const rankKey =
+    getPlayerRankKey(player);
+
+  if (!rankKey) {
+    return false;
+  }
+
+  if (rankKey.startsWith("R")) {
+    return readSelectedStars().includes(
+      Number(player.starCnt)
+    );
+  }
+
+  return readSelectedPrides().includes(rankKey);
+}
+
+/* #################################################################
+ [LAYER 15000] Bootstrap（ファイル末尾）
+ ################################################################# */
+
+/* =========================================================
+ [15000] Application Init:init（旧 [4000]）
+========================================================= */
+async function init() {
+
+  log("Viewer 初期化中");
+
+  await initLogDB();
+
+  restorePinkStateFromStorage();
+
+  restoreRealtimeActivityFromStorage();
+
+  startProgress();
+
+  buildRubyFilters();
+
+  buildPrideFilters();
+
+  try {
+
+    const [
+      areaJson,
+      latestRoundJson,
+      latestUpdateJson,
+      historicalMatchupDistributionJson,
+      scoringConfigJson,
+      roundDataJson
+    ] = await Promise.all([
+      fetchAreaListJson(),
+      fetchLatestRoundJson(),
+      fetchLatestUpdateJson(),
+      fetchHistoricalMatchupDistributionJson(),
+      fetchScoringConfigJson(),
+      fetchRoundDataJson()
+    ]);
+
+    applyAreaListJson(areaJson);
+
+    applyLatestRoundJson(
+      latestRoundJson
+    );
+
+    applyLatestUpdateJson(
+      latestUpdateJson
+    );
+
+    applyHistoricalMatchupDistributionJson(
+      historicalMatchupDistributionJson
+    );
+
+    applyScoringConfigJson(
+      scoringConfigJson
+    );
+
+    await loadCopyAreaHistory();
+
+    await seedPhaseAdjustFromCopyHistory();
+
+    applyRoundDataJson(
+      roundDataJson,
+      {
+        resetReloadButton: true
+      }
+    );
+
+    log(
+      "初期データ取得完了"
+    );
+
+  } catch (e) {
+
+    logError(
+      "初期化並列取得に失敗：" +
+      e.message
+    );
+
+    await loadAreaList();
+
+    await loadLatestRound();
+
+    await loadLatestUpdate();
+
+    await loadHistoricalMatchupDistribution();
+
+    await loadScoringConfig();
+
+    await loadCopyAreaHistory();
+
+    await seedPhaseAdjustFromCopyHistory();
+
+    try {
+        const roundDataJson = await fetchRoundDataJson();
+        applyRoundDataJson(roundDataJson, { resetReloadButton: true });
+        } catch (err) {
+          logError("integrated_data.json の取得に失敗：" + err.message);
+        State.all = [];
+          State.filtered = [];
+        }
+    log(
+      "初期データ取得完了"
+    );
+  }
+
+  applyFilters();
+
+  buildSummary();
+
+  renderSummary();
+
+  setCurrentView(
+    STATE.SUMMARY
+  );
+
+  switchDisplayView(
+    STATE.SUMMARY
+  );
+
+  stopProgress();
+
+  await loadUpdateWatchConfig();
+
+  startUpdateWatch();
+}
+
+
+  function applyFilterAndRefreshSummary() {
+    startProgress();
+    applyFilters();
+    buildSummary();
+    renderSummary();
+    setCurrentView(STATE.SUMMARY);
+    switchDisplayView(STATE.SUMMARY);
+    stopProgress();
+  }
+
+  const ViewerApp = {
+    // Config / Constants
+    BASE_URL,
+    DEFAULT_UPDATE_WATCH_CONFIG,
+    STATE,
+    ANALYSIS_SCRIPT_VERSION,
+    ALL_CANDIDATES_COLUMNS,
+    MAX_YELLOW_PHASE_WEIGHT,
+    DEFAULT_FILTER_MINUTES,
+    DEFAULT_MY_RANK_KEY,
+    MAX_LOG_LINES,
+
+    // State
+    State,
+    isCurrentView,
+    setCurrentView,
+    syncMyRankSelection,
+
+    // Diagnostics / Analysis
+    analysisChecksum,
+    buildSummaryPopulationText,
+    buildAnalysisDiagnostics,
+    recordUnmatchedSearchMemo,
+
+    // Utilities
+    getNowLabelJa,
+    buildDailyKey,
+    parseDateJST,
+    formatYMDHM,
+    formatClockHms,
+    formatClockHm,
+    updateReloadViewerTime,
+    ensureReloadViewerTime,
+    computeSampleTrust,
+    getPhaseErrorScaleSec,
+
+    // Data Appliers
+    applyAreaListJson,
+    applyLatestRoundJson,
+    applyLatestUpdateJson,
+    applyHistoricalMatchupDistributionJson,
+    applyScoringConfigJson,
+    applyRoundDataJson,
+    applyUpdateWatchConfigJson,
+
+    // Persistence & Cleanup
+    checkAndCleanDailyState,
+    isPinkTargetStale,
+    savePinkStateToStorage,
+    restorePinkStateFromStorage,
+    saveRealtimeActivityToStorage,
+    restoreRealtimeActivityFromStorage,
+    initLogDB,
+    putLog,
+    logEvent,
+    pruneLogStore,
+    pruneCandidateEventsStore,
+
+    // Data Loaders & Watch Loop
+    fetchJSON,
+    fetchAreaListJson,
+    fetchLatestRoundJson,
+    fetchLatestUpdateJson,
+    fetchHistoricalMatchupDistributionJson,
+    fetchScoringConfigJson,
+    fetchUpdateWatchConfigJson,
+    fetchRoundDataJson,
+    getAreaDisplayName,
+    loadAreaList,
+    loadLatestRound,
+    loadLatestUpdate,
+    loadHistoricalMatchupDistribution,
+    loadScoringConfig,
+    loadUpdateWatchConfig,
+    prefetchLatestRoundData,
+    reloadLatestDataPreferPrefetch,
+    checkUpdate,
+    getJstUpdateWatchWindow,
+    isWithinUpdateWatchWindow,
+    startUpdateWatch,
+
+    // Learning State Operations
+    getPinkTarget,
+    registerPinkTarget,
+    isCopiedPlayer,
+    getEncounterHistory,
+    updateEncounterHistory,
+    registerYellowSample,
+    recordRealtimeActivity,
+    getBoostDecayHalfLifeSec,
+    computeActivitySignal,
+    rebuildRecentClickIndex,
+    hasSamePlayerRecentClick,
+
+    // Phase Calculation
+    calcYellowCycle,
+    calcPinkCycle,
+    getCurrentCycle,
+    seedPhaseAdjustFromCopyHistory,
+    normalizeCopyAreaHistory,
+    loadCopyAreaHistory,
+    appendCopyAreaHistory,
+    getRoundedDiffMinAndPhaseDistance,
+    getPhaseDistanceMin,
+    computePhaseSignal,
+    getPlayerPhaseDetail,
+    buildPlayerPhaseSummaryText,
+    showPlayerPhaseDetailDialog,
+    getYellowPhaseScore,
+    isMatchingCandidateByPhase,
+    isMatchingCandidateByCopyPhase,
+    getFilterToMs,
+    getPinkSampleCount,
+    computePhaseContext,
+    getPlayerCycleCount,
+
+    // Matching & Candidates
+    calcMatchingScoreDetail,
+    buildCandidateScore,
+    buildMatchingCandidates,
+    buildScoreBreakdownLog,
+    buildAllCandidateRow,
+    saveCandidateEvent,
+
+    // Filters & Summary
+    applyFilters,
+    buildSummary,
+    filterSummaryBySearch,
+    applyPlayerFilter,
+    applyMatchingFilter,
+    applyFilterAndRefreshSummary,
+
+    // Browser Actions & Export
+    copyToClipboard,
+    downloadBlob,
+    downloadCSV,
+    exportSummaryCSV,
+    exportAllCSV,
+    exportTodayViewerLogsAsJSON,
+
+    // User Events & History
+    saveCopyEventUnified,
+    recordClickFromCopiedInfo,
+    undoLastCopiedInfo,
+
+    // Navigation
+    showSummaryUI,
+    showAreaSummary,
+    showDetail,
+    showAreaDetail,
+    showMatchingCandidates,
+    backToSummaryFromMatching,
+    setupRankNavigation,
+    setupAreaNavigation,
+    clearSearch,
+    handlePopState,
+
+    // DOM Input Readers
+    readRangeMinutes,
+    readSelectedStars,
+    readSelectedPrides,
+    isPlayerIncludedInRankFilters,
+
+    // Init Use Case
+    init
+  };
+
+  if (typeof globalThis !== "undefined") {
+    Object.assign(globalThis, ViewerApp);
+  }
+
+  return ViewerApp;
+});
