@@ -1141,6 +1141,19 @@ function buildMatchingOffsetSelectHTML(
   `;
 }
 
+function setThemeHeaderColor(mode) {
+  const colors = {
+    rank: "#168a45",
+    area: "#7c3fb3",
+    matching: "#e91e63",
+    preview: "#2563a6"
+  };
+  const color = colors[mode] || "#168a45";
+  if (typeof document !== "undefined" && document.documentElement) {
+    document.documentElement.style.setProperty("--theme-header-color", color);
+  }
+}
+
 function ensureAreaSummaryStyles() {
   if (document.getElementById("area-summary-view-styles")) {
     return;
@@ -1149,6 +1162,15 @@ function ensureAreaSummaryStyles() {
   const style = document.createElement("style");
   style.id = "area-summary-view-styles";
   style.textContent = `
+    :root {
+      --theme-header-color: #168a45;
+    }
+
+    th {
+      background: var(--theme-header-color, #168a45) !important;
+      color: #fff !important;
+    }
+
     .area-summary-list {
       display: flex;
       flex-direction: column;
@@ -1253,67 +1275,9 @@ function ensureAreaSummaryStyles() {
       padding: 8px 2px;
     }
 
-    #matchingHeader {
-      display: block;
-      box-sizing: border-box;
-      width: 100%;
-      margin: 12px 0;
-      padding: 10px 14px;
-      border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
-      color: #fff;
-      font-weight: 600;
-      cursor: pointer;
-      user-select: none;
-    }
-
-    #matchingHeader.matching-header-matching {
-      background: rgba(233, 30, 99, 0.94);
-      border: 1px solid #c2185b;
-    }
-
-    #matchingHeader.matching-header-preview {
-      background: rgba(37, 99, 166, 0.94);
-      border: 1px solid #1d4f84;
-    }
-
-    #matchingHeader:hover {
-      filter: brightness(0.92);
-    }
-
-    #matchingHeader:focus-visible,
-    .summary-action-header:focus-visible {
-      outline: 3px solid rgba(14, 165, 233, 0.45);
-      outline-offset: 2px;
-    }
-
+    #matchingHeader,
     .summary-action-header {
-      display: block;
-      box-sizing: border-box;
-      width: 100%;
-      margin: 12px 0;
-      padding: 10px 14px;
-      border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
-      color: #fff;
-      font: inherit;
-      font-weight: 600;
-      text-align: left;
-      cursor: pointer;
-    }
-
-    .summary-action-header-rank {
-      background: #168a45;
-      border: 1px solid #116f37;
-    }
-
-    .summary-action-header-area {
-      background: #7c3fb3;
-      border: 1px solid #643191;
-    }
-
-    .summary-action-header:hover {
-      filter: brightness(0.92);
+      display: none !important;
     }
 
     .matching-primary-row {
@@ -1456,11 +1420,11 @@ function ensureAreaSummaryStyles() {
     .area-summary-header-row {
       display: flex;
       align-items: stretch;
-      background: #f1f5f9;
-      border-bottom: 1px solid #cbd5e1;
+      background: var(--theme-header-color, #7c3fb3) !important;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.15);
       font-size: 12px;
       font-weight: 700;
-      color: #334155;
+      color: #fff !important;
     }
 
     .area-summary-header-row + .area-summary-row {
@@ -1472,10 +1436,11 @@ function ensureAreaSummaryStyles() {
       user-select: none;
       white-space: nowrap;
       padding: 2px 0;
+      color: #fff !important;
     }
 
     .area-sort-th:hover {
-      color: #0f172a;
+      color: #fff !important;
       text-decoration: underline;
     }
 
@@ -1485,13 +1450,14 @@ function ensureAreaSummaryStyles() {
     }
 
     .area-sort-mark.idle {
-      opacity: 0.35;
+      opacity: 0.65;
       font-weight: 400;
+      color: #fff !important;
     }
 
     .area-summary-header-label {
       padding-left: 10px;
-      color: #64748b;
+      color: rgba(255, 255, 255, 0.95) !important;
     }
 
     .area-summary-head {
@@ -2028,6 +1994,7 @@ function renderAreaSummary() {
   if (!area) return;
 
   ensureAreaSummaryStyles();
+  setThemeHeaderColor("area");
 
   const rows = sortAreaSummaryRows(getAreaSummaryRows());
   const total = rows.reduce((sum, row) => sum + row.total, 0);
@@ -2038,7 +2005,13 @@ function renderAreaSummary() {
     ])
   );
 
-  const maxAreaTotal = Math.max(1, ...rows.map(r => r.total));
+  const normSearch = typeof normalize === "function" ? normalize(State.searchText || "") : String(State.searchText || "").trim().toLowerCase();
+  const matchedPlayers = normSearch
+    ? (State.filtered || []).filter(p => (p.normalizedName || "").includes(normSearch))
+    : [];
+
+  const displayRows = normSearch ? rows.filter(r => r.total > 0) : rows;
+  const maxAreaTotal = Math.max(1, ...displayRows.map(r => r.total));
   const legendHTML = RANKS.map(rank => `
     <span class="area-summary-legend-item">
       <span class="area-summary-legend-swatch" style="${getRankLegendStyle(rank.key)}"></span>
@@ -2046,23 +2019,52 @@ function renderAreaSummary() {
     </span>
   `).join("");
 
+  let searchResultsHTML = "";
+  if (normSearch) {
+    if (matchedPlayers.length > 0) {
+      searchResultsHTML = `
+        <div class="summary-search-results" style="margin: 12px 0 16px;">
+          <h4 style="margin: 6px 0; color: #7c3fb3; font-size: 14px;">🔍 検索結果: ${matchedPlayers.length}名</h4>
+          <div style="overflow-x:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>★・PRIDE</th>
+                  <th>プレイヤー名</th>
+                  <th>エリア</th>
+                  <th>店舗名</th>
+                  <th>RP</th>
+                  <th>Last Update</th>
+                  <th>称号</th>
+                </tr>
+              </thead>
+              <tbody id="areaSummarySearchResultBody"></tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    } else {
+      searchResultsHTML = `
+        <div style="margin: 10px 0 14px; padding: 8px 12px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 6px; color: #856404; font-size: 13px;">
+          「${State.searchText}」に一致するプレイヤーは見つかりませんでした。
+        </div>
+      `;
+    }
+  }
+
   area.innerHTML = `
     ${buildSummaryModeNavHTML("area")}
-    <button
-      type="button"
-      class="summary-action-header summary-action-header-area"
-      data-summary-refresh
-      title="AREAを再表示"
-    >🗺️ AREA</button>
     <h3 class="summary-total-badge">
       ${buildSummaryPopulationText(total, rankCounts)}
     </h3>
+
+    ${searchResultsHTML}
 
     <div class="area-summary-legend">${legendHTML}</div>
 
     <div class="area-summary-list">
       ${buildAreaSummaryHeaderHTML()}
-      ${rows.map(row => {
+      ${displayRows.map(row => {
         const segments = [];
 
         RANKS.forEach(rank => {
@@ -2103,6 +2105,10 @@ function renderAreaSummary() {
   bindSummaryModeButtons(area);
   bindAreaSortHeader(area);
 
+  if (normSearch && matchedPlayers.length > 0) {
+    renderPlayerRowsToBody("areaSummarySearchResultBody", matchedPlayers);
+  }
+
   area.querySelectorAll(".area-summary-name").forEach(el => {
     el.addEventListener("click", () => {
       const areaNo = Number(el.dataset.area);
@@ -2119,6 +2125,7 @@ function renderAreaSummary() {
 
 function renderSummary() {
   ensureAreaSummaryStyles();
+  setThemeHeaderColor("rank");
 
   if (State.summaryMode === "area") {
     renderAreaSummary();
@@ -2144,17 +2151,51 @@ function renderSummary() {
     filteredSummary.map(row => [row.key, row.list.length])
   );
 
+  const normSearch = typeof normalize === "function" ? normalize(State.searchText || "") : String(State.searchText || "").trim().toLowerCase();
+  const matchedPlayers = normSearch
+    ? (State.filtered || []).filter(p => (p.normalizedName || "").includes(normSearch))
+    : [];
+
+  let searchResultsHTML = "";
+  if (normSearch) {
+    if (matchedPlayers.length > 0) {
+      searchResultsHTML = `
+        <div class="summary-search-results" style="margin: 12px 0 16px;">
+          <h4 style="margin: 6px 0; color: #168a45; font-size: 14px;">🔍 検索結果: ${matchedPlayers.length}名</h4>
+          <div style="overflow-x:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>★・PRIDE</th>
+                  <th>プレイヤー名</th>
+                  <th>エリア</th>
+                  <th>店舗名</th>
+                  <th>RP</th>
+                  <th>Last Update</th>
+                  <th>称号</th>
+                </tr>
+              </thead>
+              <tbody id="summarySearchResultBody"></tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    } else {
+      searchResultsHTML = `
+        <div style="margin: 10px 0 14px; padding: 8px 12px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 6px; color: #856404; font-size: 13px;">
+          「${State.searchText}」に一致するプレイヤーは見つかりませんでした。
+        </div>
+      `;
+    }
+  }
+
   area.innerHTML = `
     ${buildSummaryModeNavHTML("rank")}
-    <button
-      type="button"
-      class="summary-action-header summary-action-header-rank"
-      data-summary-refresh
-      title="RANKを再表示"
-    >🏆 RANK</button>
     <h3 class="summary-total-badge">
       ${buildSummaryPopulationText(total, rankCounts)}
     </h3>
+
+    ${searchResultsHTML}
 
     <div style="overflow-x:auto;">
       <table>
@@ -2237,6 +2278,10 @@ function renderSummary() {
 
   bindSummaryModeButtons(area);
 
+  if (normSearch && matchedPlayers.length > 0) {
+    renderPlayerRowsToBody("summarySearchResultBody", matchedPlayers);
+  }
+
   document
     .querySelectorAll(
       "#summaryArea .clickable"
@@ -2267,6 +2312,8 @@ function renderSummary() {
  [11400] Detail Renderer:renderDetailTable【DOM】【State】（旧 [6200]）
 ========================================================= */
 function renderDetailTable() {
+  ensureAreaSummaryStyles();
+  setThemeHeaderColor("rank");
 
   const area =
     document.getElementById(
@@ -2281,13 +2328,6 @@ function renderDetailTable() {
 
   area.innerHTML = `
     ${buildSummaryModeNavHTML()}
-
-    <button
-      type="button"
-      class="summary-action-header summary-action-header-rank"
-      data-detail-summary
-      title="RANKサマリへ戻る"
-    >🏆 RANK 詳細</button>
 
     ${buildPhaseCycleMonitorHTML()}
 
@@ -2343,6 +2383,9 @@ function renderAreaDetailTable(areaNo) {
   const area = document.getElementById("detailArea");
   if (!area) return;
 
+  ensureAreaSummaryStyles();
+  setThemeHeaderColor("area");
+
   const areaKey = String(areaNo);
   const areaName = getAreaDisplayName(areaKey);
   const list = (State.searchText ? applyPlayerFilter(State.searchText, true) : (State.detailOriginal || []).slice())
@@ -2350,13 +2393,6 @@ function renderAreaDetailTable(areaNo) {
     .filter(isPlayerIncludedInRankFilters);
   area.innerHTML = `
     ${buildSummaryModeNavHTML()}
-
-    <button
-      type="button"
-      class="summary-action-header summary-action-header-area"
-      data-detail-summary
-      title="AREAサマリへ戻る"
-    >🗺️ AREA 詳細</button>
 
     ${buildPhaseCycleMonitorHTML()}
 
@@ -2531,83 +2567,18 @@ function renderMatchingHeader() {
     return;
   }
 
-  const context =
-    State.matchingContext || {};
-
-  const offsetSec =
-    Number(context.offsetSec) || 0;
-
-  const modeLabel =
-    context.mode === "preview"
-      ? "🔭 PREVIEW"
-      : "⚔️ MATCHING";
-
-  const isPreview =
-    context.mode === "preview";
-
-  headerEl.classList.toggle(
-    "matching-header-preview",
-    isPreview
-  );
-
-  headerEl.classList.toggle(
-    "matching-header-matching",
-    !isPreview
-  );
-
-  headerEl.setAttribute(
-    "role",
-    "button"
-  );
-
-  headerEl.tabIndex = 0;
-  headerEl.title =
-    `${modeLabel}を現在の時刻設定で再計算`;
-
-  const refreshMatching =
-    () => {
-      const currentOffsetSec =
-        isPreview
-          ? State.previewOffsetSec
-          : State.matchingOffsetSec;
-
-      showMatchingCandidates({
-        push: false,
-        mode:
-          isPreview
-            ? "preview"
-            : "matching",
-        offsetSec:
-          currentOffsetSec,
-        saveEvent: !isPreview
-      });
-    };
-
-  headerEl.onclick =
-    refreshMatching;
-
-  headerEl.onkeydown =
-    event => {
-      if (
-        event.key !== "Enter" &&
-        event.key !== " "
-      ) {
-        return;
-      }
-
-      event.preventDefault();
-      refreshMatching();
-    };
-
-  headerEl.textContent =
-    `${modeLabel} — ${offsetSec > 0 ? `${offsetSec}秒後予測` : "NOW"}` +
-    ` ／ 予測ログ：${isPreview ? "記録なし" : "記録あり"}`;
+  headerEl.style.display = "none";
 }
 
 /* =========================================================
  [11610] Matching Renderer:renderMatchingTable【DOM】【State】（旧 [7810]）
 ========================================================= */
 function renderMatchingTable() {
+
+  ensureAreaSummaryStyles();
+  setThemeHeaderColor(
+    State.matchingContext?.mode === "preview" ? "preview" : "matching"
+  );
 
   const area =
     document.getElementById(
@@ -2992,6 +2963,7 @@ const logError =
     getAreaNavigationAreaNos,
     buildAreaSummaryHeaderHTML,
     bindAreaSortHeader,
+    setThemeHeaderColor,
     getRankColor,
     getRankFillStyle,
     getRankLegendStyle,
@@ -3017,5 +2989,8 @@ const logError =
   }
   if (typeof global !== "undefined") {
     global.ViewerUI = ViewerUI;
+  }
+  if (typeof globalThis !== "undefined") {
+    Object.assign(globalThis, ViewerUI);
   }
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -17,8 +17,9 @@
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
   const DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD = 0.08;
   const DEFAULT_PRIDE_BAND_PRIOR_EXPONENT = 0.5;
-  const NORMAL_SLOT_COUNT = 9;
+  const NORMAL_SLOT_COUNT = 8;
   const CROSS_BUCKET_SLOT_COUNT = 1;
+  const WILDCARD_SLOT_COUNT = 1;
   const DEFAULT_MAX_PINK_MANAGED_SLOTS = 3;
   const DEFAULT_SOFTMAX_BACKTEST_ENABLED = true;
   const DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE = 0.15;
@@ -1472,6 +1473,69 @@
       .slice(0, Math.max(0, Math.floor(Number(slotCount) || 0)));
   }
 
+  function selectWildcardCandidates(candidates, excludedCandidates, slotCount = 1) {
+    const excluded = new Set(excludedCandidates ?? []);
+
+    return [...(candidates ?? [])]
+      .filter(player => !excluded.has(player))
+      .sort((a, b) => getCandidateSelectionScore(b) - getCandidateSelectionScore(a))
+      .slice(0, Math.max(0, Math.floor(Number(slotCount) || 0)));
+  }
+
+  function applyRubySlotFloorGuarantee(slotPlan, candidates, options = {}) {
+    if (!Array.isArray(slotPlan) || slotPlan.length === 0) {
+      return slotPlan;
+    }
+    const plan = slotPlan.map(entry => ({ ...entry }));
+    const rubyBuckets = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"];
+
+    const eligibleFloorBuckets = [];
+    for (const b of rubyBuckets) {
+      const entry = plan.find(e => e.bucket === b);
+      if (!entry || entry.capacity <= 0 || entry.slots > 0) continue;
+
+      const bucketPool = (candidates ?? []).filter(
+        p => getMatchingSlotBucketKey(p.__rankKey) === b
+      );
+      if (bucketPool.length === 0) continue;
+
+      const topPlayer = [...bucketPool].sort(
+        (a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a)
+      )[0];
+
+      const topScore = getCandidateSelectionScore(topPlayer);
+      if (topScore > 0) {
+        eligibleFloorBuckets.push({
+          bucket: b,
+          entry,
+          topPlayer,
+          topScore
+        });
+      }
+    }
+
+    if (eligibleFloorBuckets.length === 0) {
+      return plan;
+    }
+
+    eligibleFloorBuckets.sort((a, b) => b.topScore - a.topScore);
+
+    for (const floorItem of eligibleFloorBuckets) {
+      const donor = plan
+        .filter(e => e.slots >= 2)
+        .sort((a, b) => (b.slots - b.rawQuota) - (a.slots - a.rawQuota) || b.slots - a.slots)[0];
+
+      if (!donor) break;
+
+      donor.slots -= 1;
+      floorItem.entry.slots = 1;
+      floorItem.entry.floorGuaranteed = true;
+      break;
+    }
+
+    return plan;
+  }
+
   function applyPinkManagedSlotCap(selected, rankedByScore, maxPinkManagedSlots) {
     if (!Number.isFinite(maxPinkManagedSlots) || maxPinkManagedSlots < 0) {
       return {
@@ -1611,6 +1675,7 @@
     DEFAULT_PRIDE_BAND_PRIOR_EXPONENT,
     NORMAL_SLOT_COUNT,
     CROSS_BUCKET_SLOT_COUNT,
+    WILDCARD_SLOT_COUNT,
     DEFAULT_MAX_PINK_MANAGED_SLOTS,
     DEFAULT_SOFTMAX_BACKTEST_ENABLED,
     DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE,
@@ -1658,6 +1723,8 @@
     getCandidateCrossBucketScore,
     assignCandidateCrossBucketRanks,
     selectCrossBucketCandidates,
+    selectWildcardCandidates,
+    applyRubySlotFloorGuarantee,
     applyPinkManagedSlotCap,
     computeSoftmaxBacktestPreview
   };

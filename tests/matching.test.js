@@ -38,8 +38,9 @@ test("Matching constants export and values", () => {
   const context = createMatchingContext();
   const matching = context.ViewerMatching;
 
-  assert.equal(matching.NORMAL_SLOT_COUNT, 9);
+  assert.equal(matching.NORMAL_SLOT_COUNT, 8);
   assert.equal(matching.CROSS_BUCKET_SLOT_COUNT, 1);
+  assert.equal(matching.WILDCARD_SLOT_COUNT, 1);
   assert.equal(matching.HISTORICAL_RELIABILITY_K, 100);
   assert.equal(matching.HISTORICAL_CANDIDATE_COUNT_ALPHA, 0.35);
   assert.equal(matching.DEFAULT_MAX_PINK_MANAGED_SLOTS, 3);
@@ -331,6 +332,44 @@ test("selectCrossBucketCandidates excludes already-selected and picks highest cr
 
   assert.equal(selectedCross.length, 1);
   assert.equal(selectedCross[0].name, "C1");
+});
+
+test("selectWildcardCandidates picks highest overall score candidate excluding already selected", () => {
+  const context = createMatchingContext();
+  const { selectWildcardCandidates } = context.ViewerMatching;
+
+  const p1 = { name: "P1", __score: 0.08 };
+  const p2 = { name: "P2", __score: 0.05 };
+  const p3 = { name: "P3", __score: 0.09 };
+
+  const wildcard = selectWildcardCandidates([p1, p2, p3], [p3], 1);
+  assert.equal(wildcard.length, 1);
+  assert.equal(wildcard[0].name, "P1");
+});
+
+test("applyRubySlotFloorGuarantee guarantees at least 1 slot for active Ruby bucket with 0 slots", () => {
+  const context = createMatchingContext();
+  const { applyRubySlotFloorGuarantee } = context.ViewerMatching;
+
+  const slotPlan = [
+    { bucket: "PRIDE", slots: 3, capacity: 5, rawQuota: 2.8 },
+    { bucket: "R7", slots: 3, capacity: 6, rawQuota: 2.9 },
+    { bucket: "R6", slots: 2, capacity: 4, rawQuota: 1.8 },
+    { bucket: "R3", slots: 0, capacity: 2, rawQuota: 0.3 }
+  ];
+
+  const candidates = [
+    { name: "P_R3", __rankKey: "R3", __score: 0.04, __slotScore: 0.95 }
+  ];
+
+  const guaranteedPlan = applyRubySlotFloorGuarantee(slotPlan, candidates);
+  const r3Entry = guaranteedPlan.find(e => e.bucket === "R3");
+  assert.equal(r3Entry.slots, 1);
+  assert.equal(r3Entry.floorGuaranteed, true);
+
+  // Total slots should be preserved (3+3+2 = 8, donor gives 1, so total remains 8)
+  const totalSlots = guaranteedPlan.reduce((sum, e) => sum + e.slots, 0);
+  assert.equal(totalSlots, 8);
 });
 
 test("browser entry loads matching globals in correct order", () => {

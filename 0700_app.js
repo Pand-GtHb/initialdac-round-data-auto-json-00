@@ -125,6 +125,7 @@
     DEFAULT_PRIDE_BAND_PRIOR_EXPONENT,
     NORMAL_SLOT_COUNT,
     CROSS_BUCKET_SLOT_COUNT,
+    WILDCARD_SLOT_COUNT,
     DEFAULT_MAX_PINK_MANAGED_SLOTS,
     DEFAULT_SOFTMAX_BACKTEST_ENABLED,
     DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE,
@@ -170,6 +171,8 @@
     getCandidateCrossBucketScore,
     assignCandidateCrossBucketRanks,
     selectCrossBucketCandidates,
+    selectWildcardCandidates,
+    applyRubySlotFloorGuarantee,
     applyPinkManagedSlotCap,
     computeSoftmaxBacktestPreview
   } = ViewerMatching || {};
@@ -5051,12 +5054,17 @@ function buildMatchingCandidates(
   State.matchingSlotAllocationDiagnostics =
     adjustedSlotPlan.diagnostics;
 
+  const floorGuaranteedSlotPlan =
+    typeof applyRubySlotFloorGuarantee === "function"
+      ? applyRubySlotFloorGuarantee(adjustedSlotPlan.plan, scoreEligible)
+      : adjustedSlotPlan.plan;
+
   const normalSelected =
     selectNormalCandidatesBySlots(
       scoreEligible,
       NORMAL_SLOT_COUNT,
       slotBucketProbabilities,
-      adjustedSlotPlan.plan
+      floorGuaranteedSlotPlan
     );
 
   const crossBucketSelected =
@@ -5074,9 +5082,28 @@ function buildMatchingCandidates(
     }
   );
 
+  const wildcardSelected =
+    typeof selectWildcardCandidates === "function"
+      ? selectWildcardCandidates(
+          scoreEligible,
+          [...normalSelected, ...crossBucketSelected],
+          WILDCARD_SLOT_COUNT || 1
+        )
+      : [];
+
+  wildcardSelected.forEach(
+    p => {
+      p.__wildcard = true;
+      p.__crossBucket = true;
+      p.__crossBucketSelectionReason =
+        "global-high-score";
+    }
+  );
+
   const selected = [
     ...normalSelected,
-    ...crossBucketSelected
+    ...crossBucketSelected,
+    ...wildcardSelected
   ];
 
   /*
@@ -5117,8 +5144,10 @@ function buildMatchingCandidates(
   State.matchingCrossBucketDiagnostics = {
     crossBucketSlotCount:
       CROSS_BUCKET_SLOT_COUNT,
+    wildcardSlotCount:
+      WILDCARD_SLOT_COUNT,
     selectedBeforePinkCap:
-      crossBucketSelected.map(
+      [...crossBucketSelected, ...wildcardSelected].map(
         p => ({
           name: p.name,
           shopname: p.shopname ?? "",
@@ -5127,7 +5156,9 @@ function buildMatchingCandidates(
           crossBucketRank:
             p.__crossBucketRank ?? null,
           crossBucketScore:
-            getCandidateCrossBucketScore(p)
+            getCandidateCrossBucketScore(p),
+          selectionReason:
+            p.__crossBucketSelectionReason ?? "individual-probability"
         })
       ),
     selectedAfterPinkCap:

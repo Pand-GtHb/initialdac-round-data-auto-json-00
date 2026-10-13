@@ -160,4 +160,26 @@ test("browser entry loads UI globals in correct order", () => {
   assert.equal(typeof context.ViewerUI.renderStars, "function");
   assert.equal(typeof context.ViewerUI.buildFilterGroupHTML, "function");
   assert.equal(typeof context.ViewerUI.renderSummary, "function");
+  assert.equal(typeof context.ViewerUI.setThemeHeaderColor, "function");
+});
+
+test("setThemeHeaderColor updates root CSS property", () => {
+  let setPropKey = null;
+  let setPropVal = null;
+  const context = createUIContext();
+  context.document.documentElement = {
+    style: {
+      setProperty: (k, v) => {
+        setPropKey = k;
+        setPropVal = v;
+      }
+    }
+  };
+
+  context.ViewerUI.setThemeHeaderColor("area");
+  assert.equal(setPropKey, "--theme-header-color");
+  assert.equal(setPropVal, "#7c3fb3");
+
+  context.ViewerUI.setThemeHeaderColor("matching");
+  assert.equal(setPropVal, "#e91e63");
 });

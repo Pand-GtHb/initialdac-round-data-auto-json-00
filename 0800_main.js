@@ -21,6 +21,35 @@
   const App = ViewerApp || (typeof globalThis !== "undefined" ? globalThis.ViewerApp : {});
   const UI = ViewerUI || (typeof globalThis !== "undefined" ? globalThis.ViewerUI : {});
 
+  const {
+    State = (typeof globalThis !== "undefined" ? globalThis.State : {}),
+    STATE = (typeof globalThis !== "undefined" ? globalThis.STATE : {}),
+    isCurrentView = (typeof globalThis !== "undefined" ? globalThis.isCurrentView : () => false),
+    setCurrentView = (typeof globalThis !== "undefined" ? globalThis.setCurrentView : () => {}),
+    applyFilters = (typeof globalThis !== "undefined" ? globalThis.applyFilters : () => {}),
+    buildSummary = (typeof globalThis !== "undefined" ? globalThis.buildSummary : () => {}),
+    applyMatchingFilter = (typeof globalThis !== "undefined" ? globalThis.applyMatchingFilter : () => {}),
+    recordUnmatchedSearchMemo = (typeof globalThis !== "undefined" ? globalThis.recordUnmatchedSearchMemo : () => {}),
+    undoLastCopiedInfo = (typeof globalThis !== "undefined" ? globalThis.undoLastCopiedInfo : () => {}),
+    exportTodayViewerLogsAsJSON = (typeof globalThis !== "undefined" ? globalThis.exportTodayViewerLogsAsJSON : () => {}),
+    reloadLatestDataPreferPrefetch = (typeof globalThis !== "undefined" ? globalThis.reloadLatestDataPreferPrefetch : async () => {}),
+    startProgress = (typeof globalThis !== "undefined" ? globalThis.startProgress : () => {}),
+    stopProgress = (typeof globalThis !== "undefined" ? globalThis.stopProgress : () => {}),
+    exportSummaryCSV = (typeof globalThis !== "undefined" ? globalThis.exportSummaryCSV : () => {}),
+    exportAllCSV = (typeof globalThis !== "undefined" ? globalThis.exportAllCSV : () => {}),
+    showMatchingCandidates = (typeof globalThis !== "undefined" ? globalThis.showMatchingCandidates : () => {}),
+    ensureReloadViewerTime = (typeof globalThis !== "undefined" ? globalThis.ensureReloadViewerTime : () => {}),
+    showSummaryUI = (typeof globalThis !== "undefined" ? globalThis.showSummaryUI : () => {})
+  } = App;
+
+  const {
+    renderSummary = (typeof globalThis !== "undefined" ? globalThis.renderSummary : () => {}),
+    renderAreaSummary = (typeof globalThis !== "undefined" ? globalThis.renderAreaSummary : () => {}),
+    renderDetailTable = (typeof globalThis !== "undefined" ? globalThis.renderDetailTable : () => {}),
+    renderAreaDetailTable = (typeof globalThis !== "undefined" ? globalThis.renderAreaDetailTable : () => {}),
+    switchDisplayView = (typeof globalThis !== "undefined" ? globalThis.switchDisplayView : () => {})
+  } = UI;
+
 /* =========================================================
  [15100] Entry Point:DOMContentLoaded【DOM】（旧 [4100]）
 ========================================================= */

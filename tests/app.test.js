@@ -299,4 +299,47 @@ test('exportTodayViewerLogsAsJSON uses active LogDB and exports candidateEvents'
   ViewerPersistence.setLogDB(null);
 });
 
+test('buildMatchingCandidates correctly integrates normal, crossBucket and wildcard slots', () => {
+  // Mock checkbox selection so UI filter passes all stars
+  const origQSA = globalThis.document.querySelectorAll;
+  globalThis.document.querySelectorAll = (selector) => {
+    if (selector.includes('.ruby-filter:checked')) {
+      return [{ value: '6' }, { value: '7' }];
+    }
+    if (selector.includes('.pride-filter:checked')) {
+      return [];
+    }
+    return [];
+  };
+
+  // Setup 15 mock players across R6 and R7
+  const mockPlayers = [];
+  for (let i = 1; i <= 15; i++) {
+    mockPlayers.push({
+      name: `PLAYER_${i}`,
+      shopname: `SHOP_${i}`,
+      onlineBattleRankId: ViewerDomain.RUBY_ID,
+      starCnt: i <= 10 ? 6 : 7,
+      areaNo: 1,
+      time: Date.now() - 60000,
+      updateDate: '2026/10/13 15:00:00'
+    });
+  }
+
+  ViewerApp.State.filtered = mockPlayers;
+  ViewerApp.State.myRankKey = 'R6';
+
+  ViewerApp.buildMatchingCandidates({ saveEvent: false });
+  const candidates = ViewerApp.State.matchingList;
+  assert.ok(Array.isArray(candidates));
+  assert.ok(candidates.length <= 10);
+  assert.ok(candidates.length >= 8);
+
+  // Check if at least one wildcard or crossBucket was selected
+  const hasSpecial = candidates.some(p => p.__crossBucket || p.__wildcard);
+  assert.ok(hasSpecial, 'Should have selected cross-bucket or wildcard candidate');
+
+  globalThis.document.querySelectorAll = origQSA;
+});
+
 
