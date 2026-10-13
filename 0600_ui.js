@@ -1351,7 +1351,7 @@ function ensureAreaSummaryStyles() {
       display: flex;
       flex-wrap: wrap;
       gap: 8px 14px;
-      margin: 8px 0 12px;
+      margin: 0 0 12px;
       padding: 8px 10px;
       border: 1px solid #e5e7eb;
       border-radius: 8px;
@@ -1385,7 +1385,7 @@ function ensureAreaSummaryStyles() {
      */
     .summary-total-badge {
       display: inline-block;
-      margin: 0px 0 6px 0;
+      margin: 8px 0 8px 0;
       background: rgba(255,255,255,0.92);
       border: 1px solid rgba(148,163,184,0.45);
       border-radius: 999px;
@@ -2025,8 +2025,8 @@ function renderAreaSummary() {
   if (normSearch) {
     if (matchedPlayers.length > 0) {
       searchResultsHTML = `
-        <div class="summary-search-results" style="margin: 12px 0 16px;">
-          <h4 style="margin: 6px 0; color: #7c3fb3; font-size: 14px;">🔍 検索結果: ${matchedPlayers.length}名</h4>
+        <div class="summary-search-results" style="margin: 8px 0 16px;">
+          <h4 style="margin: 0 0 8px; color: #7c3fb3; font-size: 14px;">🔍 検索結果: ${matchedPlayers.length}名</h4>
           <div style="overflow-x:auto;">
             <table>
               <thead>
@@ -2168,8 +2168,8 @@ function renderSummary() {
   if (normSearch) {
     if (matchedPlayers.length > 0) {
       searchResultsHTML = `
-        <div class="summary-search-results" style="margin: 12px 0 16px;">
-          <h4 style="margin: 6px 0; color: #168a45; font-size: 14px;">🔍 検索結果: ${matchedPlayers.length}名</h4>
+        <div class="summary-search-results" style="margin: 8px 0 16px;">
+          <h4 style="margin: 0 0 8px; color: #168a45; font-size: 14px;">🔍 検索結果: ${matchedPlayers.length}名</h4>
           <div style="overflow-x:auto;">
             <table>
               <thead>
