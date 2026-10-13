@@ -215,3 +215,88 @@ test('ViewerApp persistence wrappers interact with State and storage correctly',
   assert.equal(ViewerApp.State.pinkTargets['test_key'].name, 'TEST_PERSIST_PLAYER');
 });
 
+test('exportTodayViewerLogsAsJSON uses active LogDB and exports candidateEvents', async () => {
+  const now = Date.now();
+  let downloadedContent = null;
+  let downloadedFilename = null;
+
+  // Mock document.createElement and URL for Node test environment
+  const origCreateElement = globalThis.document.createElement;
+  const origCreateObjectURL = globalThis.URL?.createObjectURL;
+  const origRevokeObjectURL = globalThis.URL?.revokeObjectURL;
+  if (!globalThis.URL) globalThis.URL = {};
+  globalThis.URL.createObjectURL = () => 'blob:mock-url';
+  globalThis.URL.revokeObjectURL = () => {};
+
+  globalThis.document.createElement = (tag) => {
+    if (tag === 'a') {
+      return {
+        set href(v) {},
+        set download(v) { downloadedFilename = v; },
+        click: () => {}
+      };
+    }
+    return null;
+  };
+
+  // Intercept Blob constructor or capture before downloadBlob
+  // In Node 18+, Blob is globally available. We can intercept downloadBlob via Blob.text or mock Blob
+  const origBlob = globalThis.Blob;
+  globalThis.Blob = class MockBlob {
+    constructor(parts, opts) {
+      downloadedContent = parts.join('');
+      this.parts = parts;
+      this.opts = opts;
+    }
+  };
+
+  // Mock mockLogDB
+  const mockCandidates = [
+    { id: 1, t: now, candidates: [{ name: 'TEST_P1' }] }
+  ];
+  const mockEvents = [
+    { id: 2, t: now, e: 'runtime', message: 'test' }
+  ];
+
+  const mockDb = {
+    transaction: (stores, mode) => {
+      return {
+        objectStore: (storeName) => {
+          return {
+            getAll: () => {
+              const req = { onsuccess: null, onerror: null };
+              setTimeout(() => {
+                req.result = storeName === ViewerPersistence.LOG_STORE.candidateEvents
+                  ? mockCandidates
+                  : mockEvents;
+                if (req.onsuccess) req.onsuccess();
+              }, 0);
+              return req;
+            }
+          };
+        }
+      };
+    }
+  };
+
+  ViewerPersistence.setLogDB(mockDb);
+
+  await ViewerApp.exportTodayViewerLogsAsJSON();
+
+  assert.ok(downloadedContent, 'downloadBlob should be called with blob content');
+  assert.ok(downloadedFilename.startsWith('viewer_analysis_'), 'filename should match viewer_analysis pattern');
+
+  const parsed = JSON.parse(downloadedContent);
+  assert.equal(parsed.candidateEvents.length, 1);
+  assert.equal(parsed.candidateEvents[0].candidates[0].name, 'TEST_P1');
+  assert.equal(parsed.runtimeEvents.length, 1);
+
+  // Restore mocks
+  globalThis.document.createElement = origCreateElement;
+  globalThis.URL.createObjectURL = origCreateObjectURL;
+  globalThis.URL.revokeObjectURL = origRevokeObjectURL;
+  globalThis.Blob = origBlob;
+  ViewerPersistence.setLogDB(null);
+});
+
+

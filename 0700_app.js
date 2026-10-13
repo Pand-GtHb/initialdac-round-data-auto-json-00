@@ -96,7 +96,15 @@
     pruneCandidateEventsStore
   } = ViewerPersistence || {};
 
-  let logDB = typeof ViewerPersistence !== "undefined" && ViewerPersistence.getLogDB ? ViewerPersistence.getLogDB() : null;
+  function getActiveLogDB() {
+    return (
+      (typeof getLogDB === "function" ? getLogDB() : null) ||
+      (typeof ViewerPersistence !== "undefined" && typeof ViewerPersistence.getLogDB === "function"
+        ? ViewerPersistence.getLogDB()
+        : null) ||
+      null
+    );
+  }
 
   const {
     PRODUCTION_BASE_URL,
@@ -3303,14 +3311,15 @@ function getCurrentCycle(
 ========================================================= */
 async function seedPhaseAdjustFromCopyHistory() {
 
-  if (!logDB) {
+  const activeDb = getActiveLogDB();
+  if (!activeDb) {
     return;
   }
 
   try {
 
     const tx =
-      logDB.transaction(
+      activeDb.transaction(
         [LOG_STORE.copyEvents],
         "readonly"
       );
@@ -3541,13 +3550,14 @@ function normalizeCopyAreaHistory(
 }
 
 async function loadCopyAreaHistory() {
-  if (!logDB) {
+  const activeDb = getActiveLogDB();
+  if (!activeDb) {
     State.copyAreaHistory = [];
     return;
   }
 
   const tx =
-    logDB.transaction(
+    activeDb.transaction(
       [LOG_STORE.copyEvents],
       "readonly"
     );
@@ -5978,7 +5988,16 @@ async function exportTodayViewerLogsAsJSON() {
 
   };
 
-  if (!logDB) {
+  let activeDb = getActiveLogDB();
+  if (!activeDb && typeof initLogDB === "function") {
+    try {
+      activeDb = await initLogDB();
+    } catch (_) {
+      activeDb = null;
+    }
+  }
+
+  if (!activeDb) {
 
     logWarn(
       "IndexedDB未初期化のため localStorage のみ出力"
@@ -5989,7 +6008,7 @@ async function exportTodayViewerLogsAsJSON() {
     try {
 
       const tx =
-        logDB.transaction(
+        activeDb.transaction(
           [
             LOG_STORE.candidateEvents,
             LOG_STORE.events
