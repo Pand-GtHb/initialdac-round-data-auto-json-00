@@ -276,7 +276,7 @@
     const opponentTier = mapRankKeyToTierKey(opponentRankKey);
     const tierCandidateCount = getHistoricalTierCandidateCount(counts, opponentTier);
 
-    if (ctx.ownDistribution.total <= 0 && !ctx.adjacentDistribution) {
+    if ((ctx.ownDistribution?.total ?? 0) <= 0 && !ctx.adjacentDistribution) {
       return {
         score: 1.0,
         matched: false,
@@ -289,7 +289,7 @@
       };
     }
 
-    const ownCell = ctx.ownDistribution.total > 0
+    const ownCell = (ctx.ownDistribution?.total ?? 0) > 0
       ? getDistributionCellScore(
           ctx.ownDistribution,
           opponentTier,

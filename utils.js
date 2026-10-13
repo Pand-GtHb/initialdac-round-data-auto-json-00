@@ -113,6 +113,7 @@ globalThis.ViewerUtils = Object.freeze({
 Object.assign(globalThis, {
   normalize: globalThis.ViewerUtils.normalize,
   normalizePlayerName: globalThis.ViewerUtils.normalizePlayerName,
+  fmt: globalThis.ViewerUtils.fmt,
   getZenkakuLength: globalThis.ViewerUtils.getZenkakuLength,
   isMostlyAscii: globalThis.ViewerUtils.isMostlyAscii,
   foldToCycle: globalThis.ViewerUtils.foldToCycle,
@@ -120,3 +121,7 @@ Object.assign(globalThis, {
   clamp: globalThis.ViewerUtils.clamp,
   rejectFoldedOutliers: globalThis.ViewerUtils.rejectFoldedOutliers
 });
+
+if (typeof module === "object" && module.exports) {
+  module.exports = globalThis.ViewerUtils;
+}

@@ -154,3 +154,64 @@ test('browser entry loads all modules in correct order in index.html', () => {
     }
   }
 });
+
+test('ViewerApp delegates matching and candidate calculations correctly', () => {
+  assert.equal(typeof ViewerApp.calcMatchingScoreDetail, 'function');
+  assert.equal(typeof ViewerApp.buildCandidateScore, 'function');
+  assert.equal(typeof ViewerApp.buildMatchingCandidates, 'function');
+
+  // Provide mock player for score calculation
+  const mockPlayer = {
+    name: 'TEST_DELEGATE_PLAYER',
+    shopname: 'TEST_SHOP',
+    starCnt: 7,
+    areaNo: 1,
+    time: Date.now() - 60000
+  };
+
+  const scoreDetail = ViewerApp.calcMatchingScoreDetail(mockPlayer, {
+    baseNow: Date.now(),
+    myRankKey: 'R7'
+  });
+
+  assert.ok(scoreDetail);
+  assert.equal(typeof scoreDetail.score, 'number');
+  assert.ok(Number.isFinite(scoreDetail.score));
+
+  const candidateScore = ViewerApp.buildCandidateScore(mockPlayer);
+  assert.equal(typeof candidateScore, 'object');
+  assert.equal(typeof candidateScore.__score, 'number');
+  assert.ok(Number.isFinite(candidateScore.__score));
+});
+
+test('ViewerApp persistence wrappers interact with State and storage correctly', () => {
+  assert.equal(typeof ViewerApp.savePinkStateToStorage, 'function');
+  assert.equal(typeof ViewerApp.restorePinkStateFromStorage, 'function');
+  assert.equal(typeof ViewerApp.checkAndCleanDailyState, 'function');
+
+  // Mock localStorage for test
+  let storedData = {};
+  globalThis.localStorage = {
+    getItem: (k) => storedData[k] ?? null,
+    setItem: (k, v) => { storedData[k] = String(v); },
+    removeItem: (k) => { delete storedData[k]; },
+    clear: () => { storedData = {}; }
+  };
+
+  const todayKey = ViewerPersistence.buildDailyKey();
+  ViewerApp.State.pinkTargets['test_key'] = {
+    name: 'TEST_PERSIST_PLAYER',
+    dailyKey: todayKey,
+    copiedAt: Date.now()
+  };
+
+  ViewerApp.savePinkStateToStorage();
+  assert.ok(storedData[ViewerPersistence.PERSIST_STATE_KEY]);
+
+  // Clear in-memory state and restore
+  ViewerApp.State.pinkTargets = {};
+  ViewerApp.restorePinkStateFromStorage();
+  assert.ok(ViewerApp.State.pinkTargets['test_key']);
+  assert.equal(ViewerApp.State.pinkTargets['test_key'].name, 'TEST_PERSIST_PLAYER');
+});
+
