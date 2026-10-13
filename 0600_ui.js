@@ -1385,10 +1385,11 @@ function ensureAreaSummaryStyles() {
      */
     .summary-total-badge {
       display: inline-block;
+      margin: 0px 0 6px 0;
       background: rgba(255,255,255,0.92);
       border: 1px solid rgba(148,163,184,0.45);
       border-radius: 999px;
-      padding: 10px 20px;
+      padding: 6px 16px;
     }
 
     /*
