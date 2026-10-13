@@ -14,6 +14,7 @@
   const clamp = ViewerUtils.clamp || ((v, min, max) => Math.max(min, Math.min(max, v)));
 
   const RANKS = ViewerDomain.RANKS || [];
+  const RUBY_ID = ViewerDomain.RUBY_ID || "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
   const getRankIndex = ViewerDomain.getRankIndex || (() => 0);
   const getRankInfo = ViewerDomain.getRankInfo || (() => ({}));
   const getPlayerRankKey = ViewerDomain.getPlayerRankKey || (p => p?.__rankKey);
@@ -1168,6 +1169,11 @@ function ensureAreaSummaryStyles() {
 
     th {
       background: var(--theme-header-color, #168a45) !important;
+      color: #fff !important;
+    }
+
+    .matching-cross-rank-table th {
+      background: #168a45 !important;
       color: #fff !important;
     }
 
@@ -2601,6 +2607,8 @@ function renderMatchingTable() {
 
   if (!area) return;
 
+  const modeColor = State.matchingContext?.mode === "preview" ? "#2563a6" : "#e91e63";
+
   area.innerHTML = `
     ${buildSummaryModeNavHTML("both")}
     ${buildPhaseCycleMonitorHTML(
@@ -2617,34 +2625,62 @@ function renderMatchingTable() {
       ${buildMatchingRankCountsHTML()}
     </div>
 
-    <div style="overflow-x:auto;">
+    <!-- MATCHING候補セクション -->
+    <div id="matchingCandidatesSection">
+      <div id="matchingSearchResultsHeader" style="display:none; margin: 8px 0;">
+        <h4 id="matchingSearchResultsTitle" style="margin: 0; color: ${modeColor}; font-size: 14px;"></h4>
+      </div>
+      <div id="matchingCandidateEmptyMessage" style="display:none; margin: 6px 0 12px; padding: 8px 12px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 6px; color: #856404; font-size: 13px;"></div>
+      <div id="matchingTableWrapper" style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>★・PRIDE</th>
+              <th>プレイヤー名</th>
+              <th>エリア</th>
+              <th>店舗名</th>
+              <th>RP</th>
+              <th>Last Update</th>
+              <th>称号</th>
+            </tr>
+          </thead>
+          <tbody id="matchingTableBody"></tbody>
+        </table>
+      </div>
+    </div>
 
-      <table>
-
-        <thead>
-          <tr>
-            <th>★・PRIDE</th>
-            <th>プレイヤー名</th>
-            <th>エリア</th>
-            <th>店舗名</th>
-            <th>RP</th>
-            <th>Last Update</th>
-                        <th>称号</th>
-          </tr>
-        </thead>
-
-        <tbody id="matchingTableBody"></tbody>
-
-      </table>
-
+    <!-- RANK横断検索結果セクション（検索時のみ表示） -->
+    <div id="matchingCrossRankSection" style="display:none; margin-top: 16px;">
+      <h4 id="matchingCrossRankTitle" style="margin: 0 0 8px; color: #168a45; font-size: 14px;">🔍 全体（RANK）の検索結果: 0名</h4>
+      <div id="matchingCrossRankEmptyMessage" style="display:none; margin: 6px 0 12px; padding: 8px 12px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 6px; color: #856404; font-size: 13px;"></div>
+      <div id="matchingCrossRankTableWrapper" style="overflow-x:auto;">
+        <table class="matching-cross-rank-table">
+          <thead>
+            <tr>
+              <th style="background: #168a45 !important; color: #fff !important;">★・PRIDE</th>
+              <th style="background: #168a45 !important; color: #fff !important;">プレイヤー名</th>
+              <th style="background: #168a45 !important; color: #fff !important;">エリア</th>
+              <th style="background: #168a45 !important; color: #fff !important;">店舗名</th>
+              <th style="background: #168a45 !important; color: #fff !important;">RP</th>
+              <th style="background: #168a45 !important; color: #fff !important;">Last Update</th>
+              <th style="background: #168a45 !important; color: #fff !important;">称号</th>
+            </tr>
+          </thead>
+          <tbody id="matchingCrossRankTableBody"></tbody>
+        </table>
+      </div>
     </div>
   `;
 
   bindSummaryModeButtons(area);
 
-  renderMatchingRows(
-    State.matchingList
-  );
+  if (typeof applyMatchingFilter === "function" && State.searchText) {
+    applyMatchingFilter(State.searchText);
+  } else {
+    renderMatchingRows(
+      State.matchingList
+    );
+  }
 }
 
 /* =========================================================

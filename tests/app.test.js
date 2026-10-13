@@ -11,7 +11,11 @@ globalThis.window = {
 globalThis.document = {
   getElementById: () => null,
   querySelectorAll: () => [],
-  addEventListener: () => {}
+  addEventListener: () => {},
+  createElement: (tag) => ({
+    getContext: () => ({ measureText: (s) => ({ width: (s || '').length * 8 }) }),
+    style: {}
+  })
 };
 globalThis.localStorage = {
   getItem: () => null,
@@ -341,5 +345,107 @@ test('buildMatchingCandidates correctly integrates normal, crossBucket and wildc
 
   globalThis.document.querySelectorAll = origQSA;
 });
+
+test('applyMatchingFilter handles cross-search between MATCHING candidates and RANK summary', () => {
+  // Setup mock DOM elements
+  const elements = {};
+  const createMockEl = (id) => ({
+    id,
+    style: {},
+    textContent: '',
+    innerHTML: '',
+    querySelectorAll: () => []
+  });
+
+  const ids = [
+    'matchingRankCounts',
+    'matchingSearchResultsHeader',
+    'matchingSearchResultsTitle',
+    'matchingCandidateEmptyMessage',
+    'matchingTableWrapper',
+    'matchingCrossRankSection',
+    'matchingCrossRankTitle',
+    'matchingCrossRankEmptyMessage',
+    'matchingCrossRankTableWrapper',
+    'matchingTableBody',
+    'matchingCrossRankTableBody'
+  ];
+  ids.forEach(id => { elements[id] = createMockEl(id); });
+
+  const origGetElementById = globalThis.document.getElementById;
+  globalThis.document.getElementById = (id) => elements[id] || null;
+
+  // Setup mock State data
+  const pMatching = {
+    name: 'MATCH_TARGET',
+    normalizedName: ViewerUtils.normalize('MATCH_TARGET'),
+    shopname: 'SHOP1',
+    area: 'AREA1',
+    onlineBattleRankId: ViewerDomain.RUBY_ID,
+    starCnt: 6,
+    updateDate: '2026/10/14 08:00:00'
+  };
+  const pRankOnly = {
+    name: 'RANK_ONLY_TARGET',
+    normalizedName: ViewerUtils.normalize('RANK_ONLY_TARGET'),
+    shopname: 'SHOP2',
+    area: 'AREA2',
+    onlineBattleRankId: ViewerDomain.RUBY_ID,
+    starCnt: 7,
+    updateDate: '2026/10/14 08:00:00'
+  };
+
+  ViewerApp.State.matchingList = [pMatching];
+  ViewerApp.State.summary = [
+    { key: 'R6', label: '★6', list: [pMatching] },
+    { key: 'R7', label: '★7', list: [pRankOnly] }
+  ];
+
+  // Case 1: Empty search keyword -> returns to normal view
+  ViewerApp.applyMatchingFilter('');
+  assert.equal(elements.matchingRankCounts.style.display, 'flex');
+  assert.equal(elements.matchingSearchResultsHeader.style.display, 'none');
+  assert.equal(elements.matchingTableWrapper.style.display, 'block');
+  assert.equal(elements.matchingCrossRankSection.style.display, 'none');
+
+  // Case 2: Search matching candidate
+  ViewerApp.State.searchText = 'MATCH';
+  ViewerApp.applyMatchingFilter('MATCH');
+  assert.equal(elements.matchingRankCounts.style.display, 'none');
+  assert.equal(elements.matchingSearchResultsHeader.style.display, 'block');
+  assert.ok(elements.matchingSearchResultsTitle.textContent.includes('1名'));
+  assert.equal(elements.matchingTableWrapper.style.display, 'block');
+  assert.equal(elements.matchingCandidateEmptyMessage.style.display, 'none');
+  assert.equal(elements.matchingCrossRankSection.style.display, 'block');
+
+  // Case 3: Search rank-only player (not in MATCHING candidates, but in RANK)
+  ViewerApp.State.searchText = 'RANK_ONLY';
+  ViewerApp.applyMatchingFilter('RANK_ONLY');
+  // Matching candidate should show 0 and empty message
+  assert.ok(elements.matchingSearchResultsTitle.textContent.includes('0名'));
+  assert.equal(elements.matchingTableWrapper.style.display, 'none');
+  assert.equal(elements.matchingCandidateEmptyMessage.style.display, 'block');
+  assert.ok(elements.matchingCandidateEmptyMessage.textContent.includes('見つかりませんでした'));
+  // Cross rank section should show 1 player
+  assert.equal(elements.matchingCrossRankSection.style.display, 'block');
+  assert.ok(elements.matchingCrossRankTitle.textContent.includes('1名'));
+  assert.equal(elements.matchingCrossRankTableWrapper.style.display, 'block');
+  assert.equal(elements.matchingCrossRankEmptyMessage.style.display, 'none');
+
+  // Case 4: Search non-existent player
+  ViewerApp.State.searchText = 'UNKNOWN_PLAYER';
+  ViewerApp.applyMatchingFilter('UNKNOWN_PLAYER');
+  assert.ok(elements.matchingSearchResultsTitle.textContent.includes('0名'));
+  assert.equal(elements.matchingTableWrapper.style.display, 'none');
+  assert.equal(elements.matchingCandidateEmptyMessage.style.display, 'block');
+  assert.ok(elements.matchingCrossRankTitle.textContent.includes('0名'));
+  assert.equal(elements.matchingCrossRankTableWrapper.style.display, 'none');
+  assert.equal(elements.matchingCrossRankEmptyMessage.style.display, 'block');
+
+  // Restore mocks
+  globalThis.document.getElementById = origGetElementById;
+  ViewerApp.State.searchText = '';
+});
+
 
 

@@ -5581,22 +5581,103 @@ function applyMatchingFilter(
 ) {
 
   const norm =
-     normalize(keyword);
+     typeof normalize === "function" ? normalize(keyword) : String(keyword || "").trim().toLowerCase();
 
   const base =
      State.matchingList || [];
 
-  const list =
-     !norm
-       ? base
-       : base.filter(
-           p =>
-             (
-               p.normalizedName || ""
-             ).includes(norm)
-         );
+  if (typeof document === "undefined") {
+    const list = !norm
+      ? base
+      : base.filter(
+          p => (p.normalizedName || "").includes(norm)
+        );
+    renderMatchingRows(list);
+    return;
+  }
 
-  renderMatchingRows(list);
+  const rankCountsEl =
+    document.getElementById("matchingRankCounts");
+  const matchingHeaderEl =
+    document.getElementById("matchingSearchResultsHeader");
+  const matchingTitleEl =
+    document.getElementById("matchingSearchResultsTitle");
+  const matchingEmptyEl =
+    document.getElementById("matchingCandidateEmptyMessage");
+  const matchingTableWrap =
+    document.getElementById("matchingTableWrapper");
+
+  const rankSectionEl =
+    document.getElementById("matchingCrossRankSection");
+  const rankTitleEl =
+    document.getElementById("matchingCrossRankTitle");
+  const rankEmptyEl =
+    document.getElementById("matchingCrossRankEmptyMessage");
+  const rankTableWrap =
+    document.getElementById("matchingCrossRankTableWrapper");
+
+  const modeColor =
+    State.matchingContext?.mode === "preview" ? "#2563a6" : "#e91e63";
+
+  if (!norm) {
+    if (rankCountsEl) rankCountsEl.style.display = "flex";
+    if (matchingHeaderEl) matchingHeaderEl.style.display = "none";
+    if (matchingEmptyEl) matchingEmptyEl.style.display = "none";
+    if (matchingTableWrap) matchingTableWrap.style.display = "block";
+    renderMatchingRows(base);
+
+    if (rankSectionEl) rankSectionEl.style.display = "none";
+    return;
+  }
+
+  // 1. MATCHING候補内での絞り込み
+  const matchingFiltered = base.filter(
+    p => (p.normalizedName || "").includes(norm)
+  );
+
+  if (rankCountsEl) rankCountsEl.style.display = "none";
+  if (matchingHeaderEl) {
+    matchingHeaderEl.style.display = "block";
+    if (matchingTitleEl) {
+      matchingTitleEl.style.color = modeColor;
+      matchingTitleEl.textContent = `🔍 MATCHING候補の検索結果: ${matchingFiltered.length}名`;
+    }
+  }
+
+  if (matchingFiltered.length > 0) {
+    if (matchingEmptyEl) matchingEmptyEl.style.display = "none";
+    if (matchingTableWrap) matchingTableWrap.style.display = "block";
+    renderMatchingRows(matchingFiltered);
+  } else {
+    if (matchingTableWrap) matchingTableWrap.style.display = "none";
+    if (matchingEmptyEl) {
+      matchingEmptyEl.textContent = `MATCHING候補内に「${keyword}」に一致するプレイヤーは見つかりませんでした。`;
+      matchingEmptyEl.style.display = "block";
+    }
+  }
+
+  // 2. 全体（RANK）での絞り込み
+  const rankFilteredSummary = typeof filterSummaryBySearch === "function" ? filterSummaryBySearch() : [];
+  const rankMatchedPlayers = rankFilteredSummary.flatMap(r => r.list || []);
+
+  if (rankSectionEl) {
+    rankSectionEl.style.display = "block";
+    if (rankTitleEl) {
+      rankTitleEl.textContent = `🔍 全体（RANK）の検索結果: ${rankMatchedPlayers.length}名`;
+    }
+
+    if (rankMatchedPlayers.length > 0) {
+      if (rankEmptyEl) rankEmptyEl.style.display = "none";
+      if (rankTableWrap) rankTableWrap.style.display = "block";
+      renderPlayerRowsToBody("matchingCrossRankTableBody", rankMatchedPlayers);
+    } else {
+      if (rankTableWrap) rankTableWrap.style.display = "none";
+      if (rankEmptyEl) {
+        rankEmptyEl.textContent = `全体データ内に「${keyword}」に一致するプレイヤーは見つかりませんでした。`;
+        rankEmptyEl.style.display = "block";
+      }
+    }
+  }
 }
 
 
