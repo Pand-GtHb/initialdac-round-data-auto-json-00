@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
-const ROOT_DIR = __dirname;
+const ROOT_DIR = path.resolve(__dirname, "..");
 const REMOTE_BASE = "https://pand-gthb.github.io/initialdac-round-data-auto-json-00";
 
 const MIME_TYPES = {
