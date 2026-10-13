@@ -649,7 +649,7 @@ function buildPlayerRowHTML(
       ? renderStars(
           p.starCnt
         )
-      : p.pridePoint;
+      : (Number(p.pridePoint) > 0 ? p.pridePoint : "-");
 
   const fullShop =
     p.shopname ?? "";
@@ -2006,8 +2006,9 @@ function renderAreaSummary() {
   );
 
   const normSearch = typeof normalize === "function" ? normalize(State.searchText || "") : String(State.searchText || "").trim().toLowerCase();
+  const filteredSummary = filterSummaryBySearch();
   const matchedPlayers = normSearch
-    ? (State.filtered || []).filter(p => (p.normalizedName || "").includes(normSearch))
+    ? filteredSummary.flatMap(r => r.list)
     : [];
 
   const displayRows = normSearch ? rows.filter(r => r.total > 0) : rows;
@@ -2050,6 +2051,18 @@ function renderAreaSummary() {
         </div>
       `;
     }
+
+    area.innerHTML = `
+      ${buildSummaryModeNavHTML("area")}
+      ${searchResultsHTML}
+    `;
+
+    bindSummaryModeButtons(area);
+
+    if (matchedPlayers.length > 0) {
+      renderPlayerRowsToBody("areaSummarySearchResultBody", matchedPlayers);
+    }
+    return;
   }
 
   area.innerHTML = `
@@ -2057,8 +2070,6 @@ function renderAreaSummary() {
     <h3 class="summary-total-badge">
       ${buildSummaryPopulationText(total, rankCounts)}
     </h3>
-
-    ${searchResultsHTML}
 
     <div class="area-summary-legend">${legendHTML}</div>
 
@@ -2105,10 +2116,6 @@ function renderAreaSummary() {
   bindSummaryModeButtons(area);
   bindAreaSortHeader(area);
 
-  if (normSearch && matchedPlayers.length > 0) {
-    renderPlayerRowsToBody("areaSummarySearchResultBody", matchedPlayers);
-  }
-
   area.querySelectorAll(".area-summary-name").forEach(el => {
     el.addEventListener("click", () => {
       const areaNo = Number(el.dataset.area);
@@ -2153,7 +2160,7 @@ function renderSummary() {
 
   const normSearch = typeof normalize === "function" ? normalize(State.searchText || "") : String(State.searchText || "").trim().toLowerCase();
   const matchedPlayers = normSearch
-    ? (State.filtered || []).filter(p => (p.normalizedName || "").includes(normSearch))
+    ? filteredSummary.flatMap(r => r.list)
     : [];
 
   let searchResultsHTML = "";
@@ -2187,6 +2194,18 @@ function renderSummary() {
         </div>
       `;
     }
+
+    area.innerHTML = `
+      ${buildSummaryModeNavHTML("rank")}
+      ${searchResultsHTML}
+    `;
+
+    bindSummaryModeButtons(area);
+
+    if (matchedPlayers.length > 0) {
+      renderPlayerRowsToBody("summarySearchResultBody", matchedPlayers);
+    }
+    return;
   }
 
   area.innerHTML = `
@@ -2194,8 +2213,6 @@ function renderSummary() {
     <h3 class="summary-total-badge">
       ${buildSummaryPopulationText(total, rankCounts)}
     </h3>
-
-    ${searchResultsHTML}
 
     <div style="overflow-x:auto;">
       <table>
@@ -2277,10 +2294,6 @@ function renderSummary() {
   `;
 
   bindSummaryModeButtons(area);
-
-  if (normSearch && matchedPlayers.length > 0) {
-    renderPlayerRowsToBody("summarySearchResultBody", matchedPlayers);
-  }
 
   document
     .querySelectorAll(
