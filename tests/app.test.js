@@ -20,13 +20,13 @@ globalThis.localStorage = {
   clear: () => {}
 };
 
-const ViewerUtils = require('../utils.js');
-const ViewerDomain = require('../domain.js');
-const ViewerPersistence = require('../persistence.js');
-const ViewerData = require('../data.js');
-const ViewerMatching = require('../matching.js');
-const ViewerUI = require('../ui.js');
-const ViewerApp = require('../app.js');
+const ViewerUtils = require('../0100_utils.js');
+const ViewerDomain = require('../0200_domain.js');
+const ViewerPersistence = require('../0300_persistence.js');
+const ViewerData = require('../0400_data.js');
+const ViewerMatching = require('../0500_matching.js');
+const ViewerUI = require('../0600_ui.js');
+const ViewerApp = require('../0700_app.js');
 
 test('App constants and configuration are exported', () => {
   assert.equal(typeof ViewerApp.BASE_URL, 'string');
@@ -130,14 +130,14 @@ test('browser entry loads all modules in correct order in index.html', () => {
   const scriptBaseNames = scriptMatches.map(s => s.split('?')[0]);
 
   const expectedOrder = [
-    'utils.js',
-    'domain.js',
-    'persistence.js',
-    'data.js',
-    'matching.js',
-    'ui.js',
-    'app.js',
-    'main.js'
+    '0100_utils.js',
+    '0200_domain.js',
+    '0300_persistence.js',
+    '0400_data.js',
+    '0500_matching.js',
+    '0600_ui.js',
+    '0700_app.js',
+    '0800_main.js'
   ];
 
   for (let i = 0; i < expectedOrder.length; i++) {

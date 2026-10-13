@@ -30,14 +30,14 @@ globalThis.indexedDB = {
   })
 };
 
-const ViewerUtils = require('../utils.js');
-const ViewerDomain = require('../domain.js');
-const ViewerPersistence = require('../persistence.js');
-const ViewerData = require('../data.js');
-const ViewerMatching = require('../matching.js');
-const ViewerUI = require('../ui.js');
-const ViewerApp = require('../app.js');
-const ViewerMain = require('../main.js');
+const ViewerUtils = require('../0100_utils.js');
+const ViewerDomain = require('../0200_domain.js');
+const ViewerPersistence = require('../0300_persistence.js');
+const ViewerData = require('../0400_data.js');
+const ViewerMatching = require('../0500_matching.js');
+const ViewerUI = require('../0600_ui.js');
+const ViewerApp = require('../0700_app.js');
+const ViewerMain = require('../0800_main.js');
 
 test('Main exports init and bootstrap lifecycle methods', () => {
   assert.equal(typeof ViewerMain.init, 'function');

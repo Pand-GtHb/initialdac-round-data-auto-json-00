@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const test = require("node:test");
 
-const p = require(path.join(__dirname, "..", "persistence.js"));
+const p = require(path.join(__dirname, "..", "0300_persistence.js"));
 
 function createMockStorage(initial = {}) {
   const store = new Map(Object.entries(initial));
@@ -248,7 +248,7 @@ test("browser entry loads persistence globals in correct order", () => {
   const indexSource = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   assert.match(
     indexSource,
-    /<script src="utils\.js\?cb=\d+"><\/script>\s*<script src="domain\.js\?cb=\d+"><\/script>\s*<script src="persistence\.js\?cb=\d+"><\/script>\s*<script src="data\.js\?cb=\d+"><\/script>\s*<script src="matching\.js\?cb=\d+"><\/script>\s*<script src="ui\.js\?cb=\d+"><\/script>\s*<script src="app\.js\?cb=\d+"><\/script>\s*<script src="main\.js\?cb=\d+"><\/script>/
+    /<script src="0100_utils\.js\?cb=\d+"><\/script>\s*<script src="0200_domain\.js\?cb=\d+"><\/script>\s*<script src="0300_persistence\.js\?cb=\d+"><\/script>\s*<script src="0400_data\.js\?cb=\d+"><\/script>\s*<script src="0500_matching\.js\?cb=\d+"><\/script>\s*<script src="0600_ui\.js\?cb=\d+"><\/script>\s*<script src="0700_app\.js\?cb=\d+"><\/script>\s*<script src="0800_main\.js\?cb=\d+"><\/script>/
   );
 });
 

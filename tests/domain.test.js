@@ -4,8 +4,8 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const utilsSource = fs.readFileSync(path.join(__dirname, "..", "utils.js"), "utf8");
-const domainSource = fs.readFileSync(path.join(__dirname, "..", "domain.js"), "utf8");
+const utilsSource = fs.readFileSync(path.join(__dirname, "..", "0100_utils.js"), "utf8");
+const domainSource = fs.readFileSync(path.join(__dirname, "..", "0200_domain.js"), "utf8");
 
 const context = vm.createContext({});
 vm.runInContext(utilsSource, context);

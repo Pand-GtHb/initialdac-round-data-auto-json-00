@@ -3,7 +3,7 @@ const path = require("node:path");
 const test = require("node:test");
 const fs = require("node:fs");
 
-const dataModule = require(path.join(__dirname, "..", "data.js"));
+const dataModule = require(path.join(__dirname, "..", "0400_data.js"));
 
 test("Data constants and timeout mappings", () => {
   assert.equal(
@@ -156,6 +156,6 @@ test("browser entry loads data globals in correct order", () => {
   const indexSource = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   assert.match(
     indexSource,
-    /<script src="utils\.js\?cb=\d+"><\/script>\s*<script src="domain\.js\?cb=\d+"><\/script>\s*<script src="persistence\.js\?cb=\d+"><\/script>\s*<script src="data\.js\?cb=\d+"><\/script>\s*<script src="matching\.js\?cb=\d+"><\/script>\s*<script src="ui\.js\?cb=\d+"><\/script>\s*<script src="app\.js\?cb=\d+"><\/script>\s*<script src="main\.js\?cb=\d+"><\/script>/
+    /<script src="0100_utils\.js\?cb=\d+"><\/script>\s*<script src="0200_domain\.js\?cb=\d+"><\/script>\s*<script src="0300_persistence\.js\?cb=\d+"><\/script>\s*<script src="0400_data\.js\?cb=\d+"><\/script>\s*<script src="0500_matching\.js\?cb=\d+"><\/script>\s*<script src="0600_ui\.js\?cb=\d+"><\/script>\s*<script src="0700_app\.js\?cb=\d+"><\/script>\s*<script src="0800_main\.js\?cb=\d+"><\/script>/
   );
 });

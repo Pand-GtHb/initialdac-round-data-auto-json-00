@@ -1,10 +1,10 @@
 (function (root, factory) {
   if (typeof define === "function" && define.amd) {
-    define(["./app.js", "./ui.js"], factory);
+    define(["./0700_app.js", "./0600_ui.js"], factory);
   } else if (typeof module === "object" && module.exports) {
     module.exports = factory(
-      require("./app.js"),
-      require("./ui.js")
+      require("./0700_app.js"),
+      require("./0600_ui.js")
     );
   } else {
     root.ViewerMain = factory(

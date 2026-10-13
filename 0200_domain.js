@@ -1,6 +1,6 @@
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {
-    const utils = typeof ViewerUtils !== "undefined" ? ViewerUtils : require("./utils.js");
+    const utils = typeof ViewerUtils !== "undefined" ? ViewerUtils : require("./0100_utils.js");
     module.exports = factory(utils);
   } else {
     root.ViewerDomain = factory(root.ViewerUtils);

@@ -4,11 +4,11 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const utilsSource = fs.readFileSync(path.join(__dirname, "..", "utils.js"), "utf8");
-const domainSource = fs.readFileSync(path.join(__dirname, "..", "domain.js"), "utf8");
-const persistenceSource = fs.readFileSync(path.join(__dirname, "..", "persistence.js"), "utf8");
-const dataSource = fs.readFileSync(path.join(__dirname, "..", "data.js"), "utf8");
-const matchingSource = fs.readFileSync(path.join(__dirname, "..", "matching.js"), "utf8");
+const utilsSource = fs.readFileSync(path.join(__dirname, "..", "0100_utils.js"), "utf8");
+const domainSource = fs.readFileSync(path.join(__dirname, "..", "0200_domain.js"), "utf8");
+const persistenceSource = fs.readFileSync(path.join(__dirname, "..", "0300_persistence.js"), "utf8");
+const dataSource = fs.readFileSync(path.join(__dirname, "..", "0400_data.js"), "utf8");
+const matchingSource = fs.readFileSync(path.join(__dirname, "..", "0500_matching.js"), "utf8");
 const indexSource = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 
 function createMatchingContext(customState = {}) {
