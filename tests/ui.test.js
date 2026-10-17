@@ -10,6 +10,7 @@ const persistenceSource = fs.readFileSync(path.join(__dirname, "..", "0300_persi
 const dataSource = fs.readFileSync(path.join(__dirname, "..", "0400_data.js"), "utf8");
 const matchingSource = fs.readFileSync(path.join(__dirname, "..", "0500_matching.js"), "utf8");
 const uiSource = fs.readFileSync(path.join(__dirname, "..", "0600_ui.js"), "utf8");
+const appSource = fs.readFileSync(path.join(__dirname, "..", "0700_app.js"), "utf8");
 const indexSource = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 
 function createUIContext(customState = {}) {
@@ -64,6 +65,36 @@ test("renderStars outputs correct stars and line breaks", () => {
   assert.equal(renderStars(5), "★★★★<br>★");
   assert.equal(renderStars(7), "★★★★<br>★★★");
   assert.equal(renderStars(8), "★★★★<br>★★★★");
+});
+
+test("Phase monitor uses the same configured scale, trust and base cycle as scoring", () => {
+  const context = createUIContext();
+  vm.runInContext(appSource, context);
+  context.State.scoringConfig = {
+    phase: { yellow: { baseCycleSec: 360, minSamples: 8 } },
+    phaseError: { yellowScaleSec: 120 }
+  };
+  context.State.yellowSamples = [{}, {}];
+  context.State.phaseAdjust.yellow = 0;
+  const scales = [];
+  context.getFilterToMs = now => now;
+  context.readRangeMinutes = () => 15;
+  context.formatClockHms = () => "12:00:00";
+  context.formatClockHm = () => "12:00";
+  context.ViewerDomain = {
+    ...context.ViewerDomain,
+    getPhaseWindowHalfWidthSec: (...args) => {
+      scales.push(args[4]);
+      return 30;
+    }
+  };
+  // Reload the UI module so its domain helper binding uses the recording function.
+  vm.runInContext(uiSource, context);
+  const html = context.ViewerUI.buildPhaseCycleRowHTML("yellow", Date.now());
+  assert.match(html, /基準360秒/);
+  assert.match(html, /信頼度50%/);
+  assert.ok(scales.length > 0);
+  assert.ok(scales.every(scale => scale === 120));
 });
 
 test("buildFilterGroupHTML generates expected checkbox labels", () => {

@@ -3,24 +3,15 @@
 
   const ViewerUtils = (typeof global !== "undefined" && global.ViewerUtils) || {};
   const ViewerDomain = (typeof global !== "undefined" && global.ViewerDomain) || {};
-  const ViewerPersistence = (typeof global !== "undefined" && global.ViewerPersistence) || {};
-  const ViewerMatching = (typeof global !== "undefined" && global.ViewerMatching) || {};
 
   const normalize = ViewerUtils.normalize || (s => String(s ?? "").trim());
-  const normalizePlayerName = ViewerUtils.normalizePlayerName || (name => String(name ?? "").trim());
   const fmt = ViewerUtils.fmt || (n => Number(n).toLocaleString());
   const getZenkakuLength = ViewerUtils.getZenkakuLength || (s => (s ? s.length : 0));
   const isMostlyAscii = ViewerUtils.isMostlyAscii || (() => true);
-  const clamp = ViewerUtils.clamp || ((v, min, max) => Math.max(min, Math.min(max, v)));
 
   const RANKS = ViewerDomain.RANKS || [];
   const RUBY_ID = ViewerDomain.RUBY_ID || "dcb98f86f149cf71d3707a1592072e7838f0811140c24238820dff2b82602a85";
-  const getRankIndex = ViewerDomain.getRankIndex || (() => 0);
-  const getRankInfo = ViewerDomain.getRankInfo || (() => ({}));
   const getPlayerRankKey = ViewerDomain.getPlayerRankKey || (p => p?.__rankKey);
-  const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k);
-  const buildPlayerIdentityKey = ViewerDomain.buildPlayerIdentityKey || (() => "");
-  const getPhaseErrorScaleSec = ViewerDomain.getPhaseErrorScaleSec || (() => 60);
   const getPhaseWindowHalfWidthSec = ViewerDomain.getPhaseWindowHalfWidthSec || (() => 30);
   const calcStats = ViewerDomain.calcStats || (() => ({ count: 0, avg: 0, min: 0, max: 0 }));
 
@@ -31,10 +22,6 @@
   };
 
   const MAX_LOG_LINES = 100;
-
-  function getState() {
-    return typeof global !== "undefined" && global.State ? global.State : null;
-  }
 
 /* #################################################################
  [LAYER 10000] View Templates（HTML文字列を返す層）
@@ -413,12 +400,7 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
     Number(cfg.minSamples ?? 8);
 
   const trustPct =
-    minSamples > 0
-      ? Math.min(
-          100,
-          Math.round((samples / minSamples) * 100)
-        )
-      : 100;
+    Math.round(computeSampleTrust(samples, minSamples) * 100);
 
   const filterToMs =
     getFilterToMs(nowMs);
@@ -535,7 +517,7 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
 
       <div style="font-size:12px; color:#555; margin-bottom:4px;">
         <strong style="color:${labelColor};">${label}</strong>
-        ：周期 ${cycleSec.toFixed(1)}秒（基準345秒 ${adjust >= 0 ? "+" : ""}${adjust.toFixed(1)}秒）
+        ：周期 ${cycleSec.toFixed(1)}秒（基準${cfg.baseCycleSec ?? 345}秒 ${adjust >= 0 ? "+" : ""}${adjust.toFixed(1)}秒）
         ／信頼度${trustPct}%
         ／許容幅はdecay反映（しきい値${threshold}）
       </div>

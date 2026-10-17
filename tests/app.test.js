@@ -28,6 +28,7 @@ const ViewerUtils = require('../0100_utils.js');
 const ViewerDomain = require('../0200_domain.js');
 const ViewerPersistence = require('../0300_persistence.js');
 const ViewerData = require('../0400_data.js');
+globalThis.ViewerDomain = ViewerDomain;
 const ViewerMatching = require('../0500_matching.js');
 const ViewerUI = require('../0600_ui.js');
 const ViewerApp = require('../0700_app.js');
@@ -42,6 +43,54 @@ test('App constants and configuration are exported', () => {
   assert.equal(typeof ViewerApp.ANALYSIS_SCRIPT_VERSION, 'string');
   assert.ok(Array.isArray(ViewerApp.ALL_CANDIDATES_COLUMNS));
   assert.ok(ViewerApp.ALL_CANDIDATES_COLUMNS.includes('slotScore'));
+});
+
+test('Pink cycle learning respects zero shift and zero alpha settings', () => {
+  const { State } = ViewerApp;
+  const previous = {
+    scoringConfig: State.scoringConfig, pinkTargets: State.pinkTargets,
+    phaseAdjust: State.phaseAdjust, phaseDiag: State.phaseDiag
+  };
+  try {
+    State.scoringConfig = { phase: { pink: { baseCycleSec: 345, maxShiftSec: 0, alpha: 0, minSamples: 8 } } };
+    State.phaseAdjust = { yellow: 0, pink: 12 };
+    assert.equal(ViewerApp.calcPinkCycle(), 345);
+    State.scoringConfig.phase.pink.maxShiftSec = 45;
+    State.phaseAdjust.pink = 0;
+    State.pinkTargets = { test: { history: [1000, 376000] } };
+    assert.equal(ViewerApp.calcPinkCycle({ learn: true }), 345);
+    assert.equal(State.phaseAdjust.pink, 0);
+  } finally {
+    Object.assign(State, previous);
+  }
+});
+
+test('analysis diagnostics do not count unavailable Phase as a zero-error match', () => {
+  const { State } = ViewerApp;
+  const previous = {
+    scoringConfig: State.scoringConfig, matchingScoredAll: State.matchingScoredAll,
+    matchingRankedAll: State.matchingRankedAll, matchingList: State.matchingList,
+    matchingContext: State.matchingContext
+  };
+  try {
+    State.scoringConfig = ViewerMatching.resolveScoringConfig(
+      JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8'))
+    );
+    State.matchingContext = { evaluationTimeMs: Date.now() };
+    State.matchingRankedAll = [];
+    State.matchingList = [];
+    State.matchingScoredAll = [
+      { __rankKey: 'R7', __detail: { phaseError: 0, phaseScore: 0 } },
+      { __rankKey: 'R7', __detail: { phaseError: 0, phaseScore: 1 } }
+    ];
+    const diagnostics = ViewerApp.buildAnalysisDiagnostics();
+    assert.equal(diagnostics.phasePopulation.R7.phaseUnknown, 1);
+    assert.equal(diagnostics.phasePopulation.R7.phaseUnder30, 1);
+    assert.equal(diagnostics.provenance.scoringConfigVersion, State.scoringConfig.meta.version);
+    assert.equal(Object.hasOwn(diagnostics.provenance, 'scoringConfigSnapshot'), false);
+  } finally {
+    Object.assign(State, previous);
+  }
 });
 
 test('State object initialization and view state helpers', () => {
@@ -284,6 +333,10 @@ test('exportTodayViewerLogsAsJSON uses active LogDB and exports candidateEvents'
   };
 
   ViewerPersistence.setLogDB(mockDb);
+  const previousConfig = ViewerApp.State.scoringConfig;
+  ViewerApp.State.scoringConfig = ViewerMatching.resolveScoringConfig(
+    JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8'))
+  );
 
   await ViewerApp.exportTodayViewerLogsAsJSON();
 
@@ -294,6 +347,9 @@ test('exportTodayViewerLogsAsJSON uses active LogDB and exports candidateEvents'
   assert.equal(parsed.candidateEvents.length, 1);
   assert.equal(parsed.candidateEvents[0].candidates[0].name, 'TEST_P1');
   assert.equal(parsed.runtimeEvents.length, 1);
+  assert.equal(parsed.scoringConfigSnapshot.version, ViewerApp.State.scoringConfig.meta.version);
+  assert.equal(parsed.scoringConfigSnapshot.effective.phase.yellow.weight, 0.55);
+  assert.equal(parsed.scoringConfigSnapshot.effective.candidateSelection.slots.normal, 8);
 
   // Restore mocks
   globalThis.document.createElement = origCreateElement;
@@ -301,6 +357,7 @@ test('exportTodayViewerLogsAsJSON uses active LogDB and exports candidateEvents'
   globalThis.URL.revokeObjectURL = origRevokeObjectURL;
   globalThis.Blob = origBlob;
   ViewerPersistence.setLogDB(null);
+  ViewerApp.State.scoringConfig = previousConfig;
 });
 
 test('buildMatchingCandidates correctly integrates normal, crossBucket and wildcard slots', () => {
@@ -342,6 +399,37 @@ test('buildMatchingCandidates correctly integrates normal, crossBucket and wildc
   // Check if at least one wildcard or crossBucket was selected
   const hasSpecial = candidates.some(p => p.__crossBucket || p.__wildcard);
   assert.ok(hasSpecial, 'Should have selected cross-bucket or wildcard candidate');
+
+  const previousConfig = ViewerApp.State.scoringConfig;
+  const previousDistribution = ViewerApp.State.historicalMatchupDistribution;
+  try {
+    const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8'));
+    config.candidateSelection.slots = { normal: 7, crossBucket: 1, wildcard: 2 };
+    ViewerApp.applyScoringConfigJson(config);
+    ViewerApp.State.historicalMatchupDistribution = {
+      historicalSupportSize: 2,
+      byViewerTier: { R7: {
+        total: 200,
+        opponentTierMap: { R6: 0.5, R7: 0.5 },
+        probList: [{ opponentTier: "R6", prob: 0.5 }, { opponentTier: "R7", prob: 0.5 }]
+      } }
+    };
+    ViewerApp.buildMatchingCandidates({ saveEvent: false });
+    assert.equal(ViewerApp.State.matchingSlotPlan.reduce((sum, p) => sum + p.slots, 0), 7);
+    assert.equal(ViewerApp.State.matchingCrossBucketDiagnostics.wildcardSlotCount, 2);
+    assert.equal(ViewerApp.State.matchingList.length, 10);
+    assert.equal(ViewerApp.State.matchingPinkCapDiagnostics.maxPinkManagedSlots, 2);
+    assert.equal(ViewerApp.State.matchingContext.scoringConfigSnapshot.version, config.meta.version);
+    assert.equal(ViewerApp.State.matchingContext.scoringConfigSnapshot.effective.candidateSelection.slots.wildcard, 2);
+    const active = ViewerApp.State.scoringConfig;
+    assert.throws(() => ViewerApp.applyScoringConfigJson({
+      ...config, candidateSelection: { ...config.candidateSelection, maxPinkManagedSlots: -1 }
+    }), /scoring_config.json/);
+    assert.equal(ViewerApp.State.scoringConfig, active);
+  } finally {
+    ViewerApp.State.scoringConfig = previousConfig;
+    ViewerApp.State.historicalMatchupDistribution = previousDistribution;
+  }
 
   globalThis.document.querySelectorAll = origQSA;
 });
@@ -446,6 +534,3 @@ test('applyMatchingFilter handles cross-search between MATCHING candidates and R
   globalThis.document.getElementById = origGetElementById;
   ViewerApp.State.searchText = '';
 });
-
-
-

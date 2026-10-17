@@ -20,7 +20,7 @@
   const NORMAL_SLOT_COUNT = 8;
   const CROSS_BUCKET_SLOT_COUNT = 1;
   const WILDCARD_SLOT_COUNT = 1;
-  const DEFAULT_MAX_PINK_MANAGED_SLOTS = 3;
+  const DEFAULT_MAX_PINK_MANAGED_SLOTS = 2;
   const DEFAULT_SOFTMAX_BACKTEST_ENABLED = true;
   const DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE = 0.15;
   const DEFAULT_REALTIME_PLAYER_WEIGHT = 0.35;
@@ -31,9 +31,9 @@
   const DEFAULT_AREA_BOOST_WEIGHT = 0.05;
   const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
   const DEFAULT_RECENT_AREA_BOOST_ENABLED = true;
-  const DEFAULT_RECENT_AREA_BOOST_WEIGHT = 0.1;
-  const MAX_RECENT_AREA_BOOST_WEIGHT = 0.1;
-  const DEFAULT_RECENT_AREA_MATCH_WINDOW_SIZE = 10;
+  const DEFAULT_RECENT_AREA_BOOST_WEIGHT = 0.3;
+  const MAX_RECENT_AREA_BOOST_WEIGHT = 0.3;
+  const DEFAULT_RECENT_AREA_MATCH_WINDOW_SIZE = 5;
   const DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT = 0.05;
   const R6_PRIDE_POPULATION_THRESHOLD = 0.4;
 
@@ -56,6 +56,156 @@
 
   function getState() {
     return typeof global !== "undefined" && global.State ? global.State : null;
+  }
+
+  function getMatchingSlotCounts(config = getState()?.scoringConfig) {
+    return config?.candidateSelection?.slots ?? {
+      normal: NORMAL_SLOT_COUNT, crossBucket: CROSS_BUCKET_SLOT_COUNT, wildcard: WILDCARD_SLOT_COUNT
+    };
+  }
+
+  function resolveScoringConfig(source) {
+    const invalid = message => { throw new Error(`scoring_config.json: ${message}`); };
+    if (!source || typeof source !== "object" || Array.isArray(source)) invalid("expected an object");
+    if (source.meta?.schemaVersion !== 1) invalid("meta.schemaVersion must be 1");
+    if (typeof source.meta.version !== "string" || !source.meta.version.trim()) invalid("meta.version is required");
+    const defaults = {
+      viewerDefaults: { filterMinutes: 30, myRankKey: "R7" },
+      historical: {
+        reliabilityK: HISTORICAL_RELIABILITY_K,
+        candidateCountAlpha: HISTORICAL_CANDIDATE_COUNT_ALPHA,
+        minOwnSamplesForNoBackoff: 100
+      },
+      candidateSelection: {
+        slots: getMatchingSlotCounts(null),
+        maxPinkManagedSlots: DEFAULT_MAX_PINK_MANAGED_SLOTS,
+        slotAllocation: {
+          prideBandPriorExponent: DEFAULT_PRIDE_BAND_PRIOR_EXPONENT,
+          prideBandDiversityGapThreshold: DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD,
+          r6PridePopulationThreshold: R6_PRIDE_POPULATION_THRESHOLD,
+          relativePopulationAdjustment: { ...DEFAULT_RELATIVE_POPULATION_ADJUSTMENT }
+        },
+        areaBoost: {
+          enabled: true, weight: DEFAULT_AREA_BOOST_WEIGHT, smoothingSampleSize: DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE,
+          recentMatch: {
+            enabled: DEFAULT_RECENT_AREA_BOOST_ENABLED,
+            weight: DEFAULT_RECENT_AREA_BOOST_WEIGHT,
+            maxWeight: MAX_RECENT_AREA_BOOST_WEIGHT,
+            windowSize: DEFAULT_RECENT_AREA_MATCH_WINDOW_SIZE
+          },
+          diagnosticPhaseWeight: DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT
+        }
+      },
+      phase: {
+        weight: 0.8, yellowMaxWeight: 0.55,
+        yellow: { weight: 0.8, baseCycleSec: 345, alpha: 0.12, maxShiftSec: 30, minSamples: 8, maxSampleAgeSec: 2700 },
+        pink: { weight: 1, baseCycleSec: 345, alpha: 0.18, maxShiftSec: 45, minSamples: 8 }
+      },
+      phaseError: { scaleSec: 90, yellowThreshold: 0.7, pinkThreshold: 0.55, yellowLambda: 0.03, pinkLambda: 0.03 },
+      realtimeBoost: {
+        decaySec: 3600, playerWeight: DEFAULT_REALTIME_PLAYER_WEIGHT,
+        rankWeight: DEFAULT_REALTIME_RANK_WEIGHT, maxBonus: DEFAULT_REALTIME_MAX_BONUS,
+        pinkMismatch: { floor: DEFAULT_PINK_MISMATCH_FLOOR, decaySec: DEFAULT_PINK_MISMATCH_DECAY_SEC }
+      },
+      experimental: {
+        softmaxBacktest: { enabled: DEFAULT_SOFTMAX_BACKTEST_ENABLED, temperature: DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE }
+      }
+    };
+    const extraKeys = {
+      "": ["meta"],
+      phaseError: ["yellowScaleSec", "pinkScaleSec"],
+      "candidateSelection.slotAllocation.relativePopulationAdjustment": ["baselineMetadata"]
+    };
+    const merge = (base, input, prefix = "") => {
+      if (!input || typeof input !== "object" || Array.isArray(input)) invalid(`${prefix || "root"} must be an object`);
+      if (prefix !== "candidateSelection.slotAllocation.relativePopulationAdjustment.baselineByViewerTier") {
+        for (const key of Object.keys(input)) {
+          if (!Object.hasOwn(base, key) && !extraKeys[prefix]?.includes(key)) {
+            invalid(`unknown setting: ${prefix ? `${prefix}.` : ""}${key}`);
+          }
+        }
+      }
+      const result = { ...input };
+      for (const [key, fallback] of Object.entries(base)) {
+        const name = prefix ? `${prefix}.${key}` : key;
+        const value = input[key] === undefined ? fallback : input[key];
+        if (Array.isArray(fallback)) {
+          if (!Array.isArray(value)) invalid(`${name} must be an array`);
+          result[key] = [...value];
+        } else if (fallback && typeof fallback === "object") {
+          result[key] = merge(fallback, value, name);
+        } else {
+          if (typeof value !== typeof fallback ||
+              (typeof value === "number" && (!Number.isFinite(value) || value < 0))) {
+            invalid(`${name} has an invalid type or value`);
+          }
+          result[key] = value;
+        }
+      }
+      return result;
+    };
+    const config = merge(defaults, source);
+    for (const key of ["yellowScaleSec", "pinkScaleSec"]) {
+      const value = source.phaseError?.[key];
+      if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value <= 0)) {
+        invalid(`phaseError.${key} must be a positive finite number`);
+      }
+    }
+    const number = (name, min, max, integer = false) => {
+      const value = name.split(".").reduce((o, key) => o[key], config);
+      if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+        invalid(`${name} must be ${integer ? "an integer" : "a number"} in [${min}, ${max}]`);
+      }
+    };
+    for (const name of [
+      "historical.candidateCountAlpha", "candidateSelection.slotAllocation.prideBandPriorExponent",
+      "candidateSelection.slotAllocation.prideBandDiversityGapThreshold", "candidateSelection.slotAllocation.r6PridePopulationThreshold",
+      "candidateSelection.areaBoost.weight", "candidateSelection.areaBoost.recentMatch.weight",
+      "candidateSelection.areaBoost.recentMatch.maxWeight",
+      "candidateSelection.areaBoost.diagnosticPhaseWeight", "phase.weight", "phase.yellowMaxWeight",
+      "phase.yellow.weight", "phase.pink.weight", "phase.yellow.alpha", "phase.pink.alpha",
+      "phaseError.yellowThreshold", "phaseError.pinkThreshold", "realtimeBoost.playerWeight",
+      "realtimeBoost.rankWeight", "realtimeBoost.pinkMismatch.floor"
+    ]) number(name, 0, 1);
+    for (const name of ["historical.reliabilityK", "phase.yellow.baseCycleSec", "phase.pink.baseCycleSec",
+      "phaseError.scaleSec", "phase.yellow.maxSampleAgeSec", "realtimeBoost.decaySec",
+      "experimental.softmaxBacktest.temperature"]) number(name, Number.EPSILON, Number.MAX_VALUE);
+    number("realtimeBoost.pinkMismatch.decaySec", 1, Number.MAX_VALUE);
+    for (const name of ["historical.minOwnSamplesForNoBackoff", "phase.yellow.minSamples", "phase.pink.minSamples"]) {
+      number(name, 0, Number.MAX_SAFE_INTEGER, true);
+    }
+    number("viewerDefaults.filterMinutes", 1, Number.MAX_SAFE_INTEGER, true);
+    if (![15, 30, 60, 120, 180].includes(config.viewerDefaults.filterMinutes)) {
+      invalid("viewerDefaults.filterMinutes must match a filter option: 15, 30, 60, 120, 180");
+    }
+    for (const mode of ["yellow", "pink"]) {
+      if (config.phase[mode].maxShiftSec >= config.phase[mode].baseCycleSec) {
+        invalid(`phase.${mode}.maxShiftSec must be less than baseCycleSec`);
+      }
+    }
+    number("candidateSelection.areaBoost.recentMatch.windowSize", 1, LOG_STORAGE_LIMITS.copyEvents, true);
+    number("candidateSelection.maxPinkManagedSlots", 0, 10, true);
+    for (const key of ["normal", "crossBucket", "wildcard"]) number(`candidateSelection.slots.${key}`, 0, 10, true);
+    if (Object.values(config.candidateSelection.slots).reduce((sum, n) => sum + n, 0) !== 10) {
+      invalid("candidateSelection.slots must total 10");
+    }
+    if (!POPULATION_RANK_KEYS.includes(config.viewerDefaults.myRankKey)) invalid("viewerDefaults.myRankKey is invalid");
+    if (source.phase?.yellow?.weight === undefined) config.phase.yellow.weight = config.phase.weight;
+    if (source.phase?.pink?.weight === undefined) config.phase.pink.weight = config.phase.weight;
+    const recent = config.candidateSelection.areaBoost.recentMatch;
+    if (recent.weight > recent.maxWeight) invalid("recentMatch.weight exceeds maxWeight");
+    getRelativePopulationAdjustmentConfig(config.candidateSelection.slotAllocation.relativePopulationAdjustment);
+    return config;
+  }
+
+  function getScoringConfigSnapshot(config = getState()?.scoringConfig) {
+    if (!config) throw new Error("Scoring configuration is not loaded");
+    const effective = JSON.parse(JSON.stringify(config));
+    effective.phase.yellow.weight = Math.min(effective.phase.yellow.weight, effective.phase.yellowMaxWeight);
+    const recent = effective.candidateSelection.areaBoost.recentMatch;
+    if (!recent.enabled) recent.weight = 0;
+    if (!effective.candidateSelection.areaBoost.enabled) effective.candidateSelection.areaBoost.weight = 0;
+    return { schemaVersion: config.meta.schemaVersion, version: config.meta.version, effective };
   }
 
   function getMatchingSlotBucketKey(rankKey) {
@@ -330,7 +480,8 @@
     const ownReliability = ctx.ownDistributionIsReliable
       ? 1
       : ctx.ownDistribution.total > 0
-      ? ctx.ownDistribution.total / (ctx.ownDistribution.total + HISTORICAL_RELIABILITY_K)
+      ? ctx.ownDistribution.total / (ctx.ownDistribution.total +
+          ((scoringConfig ?? getState()?.scoringConfig)?.historical?.reliabilityK ?? HISTORICAL_RELIABILITY_K))
       : 0;
 
     const score = ctx.adjacentDistribution
@@ -547,7 +698,7 @@
     const enabled = config.enabled ?? DEFAULT_RECENT_AREA_BOOST_ENABLED;
     const configuredWeight = Number(config.weight ?? DEFAULT_RECENT_AREA_BOOST_WEIGHT);
     const weight = enabled && Number.isFinite(configuredWeight)
-      ? Math.min(MAX_RECENT_AREA_BOOST_WEIGHT, clamp(configuredWeight, 0, 1))
+      ? Math.min(Number(config.maxWeight ?? MAX_RECENT_AREA_BOOST_WEIGHT), clamp(configuredWeight, 0, 1))
       : enabled
         ? DEFAULT_RECENT_AREA_BOOST_WEIGHT
         : 0;
@@ -943,10 +1094,12 @@
     const storageKey = options.storageKey ?? R6_PRIDE_FREQUENCY_STORAGE_KEY;
     const logFn = options.log ?? (typeof global !== "undefined" && typeof global.log === "function" ? global.log : () => {});
 
+    const populationThreshold = (options.scoringConfig ?? state?.scoringConfig)
+      ?.candidateSelection?.slotAllocation?.r6PridePopulationThreshold ?? R6_PRIDE_POPULATION_THRESHOLD;
     const diagnostics = {
       historicalRate,
       populationShare,
-      populationThreshold: R6_PRIDE_POPULATION_THRESHOLD,
+      populationThreshold,
       countingBasis: "saved-matching-new-data-generation",
       maxCredit: 1,
       countedGeneration: false,
@@ -1009,7 +1162,7 @@
     }
 
     const sameGeneration = generationMs === ledger.lastGenerationMs;
-    const highPopulation = populationShare >= R6_PRIDE_POPULATION_THRESHOLD;
+    const highPopulation = populationShare >= populationThreshold;
     const allowPride = sameGeneration && highPopulation &&
       (ledger.granted || (advanceBudget && ledger.credit >= 1 - 1e-12));
 
@@ -1482,60 +1635,6 @@
       .slice(0, Math.max(0, Math.floor(Number(slotCount) || 0)));
   }
 
-  function applyRubySlotFloorGuarantee(slotPlan, candidates, options = {}) {
-    if (!Array.isArray(slotPlan) || slotPlan.length === 0) {
-      return slotPlan;
-    }
-    const plan = slotPlan.map(entry => ({ ...entry }));
-    const rubyBuckets = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"];
-
-    const eligibleFloorBuckets = [];
-    for (const b of rubyBuckets) {
-      const entry = plan.find(e => e.bucket === b);
-      if (!entry || entry.capacity <= 0 || entry.slots > 0) continue;
-
-      const bucketPool = (candidates ?? []).filter(
-        p => getMatchingSlotBucketKey(p.__rankKey) === b
-      );
-      if (bucketPool.length === 0) continue;
-
-      const topPlayer = [...bucketPool].sort(
-        (a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a)
-      )[0];
-
-      const topScore = getCandidateSelectionScore(topPlayer);
-      if (topScore > 0) {
-        eligibleFloorBuckets.push({
-          bucket: b,
-          entry,
-          topPlayer,
-          topScore
-        });
-      }
-    }
-
-    if (eligibleFloorBuckets.length === 0) {
-      return plan;
-    }
-
-    eligibleFloorBuckets.sort((a, b) => b.topScore - a.topScore);
-
-    for (const floorItem of eligibleFloorBuckets) {
-      const donor = plan
-        .filter(e => e.slots >= 2)
-        .sort((a, b) => (b.slots - b.rawQuota) - (a.slots - a.rawQuota) || b.slots - a.slots)[0];
-
-      if (!donor) break;
-
-      donor.slots -= 1;
-      floorItem.entry.slots = 1;
-      floorItem.entry.floorGuaranteed = true;
-      break;
-    }
-
-    return plan;
-  }
-
   function applyPinkManagedSlotCap(selected, rankedByScore, maxPinkManagedSlots) {
     if (!Number.isFinite(maxPinkManagedSlots) || maxPinkManagedSlots < 0) {
       return {
@@ -1579,7 +1678,7 @@
       return !keptKeys.has(key) && !Boolean(p.__detail?.isPinkManaged);
     });
 
-    const crossBucketBackfillCount = droppedPink.filter(p => p.__crossBucket).length;
+    const crossBucketBackfillCount = droppedPink.filter(p => p.__crossBucket && !p.__wildcard).length;
     const crossBucketBackfill = [...eligibleBackfill]
       .sort((a, b) => getCandidateCrossBucketScore(b) - getCandidateCrossBucketScore(a))
       .slice(0, crossBucketBackfillCount);
@@ -1590,12 +1689,22 @@
     });
 
     const crossBucketBackfillSet = new Set(crossBucketBackfill);
-    const normalBackfill = eligibleBackfill
+    const wildcardBackfill = eligibleBackfill
       .filter(p => !crossBucketBackfillSet.has(p))
+      .sort((a, b) => getCandidateSelectionScore(b) - getCandidateSelectionScore(a))
+      .slice(0, droppedPink.filter(p => p.__wildcard).length);
+    wildcardBackfill.forEach(p => {
+      p.__wildcard = true;
+      p.__crossBucket = true;
+      p.__crossBucketSelectionReason = "pink-cap-wildcard-backfill";
+    });
+    const wildcardBackfillSet = new Set(wildcardBackfill);
+    const normalBackfill = eligibleBackfill
+      .filter(p => !crossBucketBackfillSet.has(p) && !wildcardBackfillSet.has(p))
       .sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a))
-      .slice(0, droppedCount - crossBucketBackfill.length);
+      .slice(0, droppedCount - crossBucketBackfill.length - wildcardBackfill.length);
 
-    const backfill = [...crossBucketBackfill, ...normalBackfill];
+    const backfill = [...crossBucketBackfill, ...wildcardBackfill, ...normalBackfill];
 
     backfill.forEach(p => {
       p.__pinkCapBackfill = true;
@@ -1669,6 +1778,9 @@
   }
 
   const ViewerMatching = {
+    resolveScoringConfig,
+    getScoringConfigSnapshot,
+    getMatchingSlotCounts,
     HISTORICAL_RELIABILITY_K,
     HISTORICAL_CANDIDATE_COUNT_ALPHA,
     DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD,
@@ -1724,7 +1836,6 @@
     assignCandidateCrossBucketRanks,
     selectCrossBucketCandidates,
     selectWildcardCandidates,
-    applyRubySlotFloorGuarantee,
     applyPinkManagedSlotCap,
     computeSoftmaxBacktestPreview
   };

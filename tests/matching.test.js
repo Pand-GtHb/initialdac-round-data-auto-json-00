@@ -43,7 +43,10 @@ test("Matching constants export and values", () => {
   assert.equal(matching.WILDCARD_SLOT_COUNT, 1);
   assert.equal(matching.HISTORICAL_RELIABILITY_K, 100);
   assert.equal(matching.HISTORICAL_CANDIDATE_COUNT_ALPHA, 0.35);
-  assert.equal(matching.DEFAULT_MAX_PINK_MANAGED_SLOTS, 3);
+  assert.equal(matching.DEFAULT_MAX_PINK_MANAGED_SLOTS, 2);
+  assert.equal(matching.DEFAULT_RECENT_AREA_BOOST_WEIGHT, 0.3);
+  assert.equal(matching.MAX_RECENT_AREA_BOOST_WEIGHT, 0.3);
+  assert.equal(matching.DEFAULT_RECENT_AREA_MATCH_WINDOW_SIZE, 5);
   assert.equal(matching.DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD, 0.08);
   assert.equal(matching.R6_PRIDE_POPULATION_THRESHOLD, 0.4);
   assert.equal(matching.POPULATION_RANK_KEYS.length, 15);
@@ -347,29 +350,134 @@ test("selectWildcardCandidates picks highest overall score candidate excluding a
   assert.equal(wildcard[0].name, "P1");
 });
 
-test("applyRubySlotFloorGuarantee guarantees at least 1 slot for active Ruby bucket with 0 slots", () => {
+test("normal selection preserves zero Ruby slots and the donor bucket's second candidate", () => {
   const context = createMatchingContext();
-  const { applyRubySlotFloorGuarantee } = context.ViewerMatching;
-
+  const { selectNormalCandidatesBySlots } = context.ViewerMatching;
   const slotPlan = [
-    { bucket: "PRIDE", slots: 3, capacity: 5, rawQuota: 2.8 },
-    { bucket: "R7", slots: 3, capacity: 6, rawQuota: 2.9 },
-    { bucket: "R6", slots: 2, capacity: 4, rawQuota: 1.8 },
-    { bucket: "R3", slots: 0, capacity: 2, rawQuota: 0.3 }
+    { bucket: "R7", slots: 2, capacity: 2, rawQuota: 1.8 },
+    { bucket: "R2", slots: 0, capacity: 1, rawQuota: 0.2 }
   ];
-
   const candidates = [
-    { name: "P_R3", __rankKey: "R3", __score: 0.04, __slotScore: 0.95 }
+    { name: "R7_first", __rankKey: "R7", __slotScore: 1.1 },
+    { name: "R7_second", __rankKey: "R7", __slotScore: 1.0 },
+    { name: "R2_first", __rankKey: "R2", __slotScore: 1.2 }
   ];
+  const selected = selectNormalCandidatesBySlots(candidates, 2, {}, slotPlan);
+  assert.deepEqual(Array.from(selected, p => p.name), ["R7_first", "R7_second"]);
+  assert.equal(slotPlan[1].slots, 0);
+});
 
-  const guaranteedPlan = applyRubySlotFloorGuarantee(slotPlan, candidates);
-  const r3Entry = guaranteedPlan.find(e => e.bucket === "R3");
-  assert.equal(r3Entry.slots, 1);
-  assert.equal(r3Entry.floorGuaranteed, true);
+test("recent AREA defaults and deployed config use five matches, 30 percent and two Pink slots", () => {
+  const { getRecentAreaBoostConfig, applyCandidateAreaHistoryBoost } = createMatchingContext().ViewerMatching;
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scoring_config.json"), "utf8"));
+  const defaults = getRecentAreaBoostConfig();
+  const configured = getRecentAreaBoostConfig(config);
+  assert.equal(defaults.windowSize, 5);
+  assert.equal(configured.windowSize, 5);
+  assert.equal(configured.weight, 0.3);
+  assert.equal(configured.maxMultiplier, 1.3);
+  assert.equal(config.candidateSelection.maxPinkManagedSlots, 2);
+  const history = [{ area: "old" }, ...Array.from({ length: 5 }, () => ({ area: "recent" }))];
+  const candidates = ["old", "recent"].map(area => ({
+    area, __rankKey: "R6", __slotScore: 1, __detail: {}
+  }));
+  applyCandidateAreaHistoryBoost(candidates, { copyAreaHistory: history, scoringConfig: config });
+  assert.equal(candidates[0].__slotScore, 1);
+  assert.equal(candidates[1].__slotScore, 1.3);
+  applyCandidateAreaHistoryBoost(candidates, { copyAreaHistory: history, scoringConfig: config });
+  assert.equal(candidates[1].__slotScore, 1.3);
+  assert.equal(getRecentAreaBoostConfig({
+    candidateSelection: { areaBoost: { recentMatch: { weight: 1 } } }
+  }).weight, 0.3);
+  assert.equal(getRecentAreaBoostConfig({
+    candidateSelection: { areaBoost: { recentMatch: { enabled: false } } }
+  }).weight, 0);
+});
 
-  // Total slots should be preserved (3+3+2 = 8, donor gives 1, so total remains 8)
-  const totalSlots = guaranteedPlan.reduce((sum, e) => sum + e.slots, 0);
-  assert.equal(totalSlots, 8);
+test("scoring config resolves defaults, validates inputs and records effective values", () => {
+  const { resolveScoringConfig, getScoringConfigSnapshot, getMatchingSlotCounts, getRecentAreaBoostConfig } =
+    createMatchingContext().ViewerMatching;
+  const source = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scoring_config.json"), "utf8"));
+  const config = resolveScoringConfig(source);
+  assert.equal(config.candidateSelection.maxPinkManagedSlots, 2);
+  assert.equal(config.phase.yellow.weight, 0.8);
+  assert.equal(source.phase.yellow.maxSampleAgeSec, 2700);
+  assert.equal(config.phase.yellow.maxSampleAgeSec, source.phase.yellow.maxSampleAgeSec);
+  const snapshot = getScoringConfigSnapshot(config);
+  assert.equal(snapshot.version, source.meta.version);
+  assert.equal(snapshot.schemaVersion, 1);
+  assert.equal(snapshot.effective.phase.yellow.weight, 0.55);
+  assert.equal(config.phase.yellow.weight, 0.8);
+  assert.equal(snapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0.3);
+  assert.equal(getMatchingSlotCounts(config).normal, 8);
+  const defaults = resolveScoringConfig({ meta: { schemaVersion: 1, version: "minimal" } });
+  assert.equal(defaults.historical.reliabilityK, 100);
+  assert.equal(defaults.phase.pink.weight, defaults.phase.weight);
+  assert.equal(defaults.candidateSelection.areaBoost.recentMatch.windowSize, 5);
+  const disabled = resolveScoringConfig({
+    ...source,
+    candidateSelection: {
+      ...source.candidateSelection,
+      areaBoost: { recentMatch: { enabled: false, weight: 0.4, maxWeight: 0.5 } }
+    }
+  });
+
+  assert.equal(getScoringConfigSnapshot(disabled).effective.candidateSelection.areaBoost.recentMatch.weight, 0);
+  assert.equal(getRecentAreaBoostConfig(disabled).weight, 0);
+  disabled.candidateSelection.areaBoost.recentMatch.enabled = true;
+  assert.equal(getRecentAreaBoostConfig(disabled).weight, 0.4);
+  for (const [keys, value] of [
+    [["meta", "schemaVersion"], 2],
+    [["meta", "version"], ""],
+    [["candidateSelection", "maxPinkManagedSlots"], 11],
+    [["candidateSelection", "slots", "normal"], 7],
+    [["candidateSelection", "slots", "wildcard"], 1.5],
+    [["candidateSelection", "areaBoost", "recentMatch", "weight"], "0.3"],
+    [["candidateSelection", "areaBoost", "recentMatch", "weight"], 0.4],
+    [["candidateSelection", "areaBoost", "recentMatch", "windowSize"], 0],
+    [["candidateSelection", "areaBoost", "recentMatch", "enabled"], null],
+    [["phase", "yellowMaxWeight"], 2],
+    [["phase", "maxSampleAgeSec"], 2700],
+    [["phase", "pink", "maxShiftSec"], 345],
+    [["viewerDefaults", "filterMinutes"], 45],
+    [["candidateSelection", "slots", "wildCard"], 0],
+    [["candidateSelection", "areaBoost", "diagnosticRecentWeight"], 0.1],
+    [["phaseError", "scaleSec"], 0],
+    [["phaseError", "yellowScaleSec"], "90"],
+    [["realtimeBoost", "decaySec"], Infinity],
+    [["realtimeBoost", "maxBonus"], -1],
+    [["historical", "reliabilityK"], NaN]
+  ]) {
+    const bad = JSON.parse(JSON.stringify(source));
+    const parent = keys.slice(0, -1).reduce((o, k) => o[k], bad);
+    parent[keys.at(-1)] = value;
+    assert.throws(() => resolveScoringConfig(bad), /scoring_config.json/);
+  }
+});
+
+test("Pink cap backfills wildcard by global score and cross-bucket by individual probability", () => {
+  const { applyPinkManagedSlotCap } = createMatchingContext().ViewerMatching;
+  const pink = (name, wildcard) => ({
+    name, __slotScore: 10, __crossBucket: true, __wildcard: wildcard,
+    __detail: { isPinkManaged: true }
+  });
+  const globalLeader = {
+    name: "global", __score: 10, __slotScore: 1,
+    __detail: { tierProbability: 0.1, effectivePhaseScore: 1 }
+  };
+  const individualLeader = {
+    name: "individual", __score: 1, __slotScore: 10,
+    __detail: { tierProbability: 0.9, effectivePhaseScore: 1 }
+  };
+  const result = applyPinkManagedSlotCap(
+    [pink("wildcard", true), pink("cross", false)],
+    [globalLeader, individualLeader], 0
+  );
+  assert.equal(result.finalSelected.length, 2);
+  assert.equal(globalLeader.__wildcard, true);
+  assert.equal(globalLeader.__crossBucketSelectionReason, "pink-cap-wildcard-backfill");
+  assert.equal(individualLeader.__crossBucketSelectionReason, "pink-cap-backfill");
+  assert.equal(result.pinkManagedSlotsAfterCap, 0);
 });
 
 test("browser entry loads matching globals in correct order", () => {

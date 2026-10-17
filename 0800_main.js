@@ -25,35 +25,30 @@
     State = (typeof globalThis !== "undefined" ? globalThis.State : {}),
     STATE = (typeof globalThis !== "undefined" ? globalThis.STATE : {}),
     isCurrentView = (typeof globalThis !== "undefined" ? globalThis.isCurrentView : () => false),
-    setCurrentView = (typeof globalThis !== "undefined" ? globalThis.setCurrentView : () => {}),
-    applyFilters = (typeof globalThis !== "undefined" ? globalThis.applyFilters : () => {}),
-    buildSummary = (typeof globalThis !== "undefined" ? globalThis.buildSummary : () => {}),
     applyMatchingFilter = (typeof globalThis !== "undefined" ? globalThis.applyMatchingFilter : () => {}),
+    applyFilterAndRefreshSummary = (typeof globalThis !== "undefined" ? globalThis.applyFilterAndRefreshSummary : () => {}),
     recordUnmatchedSearchMemo = (typeof globalThis !== "undefined" ? globalThis.recordUnmatchedSearchMemo : () => {}),
     undoLastCopiedInfo = (typeof globalThis !== "undefined" ? globalThis.undoLastCopiedInfo : () => {}),
     exportTodayViewerLogsAsJSON = (typeof globalThis !== "undefined" ? globalThis.exportTodayViewerLogsAsJSON : () => {}),
     reloadLatestDataPreferPrefetch = (typeof globalThis !== "undefined" ? globalThis.reloadLatestDataPreferPrefetch : async () => {}),
-    startProgress = (typeof globalThis !== "undefined" ? globalThis.startProgress : () => {}),
     stopProgress = (typeof globalThis !== "undefined" ? globalThis.stopProgress : () => {}),
     exportSummaryCSV = (typeof globalThis !== "undefined" ? globalThis.exportSummaryCSV : () => {}),
     exportAllCSV = (typeof globalThis !== "undefined" ? globalThis.exportAllCSV : () => {}),
     showMatchingCandidates = (typeof globalThis !== "undefined" ? globalThis.showMatchingCandidates : () => {}),
-    ensureReloadViewerTime = (typeof globalThis !== "undefined" ? globalThis.ensureReloadViewerTime : () => {}),
-    showSummaryUI = (typeof globalThis !== "undefined" ? globalThis.showSummaryUI : () => {})
+    ensureReloadViewerTime = (typeof globalThis !== "undefined" ? globalThis.ensureReloadViewerTime : () => {})
   } = App;
 
   const {
     renderSummary = (typeof globalThis !== "undefined" ? globalThis.renderSummary : () => {}),
-    renderAreaSummary = (typeof globalThis !== "undefined" ? globalThis.renderAreaSummary : () => {}),
     renderDetailTable = (typeof globalThis !== "undefined" ? globalThis.renderDetailTable : () => {}),
     renderAreaDetailTable = (typeof globalThis !== "undefined" ? globalThis.renderAreaDetailTable : () => {}),
-    switchDisplayView = (typeof globalThis !== "undefined" ? globalThis.switchDisplayView : () => {})
+    logError = (typeof globalThis !== "undefined" ? globalThis.logError : console.error)
   } = UI;
 
 /* =========================================================
  [15100] Entry Point:DOMContentLoaded【DOM】（旧 [4100]）
 ========================================================= */
-function bootstrap() {
+async function bootstrap() {
     if (globalThis.__viewerInitialized) return;
     globalThis.__viewerInitialized = true;
 
@@ -196,29 +191,6 @@ function bootstrap() {
     /* =====================================
      * Filter
      * ===================================== */
-
-    const applyFilterAndRefreshSummary =
-      () => {
-
-        startProgress();
-
-        applyFilters();
-
-        buildSummary();
-
-        renderSummary();
-
-        setCurrentView(
-          STATE.SUMMARY
-        );
-
-        switchDisplayView(
-          STATE.SUMMARY
-        );
-
-        stopProgress();
-
-      };
 
     if (filterBtn) {
 
@@ -476,10 +448,13 @@ function bootstrap() {
      * Initialize
      * ===================================== */
 
-    if (typeof App.init === "function") {
-      App.init();
-    } else if (typeof init === "function") {
-      init();
+    if (matchingBtn) matchingBtn.disabled = true;
+    try {
+      await App.init();
+      if (matchingBtn) matchingBtn.disabled = false;
+    } catch (error) {
+      stopProgress();
+      logError(`初期化を中断しました：${error.message}。設定・通信状態を確認して再読み込みしてください。`);
     }
   }
 

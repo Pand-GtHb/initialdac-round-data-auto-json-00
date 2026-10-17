@@ -11,11 +11,7 @@
   "use strict";
 
   const {
-    normalize,
-    normalizePlayerName,
-    fmt,
-    foldToCycle,
-    clamp
+    normalizePlayerName
   } = ViewerUtils || {};
 
   const DEFAULT_PHASE_ERROR_SCALE_SEC = 90;

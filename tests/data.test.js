@@ -120,6 +120,24 @@ test("fetchJSON throws after maxRetry attempts exhausted", async () => {
   assert.deepEqual(delaysCalled, [1000]);
 });
 
+test("fetchJSON keeps the timeout active while reading the response body", { timeout: 2000 }, async () => {
+  const warnings = [];
+  await assert.rejects(dataModule.fetchJSON("slow-body.json", {
+    baseUrl: "",
+    maxRetry: 1,
+    timeouts: { default: 15 },
+    onWarn: message => warnings.push(message),
+    fetchImpl: async (_url, { signal }) => ({
+      ok: true,
+      json: () => new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("Body timed out", "AbortError")));
+      })
+    })
+  }), { name: "AbortError" });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /slow-body\.json Timeout/);
+});
+
 test("Endpoint fetchers request correct file paths", async () => {
   const pathsRequested = [];
   const mockFetch = async (url) => {

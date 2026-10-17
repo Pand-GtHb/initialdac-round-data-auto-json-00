@@ -41,8 +41,6 @@
     normalize,
     normalizePlayerName,
     fmt,
-    getZenkakuLength,
-    isMostlyAscii,
     foldToCycle,
     updateAdjust,
     clamp,
@@ -51,45 +49,30 @@
 
   const {
     RUBY_ID,
-    PRIDE_LEVELS,
     RANKS,
     DEFAULT_PHASE_ERROR_SCALE_SEC,
     getRankIndex,
     getRankInfo,
-    getPrideBandKey,
     getPlayerRankKey,
     mapRankKeyToTierKey,
     buildPlayerIdentityKey,
     computePhaseMetrics,
     buildPhaseDirectionDetail,
-    getPhaseWindowHalfWidthSec,
     calcStats,
     buildRankPopulationSnapshot,
     normalizeHistoricalMatchupDistribution
   } = ViewerDomain || {};
 
   const {
-    PERSIST_STATE_KEY,
-    R6_PRIDE_FREQUENCY_STORAGE_KEY,
-    R6_PRIDE_POPULATION_THRESHOLD,
-    REALTIME_ACTIVITY_STORAGE_KEY,
     LOG_STORAGE_KEYS,
     LOG_STORAGE_LIMITS,
-    LOG_DB_NAME,
-    LOG_DB_VERSION,
     LOG_STORE,
     buildDailyKey,
     readStoredArraySafe,
-    writeStoredArraySafe,
     pushStoredRecord,
     isPinkTargetStale,
-    loadR6PrideLedger,
-    saveR6PrideLedger,
-    updateR6PrideFrequencyOnGeneration,
-    consumeR6PrideHistoricalQuota,
     initLogDB,
     getLogDB,
-    setLogDB,
     putLog,
     logEvent,
     pruneLogStore,
@@ -97,13 +80,7 @@
   } = ViewerPersistence || {};
 
   function getActiveLogDB() {
-    return (
-      (typeof getLogDB === "function" ? getLogDB() : null) ||
-      (typeof ViewerPersistence !== "undefined" && typeof ViewerPersistence.getLogDB === "function"
-        ? ViewerPersistence.getLogDB()
-        : null) ||
-      null
-    );
+    return getLogDB();
   }
 
   const {
@@ -119,105 +96,52 @@
   } = ViewerData || {};
 
   const {
-    HISTORICAL_RELIABILITY_K,
-    HISTORICAL_CANDIDATE_COUNT_ALPHA,
+    resolveScoringConfig,
+    getScoringConfigSnapshot,
+    getMatchingSlotCounts,
     DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD,
-    DEFAULT_PRIDE_BAND_PRIOR_EXPONENT,
-    NORMAL_SLOT_COUNT,
-    CROSS_BUCKET_SLOT_COUNT,
-    WILDCARD_SLOT_COUNT,
     DEFAULT_MAX_PINK_MANAGED_SLOTS,
-    DEFAULT_SOFTMAX_BACKTEST_ENABLED,
     DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE,
     DEFAULT_REALTIME_PLAYER_WEIGHT,
     DEFAULT_REALTIME_RANK_WEIGHT,
     DEFAULT_REALTIME_MAX_BONUS,
     DEFAULT_PINK_MISMATCH_FLOOR,
     DEFAULT_PINK_MISMATCH_DECAY_SEC,
-    DEFAULT_AREA_BOOST_WEIGHT,
-    DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE,
-    DEFAULT_RECENT_AREA_BOOST_ENABLED,
-    DEFAULT_RECENT_AREA_BOOST_WEIGHT,
-    MAX_RECENT_AREA_BOOST_WEIGHT,
-    DEFAULT_RECENT_AREA_MATCH_WINDOW_SIZE,
-    DEFAULT_AREA_PHASE_DIAGNOSTIC_WEIGHT,
-    DEFAULT_RELATIVE_POPULATION_ADJUSTMENT,
-    POPULATION_RANK_KEYS,
-    getMatchingSlotBucketKey,
-    getHistoricalMinOwnSamplesForNoBackoff,
-    getHistoricalTierCandidateCount,
-    getHistoricalDistribution,
-    getDistributionCellScore,
-    getAdjacentTierDistribution,
     buildViewerHistoricalContext,
     getHistoricalScoreDetail,
     buildAreaDensityContext,
-    getAreaBoostDetail,
     applyCandidateSlotScores,
-    buildCopyAreaHistoryContext,
     getRecentAreaBoostConfig,
     applyCandidateAreaHistoryBoost,
     applyCandidateAreaPhaseDiagnostics,
     getCandidateSlotScore,
-    assignCandidateSlotRanks,
     buildMatchingSlotBucketProbabilities,
     buildMatchingSlotPlan,
-    prepareR6PrideFrequency,
-    getRelativePopulationAdjustmentConfig,
     adjustSlotsByRelativePopulation,
-    selectPrideSlotCandidates,
     selectNormalCandidatesBySlots,
     getCandidateSelectionScore,
     getCandidateCrossBucketScore,
     assignCandidateCrossBucketRanks,
     selectCrossBucketCandidates,
     selectWildcardCandidates,
-    applyRubySlotFloorGuarantee,
     applyPinkManagedSlotCap,
     computeSoftmaxBacktestPreview
   } = ViewerMatching || {};
 
   const {
-    renderStars,
-    buildFilterGroupHTML,
-    getTextWidth,
-    shortenStoreName,
-    buildPhaseCycleWindowHTML,
-    buildPhaseCycleRowHTML,
-    buildPhaseCycleMonitorHTML,
-    buildPlayerRowHTML,
-    buildRankCountBadgesHTML,
-    buildMatchingRankCountsHTML,
     switchDisplayView,
     startProgress,
-    updateProgressBar,
     stopProgress,
     buildRubyFilters,
     buildPrideFilters,
-    buildSummaryModeNavHTML,
-    buildMatchingOffsetSelectHTML,
-    ensureAreaSummaryStyles,
-    bindSummaryModeButtons,
-    getAreaSummaryRows,
-    sortAreaSummaryRows,
     getAreaNavigationAreaNos,
-    buildAreaSummaryHeaderHTML,
-    bindAreaSortHeader,
-    getRankColor,
-    getRankFillStyle,
-    getRankLegendStyle,
-    getRankShortLabel,
-    renderAreaSummary,
     renderSummary,
     renderDetailTable,
     renderAreaDetailTable,
     renderPlayerRowsToBody,
-    highlightMatchingRows,
     renderMatchingHeader,
     renderMatchingTable,
     renderMatchingRows,
-    appendLog,
-    allowLog,
     log,
     logWarn,
     logError
@@ -303,7 +227,7 @@ function buildAnalysisDiagnostics() {
     group.count++;
     if (p.__detail?.isPinkManaged) group.pinkManaged++;
     const error = p.__detail?.phaseError;
-    if (typeof error !== "number" || !Number.isFinite(error)) {
+    if (!(p.__detail?.phaseScore > 0) || typeof error !== "number" || !Number.isFinite(error)) {
       group.phaseUnknown++;
     } else if (Math.abs(error) < 30) {
       group.phaseUnder30++;
@@ -374,6 +298,7 @@ function buildAnalysisDiagnostics() {
       historicalMeta: State.historicalMatchupDistribution?.meta ?? null,
       historicalChecksum: analysisChecksum(State.historicalMatchupDistribution),
       scoringConfigChecksum: analysisChecksum(State.scoringConfig),
+      scoringConfigVersion: State.matchingContext.scoringConfigSnapshot?.version ?? State.scoringConfig?.meta.version,
       historicalSampleCount: pool[0]?.__detail?.ownSampleCount ?? null,
       scoringConfig: State.scoringConfig
     }
@@ -1110,13 +1035,11 @@ function applyScoringConfigJson(
   json
 ) {
 
-  getRelativePopulationAdjustmentConfig(
-    json?.candidateSelection?.slotAllocation?.relativePopulationAdjustment ?? {}
-  );
-  State.scoringConfig = json;
+  const resolvedConfig = resolveScoringConfig(json);
+  State.scoringConfig = resolvedConfig;
 
   const viewerDefaults =
-    json?.viewerDefaults ?? {};
+    resolvedConfig.viewerDefaults;
 
   const filterMinutes =
     Number(
@@ -1424,6 +1347,7 @@ async function loadScoringConfig() {
       "scoring_config.json 未取得：" +
       e.message
     );
+    throw e;
   }
 }
 
@@ -2602,7 +2526,7 @@ function registerYellowSample(
    * フィルタ対象期間（45分＝2700秒）を超える古すぎるデータは
    * 周期学習のノイズ・過学習・矛盾の原因となるためサンプルから除外する
    */
-  const maxAllowableDiffSec = 45 * 60;
+  const maxAllowableDiffSec = State.scoringConfig?.phase?.yellow?.maxSampleAgeSec ?? 45 * 60;
   if (diffSec > maxAllowableDiffSec) {
     return null;
   }
@@ -2610,11 +2534,9 @@ function registerYellowSample(
   /*
    * Yellow基準周期
    *
-   * 現在の学習処理は
-   * 345±45秒を前提としているため
-   * 保存時も345秒基準で折り畳み
+   * 学習処理と同じ設定周期で折り畳む。
    */
-  const baseCycleSec = 345;
+  const baseCycleSec = State.scoringConfig?.phase?.yellow?.baseCycleSec ?? 345;
 
   /*
    * 周期ズレ
@@ -3100,10 +3022,10 @@ function calcPinkCycle(
       ?.phase?.pink || {};
 
   const base =
-    cfg.baseCycleSec || 345;
+    cfg.baseCycleSec ?? 345;
 
   const maxShift =
-    cfg.maxShiftSec || 45;
+    cfg.maxShiftSec ?? 45;
 
   /*
    * 読み取り専用モード（既定）
@@ -3225,7 +3147,7 @@ function calcPinkCycle(
     updateAdjust(
       prev,
       median,
-      cfg.alpha || 0.3
+      cfg.alpha ?? 0.3
     );
 
   const clampedRaw =
@@ -4655,7 +4577,7 @@ function calcMatchingScoreDetail(
         ? phaseWeight
         : Math.min(
             phaseWeight,
-            MAX_YELLOW_PHASE_WEIGHT
+            State.scoringConfig?.phase?.yellowMaxWeight ?? MAX_YELLOW_PHASE_WEIGHT
         );
 
     const effectivePhaseScore =
@@ -4817,7 +4739,8 @@ function buildMatchingCandidates(
     mode,
     clickedAtMs,
     evaluationTimeMs,
-    offsetSec
+    offsetSec,
+    scoringConfigSnapshot: State.scoringConfig ? getScoringConfigSnapshot() : null
   };
 
   const selectedStars =
@@ -5015,7 +4938,7 @@ function buildMatchingCandidates(
   );
 
   /* =====================================
-   * STEP7: 履歴分布を通常9枠へ配分し、自ランク基準の人口構成で補正
+   * STEP7: 履歴分布を通常8枠へ配分し、自ランク基準の人口構成で補正
    * STEP8: 個人推定確率によるバケット横断1枠を追加
    * ===================================== */
   const enabledRankKeys = [
@@ -5037,10 +4960,11 @@ function buildMatchingCandidates(
       tierCounts,
       enabledRankKeys
     );
+  const slotCounts = getMatchingSlotCounts();
   const originalSlotPlan =
     buildMatchingSlotPlan(
       scoreEligible,
-      NORMAL_SLOT_COUNT,
+      slotCounts.normal,
       slotBucketProbabilities
     );
   const adjustedSlotPlan =
@@ -5054,24 +4978,19 @@ function buildMatchingCandidates(
   State.matchingSlotAllocationDiagnostics =
     adjustedSlotPlan.diagnostics;
 
-  const floorGuaranteedSlotPlan =
-    typeof applyRubySlotFloorGuarantee === "function"
-      ? applyRubySlotFloorGuarantee(adjustedSlotPlan.plan, scoreEligible)
-      : adjustedSlotPlan.plan;
-
   const normalSelected =
     selectNormalCandidatesBySlots(
       scoreEligible,
-      NORMAL_SLOT_COUNT,
+      slotCounts.normal,
       slotBucketProbabilities,
-      floorGuaranteedSlotPlan
+      adjustedSlotPlan.plan
     );
 
   const crossBucketSelected =
     selectCrossBucketCandidates(
       scoreEligible,
       normalSelected,
-      CROSS_BUCKET_SLOT_COUNT
+      slotCounts.crossBucket
     );
 
   crossBucketSelected.forEach(
@@ -5087,7 +5006,7 @@ function buildMatchingCandidates(
       ? selectWildcardCandidates(
           scoreEligible,
           [...normalSelected, ...crossBucketSelected],
-          WILDCARD_SLOT_COUNT || 1
+          slotCounts.wildcard
         )
       : [];
 
@@ -5143,9 +5062,9 @@ function buildMatchingCandidates(
 
   State.matchingCrossBucketDiagnostics = {
     crossBucketSlotCount:
-      CROSS_BUCKET_SLOT_COUNT,
+      slotCounts.crossBucket,
     wildcardSlotCount:
-      WILDCARD_SLOT_COUNT,
+      slotCounts.wildcard,
     selectedBeforePinkCap:
       [...crossBucketSelected, ...wildcardSelected].map(
         p => ({
@@ -5224,6 +5143,7 @@ function buildMatchingCandidates(
   log(
     `候補生成: Base=${base.length} / Selected=${finalSelected.length}` +
     `（通常${normalSelected.length}＋バケット横断${crossBucketSelected.length}` +
+    `＋ワイルドカード${wildcardSelected.length}` +
     `／Pink上限${maxPinkManagedSlots}枠：${pinkCapResult.pinkManagedSlotsBeforeCap}→${pinkCapResult.pinkManagedSlotsAfterCap}）` +
     ` Slot=${State.matchingSlotPlan
       .filter(entry => entry.slots > 0)
@@ -6091,6 +6011,9 @@ async function exportTodayViewerLogsAsJSON() {
       start: startTs,
       end: endTs
     },
+
+    scoringConfigSnapshot:
+      State.scoringConfig ? getScoringConfigSnapshot() : null,
 
     copyEvents,
 
@@ -7506,7 +7429,7 @@ function saveCandidateEvent(
   const yellowSamples =
     State.yellowSamples ?? [];
 
-  const baseCycleSec = 345;
+  const baseCycleSec = yellowCfg.baseCycleSec ?? 345;
 
   const yellowValues =
     yellowSamples
@@ -7740,6 +7663,9 @@ function saveCandidateEvent(
         )
     },
 
+    scoringConfigSnapshot:
+      State.matchingContext.scoringConfigSnapshot ?? getScoringConfigSnapshot(),
+
     recentAreaBoostConfig:
       getRecentAreaBoostConfig(),
 
@@ -7835,7 +7761,9 @@ function saveCandidateEvent(
     crossBucketSelection:
       State.matchingCrossBucketDiagnostics ?? {
         crossBucketSlotCount:
-          CROSS_BUCKET_SLOT_COUNT,
+          getMatchingSlotCounts().crossBucket,
+        wildcardSlotCount:
+          getMatchingSlotCounts().wildcard,
         selectedBeforePinkCap: [],
         selectedAfterPinkCap: []
       },

@@ -103,13 +103,12 @@
           signal: controller.signal
         });
 
-        clearTimeout(timeoutTimer);
-
         if (!res.ok) {
           throw new Error("HTTP " + res.status);
         }
 
         const json = await res.json();
+        clearTimeout(timeoutTimer);
         const elapsed = Math.round(perfNow() - startedAt);
 
         if (path !== "latest_update.json" || elapsed >= 1000) {
