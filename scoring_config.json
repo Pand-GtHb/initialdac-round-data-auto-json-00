@@ -10,7 +10,8 @@
       "phase": "yellowMaxWeightはYellowの適用重み上限。yellow.weight・pink.weight省略時はphase.weightを使用。yellow.maxSampleAgeSecはYellow学習サンプルの最大経過秒数。モニターも予測と同じ許容幅・平方根信頼度・設定基準周期を表示。",
       "filterMinutes": "画面の選択肢と同じ15・30・60・120・180分を指定する。",
       "cleanup": "未使用のdiagnosticRecentWeightは削除。直近AREAの選出重みはrecentMatch.weight、Phase診断専用重みはdiagnosticPhaseWeightで管理。",
-      "pinkBackfill": "Pink上限で差し替える際も、クロスバケットは個体確率、ワイルドカードは全体スコア、通常枠は枠内スコアで補充する。"
+      "pinkBackfill": "Pink上限で差し替える際も、クロスバケットは個体確率、ワイルドカードは全体スコア、通常枠は枠内スコアで補充する。",
+      "pinkStartup": "Pinkは起動時の過去Phase誤差による再シードを行わない。学習方式version=1・基準周期・補正上限が一致する保存補正と学習根拠を復元する。旧方式・不正・非互換の保存値は通知して一度だけ基準周期（既定345秒）へ移行し、対戦履歴・Yellowは保持する。通常の再対戦学習と採点式は変更しない。モニターは保存周期の学習根拠と当日間隔の信頼度を区別し、candidateEventsと日次exportにpinkCycleStateを保存する。"
     },
     "createdAt": "2026-09-26T09:15:11+09:00",
     "modifiedAt": "2026-10-17T19:25:00+09:00",

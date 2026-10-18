@@ -145,6 +145,7 @@
       pinkTargets: targetState?.pinkTargets || {},
       encounterHistory: targetState?.encounterHistory || {},
       phaseAdjust: targetState?.phaseAdjust || { yellow: 0, pink: 0 },
+      pinkCycleState: targetState?.pinkCycleState ?? null,
       yellowSamples: targetState?.yellowSamples || [],
       savedAt: Date.now()
     };
@@ -202,6 +203,7 @@
         if (Array.isArray(parsed?.yellowSamples)) {
           targetState.yellowSamples = parsed.yellowSamples;
         }
+        targetState.pinkCycleState = parsed?.pinkCycleState ?? null;
       }
       return true;
     } catch (e) {

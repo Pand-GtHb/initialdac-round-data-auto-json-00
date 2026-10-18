@@ -132,6 +132,11 @@ test("savePinkStateToStorage & restorePinkStateFromStorage preserve state across
       yellow: 1.5,
       pink: -0.5
     },
+    pinkCycleState: {
+      version: 1, baseCycleSec: 345, maxShiftSec: 45, adjustSec: -0.5,
+      source: "encounter-learning", sampleCount: 3, trust: Math.sqrt(3 / 8),
+      lastLearnedAt: 123456000
+    },
     yellowSamples: [100, 102, 98]
   };
 
@@ -155,6 +160,8 @@ test("savePinkStateToStorage & restorePinkStateFromStorage preserve state across
   assert.equal(restoredState1.encounterHistory["P1@@Shop"].count, 3);
   assert.equal(restoredState1.phaseAdjust.yellow, 1.5);
   assert.deepEqual(restoredState1.yellowSamples, [100, 102, 98]);
+  assert.deepEqual(restoredState1.pinkCycleState, originalState.pinkCycleState);
+  assert.equal(restoredState1.phaseAdjust.pink, -0.5);
 
   // Restore on next day (20261014) -> pink targets should automatically expire
   const restoredStateNextDay = {};
@@ -164,6 +171,8 @@ test("savePinkStateToStorage & restorePinkStateFromStorage preserve state across
   assert.equal(restoredStateNextDay.encounterHistory["P1@@Shop"].count, 3);
   assert.equal(restoredStateNextDay.phaseAdjust.yellow, 1.5);
   assert.deepEqual(restoredStateNextDay.yellowSamples, [100, 102, 98]);
+  assert.deepEqual(restoredStateNextDay.pinkCycleState, originalState.pinkCycleState);
+  assert.equal(restoredStateNextDay.phaseAdjust.pink, -0.5);
 });
 
 test("Realtime activity save and restore", () => {
@@ -251,4 +260,3 @@ test("browser entry loads persistence globals in correct order", () => {
     /<script src="0100_utils\.js\?cb=\d+"><\/script>\s*<script src="0200_domain\.js\?cb=\d+"><\/script>\s*<script src="0300_persistence\.js\?cb=\d+"><\/script>\s*<script src="0400_data\.js\?cb=\d+"><\/script>\s*<script src="0500_matching\.js\?cb=\d+"><\/script>\s*<script src="0600_ui\.js\?cb=\d+"><\/script>\s*<script src="0700_app\.js\?cb=\d+"><\/script>\s*<script src="0800_main\.js\?cb=\d+"><\/script>/
   );
 });
-

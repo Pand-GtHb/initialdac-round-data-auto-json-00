@@ -49,7 +49,8 @@ test('Pink cycle learning respects zero shift and zero alpha settings', () => {
   const { State } = ViewerApp;
   const previous = {
     scoringConfig: State.scoringConfig, pinkTargets: State.pinkTargets,
-    phaseAdjust: State.phaseAdjust, phaseDiag: State.phaseDiag
+    phaseAdjust: State.phaseAdjust, phaseDiag: State.phaseDiag,
+    pinkCycleState: State.pinkCycleState
   };
   try {
     State.scoringConfig = { phase: { pink: { baseCycleSec: 345, maxShiftSec: 0, alpha: 0, minSamples: 8 } } };
@@ -61,6 +62,108 @@ test('Pink cycle learning respects zero shift and zero alpha settings', () => {
     assert.equal(ViewerApp.calcPinkCycle({ learn: true }), 345);
     assert.equal(State.phaseAdjust.pink, 0);
   } finally {
+    Object.assign(State, previous);
+  }
+});
+
+test('Pink startup migrates legacy adjustment once and preserves learned cycle across restarts', () => {
+  const { State } = ViewerApp;
+  const previous = {
+    scoringConfig: State.scoringConfig, phaseAdjust: State.phaseAdjust,
+    pinkCycleState: State.pinkCycleState, phaseDiag: State.phaseDiag,
+    pinkTargets: State.pinkTargets, yellowSamples: State.yellowSamples
+  };
+  const originalStorage = globalThis.localStorage;
+  const values = new Map();
+  globalThis.localStorage = {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value)
+  };
+  try {
+    State.scoringConfig = ViewerMatching.resolveScoringConfig(
+      JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+    State.phaseAdjust = { yellow: 4.16, pink: 23.430700054742243 };
+    State.pinkCycleState = null;
+    State.pinkTargets = {};
+    State.yellowSamples = [1, 2, 3];
+    ViewerApp.initializePinkCycleState();
+    assert.equal(ViewerApp.calcPinkCycle(), 345);
+    assert.equal(State.phaseAdjust.yellow, 4.16);
+    assert.deepEqual(State.yellowSamples, [1, 2, 3]);
+    assert.equal(State.pinkCycleState.source, 'initial');
+    const initial = JSON.stringify(State.pinkCycleState);
+    ViewerApp.restorePinkStateFromStorage();
+    ViewerApp.initializePinkCycleState();
+    assert.equal(JSON.stringify(State.pinkCycleState), initial);
+
+    State.pinkTargets = { test: { history: [1000, 376000] } };
+    const learnedCycle = ViewerApp.calcPinkCycle({ learn: true });
+    assert.notEqual(learnedCycle, 345);
+    assert.equal(State.pinkCycleState.sampleCount, 1);
+    assert.equal(State.pinkCycleState.trust, Math.sqrt(1 / 8));
+    assert.equal(State.pinkCycleState.source, 'encounter-learning');
+    ViewerApp.savePinkStateToStorage();
+    const metadata = JSON.stringify(State.pinkCycleState);
+    State.phaseAdjust.pink = 0;
+    State.pinkCycleState = null;
+    ViewerApp.restorePinkStateFromStorage();
+    ViewerApp.initializePinkCycleState();
+    assert.equal(ViewerApp.calcPinkCycle(), learnedCycle);
+    assert.equal(JSON.stringify(State.pinkCycleState), metadata);
+    ViewerApp.applyScoringConfigJson(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+    assert.equal(ViewerApp.calcPinkCycle(), learnedCycle);
+    for (const invalid of [
+      { ...State.pinkCycleState, baseCycleSec: 350 },
+      { ...State.pinkCycleState, adjustSec: NaN },
+      { ...State.pinkCycleState, trust: 2 },
+      { ...State.pinkCycleState, version: 0 }
+    ]) {
+      State.pinkCycleState = invalid;
+      ViewerApp.initializePinkCycleState();
+      assert.equal(ViewerApp.calcPinkCycle(), 345);
+      assert.equal(State.phaseAdjust.yellow, 4.16);
+    }
+  } finally {
+    globalThis.localStorage = originalStorage;
+    Object.assign(State, previous);
+  }
+});
+
+test('Pink startup ignores the three historical residuals that previously produced 368.431 seconds', async () => {
+  const { State } = ViewerApp;
+  const previous = {
+    scoringConfig: State.scoringConfig, phaseAdjust: State.phaseAdjust,
+    pinkCycleState: State.pinkCycleState, yellowSamples: State.yellowSamples
+  };
+  const previousDB = ViewerPersistence.getLogDB();
+  const records = [
+    { isPinkManaged: true, scoreBreakdown: { signedPhaseError: 57.64738731744103 }, cycleCountAtCopy: 2 },
+    { isPinkManaged: true, scoreBreakdown: { signedPhaseError: -103.24789493952926 }, cycleCountAtCopy: 9 },
+    { isPinkManaged: true, scoreBreakdown: { signedPhaseError: 164.0149003831957 }, cycleCountAtCopy: 7 }
+  ];
+  const db = {
+    transaction: () => ({ objectStore: () => ({
+      getAll: () => {
+        const request = { result: records };
+        queueMicrotask(() => request.onsuccess());
+        return request;
+      }
+    }) })
+  };
+  try {
+    ViewerPersistence.setLogDB(db);
+    State.scoringConfig = ViewerMatching.resolveScoringConfig(
+      JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+    State.phaseAdjust = { yellow: 4, pink: 0 };
+    State.pinkCycleState = null;
+    State.yellowSamples = Array(50).fill({});
+    ViewerApp.initializePinkCycleState();
+    await ViewerApp.seedPhaseAdjustFromCopyHistory();
+    await ViewerApp.seedPhaseAdjustFromCopyHistory();
+    assert.equal(ViewerApp.calcPinkCycle(), 345);
+    assert.equal(State.phaseAdjust.yellow, 4);
+  } finally {
+    ViewerPersistence.setLogDB(previousDB);
     Object.assign(State, previous);
   }
 });

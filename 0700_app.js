@@ -171,7 +171,7 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "softmax-18-analysis-v1";
+const ANALYSIS_SCRIPT_VERSION = "softmax-18-analysis-v2-pink-startup";
 const MAX_LOG_LINES = 100;
 const DEFAULT_FILTER_MINUTES = 30;
 const DEFAULT_MY_RANK_KEY = "R7";
@@ -559,6 +559,7 @@ const State = {
     yellow: 0,
     pink: 0
   },
+  pinkCycleState: null,
 
   /*
    * Phase学習の診断情報（分析用）
@@ -1037,6 +1038,7 @@ function applyScoringConfigJson(
 
   const resolvedConfig = resolveScoringConfig(json);
   State.scoringConfig = resolvedConfig;
+  initializePinkCycleState();
 
   const viewerDefaults =
     resolvedConfig.viewerDefaults;
@@ -3191,6 +3193,16 @@ function calcPinkCycle(
     trust,
     adjustValue: clamped
   };
+  State.pinkCycleState = {
+    version: 1,
+    baseCycleSec: base,
+    maxShiftSec: maxShift,
+    adjustSec: clamped,
+    source: "encounter-learning",
+    sampleCount: foldedList.length,
+    trust,
+    lastLearnedAt: Date.now()
+  };
 
   return base + clamped;
 }
@@ -3209,31 +3221,43 @@ function getCurrentCycle(
 
 /* =========================================================
  [7030] Cycle Learning:seedPhaseAdjustFromCopyHistory【State】【永続化】
- ※【2026-09 改善：Phaseバイアス収束の高速化】
-
- calcYellowCycle / calcPinkCycle は EMA
- （yellow: alpha=0.05／pink: alpha=0.1）で
- State.phaseAdjust を少しずつ真値へ近づけるが、
- localStorageが空の状態（初回起動・ブラウザデータ削除後・
- 別端末）では0から再学習が始まり、実績ログ解析で
- 確認された系統的なズレ
- （実際にコピーされた相手は周期予測のピークより
- やや早いタイミングに偏る＝signedPhaseErrorが
- 負に偏る傾向。1周期あたり数秒〜十数秒程度）を
- 補正しきるまでに数十件規模のサンプル蓄積を要してしまう。
-
- 起動時、IndexedDBに蓄積済みの copyEvents（実績ログ）から
- signedPhaseError を経過周期数（cycleCountAtCopy）で
- 正規化した「1周期あたりのズレ」の中央値を求め、
- ローカルの学習がまだ十分に進んでいない場合に限り、
- その値を State.phaseAdjust.yellow / .pink の初期値として
- 適用する（十分学習済みなら上書きしない）。
-
- ※ calcYellowCycle/calcPinkCycle 側の学習ロジック・
- 　 EMA・クランプ・信頼度計算には一切手を加えない。
- 　 あくまで「初期値の種（シード）」を与えるだけであり、
- 　 以降の学習は従来どおり進む。
+ Pinkは保存した周期と根拠を復元し、旧方式・不正・非互換の値は
+ 一度だけ設定基準へ移行する。起動時の過去誤差による再シードは行わない。
+ Yellowの過去コピー履歴によるシードと、通常の再対戦学習は維持する。
 ========================================================= */
+function initializePinkCycleState() {
+  const cfg = State.scoringConfig.phase.pink;
+  const saved = State.pinkCycleState;
+  const valid = saved?.version === 1 &&
+    saved.baseCycleSec === cfg.baseCycleSec &&
+    saved.maxShiftSec === cfg.maxShiftSec &&
+    Number.isFinite(saved.adjustSec) &&
+    Math.abs(saved.adjustSec) <= cfg.maxShiftSec &&
+    saved.adjustSec === State.phaseAdjust.pink &&
+    ["initial", "encounter-learning"].includes(saved.source) &&
+    Number.isInteger(saved.sampleCount) && saved.sampleCount >= 0 &&
+    Number.isFinite(saved.trust) && saved.trust >= 0 && saved.trust <= 1 &&
+    (saved.lastLearnedAt === null ||
+      (Number.isFinite(saved.lastLearnedAt) && saved.lastLearnedAt > 0)) &&
+    (saved.source === "initial"
+      ? saved.sampleCount === 0 && saved.trust === 0 && saved.adjustSec === 0 && saved.lastLearnedAt === null
+      : saved.sampleCount > 0 && saved.lastLearnedAt !== null);
+  if (valid) {
+    log(`Pink周期：保存値を復元（${(cfg.baseCycleSec + saved.adjustSec).toFixed(3)}秒、学習${saved.sampleCount}件）`);
+    return;
+  }
+  const previousAdjust = State.phaseAdjust.pink;
+  State.phaseAdjust.pink = 0;
+  State.pinkCycleState = {
+    version: 1, baseCycleSec: cfg.baseCycleSec, maxShiftSec: cfg.maxShiftSec,
+    adjustSec: 0, source: "initial", sampleCount: 0, trust: 0, lastLearnedAt: null
+  };
+  logWarn(`Pink周期：旧方式・未保存・非互換または不正な補正を初期値へ移行（補正${previousAdjust}秒 → 0秒、周期${cfg.baseCycleSec}秒）。対戦履歴とYellowは保持します`);
+  if (!savePinkStateToStorage()) {
+    logError("Pink周期の移行結果を保存できません。次回起動時に再度移行が必要です");
+  }
+}
+
 async function seedPhaseAdjustFromCopyHistory() {
 
   const activeDb = getActiveLogDB();
@@ -3273,14 +3297,8 @@ async function seedPhaseAdjustFromCopyHistory() {
     const yellowCfg =
       State.scoringConfig?.phase?.yellow ?? {};
 
-    const pinkCfg =
-      State.scoringConfig?.phase?.pink ?? {};
-
     const yellowMinSamples =
       Number(yellowCfg.minSamples ?? 8);
-
-    const pinkMinSamples =
-      Number(pinkCfg.minSamples ?? 8);
 
     /*
      * すでにローカルで十分サンプルが蓄積・学習済みの場合は
@@ -3289,11 +3307,7 @@ async function seedPhaseAdjustFromCopyHistory() {
     const yellowAlreadyLearned =
       (State.yellowSamples?.length ?? 0) >= yellowMinSamples;
 
-    const pinkAlreadyLearned =
-      (State.phaseDiag?.pink?.sampleCount ?? 0) >= pinkMinSamples;
-
     const yellowPerCycleErrors = [];
-    const pinkPerCycleErrors = [];
 
     for (const rec of records) {
 
@@ -3320,7 +3334,7 @@ async function seedPhaseAdjustFromCopyHistory() {
       }
 
       if (rec.isPinkManaged || rec.isPink) {
-        pinkPerCycleErrors.push(perCycle);
+        continue;
       } else {
         yellowPerCycleErrors.push(perCycle);
       }
@@ -3370,27 +3384,6 @@ async function seedPhaseAdjustFromCopyHistory() {
 
       log(
         `[phase] Yellow位相バイアスを実績ログから初期化：${Math.round(State.phaseAdjust.yellow)}秒（サンプル${yellowPerCycleErrors.length}件）`
-      );
-
-    }
-
-    if (
-      !pinkAlreadyLearned &&
-      pinkPerCycleErrors.length >= MIN_SEED_SAMPLES
-    ) {
-
-      const m = median(pinkPerCycleErrors);
-
-      const maxShift =
-        Number(pinkCfg.maxShiftSec ?? 45);
-
-      State.phaseAdjust.pink =
-        clamp(m, -maxShift, maxShift);
-
-      seeded = true;
-
-      log(
-        `[phase] Pink位相バイアスを実績ログから初期化：${Math.round(State.phaseAdjust.pink)}秒（サンプル${pinkPerCycleErrors.length}件）`
       );
 
     }
@@ -6014,6 +6007,7 @@ async function exportTodayViewerLogsAsJSON() {
 
     scoringConfigSnapshot:
       State.scoringConfig ? getScoringConfigSnapshot() : null,
+    pinkCycleState: State.pinkCycleState ? { ...State.pinkCycleState } : null,
 
     copyEvents,
 
@@ -7105,7 +7099,8 @@ function recordClickFromCopiedInfo(
       ? JSON.parse(JSON.stringify(State.encounterHistory[undoIdentityKey]))
       : null,
     yellowSamples: JSON.parse(JSON.stringify(State.yellowSamples || [])),
-    phaseAdjust: JSON.parse(JSON.stringify(State.phaseAdjust || { yellow: 0, pink: 0 }))
+    phaseAdjust: JSON.parse(JSON.stringify(State.phaseAdjust || { yellow: 0, pink: 0 })),
+    pinkCycleState: State.pinkCycleState ? { ...State.pinkCycleState } : null
   };
 
   State.recentClicks.unshift({
@@ -7343,6 +7338,7 @@ function undoLastCopiedInfo() {
 
     /* 4. 周期補正値（EMA学習結果）もコピー前の値に戻す */
     State.phaseAdjust = snapshot.phaseAdjust;
+    State.pinkCycleState = snapshot.pinkCycleState;
 
   } else {
     if (typeof log === "function") {
@@ -7665,6 +7661,7 @@ function saveCandidateEvent(
 
     scoringConfigSnapshot:
       State.matchingContext.scoringConfigSnapshot ?? getScoringConfigSnapshot(),
+    pinkCycleState: State.pinkCycleState ? { ...State.pinkCycleState } : null,
 
     recentAreaBoostConfig:
       getRecentAreaBoostConfig(),
@@ -8904,6 +8901,7 @@ async function init() {
     calcPinkCycle,
     getCurrentCycle,
     seedPhaseAdjustFromCopyHistory,
+    initializePinkCycleState,
     normalizeCopyAreaHistory,
     loadCopyAreaHistory,
     appendCopyAreaHistory,

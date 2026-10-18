@@ -518,9 +518,18 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
       <div style="font-size:12px; color:#555; margin-bottom:4px;">
         <strong style="color:${labelColor};">${label}</strong>
         ：周期 ${cycleSec.toFixed(1)}秒（基準${cfg.baseCycleSec ?? 345}秒 ${adjust >= 0 ? "+" : ""}${adjust.toFixed(1)}秒）
-        ／信頼度${trustPct}%
+        ／${isPink ? "当日間隔の" : ""}信頼度${trustPct}%
         ／許容幅はdecay反映（しきい値${threshold}）
       </div>
+      ${isPink && State.pinkCycleState ? `
+        <div style="font-size:12px; color:#555; margin-bottom:4px;">
+          周期の根拠：${State.pinkCycleState.source === "encounter-learning" ? "再対戦学習" : "初期値"}
+          ／保存周期の学習${State.pinkCycleState.sampleCount}件
+          ／学習信頼度${Math.round(State.pinkCycleState.trust * 100)}%
+          ／当日再対戦${samples}件
+          ／最終学習：${State.pinkCycleState.lastLearnedAt ? new Date(State.pinkCycleState.lastLearnedAt).toLocaleString("ja-JP") : "なし"}
+        </div>
+      ` : ""}
 
       <div
         style="

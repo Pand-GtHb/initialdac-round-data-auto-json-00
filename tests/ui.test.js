@@ -116,6 +116,31 @@ test("buildFilterGroupHTML generates expected checkbox labels", () => {
   assert.ok(html.includes('Item2'));
 });
 
+test("Pink monitor separates saved learning evidence from today's intervals", () => {
+  const context = createUIContext();
+  vm.runInContext(appSource, context);
+  context.State.scoringConfig = {
+    phase: { pink: { baseCycleSec: 345, maxShiftSec: 45, minSamples: 8 } },
+    phaseError: {}
+  };
+  context.State.phaseAdjust.pink = 2.2;
+  context.State.pinkTargets = {};
+  context.State.pinkCycleState = {
+    version: 1, source: "encounter-learning", sampleCount: 3,
+    trust: Math.sqrt(3 / 8), lastLearnedAt: 1792300000000
+  };
+  context.getFilterToMs = now => now;
+  context.readRangeMinutes = () => 15;
+  context.formatClockHms = () => "12:00:00";
+  context.formatClockHm = () => "12:00";
+  const html = context.ViewerUI.buildPhaseCycleRowHTML("pink", Date.now());
+  assert.match(html, /347\.2秒/);
+  assert.match(html, /保存周期の学習3件/);
+  assert.match(html, /学習信頼度61%/);
+  assert.match(html, /当日再対戦0件/);
+  assert.match(html, /当日間隔の信頼度0%/);
+});
+
 test("shortenStoreName abbreviates long Japanese store names", () => {
   const context = createUIContext();
   const { shortenStoreName } = context.ViewerUI;
