@@ -13,7 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
-  const MATCHING_SCRIPT_VERSION = "matching-shadow-v1-20261019";
+  const MATCHING_SCRIPT_VERSION = "matching-common-phase-v3-20261019";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -22,6 +22,7 @@
   const NORMAL_SLOT_COUNT = 8;
   const CROSS_BUCKET_SLOT_COUNT = 1;
   const WILDCARD_SLOT_COUNT = 1;
+  // Historical replay exports; these settings are no longer part of live config.
   const DEFAULT_MAX_PINK_MANAGED_SLOTS = 2;
   const DEFAULT_REALTIME_PLAYER_WEIGHT = 0.35;
   const DEFAULT_REALTIME_RANK_WEIGHT = 0.03;
@@ -78,7 +79,6 @@
       },
       candidateSelection: {
         slots: getMatchingSlotCounts(null),
-        maxPinkManagedSlots: DEFAULT_MAX_PINK_MANAGED_SLOTS,
         slotAllocation: {
           prideBandPriorExponent: DEFAULT_PRIDE_BAND_PRIOR_EXPONENT,
           prideBandDiversityGapThreshold: DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD,
@@ -97,16 +97,11 @@
         }
       },
       phase: {
-        weight: 0.8, yellowMaxWeight: 0.55,
-        yellow: { weight: 0.8, baseCycleSec: 345, alpha: 0.12, maxShiftSec: 30, minSamples: 8, maxSampleAgeSec: 2700 },
-        pink: { weight: 1, baseCycleSec: 345, alpha: 0.18, maxShiftSec: 45, minSamples: 8 }
+        weight: 0.55, yellowMaxWeight: 0.55,
+        yellow: { weight: 0.55, baseCycleSec: 345, alpha: 0.12, maxShiftSec: 30, minSamples: 8, maxSampleAgeSec: 2700 },
+        pink: { weight: 0.55, baseCycleSec: 345, alpha: 0.18, maxShiftSec: 45, minSamples: 8 }
       },
       phaseError: { scaleSec: 90, yellowThreshold: 0.7, pinkThreshold: 0.55, yellowLambda: 0.03, pinkLambda: 0.03 },
-      realtimeBoost: {
-        decaySec: 3600, playerWeight: DEFAULT_REALTIME_PLAYER_WEIGHT,
-        rankWeight: DEFAULT_REALTIME_RANK_WEIGHT, maxBonus: DEFAULT_REALTIME_MAX_BONUS,
-        pinkMismatch: { floor: DEFAULT_PINK_MISMATCH_FLOOR, decaySec: DEFAULT_PINK_MISMATCH_DECAY_SEC }
-      },
       experimental: {
         dayRelativeArea: { enabled: true, weight: 0.30, smoothingCount: 2 },
         yellowPhase: { enabled: true, weight: 0.70 }
@@ -165,14 +160,12 @@
       "candidateSelection.areaBoost.recentMatch.maxWeight",
       "candidateSelection.areaBoost.diagnosticPhaseWeight", "phase.weight", "phase.yellowMaxWeight",
       "phase.yellow.weight", "phase.pink.weight", "phase.yellow.alpha", "phase.pink.alpha",
-      "phaseError.yellowThreshold", "phaseError.pinkThreshold", "realtimeBoost.playerWeight",
-      "realtimeBoost.rankWeight", "realtimeBoost.pinkMismatch.floor",
+      "phaseError.yellowThreshold", "phaseError.pinkThreshold",
       "experimental.dayRelativeArea.weight", "experimental.yellowPhase.weight"
     ]) number(name, 0, 1);
     for (const name of ["historical.reliabilityK", "phase.yellow.baseCycleSec", "phase.pink.baseCycleSec",
-      "phaseError.scaleSec", "phase.yellow.maxSampleAgeSec", "realtimeBoost.decaySec",
+      "phaseError.scaleSec", "phase.yellow.maxSampleAgeSec",
       "experimental.dayRelativeArea.smoothingCount"]) number(name, Number.EPSILON, Number.MAX_VALUE);
-    number("realtimeBoost.pinkMismatch.decaySec", 1, Number.MAX_VALUE);
     for (const name of ["historical.minOwnSamplesForNoBackoff", "phase.yellow.minSamples", "phase.pink.minSamples"]) {
       number(name, 0, Number.MAX_SAFE_INTEGER, true);
     }
@@ -186,7 +179,6 @@
       }
     }
     number("candidateSelection.areaBoost.recentMatch.windowSize", 1, LOG_STORAGE_LIMITS.copyEvents, true);
-    number("candidateSelection.maxPinkManagedSlots", 0, 10, true);
     for (const key of ["normal", "crossBucket", "wildcard"]) number(`candidateSelection.slots.${key}`, 0, 10, true);
     if (Object.values(config.candidateSelection.slots).reduce((sum, n) => sum + n, 0) !== 10) {
       invalid("candidateSelection.slots must total 10");
@@ -207,7 +199,14 @@
     const recent = effective.candidateSelection.areaBoost.recentMatch;
     if (!recent.enabled) recent.weight = 0;
     if (!effective.candidateSelection.areaBoost.enabled) effective.candidateSelection.areaBoost.weight = 0;
-    return { schemaVersion: config.meta.schemaVersion, version: config.meta.version, effective };
+    return {
+      schemaVersion: config.meta.schemaVersion, version: config.meta.version, effective,
+      phaseScoring: {
+        formula: "1 - phaseWeight * (1 - finalPhaseScore)",
+        scoringTrustApplied: false,
+        phaseTrustRole: "cycle-learning-diagnostic"
+      }
+    };
   }
 
   function getMatchingSlotBucketKey(rankKey) {
@@ -1637,6 +1636,7 @@
       .slice(0, Math.max(0, Math.floor(Number(slotCount) || 0)));
   }
 
+  // Retained for replaying historical logs only; live selection has no Pink cap.
   function applyPinkManagedSlotCap(selected, rankedByScore, maxPinkManagedSlots) {
     if (!Number.isFinite(maxPinkManagedSlots) || maxPinkManagedSlots < 0) {
       return {
@@ -1768,7 +1768,7 @@
         d.diagnosticAreaExpectedCount = expected;
         d.diagnosticAreaObservedCount = observed;
       } else if (!d.isPinkManaged) {
-        const effective = clamp(1 - settings.weight * d.phaseTrust * (1 - d.finalPhaseScore), 0, 1);
+        const effective = clamp(1 - settings.weight * (1 - d.finalPhaseScore), 0, 1);
         d.phaseWeight = settings.weight;
         d.effectivePhaseScore = effective;
         clone.__score = d.historicalScore * d.realtimeBoost * d.pinkMismatchBoostFactor * effective;
@@ -1796,12 +1796,7 @@
       p.__crossBucket = true;
       p.__crossBucketSelectionReason = "global-high-score";
     });
-    const ranked = [...eligible].sort((a, b) =>
-      getCandidateSelectionScore(b) - getCandidateSelectionScore(a));
-    const selected = applyPinkManagedSlotCap(
-      [...normal, ...cross, ...wildcard], ranked,
-      scoringConfig.candidateSelection.maxPinkManagedSlots
-    ).finalSelected;
+    const selected = [...normal, ...cross, ...wildcard];
     return {
       status: "computed",
       parameters: {
@@ -1813,7 +1808,7 @@
           observedAreaCounts: Object.fromEntries(observedCounts),
           candidateAreaCounts: Object.fromEntries(areaCounts),
           formula: "1 + weight * clamp((observed - expected) / (expected + smoothingCount), 0, 1)"
-        } : { replaces: "yellow-effective-phase-weight", pinkUnchanged: true }),
+        } : { replaces: "yellow-effective-phase-weight", pinkUnchanged: true, scoringTrustApplied: false }),
         slotPlan: slotPlan.map(entry => ({ ...entry }))
       },
       selected

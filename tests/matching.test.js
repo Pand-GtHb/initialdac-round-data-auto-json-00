@@ -296,13 +296,13 @@ test("Yellow Phase shadow applies 0.70 to all selection routes and leaves Pink u
   const config = resolveScoringConfig({ meta: { schemaVersion: 1, version: "test" } });
   const pool = Array.from({ length: 15 }, (_, i) => {
     const pink = i < 3;
-    const effective = pink ? 0.8 : 0.78;
+    const effective = 0.56;
     const slot = 1.1 * effective * 1.05 * 0.9 * 1.3;
     return Object.freeze({
       name: `P${i}`, __rankKey: "R7", __score: 0.1 * 1.1 * effective, __slotScore: slot,
       __detail: Object.freeze({
         isPinkManaged: pink, slotBucket: "R7", slotScore: slot,
-        phaseWeight: pink ? 1 : 0.55, phaseTrust: 0.5, finalPhaseScore: 0.2,
+        phaseWeight: 0.55, phaseTrust: 0.5, finalPhaseScore: 0.2,
         effectivePhaseScore: effective, historicalScore: 0.1, realtimeBoost: 1.1,
         pinkMismatchBoostFactor: 1, areaBoost: 1.05, prideBandPriorWeight: 0.9,
         recentAreaAppliedBoost: 1.3, recentAreaCounterfactualBoostWindow: 1.3,
@@ -316,14 +316,18 @@ test("Yellow Phase shadow applies 0.70 to all selection routes and leaves Pink u
     slotPlan: [{ bucket: "R7", slots: 8 }], evaluationTimeMs: Date.now()
   });
   assert.equal(result.selected.length, 10);
-  assert.equal(result.selected.filter(p => p.__detail.isPinkManaged).length, 2);
+  assert.equal(result.selected.filter(p => p.__detail.isPinkManaged).length, 3);
   const yellow = result.selected.find(p => !p.__detail.isPinkManaged);
   assert.equal(yellow.__detail.phaseWeight, 0.7);
-  assert.ok(Math.abs(yellow.__detail.effectivePhaseScore - 0.72) < 1e-12);
-  assert.ok(Math.abs(yellow.__score - 0.1 * 1.1 * 0.72) < 1e-12);
-  assert.ok(Math.abs(yellow.__slotScore - 1.1 * 0.72 * 1.05 * 0.9 * 1.3) < 1e-12);
-  assert.ok(Math.abs(getCandidateCrossBucketScore(yellow) - 0.5 / 15 * 1.1 * 0.72 * 1.05 * 1.3) < 1e-12);
-  assert.equal(result.selected.find(p => p.__detail.isPinkManaged).__detail.phaseWeight, 1);
+  assert.ok(Math.abs(yellow.__detail.effectivePhaseScore - 0.44) < 1e-12);
+  assert.ok(Math.abs(yellow.__score - 0.1 * 1.1 * 0.44) < 1e-12);
+  assert.ok(Math.abs(yellow.__slotScore - 1.1 * 0.44 * 1.05 * 0.9 * 1.3) < 1e-12);
+  assert.ok(Math.abs(getCandidateCrossBucketScore(yellow) - 0.5 / 15 * 1.1 * 0.44 * 1.05 * 1.3) < 1e-12);
+  const pink = result.selected.find(p => p.__detail.isPinkManaged);
+  assert.equal(pink.__detail.phaseWeight, 0.55);
+  assert.equal(pink.__detail.effectivePhaseScore, 0.56);
+  assert.equal(yellow.__detail.phaseTrust, 0.5);
+  assert.equal(result.parameters.scoringTrustApplied, false);
   assert.equal(JSON.stringify(pool), snapshot);
   config.experimental.yellowPhase.enabled = false;
   assert.equal(buildShadowCandidateComparison(pool, {
@@ -442,7 +446,7 @@ test("normal selection preserves zero Ruby slots and the donor bucket's second c
   assert.equal(slotPlan[1].slots, 0);
 });
 
-test("recent AREA defaults and deployed config use five matches, 30 percent and two Pink slots", () => {
+test("recent AREA defaults retain five matches and 30 percent without Pink scoring settings", () => {
   const { getRecentAreaBoostConfig, applyCandidateAreaHistoryBoost } = createMatchingContext().ViewerMatching;
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scoring_config.json"), "utf8"));
   const defaults = getRecentAreaBoostConfig();
@@ -451,7 +455,8 @@ test("recent AREA defaults and deployed config use five matches, 30 percent and 
   assert.equal(configured.windowSize, 5);
   assert.equal(configured.weight, 0.3);
   assert.equal(configured.maxMultiplier, 1.3);
-  assert.equal(config.candidateSelection.maxPinkManagedSlots, 2);
+  assert.equal(Object.hasOwn(config.candidateSelection, "maxPinkManagedSlots"), false);
+  assert.equal(Object.hasOwn(config, "realtimeBoost"), false);
   const history = [{ area: "old" }, ...Array.from({ length: 5 }, () => ({ area: "recent" }))];
   const candidates = ["old", "recent"].map(area => ({
     area, __rankKey: "R6", __slotScore: 1, __detail: {}
@@ -474,15 +479,27 @@ test("scoring config resolves defaults, validates inputs and records effective v
     createMatchingContext().ViewerMatching;
   const source = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scoring_config.json"), "utf8"));
   const config = resolveScoringConfig(source);
-  assert.equal(config.candidateSelection.maxPinkManagedSlots, 2);
-  assert.equal(config.phase.yellow.weight, 0.8);
+  assert.equal(Object.hasOwn(config.candidateSelection, "maxPinkManagedSlots"), false);
+  assert.equal(Object.hasOwn(config, "realtimeBoost"), false);
+  assert.throws(() => resolveScoringConfig({
+    ...source, candidateSelection: { ...source.candidateSelection, maxPinkManagedSlots: 2 }
+  }), /unknown setting: candidateSelection.maxPinkManagedSlots/);
+  assert.equal(config.phase.yellow.weight, 0.55);
+  assert.equal(config.phase.pink.weight, 0.55);
   assert.equal(source.phase.yellow.maxSampleAgeSec, 2700);
   assert.equal(config.phase.yellow.maxSampleAgeSec, source.phase.yellow.maxSampleAgeSec);
   const snapshot = getScoringConfigSnapshot(config);
   assert.equal(snapshot.version, source.meta.version);
   assert.equal(snapshot.schemaVersion, 1);
   assert.equal(snapshot.effective.phase.yellow.weight, 0.55);
-  assert.equal(config.phase.yellow.weight, 0.8);
+  assert.equal(config.phase.yellow.weight, 0.55);
+  assert.equal(snapshot.phaseScoring.scoringTrustApplied, false);
+  assert.equal(snapshot.phaseScoring.formula, "1 - phaseWeight * (1 - finalPhaseScore)");
+  const capped = resolveScoringConfig({ ...source, phase: { ...source.phase, yellow: {
+    ...source.phase.yellow, weight: 0.8
+  } } });
+  assert.equal(getScoringConfigSnapshot(capped).effective.phase.yellow.weight, 0.55);
+  assert.equal(capped.phase.yellow.weight, 0.8);
   assert.equal(snapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0.3);
   assert.equal(getMatchingSlotCounts(config).normal, 8);
   const defaults = resolveScoringConfig({ meta: { schemaVersion: 1, version: "minimal" } });
@@ -524,8 +541,7 @@ test("scoring config resolves defaults, validates inputs and records effective v
     [["experimental", "yellowPhase", "weight"], "0.70"],
     [["experimental", "yellowPhase", "enabled"], 1],
     [["experimental", "softmaxBacktest"], { enabled: true, temperature: 0.15 }],
-    [["realtimeBoost", "decaySec"], Infinity],
-    [["realtimeBoost", "maxBonus"], -1],
+    [["realtimeBoost"], { playerWeight: 0.35 }],
     [["historical", "reliabilityK"], NaN]
   ]) {
     const bad = JSON.parse(JSON.stringify(source));

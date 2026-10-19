@@ -101,12 +101,6 @@
     getScoringConfigSnapshot,
     getMatchingSlotCounts,
     DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD,
-    DEFAULT_MAX_PINK_MANAGED_SLOTS,
-    DEFAULT_REALTIME_PLAYER_WEIGHT,
-    DEFAULT_REALTIME_RANK_WEIGHT,
-    DEFAULT_REALTIME_MAX_BONUS,
-    DEFAULT_PINK_MISMATCH_FLOOR,
-    DEFAULT_PINK_MISMATCH_DECAY_SEC,
     buildViewerHistoricalContext,
     getHistoricalScoreDetail,
     buildAreaDensityContext,
@@ -124,7 +118,6 @@
     assignCandidateCrossBucketRanks,
     selectCrossBucketCandidates,
     selectWildcardCandidates,
-    applyPinkManagedSlotCap,
     buildShadowCandidateComparison
   } = ViewerMatching || {};
 
@@ -171,7 +164,7 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v3-shadow-area-phase-20261019";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v5-common-phase-20261019";
 const MAX_LOG_LINES = 100;
 const DEFAULT_FILTER_MINUTES = 30;
 const DEFAULT_MY_RANK_KEY = "R7";
@@ -246,21 +239,12 @@ function buildAnalysisDiagnostics() {
   }
 
   const finish = (id, parameters, selected, extra = {}) => {
-    const clones = new Map(pool.map(p => [
-      p, { ...p, __detail: { ...p.__detail } }
-    ]));
-    const originals = new Map([...clones].map(([p, clone]) => [clone, p]));
-    const capped = applyPinkManagedSlotCap(
-      selected.map(p => clones.get(p)), pool.map(p => clones.get(p)),
-      State.matchingPinkCapDiagnostics?.maxPinkManagedSlots ??
-        DEFAULT_MAX_PINK_MANAGED_SLOTS
-    ).finalSelected.map(p => originals.get(p));
     return {
       id, parameters, status: "computed",
       evaluatedCandidateCount: pool.length,
-      candidates: capped.map(identify),
-      added: capped.filter(p => !current.includes(p)).map(identify),
-      removed: current.filter(p => !capped.includes(p)).map(identify),
+      candidates: selected.map(identify),
+      added: selected.filter(p => !current.includes(p)).map(identify),
+      removed: current.filter(p => !selected.includes(p)).map(identify),
       ...extra
     };
   };
@@ -430,7 +414,7 @@ function recordUnmatchedSearchMemo() {
  * 後から列の意味が分かるようにする）。
  *
  * 追加項目（2026-09 予測精度改善策の検証用）:
- *   isPinkManaged     : historicalScore/リアルタイムブーストの
+ *   isPinkManaged     : Phase起点・周期・信頼度・cooldownの
  *                        適用条件検証用
  *   historicalBackoff : historicalScoreがバックオフ値かどうか
  *                        （historicalScoreの信頼性検証用）
@@ -580,8 +564,6 @@ const State = {
   recentClicks: [],
   recentClickSet: null,
   historicalMatchupDistribution: null,
-  playerActivity: {},
-  rankActivity: {},
   scoringConfig: null,
   updateWatchConfig: null,
   updateWatchTimer: null,
@@ -1240,13 +1222,6 @@ function restorePinkStateFromStorage() {
   return ViewerPersistence.restorePinkStateFromStorage(State);
 }
 
-function saveRealtimeActivityToStorage() {
-  return ViewerPersistence.saveRealtimeActivityToStorage(State);
-}
-
-function restoreRealtimeActivityFromStorage() {
-  return ViewerPersistence.restoreRealtimeActivityFromStorage(State);
-}
 
 
 
@@ -2645,116 +2620,6 @@ function registerYellowSample(
   }
 
   return sample;
-}
-
-/* =========================================================
- [6300] Realtime Boost:recordRealtimeActivity【State】【永続化】（旧 [7105] 内）
-========================================================= */
-function recordRealtimeActivity(
-  player,
-  rankKey,
-  timestamp
-) {
-
-  if (!player) return;
-
-  const now =
-    Number(timestamp) ||
-    Date.now();
-
-  const playerId =
-    normalizePlayerName(
-      player.name ?? ""
-    );
-
-  if (playerId) {
-
-    const prev =
-      State.playerActivity[
-        playerId
-      ] || { count: 0 };
-
-    State.playerActivity[
-      playerId
-    ] = {
-      count:
-        Number(prev.count ?? 0) + 1,
-      lastSeen: now
-    };
-  }
-
-  const rk =
-    String(rankKey ?? "");
-
-  if (rk) {
-
-    const prev =
-      State.rankActivity[rk] ||
-      { count: 0 };
-
-    State.rankActivity[rk] = {
-      count:
-        Number(prev.count ?? 0) + 1,
-      lastSeen: now
-    };
-  }
-
-  saveRealtimeActivityToStorage();
-}
-
-/* =========================================================
- [6310] Realtime Boost:getBoostDecayHalfLifeSec（旧 [7105] 内）
-========================================================= */
-function getBoostDecayHalfLifeSec() {
-
-  return Number(
-    State.scoringConfig
-      ?.realtimeBoost
-      ?.decaySec ?? 3600
-  );
-}
-
-function computeActivitySignal(
-  entry,
-  nowMs = Date.now()
-) {
-
-  if (!entry) {
-    return 0;
-  }
-
-  const count =
-    Number(entry.count ?? 0);
-
-  const lastSeen =
-    Number(entry.lastSeen ?? 0);
-
-  if (
-    !count ||
-    !lastSeen ||
-    !isFinite(lastSeen)
-  ) {
-    return 0;
-  }
-
-  const deltaSec =
-    (nowMs - lastSeen) / 1000;
-
-  if (
-    !isFinite(deltaSec) ||
-    deltaSec < 0
-  ) {
-    return 0;
-  }
-
-  const T =
-    getBoostDecayHalfLifeSec();
-
-  const decay =
-    Math.exp(-deltaSec / T);
-
-  return Math.log(1 + count) *
-    decay;
 }
 
 /*
@@ -4439,106 +4304,7 @@ function calcMatchingScoreDetail(
     const isPinkManaged =
         Boolean(phaseCtx?.isPinkManaged);
 
-    const playerId =
-        normalizePlayerName(
-            player.name ?? ""
-        );
-    const playerActivityEntry =
-        State.playerActivity[
-            playerId
-        ];
-    const rankActivityEntry =
-        State.rankActivity[
-            String(rankKey ?? "")
-        ];
-    const playerActivitySignal =
-        isPinkManaged
-            ? computeActivitySignal(
-                playerActivityEntry,
-                evaluationTimeMs
-              )
-            : 0;
-    const rankActivitySignal =
-        isPinkManaged
-            ? computeActivitySignal(
-                rankActivityEntry,
-                evaluationTimeMs
-              )
-            : 0;
-    const playerWeight =
-        clamp(
-            Number(
-                State.scoringConfig
-                    ?.realtimeBoost
-                    ?.playerWeight ??
-                DEFAULT_REALTIME_PLAYER_WEIGHT
-            ),
-            0,
-            1
-        );
-    const rankWeight =
-        clamp(
-            Number(
-                State.scoringConfig
-                    ?.realtimeBoost
-                    ?.rankWeight ??
-                DEFAULT_REALTIME_RANK_WEIGHT
-            ),
-            0,
-            1
-        );
-    const configuredMaxBonus =
-        Number(
-            State.scoringConfig
-                ?.realtimeBoost
-                ?.maxBonus ??
-            DEFAULT_REALTIME_MAX_BONUS
-        );
-    const realtimeBonusCap =
-        Number.isFinite(
-            configuredMaxBonus
-        )
-            ? Math.max(
-                0,
-                configuredMaxBonus
-              )
-            : DEFAULT_REALTIME_MAX_BONUS;
-    const playerRealtimeBonus =
-        playerWeight *
-        playerActivitySignal;
-    const rankRealtimeBonus =
-        rankWeight *
-        rankActivitySignal;
-    const realtimeBonusBeforeCap =
-        playerRealtimeBonus +
-        rankRealtimeBonus;
-    const realtimeBoost =
-        1 +
-        Math.min(
-            realtimeBonusCap,
-            realtimeBonusBeforeCap
-        );
-    const playerBoost =
-        1 +
-        playerRealtimeBonus;
-    const rankBoost =
-        1 +
-        rankRealtimeBonus;
-    /*
-     * 【2026-09 改善2】位相を主要スコアから補助要素へ弱める
-     *
-     * 以前は finalPhaseScore をそのまま乗算していたため、
-     * 位相学習の信頼度（phaseTrust）が低い（サンプル不足）状態でも
-     * 位相ズレの影響がスコアへフルに効いてしまっていた。
-     *
-     * ここでは phaseTrust と設定可能な phaseWeight を用いて
-     * 「1 - phaseWeight * phaseTrust * (1 - finalPhaseScore)」
-     * という信頼度ブレンドに変更する。
-     *
-     * phaseWeight=0 なら位相は無視（常に1.0）、
-     * phaseWeight=1 かつ phaseTrust=1 なら従来同様
-     * finalPhaseScore がそのまま反映される。
-     */
+    // Learning trust remains diagnostic; sparse samples must not soften scoring penalties.
     const phaseTrust =
         clamp(
             Number(
@@ -4552,17 +4318,12 @@ function calcMatchingScoreDetail(
         clamp(
             Number(
                 State.scoringConfig
-                    ?.phase?.weight ?? 0.35
+                    ?.phase?.weight ?? 0.55
             ),
             0,
             1
         );
 
-    /*
-     * Pink管理対象はRealtimeBoostでも優遇されるため、
-     * Phase不一致時の残留を抑える専用weightを設定可能にする。
-     * 未設定時は従来どおり共通weightへフォールバックする。
-     */
     const phaseWeight =
         clamp(
             Number(
@@ -4582,56 +4343,6 @@ function calcMatchingScoreDetail(
         !isPinkManaged ||
         Boolean(phaseCtx?.isPinkPhase);
 
-    /*
-     * 【2026-09 改善6】Pink不一致減衰の段階化
-     *
-     * 旧来は一致/不一致の二値判定で PINK_MISMATCH_BOOST_FACTOR(0.5)を
-     * 一律適用していたため、ズレが極小でも極大でも同じ0.5倍にしか
-     * ならず、実績分析でも「Phase不一致(63.2%)時の平均realtimeBoostが
-     * 1.19倍とまだ高いまま」という不十分な減衰が確認された。
-     *
-     * PinkPhase一致時は追加減衰を掛けず、既存のPhase評価だけを残す。
-     * 不一致時は phaseError（秒）の大きさに応じて
-     * exp(-phaseError / decaySec) で連続的に減衰させ、
-     * floor（下限）を下回らないようにする。
-     * ズレが大きいほど floor へ漸近する。
-     */
-    const pinkMismatchFloor =
-        clamp(
-            Number(
-                State.scoringConfig
-                    ?.realtimeBoost
-                    ?.pinkMismatch
-                    ?.floor ??
-                DEFAULT_PINK_MISMATCH_FLOOR
-            ),
-            0,
-            1
-        );
-
-    const pinkMismatchDecaySec =
-        Math.max(
-            1,
-            Number(
-                State.scoringConfig
-                    ?.realtimeBoost
-                    ?.pinkMismatch
-                    ?.decaySec ??
-                DEFAULT_PINK_MISMATCH_DECAY_SEC
-            )
-        );
-
-    const pinkMismatchBoostFactor =
-        isPinkManaged && !pinkPhaseMatched
-            ? Math.max(
-                pinkMismatchFloor,
-                Math.exp(
-                    -Number(phaseCtx?.phaseError ?? 0) /
-                    pinkMismatchDecaySec
-                )
-              )
-            : 1;
-
     const appliedPhaseWeight = isPinkManaged
         ? phaseWeight
         : Math.min(
@@ -4643,17 +4354,13 @@ function calcMatchingScoreDetail(
         clamp(
             1 -
                 appliedPhaseWeight *
-                phaseTrust *
                 (1 - finalPhaseScore),
             0,
             1
         );
 
     const rawScore =
-        historicalScore *
-        realtimeBoost *
-        pinkMismatchBoostFactor *
-        effectivePhaseScore;
+        historicalScore * effectivePhaseScore;
 
     const safeScore =
         Number.isFinite(rawScore) &&
@@ -4686,15 +4393,16 @@ function calcMatchingScoreDetail(
         opponentTier: historical.opponentTier,
         area: String(player.area ?? ""),
         isPinkManaged,
-        playerBoost,
-        rankBoost,
-        realtimeBoost,
-        playerActivitySignal,
-        rankActivitySignal,
-        playerRealtimeBonus,
-        rankRealtimeBonus,
-        realtimeBonusBeforeCap,
-        realtimeBonusCap,
+        // Neutral legacy columns keep old/new analysis logs self-describing.
+        playerBoost: 1,
+        rankBoost: 1,
+        realtimeBoost: 1,
+        playerActivitySignal: 0,
+        rankActivitySignal: 0,
+        playerRealtimeBonus: 0,
+        rankRealtimeBonus: 0,
+        realtimeBonusBeforeCap: 0,
+        realtimeBonusCap: 0,
         phaseError: phaseCtx?.phaseError ?? 0,
         signedPhaseError:
             phaseCtx?.signedPhaseError ?? 0,
@@ -4716,7 +4424,7 @@ function calcMatchingScoreDetail(
         isYellow: Boolean(phaseCtx?.isYellowPhase),
         isPink: Boolean(phaseCtx?.isPinkPhase),
         pinkPhaseMatched,
-        pinkMismatchBoostFactor,
+        pinkMismatchBoostFactor: 1,
         yellowThreshold: phaseCtx?.yellowThreshold ?? 0,
         pinkThreshold: phaseCtx?.pinkThreshold ?? 0,
 
@@ -4932,7 +4640,7 @@ function buildMatchingCandidates(
 
   /* =====================================
    * STEP3〜6: 候補集合確定後に履歴スコアを
-   * 個人priorへ変換し、Realtime/Phaseと合成する。
+   * 個人priorへ変換し、Phaseと合成する。
    * ===================================== */
   const viewerContext =
     buildViewerHistoricalContext(
@@ -5086,40 +4794,8 @@ function buildMatchingCandidates(
     ...wildcardSelected
   ];
 
-  /*
-   * 【2026-09 改善6】Pink管理対象の最終表示枠占有数キャップ適用
-   * 枠の総数は変えず、上限超過分だけをスコア順の次点候補と
-   * 差し替える。診断値は saveCandidateEvent() でログへ記録する。
-   */
-  const configuredMaxPinkManagedSlots =
-    Number(
-      State.scoringConfig
-        ?.candidateSelection
-        ?.maxPinkManagedSlots ??
-      DEFAULT_MAX_PINK_MANAGED_SLOTS
-    );
-
-  const maxPinkManagedSlots =
-    Number.isFinite(
-      configuredMaxPinkManagedSlots
-    )
-      ? Math.max(
-          0,
-          Math.floor(
-            configuredMaxPinkManagedSlots
-          )
-        )
-      : DEFAULT_MAX_PINK_MANAGED_SLOTS;
-
-  const pinkCapResult =
-    applyPinkManagedSlotCap(
-      selected,
-      rankedByScore,
-      maxPinkManagedSlots
-    );
-
-  const finalSelected =
-    pinkCapResult.finalSelected;
+  const finalSelected = selected;
+  const pinkManagedCount = finalSelected.filter(p => p.__detail?.isPinkManaged).length;
 
   State.matchingCrossBucketDiagnostics = {
     crossBucketSlotCount:
@@ -5159,13 +4835,11 @@ function buildMatchingCandidates(
   };
 
   State.matchingPinkCapDiagnostics = {
-    maxPinkManagedSlots,
-    pinkManagedSlotsBeforeCap:
-      pinkCapResult.pinkManagedSlotsBeforeCap,
-    pinkManagedSlotsAfterCap:
-      pinkCapResult.pinkManagedSlotsAfterCap,
-    pinkCapDroppedCount:
-      pinkCapResult.pinkCapDroppedCount
+    pinkCapEnabled: false,
+    maxPinkManagedSlots: null,
+    pinkManagedSlotsBeforeCap: pinkManagedCount,
+    pinkManagedSlotsAfterCap: pinkManagedCount,
+    pinkCapDroppedCount: 0
   };
 
   finalSelected.forEach(
@@ -5183,7 +4857,7 @@ function buildMatchingCandidates(
     `候補生成: Base=${base.length} / Selected=${finalSelected.length}` +
     `（通常${normalSelected.length}＋バケット横断${crossBucketSelected.length}` +
     `＋ワイルドカード${wildcardSelected.length}` +
-    `／Pink上限${maxPinkManagedSlots}枠：${pinkCapResult.pinkManagedSlotsBeforeCap}→${pinkCapResult.pinkManagedSlotsAfterCap}）` +
+    `／Pink ${pinkManagedCount}人・上限なし）` +
     ` Slot=${State.matchingSlotPlan
       .filter(entry => entry.slots > 0)
       .map(entry => `${entry.bucket}:${entry.slots}`)
@@ -6644,7 +6318,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v13_candidate_timing",
+        "slot_area_v15_common_phase",
       scriptVersion: ANALYSIS_SCRIPT_VERSION,
       matchingScriptVersion: MATCHING_SCRIPT_VERSION,
 
@@ -6882,7 +6556,7 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "slot_area_v13_candidate_timing",
+      "slot_area_v15_common_phase",
     scriptVersion: ANALYSIS_SCRIPT_VERSION,
     matchingScriptVersion: MATCHING_SCRIPT_VERSION,
 
@@ -7243,12 +6917,6 @@ function recordClickFromCopiedInfo(
         copiedAt
       );
     }
-
-    recordRealtimeActivity(
-      player,
-      rankKey,
-      copiedAt
-    );
   }
 
   /* ----------------------------------------------------
@@ -7646,7 +7314,7 @@ function saveCandidateEvent(
     t: now,
 
     logSchemaVersion:
-      "slot_area_v13_candidate_timing",
+      "slot_area_v15_common_phase",
     scriptVersion: ANALYSIS_SCRIPT_VERSION,
     matchingScriptVersion: MATCHING_SCRIPT_VERSION,
 
@@ -7840,39 +7508,11 @@ function saveCandidateEvent(
           !p.__detail?.pinkPhaseMatched
       ).length,
 
-    /*
-     * 【2026-09 改善6】Pink不一致減衰の段階化パラメータ
-     * （旧: 一律PINK_MISMATCH_BOOST_FACTOR固定 → 新: phaseErrorに
-     * 応じた exp(-phaseError/decaySec) 連続減衰、floor下限あり）
-     */
-    pinkMismatchFloor:
-      Number(
-        State.scoringConfig
-          ?.realtimeBoost
-          ?.pinkMismatch
-          ?.floor ??
-        DEFAULT_PINK_MISMATCH_FLOOR
-      ),
-
-    pinkMismatchDecaySec:
-      Number(
-        State.scoringConfig
-          ?.realtimeBoost
-          ?.pinkMismatch
-          ?.decaySec ??
-        DEFAULT_PINK_MISMATCH_DECAY_SEC
-      ),
-
-    /*
-     * 【2026-09 改善6】Pink管理対象の最終表示枠占有数キャップ診断
-     * buildMatchingCandidates() で適用した結果をそのまま記録する。
-     */
-    maxPinkManagedSlots:
-      Number(
-        State.matchingPinkCapDiagnostics
-          ?.maxPinkManagedSlots ??
-        DEFAULT_MAX_PINK_MANAGED_SLOTS
-      ),
+    pinkMismatchEnabled: false,
+    pinkMismatchFloor: null,
+    pinkMismatchDecaySec: null,
+    pinkCapEnabled: false,
+    maxPinkManagedSlots: null,
 
     pinkManagedSlotsBeforeCap:
       Number(
@@ -8721,8 +8361,6 @@ async function init() {
 
   restorePinkStateFromStorage();
 
-  restoreRealtimeActivityFromStorage();
-
   startProgress();
 
   buildRubyFilters();
@@ -8896,8 +8534,6 @@ async function init() {
     isPinkTargetStale,
     savePinkStateToStorage,
     restorePinkStateFromStorage,
-    saveRealtimeActivityToStorage,
-    restoreRealtimeActivityFromStorage,
     initLogDB,
     putLog,
     logEvent,
@@ -8934,9 +8570,6 @@ async function init() {
     getEncounterHistory,
     updateEncounterHistory,
     registerYellowSample,
-    recordRealtimeActivity,
-    getBoostDecayHalfLifeSec,
-    computeActivitySignal,
     rebuildRecentClickIndex,
     hasSamePlayerRecentClick,
 

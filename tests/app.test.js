@@ -243,6 +243,189 @@ test('candidate timing logs preserve anchor types, missing values and exact cool
   }
 });
 
+test('Pink scoring uses Phase only even with legacy activity state and a Phase mismatch', () => {
+  const { State } = ViewerApp;
+  const previous = { ...State };
+  try {
+    State.scoringConfig = ViewerMatching.resolveScoringConfig(
+      JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+    State.myRankKey = 'R7';
+    State.phaseAdjust = { yellow: 0, pink: 0 };
+    State.phaseDiag = { yellow: { sampleCount: 8, trust: 1 }, pink: { sampleCount: 8, trust: 1 } };
+    State.pinkTargets = {};
+    const now = Date.parse('2026-10-19T10:00:00+09:00');
+    const player = {
+      name: 'PHASE_ONLY', shopname: 'S', area: '1',
+      onlineBattleRankId: ViewerDomain.RUBY_ID, starCnt: 7,
+      updateDate: '2026/10/19 09:45:00'
+    };
+    const target = { ...player, lastCopiedAt: now - 862500 };
+    State.pinkTargets[ViewerDomain.buildPlayerIdentityKey(player)] = target;
+    State.playerActivity = { PHASE_ONLY: { count: 100, lastSeen: now } };
+    State.rankActivity = { R7: { count: 100, lastSeen: now } };
+    const detail = ViewerApp.calcMatchingScoreDetail(player, { R7: 1 }, null, now);
+    assert.equal(detail.isPinkManaged, true);
+    assert.equal(detail.phaseAnchorType, 'pink-last-copy');
+    assert.equal(detail.phaseAnchorAtMs, target.lastCopiedAt);
+    assert.equal(detail.cycleSec, 345);
+    assert.equal(detail.phaseWeight, 0.55);
+    assert.equal(detail.phaseTrust, 1);
+    assert.equal(detail.pinkPhaseMatched, false);
+    assert.equal(detail.phaseError, 172.5);
+    assert.equal(detail.realtimeBoost, 1);
+    assert.equal(detail.playerBoost, 1);
+    assert.equal(detail.rankBoost, 1);
+    assert.equal(detail.pinkMismatchBoostFactor, 1);
+    for (const key of ['playerActivitySignal', 'rankActivitySignal', 'playerRealtimeBonus',
+      'rankRealtimeBonus', 'realtimeBonusBeforeCap', 'realtimeBonusCap']) assert.equal(detail[key], 0, key);
+    assert.equal(detail.score, detail.historicalScore * detail.effectivePhaseScore);
+    assert.ok(Math.abs(detail.effectivePhaseScore - (1 - 0.55 * (1 - detail.finalPhaseScore))) < 1e-12);
+    State.playerActivity = {};
+    State.rankActivity = {};
+    assert.deepEqual(ViewerApp.calcMatchingScoreDetail(player, { R7: 1 }, null, now), detail);
+    delete State.pinkTargets[ViewerDomain.buildPlayerIdentityKey(player)];
+    const yellow = ViewerApp.calcMatchingScoreDetail(player, { R7: 1 }, null, now);
+    assert.equal(yellow.phaseAnchorType, 'last-update');
+    assert.equal(yellow.phaseWeight, 0.55);
+    assert.equal(yellow.score, yellow.historicalScore * yellow.effectivePhaseScore);
+  } finally {
+    delete State.playerActivity;
+    delete State.rankActivity;
+    Object.assign(State, previous);
+  }
+});
+
+test('Yellow and Pink apply identical Phase scoring independently of learning trust', () => {
+  const { State } = ViewerApp;
+  const previous = { ...State };
+  try {
+    State.scoringConfig = ViewerMatching.resolveScoringConfig(
+      JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+    State.myRankKey = 'R7';
+    State.phaseAdjust = { yellow: 0, pink: 0 };
+    State.pinkTargets = {};
+    const now = Date.parse('2026-10-19T10:00:00+09:00');
+    const player = {
+      name: 'COMMON_PHASE', shopname: 'S', area: '1',
+      onlineBattleRankId: ViewerDomain.RUBY_ID, starCnt: 7,
+      updateDate: '2026/10/19 09:45:00'
+    };
+    let baseline;
+    for (const trust of [0, Math.sqrt(1 / 8), 1]) {
+      State.phaseDiag = {
+        yellow: { sampleCount: 1, trust },
+        pink: { sampleCount: 1, trust: 1 - trust }
+      };
+      State.pinkTargets = {};
+      const yellow = ViewerApp.calcMatchingScoreDetail(player, { R7: 1 }, null, now);
+      State.pinkTargets[ViewerDomain.buildPlayerIdentityKey(player)] = {
+        ...player, lastCopiedAt: now - 900000
+      };
+      const learningBefore = JSON.stringify({
+        diag: State.phaseDiag, adjust: State.phaseAdjust, targets: State.pinkTargets
+      });
+      const pink = ViewerApp.calcMatchingScoreDetail(player, { R7: 1 }, null, now);
+      for (const detail of [yellow, pink]) {
+        assert.equal(detail.phaseWeight, 0.55);
+        assert.ok(Math.abs(detail.effectivePhaseScore - (1 - 0.55 * (1 - detail.finalPhaseScore))) < 1e-12);
+        assert.ok(detail.effectivePhaseScore >= 0.45 && detail.effectivePhaseScore <= 1);
+      }
+      assert.equal(yellow.phaseTrust, trust);
+      assert.equal(pink.phaseTrust, 1 - trust);
+      assert.equal(pink.phaseError, yellow.phaseError);
+      assert.equal(pink.finalPhaseScore, yellow.finalPhaseScore);
+      assert.equal(pink.effectivePhaseScore, yellow.effectivePhaseScore);
+      assert.equal(pink.score, yellow.score);
+      if (baseline !== undefined) assert.equal(pink.score, baseline);
+      baseline = pink.score;
+      assert.equal(JSON.stringify({
+        diag: State.phaseDiag, adjust: State.phaseAdjust, targets: State.pinkTargets
+      }), learningBefore);
+    }
+  } finally {
+    Object.assign(State, previous);
+  }
+});
+
+test('live and shadow selection retain more than two Pink candidates without cap backfill', () => {
+  const { State } = ViewerApp;
+  const previous = { ...State };
+  const previousDB = ViewerPersistence.getLogDB();
+  const origQSA = globalThis.document.querySelectorAll;
+  const saved = [];
+  try {
+    globalThis.document.querySelectorAll = selector =>
+      selector.includes('.ruby-filter:checked') ? [{ value: '7' }] : [];
+    ViewerPersistence.setLogDB({
+      transaction: () => ({ objectStore: () => ({
+        put: record => saved.push(JSON.parse(JSON.stringify(record))),
+        getAllKeys: () => ({})
+      }) })
+    });
+    State.scoringConfig = ViewerMatching.resolveScoringConfig(
+      JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+    State.myRankKey = 'R7';
+    State.phaseAdjust = { yellow: 0, pink: 0 };
+    State.phaseDiag = { yellow: { sampleCount: 8, trust: 1 }, pink: { sampleCount: 8, trust: 1 } };
+    State.pinkTargets = {};
+    State.copyAreaHistory = [];
+    const now = Date.parse('2026-10-19T10:00:00+09:00');
+    const players = Array.from({ length: 16 }, (_, i) => ({
+      name: `UNCAPPED_${i}`, shopname: 'S', area: '1',
+      onlineBattleRankId: ViewerDomain.RUBY_ID, starCnt: 7,
+      updateDate: '2026/10/19 09:46:30'
+    }));
+    for (const player of players.slice(0, 6)) {
+      State.pinkTargets[ViewerDomain.buildPlayerIdentityKey(player)] = { ...player, lastCopiedAt: now - 690000 };
+    }
+    const cooldownPlayer = players.at(-1);
+    State.pinkTargets[ViewerDomain.buildPlayerIdentityKey(cooldownPlayer)] = {
+      ...cooldownPlayer, lastCopiedAt: now - 60000
+    };
+    State.all = players;
+    State.filtered = players;
+    const learnedBefore = JSON.stringify({ adjust: State.phaseAdjust, diag: State.phaseDiag, targets: State.pinkTargets });
+    ViewerApp.buildMatchingCandidates({ evaluationTimeMs: now, clickedAtMs: now, saveEvent: false });
+    assert.equal(State.matchingList.length, 10);
+    assert.equal(new Set(State.matchingList.map(p => p.name)).size, 10);
+    assert.equal(State.matchingList.filter(p => p.__detail.isPinkManaged).length, 6);
+    assert.equal(State.matchingScoredAll.some(p => p.name === cooldownPlayer.name), false);
+    assert.equal(State.matchingCooldownExcludedCandidates[0].name, cooldownPlayer.name);
+    assert.equal(State.matchingPinkCapDiagnostics.pinkCapEnabled, false);
+    assert.equal(State.matchingPinkCapDiagnostics.maxPinkManagedSlots, null);
+    assert.equal(State.matchingPinkCapDiagnostics.pinkCapDroppedCount, 0);
+    assert.equal(State.matchingPinkCapDiagnostics.pinkManagedSlotsBeforeCap, 6);
+    assert.equal(State.matchingPinkCapDiagnostics.pinkManagedSlotsAfterCap, 6);
+    for (const comparison of ViewerApp.buildAnalysisDiagnostics().comparisons) {
+      assert.equal(comparison.candidates.length, 10);
+      assert.equal(comparison.candidates.filter(p => players.slice(0, 6).some(q => q.name === p.name)).length, 6);
+    }
+    assert.equal(JSON.stringify({ adjust: State.phaseAdjust, diag: State.phaseDiag, targets: State.pinkTargets }), learnedBefore);
+    ViewerApp.saveCandidateEvent({ clickedAtMs: now, evaluationTimeMs: now });
+    const record = saved.find(r => r.e === 'candidate');
+    assert.ok(record);
+    assert.equal(record.pinkCapEnabled, false);
+    assert.equal(record.maxPinkManagedSlots, null);
+    assert.equal(record.pinkMismatchEnabled, false);
+    assert.equal(record.pinkMismatchFloor, null);
+    assert.equal(record.pinkMismatchDecaySec, null);
+    assert.equal(record.pinkCapDroppedCount, 0);
+    assert.equal(record.pinkManagedSlotsAfterCap, 6);
+    const decoded = record.allCandidates.map(row =>
+      Object.fromEntries(record.allCandidatesColumns.map((key, i) => [key, row[i]])));
+    for (const p of decoded) {
+      assert.equal(p.realtimeBoost, 1);
+      assert.equal(p.pinkMismatchBoostFactor, 1);
+      assert.equal(p.playerActivitySignal, 0);
+    }
+    assert.equal(Object.hasOwn(record.scoringConfigSnapshot.effective, 'realtimeBoost'), false);
+  } finally {
+    ViewerPersistence.setLogDB(previousDB);
+    globalThis.document.querySelectorAll = origQSA;
+    Object.assign(State, previous);
+  }
+});
+
 test('saved shadow diagnostics and timing logs do not change production candidates or learning', () => {
   const { State } = ViewerApp;
   const previous = { ...State };
@@ -658,7 +841,8 @@ test('buildMatchingCandidates correctly integrates normal, crossBucket and wildc
     assert.equal(ViewerApp.State.matchingSlotPlan.reduce((sum, p) => sum + p.slots, 0), 7);
     assert.equal(ViewerApp.State.matchingCrossBucketDiagnostics.wildcardSlotCount, 2);
     assert.equal(ViewerApp.State.matchingList.length, 10);
-    assert.equal(ViewerApp.State.matchingPinkCapDiagnostics.maxPinkManagedSlots, 2);
+    assert.equal(ViewerApp.State.matchingPinkCapDiagnostics.maxPinkManagedSlots, null);
+    assert.equal(ViewerApp.State.matchingPinkCapDiagnostics.pinkCapEnabled, false);
     assert.equal(ViewerApp.State.matchingContext.scoringConfigSnapshot.version, config.meta.version);
     assert.equal(ViewerApp.State.matchingContext.scoringConfigSnapshot.effective.candidateSelection.slots.wildcard, 2);
     const active = ViewerApp.State.scoringConfig;
