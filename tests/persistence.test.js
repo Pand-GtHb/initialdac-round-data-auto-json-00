@@ -51,6 +51,13 @@ test("buildDailyKey rolls over at 04:00 (28:00 cutoff)", () => {
   assert.equal(p.buildDailyKey(d3), "20261013");
 });
 
+test("explicit timezone daily keys use JST 04:00 regardless of host timezone", () => {
+  assert.equal(p.buildDailyKey(new Date("2026-10-18T18:59:59Z"), 540), "20261018");
+  assert.equal(p.buildDailyKey(new Date("2026-10-18T19:00:00Z"), 540), "20261019");
+  assert.equal(p.buildDailyKey(new Date("2026-10-19T03:59:59Z"), 0), "20261018");
+  assert.equal(p.buildDailyKey(new Date("2026-10-19T04:00:00Z"), 0), "20261019");
+});
+
 test("readStoredArraySafe & writeStoredArraySafe handle arrays and errors", () => {
   const storage = createMockStorage();
 

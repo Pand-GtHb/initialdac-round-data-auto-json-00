@@ -3,7 +3,8 @@
 
   const ViewerUtils = (typeof global !== "undefined" && global.ViewerUtils) || {};
   const ViewerDomain = (typeof global !== "undefined" && global.ViewerDomain) || {};
-  const ViewerPersistence = (typeof global !== "undefined" && global.ViewerPersistence) || {};
+  const ViewerPersistence = (typeof global !== "undefined" && global.ViewerPersistence) ||
+    (typeof module === "object" && module.exports ? require("./0300_persistence.js") : {});
 
   const clamp = ViewerUtils.clamp || ((v, min, max) => Math.max(min, Math.min(max, v)));
   const normalizePlayerName = ViewerUtils.normalizePlayerName || (name => String(name ?? "").trim());
@@ -12,6 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
+  const MATCHING_SCRIPT_VERSION = "matching-shadow-v1-20261019";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -21,8 +23,6 @@
   const CROSS_BUCKET_SLOT_COUNT = 1;
   const WILDCARD_SLOT_COUNT = 1;
   const DEFAULT_MAX_PINK_MANAGED_SLOTS = 2;
-  const DEFAULT_SOFTMAX_BACKTEST_ENABLED = true;
-  const DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE = 0.15;
   const DEFAULT_REALTIME_PLAYER_WEIGHT = 0.35;
   const DEFAULT_REALTIME_RANK_WEIGHT = 0.03;
   const DEFAULT_REALTIME_MAX_BONUS = 0.25;
@@ -108,7 +108,8 @@
         pinkMismatch: { floor: DEFAULT_PINK_MISMATCH_FLOOR, decaySec: DEFAULT_PINK_MISMATCH_DECAY_SEC }
       },
       experimental: {
-        softmaxBacktest: { enabled: DEFAULT_SOFTMAX_BACKTEST_ENABLED, temperature: DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE }
+        dayRelativeArea: { enabled: true, weight: 0.30, smoothingCount: 2 },
+        yellowPhase: { enabled: true, weight: 0.70 }
       }
     };
     const extraKeys = {
@@ -165,11 +166,12 @@
       "candidateSelection.areaBoost.diagnosticPhaseWeight", "phase.weight", "phase.yellowMaxWeight",
       "phase.yellow.weight", "phase.pink.weight", "phase.yellow.alpha", "phase.pink.alpha",
       "phaseError.yellowThreshold", "phaseError.pinkThreshold", "realtimeBoost.playerWeight",
-      "realtimeBoost.rankWeight", "realtimeBoost.pinkMismatch.floor"
+      "realtimeBoost.rankWeight", "realtimeBoost.pinkMismatch.floor",
+      "experimental.dayRelativeArea.weight", "experimental.yellowPhase.weight"
     ]) number(name, 0, 1);
     for (const name of ["historical.reliabilityK", "phase.yellow.baseCycleSec", "phase.pink.baseCycleSec",
       "phaseError.scaleSec", "phase.yellow.maxSampleAgeSec", "realtimeBoost.decaySec",
-      "experimental.softmaxBacktest.temperature"]) number(name, Number.EPSILON, Number.MAX_VALUE);
+      "experimental.dayRelativeArea.smoothingCount"]) number(name, Number.EPSILON, Number.MAX_VALUE);
     number("realtimeBoost.pinkMismatch.decaySec", 1, Number.MAX_VALUE);
     for (const name of ["historical.minOwnSamplesForNoBackoff", "phase.yellow.minSamples", "phase.pink.minSamples"]) {
       number(name, 0, Number.MAX_SAFE_INTEGER, true);
@@ -1721,63 +1723,105 @@
     };
   }
 
-  function computeSoftmaxBacktestPreview(pool, slotCount, temperature, options = {}) {
-    const config = options.scoringConfig ?? getState()?.scoringConfig;
-    const enabled = Boolean(
-      config?.experimental?.softmaxBacktest?.enabled ?? DEFAULT_SOFTMAX_BACKTEST_ENABLED
+  function buildShadowCandidateComparison(pool, {
+    variant, scoringConfig, slotPlan = [], copyAreaHistory = [], evaluationTimeMs
+  }) {
+    if (!["dayRelativeArea", "yellowPhase"].includes(variant)) {
+      throw new Error(`Unknown diagnostic variant: ${variant}`);
+    }
+    const settings = scoringConfig.experimental[variant];
+    if (!settings.enabled) return { status: "disabled", parameters: { ...settings }, selected: [] };
+
+    const dayKey = ViewerPersistence.buildDailyKey(new Date(evaluationTimeMs), 540);
+    const history = copyAreaHistory.filter(record =>
+      Number.isFinite(record.t) && record.t <= evaluationTimeMs &&
+      ViewerPersistence.buildDailyKey(new Date(record.t), 540) === dayKey &&
+      String(record.area ?? "") !== ""
     );
-
-    if (!enabled || !Array.isArray(pool) || pool.length === 0 || slotCount <= 0) {
-      return {
-        enabled,
-        temperature,
-        previewCandidates: []
-      };
+    const areaCounts = new Map();
+    const observedCounts = new Map();
+    for (const p of pool) {
+      const area = String(p.area ?? "");
+      areaCounts.set(area, (areaCounts.get(area) ?? 0) + 1);
+    }
+    for (const record of history) {
+      const area = String(record.area);
+      observedCounts.set(area, (observedCounts.get(area) ?? 0) + 1);
     }
 
-    const items = pool
-      .map(p => ({
-        player: p,
-        score: getCandidateSlotScore(p)
-      }))
-      .filter(x => x.score > 0);
-
-    const remaining = [...items];
-    const picked = [];
-    const effectiveSlotCount = Math.min(slotCount, remaining.length);
-
-    for (let i = 0; i < effectiveSlotCount; i++) {
-      const maxScore = Math.max(...remaining.map(x => x.score));
-      const weights = remaining.map(x => Math.exp((x.score - maxScore) / temperature));
-      const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-
-      let r = (options.random ?? Math.random)() * totalWeight;
-      let idx = 0;
-      for (; idx < weights.length; idx++) {
-        r -= weights[idx];
-        if (r <= 0) {
-          break;
-        }
+    // All selection flags and score details belong to diagnostic clones only.
+    const clones = pool.map(p => {
+      const clone = { ...p, __detail: { ...p.__detail } };
+      for (const key of ["__crossBucket", "__wildcard", "__pinkCapBackfill",
+        "__crossBucketSelectionReason", "displayRank"]) delete clone[key];
+      const d = clone.__detail;
+      if (variant === "dayRelativeArea") {
+        const area = String(p.area ?? "");
+        const expected = history.length * (areaCounts.get(area) ?? 0) / Math.max(1, pool.length);
+        const observed = observedCounts.get(area) ?? 0;
+        const boost = area
+          ? 1 + settings.weight * clamp((observed - expected) / (expected + settings.smoothingCount), 0, 1)
+          : 1;
+        d.slotScore = getCandidateSlotScore(p) / (d.recentAreaAppliedBoost ?? 1) * boost;
+        d.recentAreaCounterfactualBoostWindow = boost;
+        d.recentAreaAppliedBoost = boost;
+        d.diagnosticAreaExpectedCount = expected;
+        d.diagnosticAreaObservedCount = observed;
+      } else if (!d.isPinkManaged) {
+        const effective = clamp(1 - settings.weight * d.phaseTrust * (1 - d.finalPhaseScore), 0, 1);
+        d.phaseWeight = settings.weight;
+        d.effectivePhaseScore = effective;
+        clone.__score = d.historicalScore * d.realtimeBoost * d.pinkMismatchBoostFactor * effective;
+        d.score = clone.__score;
+        d.slotScore = d.realtimeBoost * d.pinkMismatchBoostFactor * effective *
+          d.areaBoost * d.prideBandPriorWeight * d.recentAreaAppliedBoost;
       }
-      idx = Math.min(idx, remaining.length - 1);
-
-      picked.push(remaining[idx].player);
-      remaining.splice(idx, 1);
-    }
-
+      clone.__slotScore = d.slotScore;
+      return clone;
+    });
+    const eligible = clones.filter(p =>
+      getCandidateSelectionScore(p) > 0 && getCandidateSlotScore(p) > 0);
+    const slots = getMatchingSlotCounts(scoringConfig);
+    const normal = selectNormalCandidatesBySlots(eligible, slots.normal, {}, slotPlan, {
+      state: {}, scoringConfig
+    });
+    const cross = selectCrossBucketCandidates(eligible, normal, slots.crossBucket);
+    cross.forEach(p => {
+      p.__crossBucket = true;
+      p.__crossBucketSelectionReason = "individual-probability";
+    });
+    const wildcard = selectWildcardCandidates(eligible, [...normal, ...cross], slots.wildcard);
+    wildcard.forEach(p => {
+      p.__wildcard = true;
+      p.__crossBucket = true;
+      p.__crossBucketSelectionReason = "global-high-score";
+    });
+    const ranked = [...eligible].sort((a, b) =>
+      getCandidateSelectionScore(b) - getCandidateSelectionScore(a));
+    const selected = applyPinkManagedSlotCap(
+      [...normal, ...cross, ...wildcard], ranked,
+      scoringConfig.candidateSelection.maxPinkManagedSlots
+    ).finalSelected;
     return {
-      enabled,
-      temperature,
-      previewCandidates: picked.map(p => ({
-        name: p.name,
-        shopname: p.shopname ?? "",
-        slotScore: Number(getCandidateSlotScore(p).toFixed(6)),
-        isPinkManaged: Boolean(p.__detail?.isPinkManaged)
-      }))
+      status: "computed",
+      parameters: {
+        ...settings,
+        ...(variant === "dayRelativeArea" ? {
+          dayKey, dayBoundary: "JST-04:00", historySource: "prior-normal-copies",
+          sampleCount: history.length, populationSource: "scoredCandidates",
+          populationCount: pool.length, replaces: "recent-area-only",
+          observedAreaCounts: Object.fromEntries(observedCounts),
+          candidateAreaCounts: Object.fromEntries(areaCounts),
+          formula: "1 + weight * clamp((observed - expected) / (expected + smoothingCount), 0, 1)"
+        } : { replaces: "yellow-effective-phase-weight", pinkUnchanged: true }),
+        slotPlan: slotPlan.map(entry => ({ ...entry }))
+      },
+      selected
     };
   }
 
   const ViewerMatching = {
+    MATCHING_SCRIPT_VERSION,
     resolveScoringConfig,
     getScoringConfigSnapshot,
     getMatchingSlotCounts,
@@ -1789,8 +1833,6 @@
     CROSS_BUCKET_SLOT_COUNT,
     WILDCARD_SLOT_COUNT,
     DEFAULT_MAX_PINK_MANAGED_SLOTS,
-    DEFAULT_SOFTMAX_BACKTEST_ENABLED,
-    DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE,
     DEFAULT_REALTIME_PLAYER_WEIGHT,
     DEFAULT_REALTIME_RANK_WEIGHT,
     DEFAULT_REALTIME_MAX_BONUS,
@@ -1837,7 +1879,7 @@
     selectCrossBucketCandidates,
     selectWildcardCandidates,
     applyPinkManagedSlotCap,
-    computeSoftmaxBacktestPreview
+    buildShadowCandidateComparison
   };
 
   if (typeof module !== "undefined" && module.exports) {

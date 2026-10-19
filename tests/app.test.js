@@ -196,6 +196,141 @@ test('analysis diagnostics do not count unavailable Phase as a zero-error match'
   }
 });
 
+test('candidate timing logs preserve anchor types, missing values and exact cooldown boundary', () => {
+  const { State } = ViewerApp;
+  const previous = { ...State };
+  try {
+    State.scoringConfig = ViewerMatching.resolveScoringConfig(
+      JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+    State.phaseAdjust = { yellow: 0, pink: 0 };
+    State.pinkTargets = {};
+    const evaluationTimeMs = Date.parse('2026-10-19T10:00:00+09:00');
+    const player = { name: 'timing', shopname: 'S', updateDate: '2026/10/19 09:50:00' };
+    const yellow = ViewerApp.getCandidateTimingLog(player, evaluationTimeMs);
+    assert.equal(yellow.phaseAnchorType, 'last-update');
+    assert.equal(yellow.phaseAnchorAtMs, Date.parse('2026-10-19T09:50:00+09:00'));
+    assert.equal(yellow.lastUpdateAgeSec, 600);
+    assert.equal(yellow.pinkLastEncounterAtMs, null);
+    assert.equal(yellow.cooldownCycleSec, null);
+    const missing = ViewerApp.getCandidateTimingLog({ name: 'missing', updateDate: 'invalid' }, evaluationTimeMs);
+    assert.equal(missing.phaseAnchorAtMs, null);
+    assert.equal(missing.phaseAnchorType, 'unavailable');
+    assert.equal(missing.lastUpdateAtMs, null);
+    assert.equal(missing.lastUpdateAgeSec, null);
+
+    const target = { ...player, lastCopiedAt: evaluationTimeMs - 60000 };
+    State.pinkTargets[ViewerDomain.buildPlayerIdentityKey(player)] = target;
+    const pink = ViewerApp.getCandidateTimingLog(player, evaluationTimeMs);
+    assert.equal(pink.phaseAnchorType, 'pink-last-copy');
+    assert.equal(pink.phaseAnchorAtMs, target.lastCopiedAt);
+    assert.equal(pink.pinkLastEncounterAgeSec, 60);
+    assert.equal(pink.lastUpdateAgeSec, 600);
+    assert.equal(pink.cooldownCycleSec, 345);
+    assert.equal(pink.cooldownDurationSec, 517.5);
+    assert.equal(pink.cooldownRemainingSec, 457.5);
+    target.lastCopiedAt = evaluationTimeMs - 517500;
+    assert.equal(ViewerApp.getCandidateTimingLog(player, evaluationTimeMs).cooldownRemainingSec, 0);
+    for (const slim of [true, false]) {
+      const breakdown = ViewerApp.buildScoreBreakdownLog(pink, slim);
+      for (const key of Object.keys(pink)) assert.equal(breakdown[key], pink[key], key);
+    }
+    const row = ViewerApp.buildAllCandidateRow({ name: 'timing', __detail: pink });
+    assert.equal(row.length, ViewerApp.ALL_CANDIDATES_COLUMNS.length);
+    const decoded = Object.fromEntries(ViewerApp.ALL_CANDIDATES_COLUMNS.map((key, i) => [key, row[i]]));
+    for (const key of Object.keys(pink)) assert.equal(decoded[key], pink[key], key);
+  } finally {
+    Object.assign(State, previous);
+  }
+});
+
+test('saved shadow diagnostics and timing logs do not change production candidates or learning', () => {
+  const { State } = ViewerApp;
+  const previous = { ...State };
+  const previousDB = ViewerPersistence.getLogDB();
+  const origQSA = globalThis.document.querySelectorAll;
+  const saved = [];
+  try {
+    globalThis.document.querySelectorAll = selector =>
+      selector.includes('.ruby-filter:checked') ? [{ value: '7' }] : [];
+    ViewerPersistence.setLogDB({
+      transaction: () => ({ objectStore: () => ({
+        put: record => saved.push(JSON.parse(JSON.stringify(record))),
+        getAllKeys: () => ({})
+      }) })
+    });
+    State.scoringConfig = ViewerMatching.resolveScoringConfig(
+      JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+    State.myRankKey = 'R7';
+    State.phaseAdjust = { yellow: 0, pink: 0 };
+    State.yellowSamples = [];
+    State.phaseDiag = { yellow: { sampleCount: 8, trust: 1 }, pink: { sampleCount: 0, trust: 0 } };
+    State.pinkTargets = {};
+    const now = Date.parse('2026-10-19T10:00:00+09:00');
+    const players = Array.from({ length: 16 }, (_, i) => ({
+      name: `SHADOW_${i}`, shopname: 'S', area: i < 4 ? '1' : '2',
+      onlineBattleRankId: ViewerDomain.RUBY_ID, starCnt: 7,
+      updateDate: `2026/10/19 09:${50 + i % 8}:00`
+    }));
+    State.filtered = players;
+    State.all = players;
+    State.pinkTargets[ViewerDomain.buildPlayerIdentityKey(players[0])] = {
+      ...players[0], lastCopiedAt: now - 60000
+    };
+    State.copyAreaHistory = [{ t: now - 20000, area: '1' }];
+    const buildOptions = { evaluationTimeMs: now, clickedAtMs: now, saveEvent: false };
+    ViewerApp.buildMatchingCandidates(buildOptions);
+    const before = JSON.stringify({
+      list: State.matchingList, scored: State.matchingScoredAll,
+      plan: State.matchingSlotPlan, pink: State.pinkTargets,
+      adjust: State.phaseAdjust, pinkCycle: State.pinkCycleState,
+      samples: State.yellowSamples
+    });
+    const diagnostics = ViewerApp.buildAnalysisDiagnostics();
+    assert.deepEqual(diagnostics.comparisons.map(c => c.id), [
+      'pride-rescue-cross-slot', 'day-relative-area', 'yellow-phase-weight-070'
+    ]);
+    for (const c of diagnostics.comparisons) {
+      assert.equal(c.candidates.length, 10);
+      assert.equal(new Set(c.candidates.map(p => p.name)).size, 10);
+    }
+    assert.equal(JSON.stringify({
+      list: State.matchingList, scored: State.matchingScoredAll,
+      plan: State.matchingSlotPlan, pink: State.pinkTargets,
+      adjust: State.phaseAdjust, pinkCycle: State.pinkCycleState,
+      samples: State.yellowSamples
+    }), before);
+    ViewerApp.saveCandidateEvent({ clickedAtMs: now, evaluationTimeMs: now });
+    const record = saved.find(r => r.e === 'candidate');
+    assert.ok(record);
+    assert.equal(record.scriptVersion, ViewerApp.ANALYSIS_SCRIPT_VERSION);
+    assert.equal(record.matchingScriptVersion, ViewerMatching.MATCHING_SCRIPT_VERSION);
+    assert.equal(Object.hasOwn(record, 'softmaxBacktest'), false);
+    assert.equal(record.analysisDiagnostics.storageCoverage.complete, true);
+    const excluded = record.filteredPopulationAfterTimeAndRankFilters.pinkCooldownExcludedCandidates[0];
+    assert.equal(excluded.name, 'SHADOW_0');
+    assert.equal(excluded.cooldownRemainingSec, 457.5);
+    assert.equal(excluded.cooldownCycleSec, 345);
+    assert.equal(excluded.phaseAnchorAtMs, now - 60000);
+    for (const row of record.allCandidates) {
+      assert.equal(row.length, record.allCandidatesColumns.length);
+      assert.equal(row[record.allCandidatesColumns.indexOf('phaseAnchorType')], 'last-update');
+      assert.equal(typeof row[record.allCandidatesColumns.indexOf('lastUpdateAgeSec')], 'number');
+    }
+    assert.equal(record.candidates[0].scoreBreakdown.phaseAnchorType, 'last-update');
+    const names = State.matchingList.map(p => p.name);
+    State.scoringConfig.experimental.dayRelativeArea.enabled = false;
+    State.scoringConfig.experimental.yellowPhase.enabled = false;
+    ViewerApp.buildMatchingCandidates(buildOptions);
+    assert.deepEqual(State.matchingList.map(p => p.name), names);
+    assert.ok(ViewerApp.buildAnalysisDiagnostics().comparisons.slice(1).every(c =>
+      c.status === 'disabled' && c.candidates.length === 0 && c.removed.length === 0));
+  } finally {
+    globalThis.document.querySelectorAll = origQSA;
+    ViewerPersistence.setLogDB(previousDB);
+    Object.assign(State, previous);
+  }
+});
+
 test('State object initialization and view state helpers', () => {
   assert.ok(Array.isArray(ViewerApp.State.all));
   assert.ok(Array.isArray(ViewerApp.State.filtered));
@@ -453,6 +588,8 @@ test('exportTodayViewerLogsAsJSON uses active LogDB and exports candidateEvents'
   assert.equal(parsed.scoringConfigSnapshot.version, ViewerApp.State.scoringConfig.meta.version);
   assert.equal(parsed.scoringConfigSnapshot.effective.phase.yellow.weight, 0.55);
   assert.equal(parsed.scoringConfigSnapshot.effective.candidateSelection.slots.normal, 8);
+  assert.equal(parsed.scriptVersion, ViewerApp.ANALYSIS_SCRIPT_VERSION);
+  assert.equal(parsed.matchingScriptVersion, ViewerMatching.MATCHING_SCRIPT_VERSION);
 
   // Restore mocks
   globalThis.document.createElement = origCreateElement;

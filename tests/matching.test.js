@@ -234,28 +234,103 @@ test("applyPinkManagedSlotCap enforces max pink managed limit and backfills", ()
   assert.equal(backfilled.length, 2);
 });
 
-test("computeSoftmaxBacktestPreview generates candidate sample", () => {
+test("day-relative AREA shadow uses prior same-day copies and never mutates production", () => {
   const context = createMatchingContext();
-  const { computeSoftmaxBacktestPreview } = context.ViewerMatching;
-
-  const pool = [
-    { name: "C1", __slotScore: 5.0, __detail: {} },
-    { name: "C2", __slotScore: 4.0, __detail: {} },
-    { name: "C3", __slotScore: 3.0, __detail: {} },
-    { name: "C4", __slotScore: 2.0, __detail: {} }
+  const { buildShadowCandidateComparison, resolveScoringConfig } = context.ViewerMatching;
+  const config = resolveScoringConfig({ meta: { schemaVersion: 1, version: "test" } });
+  const evaluationTimeMs = Date.parse("2026-10-19T10:00:00+09:00");
+  const pool = Array.from({ length: 12 }, (_, i) => Object.freeze({
+    name: `P${i}`, shopname: "S", area: i < 2 ? "rare" : "common",
+    __rankKey: "R7", __score: 0.1, __slotScore: 1.3,
+    __crossBucket: true, __wildcard: true, displayRank: 1,
+    __detail: Object.freeze({
+      slotBucket: "R7", slotScore: 1.3, effectivePhaseScore: 1,
+      tierProbability: 1, tierCandidateCount: 12, recentAreaAppliedBoost: 1.3,
+      recentAreaCounterfactualBoostWindow: 1.3
+    })
+  }));
+  const slotPlan = [{ bucket: "R7", slots: 8 }];
+  const history = [
+    { t: Date.parse("2026-10-19T03:59:59+09:00"), area: "rare" },
+    { t: Date.parse("2026-10-19T04:00:00+09:00"), area: "rare" },
+    { t: evaluationTimeMs - 20000, area: "rare" },
+    { t: evaluationTimeMs - 10000, area: "common" },
+    { t: evaluationTimeMs + 1, area: "rare" },
+    { t: evaluationTimeMs - 100, area: "" }
   ];
-
-  const result = computeSoftmaxBacktestPreview(pool, 2, 0.15, {
-    scoringConfig: {
-      experimental: {
-        softmaxBacktest: { enabled: true }
-      }
-    }
+  const snapshot = JSON.stringify({ pool, slotPlan, history });
+  const result = buildShadowCandidateComparison(pool, {
+    variant: "dayRelativeArea", scoringConfig: config, slotPlan,
+    copyAreaHistory: history, evaluationTimeMs
   });
+  assert.equal(result.parameters.sampleCount, 3);
+  assert.equal(result.parameters.populationCount, 12);
+  assert.equal(result.parameters.dayKey, "20261019");
+  assert.equal(result.selected.length, 10);
+  assert.equal(new Set(result.selected.map(p => p.name)).size, 10);
+  const rare = result.selected.find(p => p.area === "rare");
+  assert.ok(Math.abs(rare.__slotScore - 1.18) < 1e-12);
+  assert.equal(rare.__detail.diagnosticAreaExpectedCount, 0.5);
+  assert.equal(rare.__detail.diagnosticAreaObservedCount, 2);
+  assert.equal(rare.__score, 0.1, "AREA does not alter global-score wildcard weighting");
+  assert.equal(result.selected.filter(p => p.__wildcard).length, 1);
+  assert.equal(result.selected.filter(p => p.__crossBucket && !p.__wildcard).length, 1);
+  assert.equal(JSON.stringify({ pool, slotPlan, history }), snapshot);
+  assert.equal(context.State.matchingSlotPlan, undefined);
+  const again = buildShadowCandidateComparison(pool, {
+    variant: "dayRelativeArea", scoringConfig: config, slotPlan,
+    copyAreaHistory: history, evaluationTimeMs
+  });
+  assert.deepEqual(again, result);
+  const empty = buildShadowCandidateComparison(pool, {
+    variant: "dayRelativeArea", scoringConfig: config, slotPlan,
+    evaluationTimeMs: evaluationTimeMs + 86400000, copyAreaHistory: history.slice(0, 4)
+  });
+  assert.equal(empty.parameters.sampleCount, 0);
+  assert.ok(empty.selected.every(p => p.__slotScore === 1));
+});
 
-  assert.equal(result.enabled, true);
-  assert.equal(result.previewCandidates.length, 2);
-  assert.ok(result.previewCandidates[0].slotScore > 0);
+test("Yellow Phase shadow applies 0.70 to all selection routes and leaves Pink unchanged", () => {
+  const context = createMatchingContext();
+  const { buildShadowCandidateComparison, resolveScoringConfig, getCandidateCrossBucketScore } = context.ViewerMatching;
+  const config = resolveScoringConfig({ meta: { schemaVersion: 1, version: "test" } });
+  const pool = Array.from({ length: 15 }, (_, i) => {
+    const pink = i < 3;
+    const effective = pink ? 0.8 : 0.78;
+    const slot = 1.1 * effective * 1.05 * 0.9 * 1.3;
+    return Object.freeze({
+      name: `P${i}`, __rankKey: "R7", __score: 0.1 * 1.1 * effective, __slotScore: slot,
+      __detail: Object.freeze({
+        isPinkManaged: pink, slotBucket: "R7", slotScore: slot,
+        phaseWeight: pink ? 1 : 0.55, phaseTrust: 0.5, finalPhaseScore: 0.2,
+        effectivePhaseScore: effective, historicalScore: 0.1, realtimeBoost: 1.1,
+        pinkMismatchBoostFactor: 1, areaBoost: 1.05, prideBandPriorWeight: 0.9,
+        recentAreaAppliedBoost: 1.3, recentAreaCounterfactualBoostWindow: 1.3,
+        tierProbability: 0.5, tierCandidateCount: 15
+      })
+    });
+  });
+  const snapshot = JSON.stringify(pool);
+  const result = buildShadowCandidateComparison(pool, {
+    variant: "yellowPhase", scoringConfig: config,
+    slotPlan: [{ bucket: "R7", slots: 8 }], evaluationTimeMs: Date.now()
+  });
+  assert.equal(result.selected.length, 10);
+  assert.equal(result.selected.filter(p => p.__detail.isPinkManaged).length, 2);
+  const yellow = result.selected.find(p => !p.__detail.isPinkManaged);
+  assert.equal(yellow.__detail.phaseWeight, 0.7);
+  assert.ok(Math.abs(yellow.__detail.effectivePhaseScore - 0.72) < 1e-12);
+  assert.ok(Math.abs(yellow.__score - 0.1 * 1.1 * 0.72) < 1e-12);
+  assert.ok(Math.abs(yellow.__slotScore - 1.1 * 0.72 * 1.05 * 0.9 * 1.3) < 1e-12);
+  assert.ok(Math.abs(getCandidateCrossBucketScore(yellow) - 0.5 / 15 * 1.1 * 0.72 * 1.05 * 1.3) < 1e-12);
+  assert.equal(result.selected.find(p => p.__detail.isPinkManaged).__detail.phaseWeight, 1);
+  assert.equal(JSON.stringify(pool), snapshot);
+  config.experimental.yellowPhase.enabled = false;
+  assert.equal(buildShadowCandidateComparison(pool, {
+    variant: "yellowPhase", scoringConfig: config, slotPlan: []
+  }).status, "disabled");
+  assert.throws(() => buildShadowCandidateComparison(pool, { variant: "unknown" }), /Unknown diagnostic/);
+  assert.equal(context.ViewerMatching.computeSoftmaxBacktestPreview, undefined);
 });
 
 test("adjustSlotsByRelativePopulation handles disabled state and eligible adjustments", () => {
@@ -444,6 +519,11 @@ test("scoring config resolves defaults, validates inputs and records effective v
     [["candidateSelection", "areaBoost", "diagnosticRecentWeight"], 0.1],
     [["phaseError", "scaleSec"], 0],
     [["phaseError", "yellowScaleSec"], "90"],
+    [["experimental", "dayRelativeArea", "weight"], 1.1],
+    [["experimental", "dayRelativeArea", "smoothingCount"], 0],
+    [["experimental", "yellowPhase", "weight"], "0.70"],
+    [["experimental", "yellowPhase", "enabled"], 1],
+    [["experimental", "softmaxBacktest"], { enabled: true, temperature: 0.15 }],
     [["realtimeBoost", "decaySec"], Infinity],
     [["realtimeBoost", "maxBonus"], -1],
     [["historical", "reliabilityK"], NaN]

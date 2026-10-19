@@ -96,12 +96,12 @@
   } = ViewerData || {};
 
   const {
+    MATCHING_SCRIPT_VERSION,
     resolveScoringConfig,
     getScoringConfigSnapshot,
     getMatchingSlotCounts,
     DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD,
     DEFAULT_MAX_PINK_MANAGED_SLOTS,
-    DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE,
     DEFAULT_REALTIME_PLAYER_WEIGHT,
     DEFAULT_REALTIME_RANK_WEIGHT,
     DEFAULT_REALTIME_MAX_BONUS,
@@ -125,7 +125,7 @@
     selectCrossBucketCandidates,
     selectWildcardCandidates,
     applyPinkManagedSlotCap,
-    computeSoftmaxBacktestPreview
+    buildShadowCandidateComparison
   } = ViewerMatching || {};
 
   const {
@@ -171,7 +171,7 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "softmax-18-analysis-v2-pink-startup";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v3-shadow-area-phase-20261019";
 const MAX_LOG_LINES = 100;
 const DEFAULT_FILTER_MINUTES = 30;
 const DEFAULT_MY_RANK_KEY = "R7";
@@ -215,7 +215,14 @@ function buildAnalysisDiagnostics() {
     name: p.name,
     shopname: p.shopname ?? "",
     rankKey: p.__rankKey,
-    slotScore: getCandidateSlotScore(p)
+    slotScore: getCandidateSlotScore(p),
+    score: getCandidateSelectionScore(p),
+    crossBucketScore: getCandidateCrossBucketScore(p),
+    phaseWeight: p.__detail?.phaseWeight ?? null,
+    effectivePhaseScore: p.__detail?.effectivePhaseScore ?? null,
+    recentAreaBoost: p.__detail?.recentAreaAppliedBoost ?? null,
+    areaExpectedCount: p.__detail?.diagnosticAreaExpectedCount ?? null,
+    areaObservedCount: p.__detail?.diagnosticAreaObservedCount ?? null
   });
   const phasePopulation = {};
   for (const p of State.matchingScoredAll) {
@@ -287,6 +294,29 @@ function buildAnalysisDiagnostics() {
     rescue: rescue ? { ...identify(rescue), rescueScore: rescueScore(rescue) } : null,
     replacement: eligibleViewer && rescue && cross ? identify(cross) : null
   }));
+  const currentKeys = new Set(current.map(buildPlayerIdentityKey));
+  for (const [variant, id] of [
+    ["dayRelativeArea", "day-relative-area"],
+    ["yellowPhase", "yellow-phase-weight-070"]
+  ]) {
+    const result = buildShadowCandidateComparison(State.matchingScoredAll, {
+      variant, scoringConfig: State.scoringConfig,
+      slotPlan: State.matchingSlotPlan,
+      copyAreaHistory: State.copyAreaHistory,
+      evaluationTimeMs: State.matchingContext.evaluationTimeMs
+    });
+    const selectedKeys = new Set(result.selected.map(buildPlayerIdentityKey));
+    comparisons.push({
+      id, status: result.status, parameters: result.parameters,
+      evaluatedCandidateCount: State.matchingScoredAll.length,
+      candidates: result.selected.map(identify),
+      added: result.selected.filter(p => !currentKeys.has(buildPlayerIdentityKey(p))).map(identify),
+      removed: result.status === "computed"
+        ? current.filter(p => !selectedKeys.has(buildPlayerIdentityKey(p))).map(identify)
+        : []
+    });
+  }
+
   return {
     version: ANALYSIS_SCRIPT_VERSION,
     evaluatedAt: State.matchingContext.evaluationTimeMs,
@@ -295,6 +325,7 @@ function buildAnalysisDiagnostics() {
     comparisons,
     computationMs: performance.now() - startedAt,
     provenance: {
+      matchingScriptVersion: MATCHING_SCRIPT_VERSION,
       historicalMeta: State.historicalMatchupDistribution?.meta ?? null,
       historicalChecksum: analysisChecksum(State.historicalMatchupDistribution),
       scoringConfigChecksum: analysisChecksum(State.scoringConfig),
@@ -320,6 +351,8 @@ function recordUnmatchedSearchMemo() {
   const t = Date.now();
   const record = {
     t, dk: buildDailyKey(), logSchemaVersion: ANALYSIS_SCRIPT_VERSION,
+    scriptVersion: ANALYSIS_SCRIPT_VERSION,
+    matchingScriptVersion: MATCHING_SCRIPT_VERSION,
     recordKind: "unmatched-search-memo",
     matchEventId: `manual-${crypto.randomUUID()}`,
     searchMemo, n: null, shopname: null, opponentTier: null,
@@ -413,6 +446,11 @@ function recordUnmatchedSearchMemo() {
  *   候補ごとの重複記録をやめ、candidateEventレコード側に
  *   1回だけ記録する。
  */
+const CANDIDATE_TIMING_COLUMNS = [
+  "phaseAnchorAtMs", "phaseAnchorType", "lastUpdate", "lastUpdateAtMs",
+  "lastUpdateAgeSec", "pinkLastEncounterAtMs", "pinkLastEncounterAgeSec",
+  "cooldownRemainingSec", "cooldownCycleSec", "cooldownDurationSec", "cycleSec"
+];
 const ALL_CANDIDATES_COLUMNS = [
   "globalScoreRank",
   "name",
@@ -484,7 +522,8 @@ const ALL_CANDIDATES_COLUMNS = [
   "phaseWeight",
   "phaseSampleCount",
   "phaseTrust",
-  "phaseAdjustValue"
+  "phaseAdjustValue",
+  ...CANDIDATE_TIMING_COLUMNS
 ];
 
 const MAX_YELLOW_PHASE_WEIGHT = 0.55;
@@ -528,7 +567,6 @@ const State = {
   matchingFilteredPopulationSnapshot: null,
   matchingCrossBucketDiagnostics: null,
   matchingPinkCapDiagnostics: null,
-  matchingSoftmaxBacktestPreview: null,
   matchingOffsetSec: 0,
   previewOffsetSec: 0,
   matchingContext: {
@@ -657,7 +695,6 @@ function syncMyRankSelection(
     State.matchingFilteredPopulationSnapshot = null;
     State.matchingCrossBucketDiagnostics = null;
     State.matchingPinkCapDiagnostics = null;
-    State.matchingSoftmaxBacktestPreview = null;
     State.matchingContext = {
       mode: "matching",
       clickedAtMs: null,
@@ -4159,6 +4196,35 @@ function getPinkSampleCount() {
 /* =========================================================
  [7420] Phase Context:computePhaseContext【State】（旧 [7500] 内）
 ========================================================= */
+function getCandidateTimingLog(player, evaluationTimeMs) {
+  const target = getPinkTarget(player);
+  const lastUpdateAt = parseDateJST(player?.updateDate)?.getTime();
+  const lastUpdateAtMs = Number.isFinite(lastUpdateAt) ? lastUpdateAt : null;
+  const encounterAt = Number(target?.lastCopiedAt);
+  const pinkLastEncounterAtMs = Number.isFinite(encounterAt) && encounterAt > 0 ? encounterAt : null;
+  const cycleSec = getCurrentCycle(player);
+  const cooldownCycleSec = target ? Math.max(60, cycleSec) : null;
+  const cooldown = target
+    ? getPhaseDistanceMin(pinkLastEncounterAtMs, cooldownCycleSec / 60, evaluationTimeMs)
+    : null;
+  const phaseAnchorAtMs = target ? pinkLastEncounterAtMs : lastUpdateAtMs;
+  return {
+    phaseAnchorAtMs,
+    phaseAnchorType: phaseAnchorAtMs === null
+      ? "unavailable" : target ? "pink-last-copy" : "last-update",
+    lastUpdate: player?.updateDate ?? null,
+    lastUpdateAtMs,
+    lastUpdateAgeSec: lastUpdateAtMs === null ? null : (evaluationTimeMs - lastUpdateAtMs) / 1000,
+    pinkLastEncounterAtMs,
+    pinkLastEncounterAgeSec: pinkLastEncounterAtMs === null
+      ? null : (evaluationTimeMs - pinkLastEncounterAtMs) / 1000,
+    cooldownRemainingSec: cooldown?.cooldownRemainingSec ?? 0,
+    cooldownCycleSec,
+    cooldownDurationSec: cooldownCycleSec === null ? 0 : cooldownCycleSec * 1.5,
+    cycleSec
+  };
+}
+
 function computePhaseContext(player, nowMs = Date.now()) {
   const isPinkManaged = isCopiedPlayer(player);
   let metrics = null;
@@ -4662,7 +4728,8 @@ function calcMatchingScoreDetail(
             phaseCtx?.phaseSampleCount ?? 0,
         phaseTrust,
         phaseAdjustValue:
-            phaseCtx?.phaseAdjustValue ?? 0
+            phaseCtx?.phaseAdjustValue ?? 0,
+        ...getCandidateTimingLog(player, evaluationTimeMs)
     };
 }
 
@@ -4784,7 +4851,7 @@ function buildMatchingCandidates(
 
   /* =====================================
    * cooldown
-   * Pink管理対象について初回1サイクルは除外する。
+   * Pink管理対象について初回1.5サイクルは除外する。
    * ===================================== */
   const afterCooldown =
     filteredByUi.filter(p => {
@@ -4815,7 +4882,7 @@ function buildMatchingCandidates(
         );
 
       /*
-       * Pink管理対象は初回1サイクルは除外
+       * Pink管理対象は初回1.5サイクルは除外
        */
       if (
         phase.isInitialCooldown
@@ -4837,7 +4904,8 @@ function buildMatchingCandidates(
         shopname: p.shopname ?? "",
         rankKey: p.__rankKey,
         area: String(p.area ?? ""),
-        exclusionReason: "pink-initial-cooldown"
+        exclusionReason: "pink-initial-cooldown",
+        ...getCandidateTimingLog(p, evaluationTimeMs)
       }));
 
   const tierCounts = {};
@@ -5099,28 +5167,6 @@ function buildMatchingCandidates(
     pinkCapDroppedCount:
       pinkCapResult.pinkCapDroppedCount
   };
-
-  /*
-   * 【将来検討：ソフトマックス選択モデル（C-3ハイブリッド フェーズB）】
-   * 本番選出（finalSelected）には影響を与えない診断専用プレビュー。
-   * 温度パラメータは scoring_config.json
-   * experimental.softmaxBacktest.temperature で調整可能。
-   */
-  const softmaxTemperature =
-    Number(
-      State.scoringConfig
-        ?.experimental
-        ?.softmaxBacktest
-        ?.temperature ??
-      DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE
-    ) || DEFAULT_SOFTMAX_BACKTEST_TEMPERATURE;
-
-  State.matchingSoftmaxBacktestPreview =
-    computeSoftmaxBacktestPreview(
-      rankedByScore,
-      finalSelected.length,
-      softmaxTemperature
-    );
 
   finalSelected.forEach(
     (p, i) => {
@@ -5993,6 +6039,8 @@ async function exportTodayViewerLogsAsJSON() {
 
     exportedAt:
       Date.now(),
+    scriptVersion: ANALYSIS_SCRIPT_VERSION,
+    matchingScriptVersion: MATCHING_SCRIPT_VERSION,
 
     rawDate,
 
@@ -6197,6 +6245,7 @@ function buildScoreBreakdownLog(
   if (slim) {
 
     return {
+      ...Object.fromEntries(CANDIDATE_TIMING_COLUMNS.map(key => [key, detail[key] ?? null])),
       historicalScore:
         Number(detail.historicalScore ?? 0),
       tierProbability:
@@ -6312,6 +6361,7 @@ function buildScoreBreakdownLog(
   }
 
   return {
+    ...Object.fromEntries(CANDIDATE_TIMING_COLUMNS.map(key => [key, detail[key] ?? null])),
     historicalScore:
       Number(detail.historicalScore ?? 0),
     historicalMatched:
@@ -6545,7 +6595,8 @@ function buildAllCandidateRow(
     Number(d.phaseWeight ?? 0),
     Number(d.phaseSampleCount ?? 0),
     Number(d.phaseTrust ?? 1),
-    Number(d.phaseAdjustValue ?? 0)
+    Number(d.phaseAdjustValue ?? 0),
+    ...CANDIDATE_TIMING_COLUMNS.map(key => d[key] ?? null)
   ];
 
 }
@@ -6593,7 +6644,9 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v12_pride_population_adjustment",
+        "slot_area_v13_candidate_timing",
+      scriptVersion: ANALYSIS_SCRIPT_VERSION,
+      matchingScriptVersion: MATCHING_SCRIPT_VERSION,
 
       dk:
         buildDailyKey(),
@@ -6829,7 +6882,9 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "slot_area_v11_recent_area_config",
+      "slot_area_v13_candidate_timing",
+    scriptVersion: ANALYSIS_SCRIPT_VERSION,
+    matchingScriptVersion: MATCHING_SCRIPT_VERSION,
 
     dk:
       buildDailyKey(),
@@ -7591,7 +7646,9 @@ function saveCandidateEvent(
     t: now,
 
     logSchemaVersion:
-      "slot_area_v11_recent_area_config",
+      "slot_area_v13_candidate_timing",
+    scriptVersion: ANALYSIS_SCRIPT_VERSION,
+    matchingScriptVersion: MATCHING_SCRIPT_VERSION,
 
     e: "candidate",
 
@@ -7846,19 +7903,6 @@ function saveCandidateEvent(
           ?.prideBandDiversityGapThreshold ??
         DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD
       ),
-
-    /*
-     * 【将来検討：ソフトマックス選択モデル（C-3ハイブリッド フェーズB）】
-     * 本番選出には使用しないバックテスト専用プレビュー。
-     * previewCandidatesと実際のcandidates（本番選出）を後から
-     * 突き合わせることで、温度パラメータや採用可否を評価できる。
-     */
-    softmaxBacktest:
-      State.matchingSoftmaxBacktestPreview ?? {
-        enabled: false,
-        temperature: null,
-        previewCandidates: []
-      },
 
     /*
      * 【2026-09 ログ拡充】ownSampleCount等は同一candidateEvent内
@@ -8916,6 +8960,7 @@ async function init() {
     isMatchingCandidateByCopyPhase,
     getFilterToMs,
     getPinkSampleCount,
+    getCandidateTimingLog,
     computePhaseContext,
     getPlayerCycleCount,
 

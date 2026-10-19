@@ -39,8 +39,12 @@
   /* =========================================================
    Date Utility (28時締め日付けキー)
   ========================================================= */
-  function buildDailyKey(date = new Date()) {
+  function buildDailyKey(date = new Date(), timezoneOffsetMinutes = null) {
     const d = new Date(date);
+    if (timezoneOffsetMinutes !== null) {
+      d.setTime(d.getTime() + (timezoneOffsetMinutes - 4 * 60) * 60000);
+      return d.toISOString().slice(0, 10).replace(/-/g, "");
+    }
     if (d.getHours() < 4) {
       d.setDate(d.getDate() - 1);
     }
