@@ -783,6 +783,104 @@ test('exportTodayViewerLogsAsJSON uses active LogDB and exports candidateEvents'
   ViewerApp.State.scoringConfig = previousConfig;
 });
 
+test('temporary 10/25 recovery exports both stores read-only and reports failures', async () => {
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '..', '0700_app.js'), 'utf8');
+  const start = Date.parse('2026-10-25T04:00:00+09:00');
+  const end = Date.parse('2026-10-26T04:00:00+09:00');
+  for (const failure of [null, 'uninitialized', 'abort', 'read', 'json', 'storage']) {
+    const messages = [];
+    const downloads = [];
+    const transactions = [];
+    const button = { disabled: false };
+    const records = [
+      { t: start - 1 },
+      { t: start, matchEventId: 'normal-1', candidateEventId: 123, n: 'normal' },
+      { t: end - 1, matchEventId: 'manual-1', recordKind: 'unmatched-search-memo', searchMemo: 'memo' },
+      { t: end }
+    ];
+    const local = {
+      initialdac_copy_events_20261025: failure === 'json' ? '{' : JSON.stringify([records[1]]),
+      matchingRealtimeActivity_v1: '{"legacy":true}',
+      unrelated: 'do-not-export-this-value'
+    };
+    const db = {
+      transaction(stores, mode) {
+        transactions.push({ stores: [...stores], mode });
+        const tx = {
+          objectStore() {
+            return {
+              getAll() {
+                const req = {};
+                setTimeout(() => {
+                  if (failure === 'read') {
+                    req.error = new Error('read failed');
+                    req.onerror();
+                  } else if (failure === 'abort') {
+                    tx.error = new Error('transaction aborted');
+                    tx.onabort();
+                  } else {
+                    req.result = records;
+                    req.onsuccess();
+                    tx.oncomplete();
+                  }
+                }, 0);
+                return req;
+              }
+            };
+          }
+        };
+        return tx;
+      }
+    };
+    const context = vm.createContext({
+      console: { error() {} }, setTimeout, Date,
+      ViewerUtils, ViewerDomain, ViewerMatching, ViewerData,
+      ViewerPersistence: { ...ViewerPersistence, getLogDB: () => failure === 'uninitialized' ? null : db },
+      ViewerUI: { ...ViewerUI, log: message => messages.push(message), logError: message => messages.push(message) },
+      document: {
+        getElementById: id => id === 'recoverCopyLogBtn' ? button : null,
+        createElement: () => ({ click() {} })
+      },
+      localStorage: {
+        get length() { return Object.keys(local).length; },
+        key: i => Object.keys(local)[i],
+        getItem(key) {
+          if (failure === 'storage') throw new Error('storage access denied');
+          return local[key] ?? null;
+        },
+        setItem() { assert.fail('Recovery must not write localStorage'); },
+        removeItem() { assert.fail('Recovery must not delete localStorage'); },
+        clear() { assert.fail('Recovery must not clear localStorage'); }
+      },
+      Blob: class {
+        constructor(parts) { downloads.push(parts.join('')); }
+      },
+      URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} }
+    });
+    vm.runInContext(source, context);
+    const task = context.ViewerApp.exportCopyRecovery20261025();
+    if (failure !== 'uninitialized') assert.equal(button.disabled, true);
+    await task;
+    assert.equal(button.disabled, false);
+    assert(transactions.every(tx => tx.mode === 'readonly'));
+    if (failure) {
+      assert.equal(downloads.length, 0);
+      assert(messages.some(message => message.includes('救出失敗')));
+    } else {
+      const payload = JSON.parse(downloads[0]);
+      assert.equal(payload.dateKey, '20261025');
+      assert.deepEqual(payload.indexedDBCopyEvents, records.slice(1, 3));
+      assert.deepEqual(payload.localStorageCopyEvents, [records[1]]);
+      assert.equal(payload.indexedDBCopyEvents[0].candidateEventId, 123);
+      assert.equal(payload.localStorageInventory.length, 2);
+      assert.equal(payload.otherLocalStorage.keys, 1);
+      assert(!downloads[0].includes('do-not-export-this-value'));
+      assert.equal(messages.length, 1);
+    }
+  }
+});
+
 test('buildMatchingCandidates correctly integrates normal, crossBucket and wildcard slots', () => {
   // Mock checkbox selection so UI filter passes all stars
   const origQSA = globalThis.document.querySelectorAll;

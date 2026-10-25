@@ -30,6 +30,7 @@
     recordUnmatchedSearchMemo = (typeof globalThis !== "undefined" ? globalThis.recordUnmatchedSearchMemo : () => {}),
     undoLastCopiedInfo = (typeof globalThis !== "undefined" ? globalThis.undoLastCopiedInfo : () => {}),
     exportTodayViewerLogsAsJSON = (typeof globalThis !== "undefined" ? globalThis.exportTodayViewerLogsAsJSON : () => {}),
+    exportCopyRecovery20261025,
     reloadLatestDataPreferPrefetch = (typeof globalThis !== "undefined" ? globalThis.reloadLatestDataPreferPrefetch : async () => {}),
     stopProgress = (typeof globalThis !== "undefined" ? globalThis.stopProgress : () => {}),
     exportSummaryCSV = (typeof globalThis !== "undefined" ? globalThis.exportSummaryCSV : () => {}),
@@ -164,6 +165,12 @@ async function bootstrap() {
 
       }
 
+      }
+
+      const recoverCopyLogBtn = document.getElementById("recoverCopyLogBtn");
+      if (recoverCopyLogBtn) {
+        recoverCopyLogBtn.disabled = typeof exportCopyRecovery20261025 !== "function";
+        recoverCopyLogBtn.onclick = exportCopyRecovery20261025;
     }
 
     /* =====================================

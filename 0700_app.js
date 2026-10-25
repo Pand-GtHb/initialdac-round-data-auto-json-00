@@ -5598,6 +5598,65 @@ function exportAllCSV() {
 /* =========================================================
  [12210] JSON Export:exportTodayViewerLogsAsJSON【State】【永続化】【DOM】（旧 [9900]）
 ========================================================= */
+async function exportCopyRecovery20261025() {
+  const button = document.getElementById("recoverCopyLogBtn");
+  if (button) button.disabled = true;
+  try {
+    const db = getActiveLogDB();
+    if (!db) {
+      throw new Error("ログDBが未初期化です。ページの初期化完了後に再試行してください");
+    }
+    const start = Date.parse("2026-10-25T04:00:00+09:00");
+    const end = Date.parse("2026-10-26T04:00:00+09:00");
+    const indexedDBCopyEvents = await new Promise((resolve, reject) => {
+      const tx = db.transaction([LOG_STORE.copyEvents], "readonly");
+      const request = tx.objectStore(LOG_STORE.copyEvents).getAll();
+      let records;
+      request.onsuccess = () => { records = request.result; };
+      request.onerror = () => reject(request.error ?? new Error("コピー記録の読込失敗"));
+      tx.onabort = () => reject(tx.error ?? new Error("コピー記録の読込中断"));
+      tx.oncomplete = () => {
+        if (!Array.isArray(records)) {
+          reject(new Error("コピー記録の読込結果が不正です"));
+          return;
+        }
+        resolve(records.filter(record => Number(record.t) >= start && Number(record.t) < end));
+      };
+    });
+    const raw = localStorage.getItem("initialdac_copy_events_20261025");
+    const localStorageCopyEvents = raw === null ? [] : JSON.parse(raw);
+    if (!Array.isArray(localStorageCopyEvents)) {
+      throw new Error("localStorageの10/25コピー記録が配列ではありません");
+    }
+    const localStorageInventory = [];
+    const otherLocalStorage = { keys: 0, estimatedUtf16Bytes: 0 };
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key === null) throw new Error("保存容量の確認中にlocalStorageのキーが変化しました");
+      const value = localStorage.getItem(key);
+      const estimatedUtf16Bytes = 2 * (key.length + (value?.length ?? 0));
+      if (/^(initialdac_|matchingRealtimeActivity)/.test(key)) {
+        localStorageInventory.push({ key, estimatedUtf16Bytes });
+      } else {
+        otherLocalStorage.keys++;
+        otherLocalStorage.estimatedUtf16Bytes += estimatedUtf16Bytes;
+      }
+    }
+    downloadBlob(JSON.stringify({
+      dateKey: "20261025", exportedAt: Date.now(),
+      source: "read-only browser copy recovery",
+      indexedDBCopyEvents, localStorageCopyEvents,
+      localStorageInventory, otherLocalStorage
+    }, null, 2), "viewer_copy_recovery_20261025.json");
+    log(`10/25コピー記録救出JSON出力：IndexedDB ${indexedDBCopyEvents.length}件 / localStorage ${localStorageCopyEvents.length}件（元データは変更していません）`);
+  } catch (error) {
+    console.error("10/25コピー記録救出失敗", error);
+    logError(`10/25コピー記録救出失敗：${error.message}`);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function exportTodayViewerLogsAsJSON() {
 
   const input =
@@ -8620,6 +8679,7 @@ async function init() {
     exportSummaryCSV,
     exportAllCSV,
     exportTodayViewerLogsAsJSON,
+    exportCopyRecovery20261025,
 
     // User Events & History
     saveCopyEventUnified,
