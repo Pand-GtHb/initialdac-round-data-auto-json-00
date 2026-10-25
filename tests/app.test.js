@@ -598,6 +598,8 @@ test('getPinkTarget and self-healing lookups', () => {
 test('browser entry loads all modules in correct order in index.html', () => {
   const htmlPath = path.join(__dirname, '..', 'index.html');
   const html = fs.readFileSync(htmlPath, 'utf8');
+  assert.match(html, /id="copyStorageUsage"/);
+  assert.doesNotMatch(html, /コピー記録は記録のある営業日|容量上限時は当営業日を保護/);
 
   const scriptMatches = [...html.matchAll(/<script\s+src="([^"]+)"/g)].map(m => m[1]);
 
@@ -1086,11 +1088,11 @@ test('applyMatchingFilter handles cross-search between MATCHING candidates and R
   // Case 3: Search rank-only player (not in MATCHING candidates, but in RANK)
   ViewerApp.State.searchText = 'RANK_ONLY';
   ViewerApp.applyMatchingFilter('RANK_ONLY');
-  // Matching candidate should show 0 and empty message
+  // Matching candidate should show only the zero-count header.
   assert.ok(elements.matchingSearchResultsTitle.textContent.includes('0名'));
   assert.equal(elements.matchingTableWrapper.style.display, 'none');
-  assert.equal(elements.matchingCandidateEmptyMessage.style.display, 'block');
-  assert.ok(elements.matchingCandidateEmptyMessage.textContent.includes('見つかりませんでした'));
+  assert.equal(elements.matchingCandidateEmptyMessage.style.display, 'none');
+  assert.equal(elements.matchingCandidateEmptyMessage.textContent, '');
   // Cross rank section should show 1 player
   assert.equal(elements.matchingCrossRankSection.style.display, 'block');
   assert.ok(elements.matchingCrossRankTitle.textContent.includes('1名'));
@@ -1102,10 +1104,12 @@ test('applyMatchingFilter handles cross-search between MATCHING candidates and R
   ViewerApp.applyMatchingFilter('UNKNOWN_PLAYER');
   assert.ok(elements.matchingSearchResultsTitle.textContent.includes('0名'));
   assert.equal(elements.matchingTableWrapper.style.display, 'none');
-  assert.equal(elements.matchingCandidateEmptyMessage.style.display, 'block');
+  assert.equal(elements.matchingCandidateEmptyMessage.style.display, 'none');
+  assert.equal(elements.matchingCandidateEmptyMessage.textContent, '');
   assert.ok(elements.matchingCrossRankTitle.textContent.includes('0名'));
   assert.equal(elements.matchingCrossRankTableWrapper.style.display, 'none');
-  assert.equal(elements.matchingCrossRankEmptyMessage.style.display, 'block');
+  assert.equal(elements.matchingCrossRankEmptyMessage.style.display, 'none');
+  assert.equal(elements.matchingCrossRankEmptyMessage.textContent, '');
 
   // Restore mocks
   globalThis.document.getElementById = origGetElementById;

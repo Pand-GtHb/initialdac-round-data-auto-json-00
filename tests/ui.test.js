@@ -93,6 +93,7 @@ test("Phase monitor uses the same configured scale, trust and base cycle as scor
   const html = context.ViewerUI.buildPhaseCycleRowHTML("yellow", Date.now());
   assert.match(html, /基準360秒/);
   assert.match(html, /信頼度50%/);
+  assert.doesNotMatch(html, /採点には乗算しない|周期の根拠/);
   assert.ok(scales.length > 0);
   assert.ok(scales.every(scale => scale === 120));
 });
@@ -116,7 +117,7 @@ test("buildFilterGroupHTML generates expected checkbox labels", () => {
   assert.ok(html.includes('Item2'));
 });
 
-test("Pink monitor separates saved learning evidence from today's intervals", () => {
+test("Pink monitor shows compact cycle and interval trust without learning evidence row", () => {
   const context = createUIContext();
   vm.runInContext(appSource, context);
   context.State.scoringConfig = {
@@ -135,10 +136,9 @@ test("Pink monitor separates saved learning evidence from today's intervals", ()
   context.formatClockHm = () => "12:00";
   const html = context.ViewerUI.buildPhaseCycleRowHTML("pink", Date.now());
   assert.match(html, /347\.2秒/);
-  assert.match(html, /保存周期の学習3件/);
-  assert.match(html, /学習信頼度61%/);
-  assert.match(html, /当日再対戦0件/);
   assert.match(html, /当日間隔の信頼度0%/);
+  assert.doesNotMatch(html, /採点には乗算しない|周期の根拠|保存周期の学習|当日再対戦|最終学習/);
+  assert.match(html, /許容幅はdecay反映/);
 });
 
 test("shortenStoreName abbreviates long Japanese store names", () => {

@@ -5299,8 +5299,8 @@ function applyMatchingFilter(
   } else {
     if (matchingTableWrap) matchingTableWrap.style.display = "none";
     if (matchingEmptyEl) {
-      matchingEmptyEl.textContent = `MATCHING候補内に「${keyword}」に一致するプレイヤーは見つかりませんでした。`;
-      matchingEmptyEl.style.display = "block";
+      matchingEmptyEl.textContent = "";
+      matchingEmptyEl.style.display = "none";
     }
   }
 
@@ -5321,8 +5321,8 @@ function applyMatchingFilter(
     } else {
       if (rankTableWrap) rankTableWrap.style.display = "none";
       if (rankEmptyEl) {
-        rankEmptyEl.textContent = `全体データ内に「${keyword}」に一致するプレイヤーは見つかりませんでした。`;
-        rankEmptyEl.style.display = "block";
+        rankEmptyEl.textContent = "";
+        rankEmptyEl.style.display = "none";
       }
     }
   }
