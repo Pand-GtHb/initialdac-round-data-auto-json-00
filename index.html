@@ -578,18 +578,19 @@ td.center { text-align:center; }
     title="Today"
     style="padding: 4px; font-size: 12px;">
   <button id="analysisLogBtn" class="btn-sub">📊 LOG保存</button>
-  <button id="recoverCopyLogBtn" class="btn-sub">10/25 コピー記録救出（臨時）</button>
-  <span style="font-size: 12px;">救出は10/25の保存済み記録をJSON出力するだけです。保存データは変更しません。</span>
+  <span style="font-size: 12px;">コピー記録は記録のある営業日を新しい順に14日分保持します（日本時間4時区切り）。それ以前のコピー記録は自動削除します。</span>
+  <span id="copyStorageUsage" style="font-size: 12px;"></span>
+  <span style="font-size: 12px;">容量上限時は当営業日を保護し、古いlocalStorageコピー記録から削除して再試行します。IndexedDB側の14記録日保持は維持します。</span>
 </div>
 
 <script src="0100_utils.js?cb=19"></script>
 <script src="0200_domain.js?cb=19"></script>
-<script src="0300_persistence.js?cb=19"></script>
+<script src="0300_persistence.js?cb=26"></script>
 <script src="0400_data.js?cb=19"></script>
 <script src="0500_matching.js?cb=19"></script>
 <script src="0600_ui.js?cb=19"></script>
-<script src="0700_app.js?cb=25-recovery"></script>
-<script src="0800_main.js?cb=25-recovery"></script>
+<script src="0700_app.js?cb=26"></script>
+<script src="0800_main.js?cb=26"></script>
 
 </body>
 </html>

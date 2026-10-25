@@ -734,7 +734,7 @@ test('exportTodayViewerLogsAsJSON uses active LogDB and exports candidateEvents'
 
   const mockDb = {
     transaction: (stores, mode) => {
-      return {
+      const tx = {
         objectStore: (storeName) => {
           return {
             getAll: () => {
@@ -742,14 +742,16 @@ test('exportTodayViewerLogsAsJSON uses active LogDB and exports candidateEvents'
               setTimeout(() => {
                 req.result = storeName === ViewerPersistence.LOG_STORE.candidateEvents
                   ? mockCandidates
-                  : mockEvents;
+                  : storeName === ViewerPersistence.LOG_STORE.copyEvents ? [] : mockEvents;
                 if (req.onsuccess) req.onsuccess();
+                if (storeName === ViewerPersistence.LOG_STORE.copyEvents) tx.oncomplete();
               }, 0);
               return req;
             }
           };
         }
       };
+      return tx;
     }
   };
 
@@ -783,16 +785,15 @@ test('exportTodayViewerLogsAsJSON uses active LogDB and exports candidateEvents'
   ViewerApp.State.scoringConfig = previousConfig;
 });
 
-test('temporary 10/25 recovery exports both stores read-only and reports failures', async () => {
+test('regular export merges both copy stores and stops on read failure; temporary recovery is removed', async () => {
   const vm = require('node:vm');
   const source = fs.readFileSync(path.join(__dirname, '..', '0700_app.js'), 'utf8');
-  const start = Date.parse('2026-10-25T04:00:00+09:00');
-  const end = Date.parse('2026-10-26T04:00:00+09:00');
+  const start = new Date(2026, 9, 25, 4).getTime();
+  const end = new Date(2026, 9, 26, 4).getTime();
   for (const failure of [null, 'uninitialized', 'abort', 'read', 'json', 'storage']) {
     const messages = [];
     const downloads = [];
     const transactions = [];
-    const button = { disabled: false };
     const records = [
       { t: start - 1 },
       { t: start, matchEventId: 'normal-1', candidateEventId: 123, n: 'normal' },
@@ -808,7 +809,7 @@ test('temporary 10/25 recovery exports both stores read-only and reports failure
       transaction(stores, mode) {
         transactions.push({ stores: [...stores], mode });
         const tx = {
-          objectStore() {
+          objectStore(name) {
             return {
               getAll() {
                 const req = {};
@@ -820,9 +821,9 @@ test('temporary 10/25 recovery exports both stores read-only and reports failure
                     tx.error = new Error('transaction aborted');
                     tx.onabort();
                   } else {
-                    req.result = records;
+                    req.result = name === ViewerPersistence.LOG_STORE.copyEvents ? records : [];
                     req.onsuccess();
-                    tx.oncomplete();
+                    if (name === ViewerPersistence.LOG_STORE.copyEvents) tx.oncomplete();
                   }
                 }, 0);
                 return req;
@@ -836,10 +837,14 @@ test('temporary 10/25 recovery exports both stores read-only and reports failure
     const context = vm.createContext({
       console: { error() {} }, setTimeout, Date,
       ViewerUtils, ViewerDomain, ViewerMatching, ViewerData,
-      ViewerPersistence: { ...ViewerPersistence, getLogDB: () => failure === 'uninitialized' ? null : db },
+      ViewerPersistence: {
+        ...ViewerPersistence,
+        getLogDB: () => failure === 'uninitialized' ? null : db,
+        initLogDB: async () => { throw new Error('uninitialized'); }
+      },
       ViewerUI: { ...ViewerUI, log: message => messages.push(message), logError: message => messages.push(message) },
       document: {
-        getElementById: id => id === 'recoverCopyLogBtn' ? button : null,
+        getElementById: id => id === 'logExportDate' ? { value: '2026-10-25' } : null,
         createElement: () => ({ click() {} })
       },
       localStorage: {
@@ -859,26 +864,76 @@ test('temporary 10/25 recovery exports both stores read-only and reports failure
       URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} }
     });
     vm.runInContext(source, context);
-    const task = context.ViewerApp.exportCopyRecovery20261025();
-    if (failure !== 'uninitialized') assert.equal(button.disabled, true);
-    await task;
-    assert.equal(button.disabled, false);
+    assert.equal(context.ViewerApp.exportCopyRecovery20261025, undefined);
+    await context.ViewerApp.exportTodayViewerLogsAsJSON();
     assert(transactions.every(tx => tx.mode === 'readonly'));
     if (failure) {
       assert.equal(downloads.length, 0);
-      assert(messages.some(message => message.includes('救出失敗')));
+      assert(messages.some(message => /失敗|中止/.test(message)));
     } else {
       const payload = JSON.parse(downloads[0]);
       assert.equal(payload.dateKey, '20261025');
-      assert.deepEqual(payload.indexedDBCopyEvents, records.slice(1, 3));
-      assert.deepEqual(payload.localStorageCopyEvents, [records[1]]);
-      assert.equal(payload.indexedDBCopyEvents[0].candidateEventId, 123);
-      assert.equal(payload.localStorageInventory.length, 2);
-      assert.equal(payload.otherLocalStorage.keys, 1);
+      assert.deepEqual(payload.copyEvents, records.slice(1, 3));
+      assert.equal(payload.copyEvents[0].candidateEventId, 123);
       assert(!downloads[0].includes('do-not-export-this-value'));
-      assert.equal(messages.length, 1);
+      assert(messages.some(message => message.includes('出力完了')));
     }
   }
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert(!html.includes('recoverCopyLogBtn'));
+  const main = fs.readFileSync(path.join(__dirname, '..', '0800_main.js'), 'utf8');
+  assert(!main.includes('exportCopyRecovery20261025'));
+});
+
+test('manual copies still reach IndexedDB after local quota failure and show explicit status', () => {
+  const vm = require('node:vm');
+  const errors = [];
+  const info = [];
+  const stored = [];
+  const usage = {};
+  let writes = 0;
+  const context = vm.createContext({
+    console: { error() {} }, Date, crypto: require('node:crypto'),
+    ViewerUtils, ViewerDomain, ViewerMatching, ViewerData,
+    ViewerPersistence: {
+      ...ViewerPersistence,
+      saveCopyRecordToStorage() {
+        writes++;
+        const error = new Error('quota exhausted');
+        error.name = 'QuotaExceededError';
+        throw error;
+      },
+      getLocalStorageUsage: () => 1048576,
+      logEvent(type, record, options) {
+        assert.equal(type, 'copy');
+        stored.push(record);
+        options.onSaved();
+      }
+    },
+    ViewerUI: {
+      ...ViewerUI, log: message => info.push(message),
+      logWarn: message => info.push(message), logError: message => errors.push(message)
+    },
+    localStorage: {},
+    document: {
+      getElementById: id => id === 'searchInput' ? { value: 'outside memo' } :
+        id === 'copyStorageUsage' ? usage : null,
+      createElement: () => ({ style: {}, setAttribute() {}, select() {}, setSelectionRange() {}, remove() {} }),
+      body: { appendChild() {} },
+      execCommand: () => true
+    }
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '0700_app.js'), 'utf8'), context);
+  context.ViewerApp.State.latestCandidateEventIdForCopy = 123;
+  context.ViewerApp.recordUnmatchedSearchMemo();
+  assert.equal(writes, 1);
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].candidateEventId, 123);
+  assert.equal(stored[0].searchMemo, 'outside memo');
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /quota exhausted/);
+  assert.match(usage.textContent, /1\.00 MiB/);
+  assert(info.some(message => message.includes('メモを保存')));
 });
 
 test('buildMatchingCandidates correctly integrates normal, crossBucket and wildcard slots', () => {

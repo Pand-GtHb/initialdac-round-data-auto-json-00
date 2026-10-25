@@ -21,7 +21,10 @@
   });
 
   const LOG_STORAGE_LIMITS = Object.freeze({
-    copyEvents: 200,
+    // Copy logs are retained by recorded business days, not by record count.
+    copyEvents: Infinity,
+    copyRecordDays: 14,
+    copyAreaHistory: 200,
     candidateEvents: 300
   });
 
@@ -35,6 +38,7 @@
   });
 
   let activeLogDB = null;
+  let copyRecordDays = new Set();
 
   /* =========================================================
    Date Utility (28時締め日付けキー)
@@ -92,10 +96,116 @@
     }
 
     const storage = options.storage || (typeof globalThis !== "undefined" ? globalThis.localStorage : null);
+    if (daily && key === LOG_STORAGE_KEYS.copyEvents) {
+      return saveCopyRecordToStorage(record, storage, options);
+    }
     const arr = readStoredArraySafe(finalKey, storage);
     arr.unshift(record);
     const trimmed = arr.slice(0, limit);
     writeStoredArraySafe(finalKey, trimmed, storage);
+  }
+
+  function getLocalStorageUsage(storage = globalThis.localStorage) {
+    let bytes = 0;
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key === null) throw new Error("保存容量確認中にキーが変化しました");
+      bytes += 2 * (key.length + (storage.getItem(key)?.length ?? 0));
+    }
+    return bytes;
+  }
+
+  function saveCopyRecordToStorage(record, storage = globalThis.localStorage, options = {}) {
+    if (!storage) throw new Error("localStorageが利用できません");
+    const day = record.dk ?? options.dailyKey ?? buildDailyKey(new Date(record.t), 540);
+    const key = LOG_STORAGE_KEYS.copyEvents + day;
+    pruneLocalCopyRecords(storage, day);
+    const raw = storage.getItem(key);
+    const records = raw === null ? [] : JSON.parse(raw);
+    if (!Array.isArray(records)) throw new Error(`コピー記録が配列ではありません：${key}`);
+    const value = JSON.stringify([record, ...records]);
+    const protectedDay = buildDailyKey(new Date(), 540);
+    const oldest = collectLocalCopyDays(storage)
+      .filter(entry => entry.day < day && entry.day !== protectedDay)
+      .sort((a, b) => a.day.localeCompare(b.day));
+    const removedDays = [];
+    while (true) {
+      try {
+        storage.setItem(key, value);
+        return { removedDays, estimatedUtf16Bytes: getLocalStorageUsage(storage) };
+      } catch (error) {
+        if (error.name !== "QuotaExceededError" && error.name !== "NS_ERROR_DOM_QUOTA_REACHED") throw error;
+        const entry = oldest.shift();
+        if (!entry) throw error;
+        storage.removeItem(entry.key);
+        removedDays.push(entry.day);
+        const message = `保存容量上限：${entry.day}のlocalStorageコピー記録を削除し、保存を再試行します（IndexedDBの記録は削除しません）`;
+        if (typeof options.onWarning === "function") options.onWarning(message);
+        else console.warn(message);
+      }
+    }
+  }
+
+  function collectLocalCopyDays(storage) {
+    const entries = [];
+    if (!storage) return entries;
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (!key?.startsWith(LOG_STORAGE_KEYS.copyEvents)) continue;
+      const day = key.slice(LOG_STORAGE_KEYS.copyEvents.length);
+      if (!/^\d{8}$/.test(day)) continue;
+      const records = JSON.parse(storage.getItem(key));
+      if (!Array.isArray(records)) throw new Error(`コピー記録が配列ではありません：${key}`);
+      if (records.length) entries.push({ key, day });
+    }
+    return entries;
+  }
+
+  function pruneLocalCopyRecords(storage = globalThis.localStorage, incomingDay = null, databaseDays = copyRecordDays) {
+    const entries = collectLocalCopyDays(storage);
+    const days = new Set([...databaseDays, ...entries.map(entry => entry.day)]);
+    if (incomingDay) days.add(incomingDay);
+    const retained = [...days].sort().reverse().slice(0, LOG_STORAGE_LIMITS.copyRecordDays);
+    const keep = new Set(retained);
+    for (const { key, day } of entries) {
+      if (!keep.has(day)) storage.removeItem(key);
+    }
+    return keep;
+  }
+
+  function copyRecordDay(record) {
+    if (!Number.isFinite(record.t)) throw new Error("コピー記録の日時が不正です");
+    return buildDailyKey(new Date(record.t), 540);
+  }
+
+  function pruneCopyEventLogs(db = activeLogDB, storage = globalThis.localStorage) {
+    if (!db) return Promise.reject(new Error("コピー記録整理：IndexedDBが未初期化です"));
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(LOG_STORE.copyEvents, "readwrite");
+      const store = tx.objectStore(LOG_STORE.copyEvents);
+      const req = store.getAll();
+      let retainedDatabaseDays;
+      req.onsuccess = () => {
+        try {
+          const records = req.result;
+          const days = records.map(copyRecordDay);
+          const keep = pruneLocalCopyRecords(storage, null, new Set(days));
+          retainedDatabaseDays = new Set(days.filter(day => keep.has(day)));
+          records.forEach((record, index) => {
+            if (!keep.has(days[index])) store.delete(record.id);
+          });
+        } catch (error) {
+          tx.abort();
+          reject(error);
+        }
+      };
+      req.onerror = () => reject(req.error);
+      tx.onabort = () => reject(tx.error ?? new Error("コピー記録整理が中断されました"));
+      tx.oncomplete = () => {
+        copyRecordDays = retainedDatabaseDays;
+        resolve();
+      };
+    });
   }
 
   /* =========================================================
@@ -356,6 +466,12 @@
   function logEvent(type, payload = {}, options = {}) {
     const db = options.db || activeLogDB;
     if (!db) {
+      if (type === "copy" || type === "top") {
+        const message = "IndexedDB未初期化：コピー記録を保存できません";
+        console.error(message);
+        if (typeof options.onError === "function") options.onError(message);
+        else if (typeof globalThis.logError === "function") globalThis.logError(message);
+      }
       if (type === "candidate" && payload.analysisDiagnostics) {
         if (typeof options.onError === "function") {
           options.onError("IndexedDB未初期化：候補分析ログを保存できません");
@@ -381,9 +497,29 @@
     }
 
     if (type === "copy" || type === "top") {
-      const tx = putLog(LOG_STORE.copyEvents, record, db);
+      const reportError = error => {
+        const message = `コピー記録のIndexedDB保存失敗：${error?.message ?? "transaction aborted"}`;
+        console.error(message, error);
+        if (typeof options.onError === "function") options.onError(message);
+        else if (typeof globalThis.logError === "function") globalThis.logError(message);
+      };
+      let tx;
+      try {
+        tx = putLog(LOG_STORE.copyEvents, record, db);
+      } catch (error) {
+        reportError(error);
+        return;
+      }
       if (tx) {
-        tx.oncomplete = () => pruneLogStore(LOG_STORE.copyEvents, LOG_STORAGE_LIMITS.copyEvents, db);
+        tx.onabort = () => reportError(tx.error);
+        tx.oncomplete = () => {
+          if (typeof options.onSaved === "function") options.onSaved();
+          pruneCopyEventLogs(db, options.storage ?? globalThis.localStorage).catch(error => {
+            console.error("[LOG] copy retention failed", error);
+            if (typeof options.onError === "function") options.onError(`コピー記録の整理失敗：${error.message}`);
+            else if (typeof globalThis.logError === "function") globalThis.logError(`コピー記録の整理失敗：${error.message}`);
+          });
+        };
       }
       return;
     }
@@ -478,14 +614,21 @@
         }
       };
 
-      req.onsuccess = (e) => {
+      req.onsuccess = async (e) => {
         const db = e.target.result;
         activeLogDB = db;
+        try {
+          copyRecordDays = new Set();
+          await pruneCopyEventLogs(db, options.storage ?? globalThis.localStorage);
+        } catch (error) {
+          console.error("[LOG] copy retention failed", error);
+          reject(error);
+          return;
+        }
         if (typeof options.onSuccess === "function") {
           options.onSuccess(db);
         }
 
-        pruneLogStore(LOG_STORE.copyEvents, LOG_STORAGE_LIMITS.copyEvents, db);
         pruneCandidateEventsStore(LOG_STORAGE_LIMITS.candidateEvents, db);
 
         console.log("[LOG] IndexedDB ready");
@@ -512,6 +655,10 @@
     readStoredArraySafe,
     writeStoredArraySafe,
     pushStoredRecord,
+    saveCopyRecordToStorage,
+    getLocalStorageUsage,
+    pruneLocalCopyRecords,
+    pruneCopyEventLogs,
     isPinkTargetStale,
     checkAndCleanDailyState,
     serializePinkState,

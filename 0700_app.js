@@ -69,7 +69,8 @@
     LOG_STORE,
     buildDailyKey,
     readStoredArraySafe,
-    pushStoredRecord,
+    saveCopyRecordToStorage,
+    getLocalStorageUsage,
     isPinkTargetStale,
     initLogDB,
     getLogDB,
@@ -320,6 +321,28 @@ function buildAnalysisDiagnostics() {
   };
 }
 
+function updateCopyStorageUsage() {
+  const element = document.getElementById("copyStorageUsage");
+  try {
+    const mib = getLocalStorageUsage() / (1024 * 1024);
+    if (element) element.textContent = `localStorage使用量（UTF-16換算・推定）：${mib.toFixed(2)} MiB／上限・空き容量は取得不可`;
+  } catch (error) {
+    if (element) element.textContent = "localStorage使用量：取得失敗";
+    console.error("保存容量の確認失敗", error);
+    logError(`保存容量の確認失敗：${error.message}`);
+  }
+}
+
+function persistCopyRecordLocally(record) {
+  try {
+    saveCopyRecordToStorage(record, localStorage, { onWarning: message => logWarn(message) });
+  } catch (error) {
+    console.error("コピー記録のlocalStorage保存失敗", error);
+    logError(`コピー記録のlocalStorage保存失敗：${error.message}（IndexedDBへの保存を試みます）`);
+  }
+  updateCopyStorageUsage();
+}
+
 function recordUnmatchedSearchMemo() {
   const input = document.getElementById("searchInput");
   const searchMemo = String(input?.value ?? "").trim();
@@ -354,19 +377,11 @@ function recordUnmatchedSearchMemo() {
     dataPresenceStatus: "user-reported-absent-not-verified",
     dataPresenceObservedAt: t
   };
-  const key = LOG_STORAGE_KEYS.copyEvents + record.dk;
-  const records = readStoredArraySafe(key);
-  try {
-    localStorage.setItem(
-      key, JSON.stringify([record, ...records].slice(0, LOG_STORAGE_LIMITS.copyEvents))
-    );
-  } catch (error) {
-    console.error("候補外記録の保存失敗", error);
-    logError(`候補外記録の保存失敗：${error.message}`);
-    return;
-  }
-  logEvent("copy", record);
-  log(`候補外対戦メモを保存：${searchMemo}（相手名未確定）`);
+  persistCopyRecordLocally(record);
+  logEvent("copy", record, {
+    onError: message => logError(message),
+    onSaved: () => log(`候補外対戦メモを保存：${searchMemo}（相手名未確定）`)
+  });
   let temporaryInput = null;
   try {
     temporaryInput = document.createElement("textarea");
@@ -3365,7 +3380,7 @@ function normalizeCopyAreaHistory(
   }
 
   return result.slice(
-    -LOG_STORAGE_LIMITS.copyEvents
+    -LOG_STORAGE_LIMITS.copyAreaHistory
   );
 }
 
@@ -3450,7 +3465,7 @@ function appendCopyAreaHistory(
   );
   State.copyAreaHistory =
     State.copyAreaHistory.slice(
-      -LOG_STORAGE_LIMITS.copyEvents
+      -LOG_STORAGE_LIMITS.copyAreaHistory
     );
 }
 
@@ -5348,7 +5363,8 @@ function copyToClipboard(
 
     logEvent(
       "copy",
-      copyRecord
+      copyRecord,
+      { onError: message => logError(message) }
     );
 
     /*
@@ -5598,65 +5614,6 @@ function exportAllCSV() {
 /* =========================================================
  [12210] JSON Export:exportTodayViewerLogsAsJSON【State】【永続化】【DOM】（旧 [9900]）
 ========================================================= */
-async function exportCopyRecovery20261025() {
-  const button = document.getElementById("recoverCopyLogBtn");
-  if (button) button.disabled = true;
-  try {
-    const db = getActiveLogDB();
-    if (!db) {
-      throw new Error("ログDBが未初期化です。ページの初期化完了後に再試行してください");
-    }
-    const start = Date.parse("2026-10-25T04:00:00+09:00");
-    const end = Date.parse("2026-10-26T04:00:00+09:00");
-    const indexedDBCopyEvents = await new Promise((resolve, reject) => {
-      const tx = db.transaction([LOG_STORE.copyEvents], "readonly");
-      const request = tx.objectStore(LOG_STORE.copyEvents).getAll();
-      let records;
-      request.onsuccess = () => { records = request.result; };
-      request.onerror = () => reject(request.error ?? new Error("コピー記録の読込失敗"));
-      tx.onabort = () => reject(tx.error ?? new Error("コピー記録の読込中断"));
-      tx.oncomplete = () => {
-        if (!Array.isArray(records)) {
-          reject(new Error("コピー記録の読込結果が不正です"));
-          return;
-        }
-        resolve(records.filter(record => Number(record.t) >= start && Number(record.t) < end));
-      };
-    });
-    const raw = localStorage.getItem("initialdac_copy_events_20261025");
-    const localStorageCopyEvents = raw === null ? [] : JSON.parse(raw);
-    if (!Array.isArray(localStorageCopyEvents)) {
-      throw new Error("localStorageの10/25コピー記録が配列ではありません");
-    }
-    const localStorageInventory = [];
-    const otherLocalStorage = { keys: 0, estimatedUtf16Bytes: 0 };
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key === null) throw new Error("保存容量の確認中にlocalStorageのキーが変化しました");
-      const value = localStorage.getItem(key);
-      const estimatedUtf16Bytes = 2 * (key.length + (value?.length ?? 0));
-      if (/^(initialdac_|matchingRealtimeActivity)/.test(key)) {
-        localStorageInventory.push({ key, estimatedUtf16Bytes });
-      } else {
-        otherLocalStorage.keys++;
-        otherLocalStorage.estimatedUtf16Bytes += estimatedUtf16Bytes;
-      }
-    }
-    downloadBlob(JSON.stringify({
-      dateKey: "20261025", exportedAt: Date.now(),
-      source: "read-only browser copy recovery",
-      indexedDBCopyEvents, localStorageCopyEvents,
-      localStorageInventory, otherLocalStorage
-    }, null, 2), "viewer_copy_recovery_20261025.json");
-    log(`10/25コピー記録救出JSON出力：IndexedDB ${indexedDBCopyEvents.length}件 / localStorage ${localStorageCopyEvents.length}件（元データは変更していません）`);
-  } catch (error) {
-    console.error("10/25コピー記録救出失敗", error);
-    logError(`10/25コピー記録救出失敗：${error.message}`);
-  } finally {
-    if (button) button.disabled = false;
-  }
-}
-
 async function exportTodayViewerLogsAsJSON() {
 
   const input =
@@ -5762,11 +5719,15 @@ async function exportTodayViewerLogsAsJSON() {
   const endTs =
     endDate.getTime();
 
-  const copyEvents =
-    readStoredArraySafe(
-      LOG_STORAGE_KEYS.copyEvents +
-      dateKey
-    );
+  let copyEvents;
+  try {
+    const raw = localStorage.getItem(LOG_STORAGE_KEYS.copyEvents + dateKey);
+    copyEvents = raw === null ? [] : JSON.parse(raw);
+    if (!Array.isArray(copyEvents)) throw new Error("コピー記録が配列ではありません");
+  } catch (error) {
+    logError(`分析JSON出力中止：コピー記録の読込失敗：${error.message}`);
+    return;
+  }
 
   const payload = {
 
@@ -5802,16 +5763,16 @@ async function exportTodayViewerLogsAsJSON() {
   if (!activeDb && typeof initLogDB === "function") {
     try {
       activeDb = await initLogDB();
-    } catch (_) {
-      activeDb = null;
+    } catch (error) {
+      logError(`分析JSON出力中止：IndexedDB初期化失敗：${error.message}`);
+      return;
     }
   }
 
   if (!activeDb) {
 
-    logWarn(
-      "IndexedDB未初期化のため localStorage のみ出力"
-    );
+    logError("分析JSON出力中止：IndexedDBが未初期化です");
+    return;
 
   } else {
 
@@ -5821,37 +5782,29 @@ async function exportTodayViewerLogsAsJSON() {
         activeDb.transaction(
           [
             LOG_STORE.candidateEvents,
-            LOG_STORE.events
+            LOG_STORE.events,
+            LOG_STORE.copyEvents
           ],
           "readonly"
         );
 
-      const candidateStore =
-        tx.objectStore(
-          LOG_STORE.candidateEvents
-        );
-
-      const candidates =
-        await new Promise(
-          (
-            resolve,
-            reject
-          ) => {
-
-            const req =
-              candidateStore.getAll();
-
-            req.onsuccess =
-              () =>
-                resolve(
-                  req.result || []
-                );
-
-            req.onerror =
-              reject;
-
-          }
-        );
+      const stored = await new Promise((resolve, reject) => {
+        const result = {};
+        for (const name of [LOG_STORE.candidateEvents, LOG_STORE.events, LOG_STORE.copyEvents]) {
+          const req = tx.objectStore(name).getAll();
+          req.onsuccess = () => { result[name] = req.result; };
+          req.onerror = () => reject(req.error ?? new Error("ログ読込失敗"));
+        }
+        tx.oncomplete = () => resolve(result);
+        tx.onabort = () => reject(tx.error ?? new Error("ログ読込中断"));
+      });
+      const candidates = stored[LOG_STORE.candidateEvents];
+      const copyKey = record => record.matchEventId ??
+        `${record.t}|${buildPlayerIdentityKey({ name: record.n ?? record.name, shopname: record.shopname })}`;
+      payload.copyEvents = [...new Map([
+        ...copyEvents,
+        ...stored[LOG_STORE.copyEvents].filter(record => record.t >= startTs && record.t <= endTs)
+      ].map(record => [copyKey(record), record])).values()].sort((a, b) => a.t - b.t);
 
       payload.candidateEvents =
         candidates.filter(
@@ -5870,31 +5823,7 @@ async function exportTodayViewerLogsAsJSON() {
           }
         );
 
-      const eventStore =
-        tx.objectStore(
-          LOG_STORE.events
-        );
-
-      const events =
-        await new Promise(
-          (
-            resolve,
-            reject
-          ) => {
-
-            const req =
-              eventStore.getAll();
-
-            req.onsuccess =
-              () =>
-                resolve(
-                  req.result || []
-                );
-
-            req.onerror =
-              reject;
-          }
-        );
+      const events = stored[LOG_STORE.events];
 
       payload.runtimeEvents =
         events.filter(
@@ -5920,6 +5849,7 @@ async function exportTodayViewerLogsAsJSON() {
       console.error(
         e
       );
+      return;
 
     }
 
@@ -6451,12 +6381,7 @@ function saveCopyEventUnified(
 
     };
 
-    pushStoredRecord(
-      LOG_STORAGE_KEYS.copyEvents,
-      record,
-      LOG_STORAGE_LIMITS.copyEvents,
-      true
-    );
+    persistCopyRecordLocally(record);
 
     return record;
 
@@ -6736,12 +6661,7 @@ function saveCopyEventUnified(
 
   };
 
-  pushStoredRecord(
-    LOG_STORAGE_KEYS.copyEvents,
-    record,
-    LOG_STORAGE_LIMITS.copyEvents,
-    true
-  );
+  persistCopyRecordLocally(record);
 
   appendCopyAreaHistory(record);
 
@@ -8417,6 +8337,7 @@ async function init() {
   log("Viewer 初期化中");
 
   await initLogDB();
+  updateCopyStorageUsage();
 
   restorePinkStateFromStorage();
 
@@ -8679,7 +8600,6 @@ async function init() {
     exportSummaryCSV,
     exportAllCSV,
     exportTodayViewerLogsAsJSON,
-    exportCopyRecovery20261025,
 
     // User Events & History
     saveCopyEventUnified,

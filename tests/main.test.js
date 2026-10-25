@@ -77,21 +77,17 @@ test('bootstrap gates matching until ready and reports initialization failure', 
     const messages = [];
     let stopped = false;
     const button = {};
-    const recoveryButton = {};
-    let recoveryCalls = 0;
     const context = vm.createContext({
       console,
       document: {
         readyState: 'loading',
         addEventListener() {},
-        getElementById: id => id === 'matchingBtn' ? button :
-          id === 'recoverCopyLogBtn' ? recoveryButton : null
+        getElementById: id => id === 'matchingBtn' ? button : null
       },
       history: { replaceState() {}, pushState() {} },
       ViewerApp: {
         STATE: { SUMMARY: 'summary' },
         ensureReloadViewerTime() {},
-        exportCopyRecovery20261025: () => { recoveryCalls++; },
         stopProgress: () => { stopped = true; },
         init: () => new Promise((resolve, reject) => {
           finish = () => fail ? reject(new Error('invalid config')) : resolve();
@@ -101,9 +97,6 @@ test('bootstrap gates matching until ready and reports initialization failure', 
     });
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '0800_main.js'), 'utf8'), context);
     const initialization = context.ViewerMain.bootstrap();
-    assert.equal(recoveryButton.disabled, false);
-    recoveryButton.onclick();
-    assert.equal(recoveryCalls, 1);
     assert.equal(button.disabled, true);
     finish();
     await initialization;

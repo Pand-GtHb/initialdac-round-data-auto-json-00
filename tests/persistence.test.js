@@ -7,6 +7,8 @@ const p = require(path.join(__dirname, "..", "0300_persistence.js"));
 function createMockStorage(initial = {}) {
   const store = new Map(Object.entries(initial));
   return {
+    get length() { return store.size; },
+    key(index) { return [...store.keys()][index] ?? null; },
     getItem(key) {
       return store.has(key) ? store.get(key) : null;
     },
@@ -28,7 +30,9 @@ test("Persistence constants match existing schema", () => {
   assert.equal(p.R6_PRIDE_FREQUENCY_STORAGE_KEY, "initialdac_r6_pride_frequency_v1");
   assert.equal(p.REALTIME_ACTIVITY_STORAGE_KEY, "matchingRealtimeActivity_v1");
   assert.equal(p.LOG_STORAGE_KEYS.copyEvents, "initialdac_copy_events_");
-  assert.equal(p.LOG_STORAGE_LIMITS.copyEvents, 200);
+  assert.equal(p.LOG_STORAGE_LIMITS.copyEvents, Infinity);
+  assert.equal(p.LOG_STORAGE_LIMITS.copyRecordDays, 14);
+  assert.equal(p.LOG_STORAGE_LIMITS.copyAreaHistory, 200);
   assert.equal(p.LOG_STORAGE_LIMITS.candidateEvents, 300);
   assert.equal(p.LOG_DB_NAME, "viewer_logs_db");
   assert.equal(p.LOG_DB_VERSION, 3);
@@ -92,6 +96,248 @@ test("pushStoredRecord unshifts and enforces limits", () => {
   // With daily key
   p.pushStoredRecord("daily_list", { v: "today" }, 3, true, { storage, dailyKey: "20261013" });
   assert.deepEqual(p.readStoredArraySafe("daily_list20261013", storage), [{ v: "today" }]);
+});
+
+test("copy retention keeps 14 recorded JST business days across both stores without a count cap", async () => {
+  const fs = require("node:fs");
+  const vm = require("node:vm");
+  const storage = createMockStorage({
+    [p.PERSIST_STATE_KEY]: '{"preserve":true}',
+    [p.REALTIME_ACTIVITY_STORAGE_KEY]: '{"preserve":true}',
+    initialdac_copy_events_notes: "preserve",
+    initialdac_copy_events_20260101: "[]"
+  });
+  const api = vm.runInNewContext(
+    fs.readFileSync(path.join(__dirname, "..", "0300_persistence.js"), "utf8") +
+    "\nViewerPersistence;",
+    { console, localStorage: storage }
+  );
+  const rows = [];
+  const days = [];
+  // Irregularly spaced days must count as recorded days, not elapsed days.
+  for (let i = 0; i < 16; i++) {
+    const t = Date.parse("2026-01-01T04:00:00+09:00") + i * 4 * 86400000;
+    const day = api.buildDailyKey(new Date(t), 540);
+    days.push(day);
+    if (i % 2 === 0) storage.setItem(p.LOG_STORAGE_KEYS.copyEvents + day, JSON.stringify([{ t }]));
+    else rows.push({ id: i, t });
+  }
+  // More than 200 copies in one retained day must all survive.
+  for (let i = 0; i < 250; i++) rows.push({ id: 100 + i, t: rows.at(-1).t });
+  const deleted = [];
+  const db = {
+    transaction(name, mode) {
+      assert.equal(name, "copyEvents");
+      assert.equal(mode, "readwrite");
+      const tx = {
+        objectStore: () => ({
+          getAll() {
+            const req = { result: rows };
+            queueMicrotask(() => {
+              req.onsuccess();
+              if (!tx.aborted) tx.oncomplete();
+            });
+            return req;
+          },
+          delete(id) { deleted.push(id); }
+        }),
+        abort() { tx.aborted = true; tx.onabort(); }
+      };
+      return tx;
+    }
+  };
+  await api.pruneCopyEventLogs(db, storage);
+  assert.deepEqual(deleted, [1]);
+  assert.equal(storage.getItem(p.LOG_STORAGE_KEYS.copyEvents + days[0]), null);
+  assert(storage.getItem(p.LOG_STORAGE_KEYS.copyEvents + days[2]));
+  assert.equal(storage.getItem(p.PERSIST_STATE_KEY), '{"preserve":true}');
+  assert.equal(storage.getItem(p.REALTIME_ACTIVITY_STORAGE_KEY), '{"preserve":true}');
+  assert.equal(storage.getItem("initialdac_copy_events_notes"), "preserve");
+
+  const before = [...storage._raw];
+  api.pruneLocalCopyRecords(storage);
+  assert.deepEqual([...storage._raw], before, "Idle calendar days must not age out recorded days");
+  const nextTime = Date.parse("2026-10-25T04:00:00+09:00");
+  api.pushStoredRecord(p.LOG_STORAGE_KEYS.copyEvents, { t: nextTime, dk: "20261025" },
+    api.LOG_STORAGE_LIMITS.copyEvents, true, { storage });
+  assert.equal(storage.getItem(p.LOG_STORAGE_KEYS.copyEvents + days[2]), null);
+  assert.equal(JSON.parse(storage.getItem(p.LOG_STORAGE_KEYS.copyEvents + "20261025")).length, 1);
+  for (let i = 0; i < 220; i++) {
+    api.pushStoredRecord(p.LOG_STORAGE_KEYS.copyEvents, { t: nextTime, dk: "20261025" },
+      api.LOG_STORAGE_LIMITS.copyEvents, true, { storage });
+  }
+  assert.equal(JSON.parse(storage.getItem(p.LOG_STORAGE_KEYS.copyEvents + "20261025")).length, 221);
+  assert.equal(api.buildDailyKey(new Date("2026-10-25T03:59:59+09:00"), 540), "20261024");
+  assert.equal(api.buildDailyKey(new Date(nextTime), 540), "20261025");
+});
+
+test("copy retention rejects malformed data and aborted database transactions", async () => {
+  const storage = createMockStorage({ initialdac_copy_events_20261025: "not-json" });
+  assert.throws(() => p.pruneLocalCopyRecords(storage), SyntaxError);
+  assert.equal(storage.getItem("initialdac_copy_events_20261025"), "not-json");
+  await assert.rejects(p.pruneCopyEventLogs({
+    transaction() {
+      const tx = {
+        objectStore: () => ({ getAll: () => ({}) })
+      };
+      queueMicrotask(() => tx.onabort());
+      return tx;
+    }
+  }, createMockStorage()), /中断/);
+});
+
+test("quota retry evicts only oldest local copy days until the exact write succeeds", () => {
+  const oldDays = ["20200101", "20200104", "20200201"];
+  const storage = createMockStorage({
+    [p.PERSIST_STATE_KEY]: "keep-settings",
+    unrelated: "keep-unrelated",
+    ...Object.fromEntries(oldDays.map(day => [p.LOG_STORAGE_KEYS.copyEvents + day, JSON.stringify([{ dk: day }])]))
+  });
+  const setItem = storage.setItem;
+  const record = { t: Date.parse("2020-03-01T04:00:00+09:00"), dk: "20200301", candidateEventId: 123 };
+  const newKey = p.LOG_STORAGE_KEYS.copyEvents + record.dk;
+  const newBytes = 2 * (newKey.length + JSON.stringify([record]).length);
+  const bytesOfDay = day => {
+    const key = p.LOG_STORAGE_KEYS.copyEvents + day;
+    return 2 * (key.length + storage.getItem(key).length);
+  };
+  const quotaBytes = p.getLocalStorageUsage(storage) - bytesOfDay(oldDays[0]) - bytesOfDay(oldDays[1]) + newBytes;
+  let attempts = 0;
+  storage.setItem = (key, value) => {
+    attempts++;
+    if (p.getLocalStorageUsage(storage) + 2 * (key.length + value.length) > quotaBytes) {
+      const error = new Error("full");
+      error.name = "QuotaExceededError";
+      throw error;
+    }
+    setItem(key, value);
+  };
+  const warnings = [];
+  const result = p.saveCopyRecordToStorage(record, storage, { onWarning: message => warnings.push(message) });
+  assert.deepEqual(result.removedDays, oldDays.slice(0, 2));
+  assert.equal(attempts, 3);
+  assert.equal(warnings.length, 2);
+  assert.deepEqual(JSON.parse(storage.getItem(p.LOG_STORAGE_KEYS.copyEvents + record.dk)), [record]);
+  assert(storage.getItem(p.LOG_STORAGE_KEYS.copyEvents + oldDays[2]));
+  assert.equal(storage.getItem(p.PERSIST_STATE_KEY), "keep-settings");
+  assert.equal(storage.getItem("unrelated"), "keep-unrelated");
+  assert.equal(result.estimatedUtf16Bytes, [...storage._raw].reduce((sum, [key, value]) => sum + 2 * (key.length + value.length), 0));
+  assert.equal(result.estimatedUtf16Bytes, quotaBytes);
+});
+
+test("quota exhaustion protects current/incoming days; non-quota errors do not evict data", () => {
+  const today = p.buildDailyKey(new Date(), 540);
+  for (const name of ["QuotaExceededError", "SecurityError"]) {
+    const storage = createMockStorage({
+      [p.LOG_STORAGE_KEYS.copyEvents + today]: JSON.stringify([{ dk: today }]),
+      [p.LOG_STORAGE_KEYS.copyEvents + "20200101"]: JSON.stringify([{ dk: "20200101" }]),
+      [p.PERSIST_STATE_KEY]: "keep"
+    });
+    const error = new Error(name);
+    error.name = name;
+    storage.setItem = () => { throw error; };
+    assert.throws(() => p.saveCopyRecordToStorage({ dk: today, t: Date.now() }, storage, { onWarning() {} }), { name });
+    assert(storage.getItem(p.LOG_STORAGE_KEYS.copyEvents + today));
+    assert.equal(storage.getItem(p.PERSIST_STATE_KEY), "keep");
+    if (name === "SecurityError") assert(storage.getItem(p.LOG_STORAGE_KEYS.copyEvents + "20200101"));
+    else assert.equal(storage.getItem(p.LOG_STORAGE_KEYS.copyEvents + "20200101"), null);
+  }
+});
+
+test("copy save failures notify explicitly and never report successful persistence", () => {
+  for (const failure of ["uninitialized", "start", "abort"]) {
+    const errors = [];
+    let saved = 0;
+    const tx = {
+      error: new Error("database full"),
+      objectStore: () => ({ put() {} })
+    };
+    const db = failure === "uninitialized" ? null : {
+      transaction() {
+        if (failure === "start") throw new Error("transaction unavailable");
+        return tx;
+      }
+    };
+    p.setLogDB(null);
+    p.logEvent("copy", { t: Date.now() }, {
+      db, onError: message => errors.push(message), onSaved: () => saved++
+    });
+    if (failure === "abort") tx.onabort();
+    assert.equal(errors.length, 1);
+    assert.equal(saved, 0);
+  }
+});
+
+test("startup and copy-save cleanup enforce the same 14-day policy", async () => {
+  const fs = require("node:fs");
+  const vm = require("node:vm");
+  const storage = createMockStorage();
+  const records = new Map();
+  const base = Date.parse("2026-08-01T04:00:00+09:00");
+  for (let id = 1; id <= 15; id++) {
+    const t = base + id * 3 * 86400000;
+    records.set(id, { id, t });
+    storage.setItem(p.LOG_STORAGE_KEYS.copyEvents + p.buildDailyKey(new Date(t), 540), JSON.stringify([{ t }]));
+  }
+  const api = vm.runInNewContext(
+    fs.readFileSync(path.join(__dirname, "..", "0300_persistence.js"), "utf8") +
+    "\nViewerPersistence;",
+    { console, localStorage: storage }
+  );
+  const transactions = [];
+  const db = {
+    transaction(name) {
+      transactions.push(name);
+      const tx = {
+        objectStore: () => ({
+          getAll() {
+            const req = {};
+            queueMicrotask(() => {
+              req.result = [...records.values()];
+              req.onsuccess();
+              tx.oncomplete();
+            });
+
+            return req;
+          },
+          getAllKeys() {
+            const req = { result: [] };
+            queueMicrotask(() => req.onsuccess());
+            return req;
+          },
+          delete(id) { records.delete(id); },
+          put(record) {
+            records.set(record.id, record);
+            queueMicrotask(() => tx.oncomplete());
+          }
+        })
+      };
+      return tx;
+    }
+  };
+  const indexedDB = {
+    open() {
+      const req = {};
+      queueMicrotask(() => req.onsuccess({ target: { result: db } }));
+      return req;
+    }
+  };
+  let initialized = false;
+  await api.initLogDB({ indexedDB, storage, onSuccess() {
+    assert.equal(records.size, 14, "cleanup must complete before initialization succeeds");
+    initialized = true;
+  } });
+  assert(initialized);
+  assert.equal(storage.length, 14);
+  assert(!records.has(1));
+  const t = Date.parse("2026-10-25T04:00:00+09:00");
+  api.logEvent("copy", { id: 16, t }, { db, storage });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(records.size, 14);
+  assert(!records.has(2));
+  assert(records.has(16));
+  assert.equal(storage.length, 13, "an IndexedDB-only day also counts toward the 14 days");
+  assert(transactions.includes("candidateEvents"), "candidate count pruning remains unchanged");
 });
 
 test("Pink target staleness & daily cleanup", () => {
