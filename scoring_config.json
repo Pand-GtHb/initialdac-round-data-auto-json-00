@@ -1,26 +1,27 @@
 {
   "meta": {
     "schemaVersion": 1,
-    "version": "scoring_config_v35_common_phase_20261019",
+    "version": "scoring_config_v37_phase_area_20261026",
     "parameterNotes": {
       "validation": "schemaVersion=1。未指定項目は既定値で補完し、型・範囲・枠数合計10・未定義の設定名を読込時に検証。不正設定は通知して読込を中断する。",
       "effectiveValues": "予測ログのscoringConfigSnapshotにversionと既定値補完後の設定を保存。phase.yellow.weightはyellowMaxWeight適用後、recentMatch.weightは無効時0を記録。",
       "slots": "normal・crossBucket・wildcardは非負の整数で合計10。Pink表示上限は撤廃し、選出後の差し替えは行わない。",
-      "recentMatch": "weightとmaxWeightは0～1、weightはmaxWeight以下。windowSizeは保存可能なコピー件数以内の正の整数。",
-      "phase": "Yellow・Pinkの採点重みは双方0.55。採点倍率は1-weight×(1-finalPhaseScore)で、phaseTrustは乗算しない。phaseTrust列は周期学習の診断値として保存し、周期学習側の信頼度・補正抑制は維持。scoringConfigSnapshot.phaseScoringに式と信頼度の役割を記録。yellowMaxWeightはYellowの適用重み上限。yellow.weight・pink.weight省略時はphase.weightを使用。yellow.maxSampleAgeSecはYellow学習サンプルの最大経過秒数。誤差幅・経過周期減衰・起点・cooldownは変更しない。",
-      "filterMinutes": "画面の選択肢と同じ15・30・60・120・180分を指定する。",
-      "cleanup": "未使用のdiagnosticRecentWeightは削除。直近AREAの選出重みはrecentMatch.weight、Phase診断専用重みはdiagnosticPhaseWeightで管理。softmaxBacktestは診断処理・設定とも撤去し、過去ログは変更しない。",
+      "recentMatch": "本番では直近AREA加点を無効とし基本AREAのみ適用。weight・maxWeight・windowSizeは診断の加点復元にも使用するため保持。weightとmaxWeightは0～1、weightはmaxWeight以下。windowSizeは保存可能なコピー件数以内の正の整数。",
+      "phase": "Yellowの経過周期減衰係数を0.10へ変更し、Pinkは0.03を維持。誤差幅は双方90秒、採点重みは双方0.55。採点倍率は1-weight×(1-finalPhaseScore)でphaseTrustは乗算しない。phaseTrustは周期学習の診断値。周期学習・起点・cooldownは維持。yellowMaxWeightはYellow重み上限。yellow.weight・pink.weight省略時はphase.weightを使用。yellow.maxSampleAgeSecはYellow学習サンプルの最大経過秒数。",
+      "policyComparisons": "本番と同じ時間母集団・人口補正済み通常枠で独立再選出。Yellow減衰0.03/誤差90秒、減衰0.03/誤差60秒、減衰なし/誤差90秒、基本×直近AREA、直近AREAのみ、AREAなし、当日相対AREAのみ、変更前PhaseとAREAの組合せを固定IDでログ保存。Yellow重み0.70と基本×当日相対AREAも維持。過去ログは改変せず、比較は学習・本番選出に影響しない。直近履歴は予測以前の通常コピー（過去日含む）、当日履歴はJST4時以降のみ。Phase起点不明の比較は観測値を維持し件数を記録。",
+      "filterMinutes": "既定値は15分。画面の選択肢と同じ15・30・60・120・180分を指定する。integrated_dataの更新時刻を基準とする下限フィルターで、選択した時間幅は候補人口・枠配分にも反映する。",
+      "cleanup": "未使用のdiagnosticRecentWeightは削除。直近AREAの診断復元重みはrecentMatch.weight、Phase診断専用重みはdiagnosticPhaseWeightで管理。診断のAREA人口・当日履歴・直近履歴集計は同一予測内で共有し、別予測には持ち越さない。softmaxBacktestは診断処理・設定とも撤去し、過去ログは変更しない。",
       "shadowDiagnostics": "診断は本番候補・枠配分・学習を変更しない。既存PRIDE救済を維持し、day-relative-areaとyellow-phase-weight-070を独立に保存。dayRelativeAreaはJST午前4時区切りの当日かつ予測時点以前の通常コピー履歴を使用。候補AREA人数/全スコア対象人数×履歴件数を期待件数とし、1+weight×clamp((実績件数-期待件数)/(期待件数+smoothingCount),0,1)で直近AREA加点のみ置換。基本AREA加点は維持。Yellow案はPhase得点を維持して適用重みを0.70へ置換し、本番と同じく信頼度は採点へ乗算しない。Pinkは変更しない。両案とも本番と同じ通常/横断/ワイルドカード枠で、Pink上限なしで再選出。実績履歴はViewerに保存された最大200件内で、未観測の対戦を含まない。",
       "candidateTimingLogs": "全スコア対象のallCandidates末尾・表示候補/コピーのscoreBreakdown・cooldown除外にPhase起点時刻(ms)/種類、LastUpdate原文/時刻(ms)/経過秒、Pink最終コピー時刻(ms)/経過秒、cooldown残秒/適用周期秒/総秒、Phase周期秒を保存。欠測はnull。Phase起点はlast-updateまたはpink-last-copy、欠測はunavailable。経過時間は予測評価時点基準、コピーの再計算時はその評価時点基準。cooldownは適用周期×1.5。candidate/copy/日次exportのscriptVersionとmatchingScriptVersionでアプリ・選出モジュールの実装版を識別し、export内の過去イベント版は書き換えない。自カード/プレー区間情報は追加しない。",
-      "pinkScoring": "Pinkの個人・ランク活動加点、専用の追加Phase不一致減衰、表示上限を撤廃。Phase起点・周期学習・保存復元・1.5周期cooldownは維持する。Phase採点はphase項目の共通方式に従う。realtimeBoostとcandidateSelection.maxPinkManagedSlotsは廃止し、指定時は未知キーエラー。旧活動保存データは削除せず読み書きしない。旧分析列は互換性のため倍率1・加点0を保存し、pinkMismatchEnabled/pinkCapEnabled=false、上限・追加減衰パラメータはnull。過去イベントは書き換えない。AREA設定・通常8＋横断1＋ワイルドカード1は変更しない。",
+      "pinkScoring": "Pinkの個人・ランク活動加点、専用の追加Phase不一致減衰、表示上限は撤廃済み。Phase起点・周期学習・保存復元・1.5周期cooldownは維持。Pink減衰は0.03で、AREAはYellowと同じ基本加点のみ。realtimeBoostとcandidateSelection.maxPinkManagedSlotsは廃止し指定時は未知キーエラー。旧活動保存データは削除せず読み書きしない。旧分析列は互換性のため倍率1・加点0、pinkMismatchEnabled/pinkCapEnabled=false、廃止パラメータはnull。過去イベントは書き換えず、通常8＋横断1＋wildcard1は維持。",
       "pinkStartup": "Pinkは起動時の過去Phase誤差による再シードを行わない。学習方式version=1・基準周期・補正上限が一致する保存補正と学習根拠を復元する。旧方式・不正・非互換の保存値は通知して一度だけ基準周期（既定345秒）へ移行し、対戦履歴・Yellowは保持する。通常の再対戦学習と採点式は変更しない。モニターは保存周期の学習根拠と当日間隔の信頼度を区別し、candidateEventsと日次exportにpinkCycleStateを保存する。"
     },
     "createdAt": "2026-09-26T09:15:11+09:00",
-    "modifiedAt": "2026-10-19T23:06:02+09:00",
-    "description": "ViewerのFilter既定値と自ランク既定値はviewerDefaultsで管理する。表示は通常8枠＋個体確率クロスバケット1枠＋総合スコアのワイルドカード1枠。Rubyフロア保証は撤去し、人口補正後の通常枠配分をそのまま使用する。通常枠はhistoricalの自ランク別確率を基本とし、relativePopulationAdjustmentで下位・同格・上位の現在人口構成を補正する。時間・全ランクフィルター後、Pink cooldown除外前のRuby＋PRIDE分類人数を母数とする。下位・上位の係数は((現在群比率/現在同格比率)/(基準群比率/基準同格比率))^exponentをminMultiplier～maxMultiplierに制限し、同格係数は1とする。係数をバケット確率へ乗算して再配分するが、maxTransferredSlotsまでの移動に制限する。寄付元は補正目標より枠が多く容量に余裕があるバケットのうち、フィルター後人口が最少のものを選ぶ。同数なら補正後確率、バケット名順。人口基準は10/1～10/5のコピー時スナップショットを自ランクに依存せず重複除外した57件の比率平均で、R8も暫定値。全ランク選択かつ最小母数・同格最小人数を満たすR6/R7/R8のみ対象。候補人口はゲーム全体の待機人数ではない。areaBoost.recentMatchはAREAが記録された直近5コピーの同AREA件数を使い、1＋0.30×sqrt(件数/5)を通常枠スコアと横断評価へ適用する。最大倍率は1.30で、基本AREA加点とは別。Pinkの活動加点・専用追加不一致減衰・表示上限を撤廃し、選出後の差し替えは行わない。Phase採点はYellow・Pinkとも重み0.55とし、信頼度を乗算しない。Phase起点・周期学習側の信頼度と補正抑制・保存復元・cooldownは維持する。PRIDE帯別補正、Phase診断専用加点は維持する。ソフトマックス診断は撤去済みで、当日AREA相対評価とYellow Phase重み0.70は診断専用。candidate eventには人口補正と直近AREA設定、診断結果、候補の起点時刻とcooldown情報、scriptVersionを保存する。"
+    "modifiedAt": "2026-10-26T22:43:37+09:00",
+    "description": "Filter既定15分・自ランク既定値はviewerDefaultsで管理。表示は通常8＋個体確率クロス1＋総合スコアwildcard1。通常枠はhistorical確率とrelativePopulationAdjustmentで配分しRubyフロア保証なし。人口は時間・ランクフィルター後かつPink cooldown前の分類人数で、ゲーム全体の待機人数ではない。R6/R7/R8かつ全ランク選択・最小人数を満たす場合のみ下位/上位を基準人口比で補正し、同格係数は1。係数は設定範囲に制限し最大移動枠数を維持。寄付元は過剰枠かつ容量に余裕がある最少人口バケット（同数は補正確率・名前順）。基準は10/1～10/5の重複除外57スナップショット、R8は暫定。本番AREAは基本加点のみで直近加点は診断専用。PhaseはYellow減衰0.10/Pink減衰0.03、誤差幅90秒、重み双方0.55、採点trust乗算なし。Pink活動加点・追加不一致減衰・上限は撤廃済み。起点・周期学習・保存復元・cooldown・PRIDE帯補正は維持。Phase/AREA比較診断は同一母集団・枠で再選出し本番や学習を変更しない。候補起点・cooldown・採点内訳・実装版とともにログへ保存する。"
   },
   "viewerDefaults": {
-    "filterMinutes": 30,
+    "filterMinutes": 15,
     "myRankKey": "R7"
   },
   "historical": {
@@ -85,7 +86,7 @@
       "weight": 0.05,
       "smoothingSampleSize": 30,
       "recentMatch": {
-        "enabled": true,
+        "enabled": false,
         "weight": 0.30,
         "maxWeight": 0.30,
         "windowSize": 5
@@ -116,7 +117,7 @@
     "scaleSec": 90,
     "yellowThreshold": 0.70,
     "pinkThreshold": 0.55,
-    "yellowLambda": 0.03,
+    "yellowLambda": 0.10,
     "pinkLambda": 0.03
   },
   "experimental": {

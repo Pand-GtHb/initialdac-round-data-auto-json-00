@@ -388,7 +388,7 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
     Number(
       errCfg[
         isPink ? "pinkLambda" : "yellowLambda"
-      ] ?? 0.03
+      ] ?? (isPink ? 0.03 : 0.10)
     );
 
   const samples =
@@ -1984,29 +1984,10 @@ function renderAreaSummary() {
   ensureAreaSummaryStyles();
   setThemeHeaderColor("area");
 
-  const rows = sortAreaSummaryRows(getAreaSummaryRows());
-  const total = rows.reduce((sum, row) => sum + row.total, 0);
-  const rankCounts = Object.fromEntries(
-    RANKS.map(rank => [
-      rank.key,
-      rows.reduce((sum, row) => sum + (row.counts[rank.key] || 0), 0)
-    ])
-  );
-
   const normSearch = typeof normalize === "function" ? normalize(State.searchText || "") : String(State.searchText || "").trim().toLowerCase();
-  const filteredSummary = filterSummaryBySearch();
   const matchedPlayers = normSearch
-    ? filteredSummary.flatMap(r => r.list)
+    ? filterSummaryBySearch().flatMap(r => r.list)
     : [];
-
-  const displayRows = normSearch ? rows.filter(r => r.total > 0) : rows;
-  const maxAreaTotal = Math.max(1, ...displayRows.map(r => r.total));
-  const legendHTML = RANKS.map(rank => `
-    <span class="area-summary-legend-item">
-      <span class="area-summary-legend-swatch" style="${getRankLegendStyle(rank.key)}"></span>
-      ${rank.label}
-    </span>
-  `).join("");
 
   let searchResultsHTML = "";
   if (normSearch) {
@@ -2052,6 +2033,22 @@ function renderAreaSummary() {
     }
     return;
   }
+
+  const displayRows = sortAreaSummaryRows(getAreaSummaryRows());
+  const total = displayRows.reduce((sum, row) => sum + row.total, 0);
+  const rankCounts = Object.fromEntries(
+    RANKS.map(rank => [
+      rank.key,
+      displayRows.reduce((sum, row) => sum + (row.counts[rank.key] || 0), 0)
+    ])
+  );
+  const maxAreaTotal = Math.max(1, ...displayRows.map(r => r.total));
+  const legendHTML = RANKS.map(rank => `
+    <span class="area-summary-legend-item">
+      <span class="area-summary-legend-swatch" style="${getRankLegendStyle(rank.key)}"></span>
+      ${rank.label}
+    </span>
+  `).join("");
 
   area.innerHTML = `
     ${buildSummaryModeNavHTML("area")}

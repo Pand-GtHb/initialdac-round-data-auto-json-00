@@ -239,3 +239,45 @@ test("setThemeHeaderColor updates root CSS property", () => {
   context.ViewerUI.setThemeHeaderColor("matching");
   assert.equal(setPropVal, "#e91e63");
 });
+
+test("AREA search skips Phase and chart aggregation while unfiltered view retains it", () => {
+  const context = createUIContext({ searchText: "PLAYER" });
+  const area = { innerHTML: "", querySelector: () => null, querySelectorAll: () => [] };
+  context.document.getElementById = id => id === "summaryArea" ? area
+    : id === "area-summary-view-styles" ? {} : null;
+  const player = { name: "PLAYER", area: "1" };
+  let filterCalls = 0;
+  let phaseCalls = 0;
+  let players = [{ key: "R7", list: [player] }];
+  context.filterSummaryBySearch = () => {
+    filterCalls++;
+    return players;
+  };
+  context.isCopiedPlayer = () => false;
+  context.isMatchingCandidateByPhase = () => {
+    phaseCalls++;
+    return true;
+  };
+  context.getAreaDisplayName = key => `AREA_${key}`;
+  context.buildSummaryPopulationText = total => `TOTAL_${total}`;
+
+  context.ViewerUI.renderAreaSummary();
+  assert.equal(filterCalls, 1);
+  assert.equal(phaseCalls, 0);
+  assert.match(area.innerHTML, /areaSummarySearchResultBody/);
+  assert.doesNotMatch(area.innerHTML, /area-summary-list/);
+
+  players = [];
+  context.ViewerUI.renderAreaSummary();
+  assert.equal(filterCalls, 2);
+  assert.equal(phaseCalls, 0);
+  assert.doesNotMatch(area.innerHTML, /areaSummarySearchResultBody|area-summary-list/);
+
+  players = [{ key: "R7", list: [player] }];
+  context.State.searchText = "";
+  context.ViewerUI.renderAreaSummary();
+  assert.equal(filterCalls, 3);
+  assert.equal(phaseCalls, 1);
+  assert.match(area.innerHTML, /TOTAL_1/);
+  assert.match(area.innerHTML, /area-summary-list/);
+});

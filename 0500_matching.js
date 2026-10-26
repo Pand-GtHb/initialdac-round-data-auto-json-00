@@ -13,7 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
-  const MATCHING_SCRIPT_VERSION = "matching-diagnostics-v4-20261026";
+  const MATCHING_SCRIPT_VERSION = "matching-policy-v6-phase-area-20261026";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -31,7 +31,7 @@
   const DEFAULT_PINK_MISMATCH_DECAY_SEC = 60;
   const DEFAULT_AREA_BOOST_WEIGHT = 0.05;
   const DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE = 30;
-  const DEFAULT_RECENT_AREA_BOOST_ENABLED = true;
+  const DEFAULT_RECENT_AREA_BOOST_ENABLED = false;
   const DEFAULT_RECENT_AREA_BOOST_WEIGHT = 0.3;
   const MAX_RECENT_AREA_BOOST_WEIGHT = 0.3;
   const DEFAULT_RECENT_AREA_MATCH_WINDOW_SIZE = 5;
@@ -71,7 +71,7 @@
     if (source.meta?.schemaVersion !== 1) invalid("meta.schemaVersion must be 1");
     if (typeof source.meta.version !== "string" || !source.meta.version.trim()) invalid("meta.version is required");
     const defaults = {
-      viewerDefaults: { filterMinutes: 30, myRankKey: "R7" },
+      viewerDefaults: { filterMinutes: 15, myRankKey: "R7" },
       historical: {
         reliabilityK: HISTORICAL_RELIABILITY_K,
         candidateCountAlpha: HISTORICAL_CANDIDATE_COUNT_ALPHA,
@@ -101,7 +101,7 @@
         yellow: { weight: 0.55, baseCycleSec: 345, alpha: 0.12, maxShiftSec: 30, minSamples: 8, maxSampleAgeSec: 2700 },
         pink: { weight: 0.55, baseCycleSec: 345, alpha: 0.18, maxShiftSec: 45, minSamples: 8 }
       },
-      phaseError: { scaleSec: 90, yellowThreshold: 0.7, pinkThreshold: 0.55, yellowLambda: 0.03, pinkLambda: 0.03 },
+      phaseError: { scaleSec: 90, yellowThreshold: 0.7, pinkThreshold: 0.55, yellowLambda: 0.10, pinkLambda: 0.03 },
       experimental: {
         dayRelativeArea: { enabled: true, weight: 0.30, smoothingCount: 2 },
         yellowPhase: { enabled: true, weight: 0.70 }
@@ -203,6 +203,7 @@
       schemaVersion: config.meta.schemaVersion, version: config.meta.version, effective,
       phaseScoring: {
         formula: "1 - phaseWeight * (1 - finalPhaseScore)",
+        finalPhaseFormula: "exp(-0.5 * (phaseError / scaleSec)^2) * exp(-lambda * cycleCount)",
         scoringTrustApplied: false,
         phaseTrustRole: "cycle-learning-diagnostic"
       }
@@ -1529,15 +1530,19 @@
     }
 
     const selected = [];
+    const poolsByBucket = new Map();
+    for (const player of candidates) {
+      const bucket = getMatchingSlotBucketKey(player.__rankKey);
+      if (!poolsByBucket.has(bucket)) poolsByBucket.set(bucket, []);
+      poolsByBucket.get(bucket).push(player);
+    }
 
     for (const entry of plan) {
       if (entry.slots <= 0) {
         continue;
       }
 
-      const pool = candidates.filter(
-        player => getMatchingSlotBucketKey(player.__rankKey) === entry.bucket
-      );
+      const pool = poolsByBucket.get(entry.bucket) ?? [];
 
       const bucketSelected = entry.bucket === "PRIDE"
         ? selectPrideSlotCandidates(pool, entry.slots, options)
@@ -1723,25 +1728,40 @@
     };
   }
 
-  function buildShadowCandidateComparison(pool, {
-    variant, scoringConfig, slotPlan = [], copyAreaHistory = [], evaluationTimeMs
-  }) {
-    if (!["dayRelativeArea", "yellowPhase"].includes(variant)) {
-      throw new Error(`Unknown diagnostic variant: ${variant}`);
-    }
-    const settings = scoringConfig.experimental[variant];
-    if (!settings.enabled) return { status: "disabled", parameters: { ...settings }, selected: [] };
+  const SCORING_POLICY_COMPARISONS = Object.freeze([
+    Object.freeze({ variant: "yellowPrevious", id: "yellow-phase-decay-003", lambda: 0.03, scaleSec: 90 }),
+    Object.freeze({ variant: "yellowError60", id: "yellow-phase-error-060", lambda: 0.03, scaleSec: 60 }),
+    Object.freeze({ variant: "yellowNoDecay", id: "yellow-phase-no-decay", lambda: 0, scaleSec: 90 }),
+    Object.freeze({ variant: "areaRecent", id: "area-basic-recent", area: "basic-recent" }),
+    Object.freeze({ variant: "areaRecentOnly", id: "area-recent-only", area: "recent-only" }),
+    Object.freeze({ variant: "areaNone", id: "area-none", area: "none" }),
+    Object.freeze({ variant: "areaDayOnly", id: "area-day-relative-only", area: "day-only" }),
+    Object.freeze({ variant: "previousPolicy", id: "previous-phase-area-policy",
+      lambda: 0.03, scaleSec: 90, area: "basic-recent" })
+  ]);
 
-    const isArea = variant === "dayRelativeArea";
-    const dayKey = isArea ? ViewerPersistence.buildDailyKey(new Date(evaluationTimeMs), 540) : null;
-    const history = isArea ? copyAreaHistory.filter(record =>
+  function buildShadowCandidateComparisons(pool, options) {
+    // Share aggregates only within this prediction; never reuse history across evaluations.
+    const context = {};
+    return [
+      { variant: "dayRelativeArea", id: "day-relative-area" },
+      { variant: "yellowPhase", id: "yellow-phase-weight-070" },
+      ...SCORING_POLICY_COMPARISONS
+    ].map(({ variant, id }) => ({
+      id, ...evaluateShadowCandidateComparison(pool, { ...options, variant }, context)
+    }));
+  }
+
+  function buildShadowAreaContext(pool, copyAreaHistory, evaluationTimeMs, settings) {
+    const dayKey = ViewerPersistence.buildDailyKey(new Date(evaluationTimeMs), 540);
+    const history = copyAreaHistory.filter(record =>
       Number.isFinite(record.t) && record.t <= evaluationTimeMs &&
       ViewerPersistence.buildDailyKey(new Date(record.t), 540) === dayKey &&
       String(record.area ?? "") !== ""
-    ) : [];
+    );
     const areaCounts = new Map();
     const observedCounts = new Map();
-    for (const p of isArea ? pool : []) {
+    for (const p of pool) {
       const area = String(p.area ?? "");
       areaCounts.set(area, (areaCounts.get(area) ?? 0) + 1);
     }
@@ -1749,6 +1769,54 @@
       const area = String(record.area);
       observedCounts.set(area, (observedCounts.get(area) ?? 0) + 1);
     }
+    const details = new Map([...areaCounts].map(([area, count]) => {
+      const expected = history.length * count / Math.max(1, pool.length);
+      const observed = observedCounts.get(area) ?? 0;
+      const boost = area
+        ? 1 + settings.weight * clamp((observed - expected) / (expected + settings.smoothingCount), 0, 1)
+        : 1;
+      return [area, { expected, observed, boost }];
+    }));
+    return { dayKey, sampleCount: history.length, areaCounts, observedCounts, details };
+  }
+
+  function buildShadowCandidateComparison(pool, options) {
+    return evaluateShadowCandidateComparison(pool, options, {});
+  }
+
+  function evaluateShadowCandidateComparison(pool, {
+    variant, scoringConfig, slotPlan = [], copyAreaHistory = [], evaluationTimeMs
+  }, context) {
+    const policy = SCORING_POLICY_COMPARISONS.find(entry => entry.variant === variant);
+    if (!policy && !["dayRelativeArea", "yellowPhase"].includes(variant)) {
+      throw new Error(`Unknown diagnostic variant: ${variant}`);
+    }
+    const settings = policy ? { enabled: true, ...policy } : scoringConfig.experimental[variant];
+    if (!settings.enabled) return { status: "disabled", parameters: { ...settings }, selected: [] };
+
+    const isArea = variant === "dayRelativeArea" || policy?.area === "day-only";
+    let dayArea = null;
+    if (isArea) {
+      dayArea = context.dayArea ??= buildShadowAreaContext(
+        pool, copyAreaHistory, evaluationTimeMs, scoringConfig.experimental.dayRelativeArea);
+    }
+    let recentHistory = null;
+    if (policy?.area?.includes("recent")) {
+      if (!context.recentHistory) {
+        const config = getRecentAreaBoostConfig({
+          candidateSelection: { areaBoost: { recentMatch: {
+            ...scoringConfig.candidateSelection.areaBoost.recentMatch, enabled: true
+          } } }
+        });
+        context.recentHistory = {
+          config,
+          ...buildCopyAreaHistoryContext(copyAreaHistory.filter(record =>
+            Number.isFinite(record.t) && record.t <= evaluationTimeMs), config)
+        };
+      }
+      recentHistory = context.recentHistory;
+    }
+    let unavailablePhaseCount = 0;
 
     // All selection flags and score details belong to diagnostic clones only.
     const clones = pool.map(p => {
@@ -1756,13 +1824,50 @@
       for (const key of ["__crossBucket", "__wildcard", "__pinkCapBackfill",
         "__crossBucketSelectionReason", "displayRank"]) delete clone[key];
       const d = clone.__detail;
-      if (variant === "dayRelativeArea") {
+      if (policy) {
+        let effective = d.effectivePhaseScore;
+        if (policy.lambda !== undefined && !d.isPinkManaged) {
+          const diffSec = (evaluationTimeMs - d.phaseAnchorAtMs) / 1000;
+          if (typeof d.phaseAnchorAtMs === "number" && Number.isFinite(d.phaseAnchorAtMs) &&
+              d.phaseAnchorType !== "unavailable" && Number.isFinite(d.cycleSec) &&
+              d.cycleSec > 0 && Number.isFinite(diffSec) && diffSec >= 0) {
+            Object.assign(d, ViewerDomain.computePhaseMetrics(diffSec, d.cycleSec, policy.lambda, policy.scaleSec));
+            effective = 1 - d.phaseWeight * (1 - d.finalPhaseScore);
+          } else {
+            unavailablePhaseCount++;
+          }
+        }
+        let basic = d.areaBoost;
+        let recent = d.recentAreaAppliedBoost;
+        if (policy.area) {
+          basic = policy.area === "basic-recent" ? basic : 1;
+          recent = 1;
+          const area = String(p.area ?? "");
+          if (recentHistory && area) {
+            recent = 1 + recentHistory.config.weight * Math.sqrt(
+              Number(recentHistory.recentWindowCounts[area] ?? 0) / recentHistory.config.windowSize);
+          }
+          if (policy.area === "day-only") {
+            const { boost, expected, observed } = dayArea.details.get(area);
+            recent = boost;
+            d.diagnosticAreaExpectedCount = expected;
+            d.diagnosticAreaObservedCount = observed;
+          }
+        }
+        d.effectivePhaseScore = effective;
+        d.areaBoost = basic;
+        d.recentAreaAppliedBoost = recent;
+        d.recentAreaCounterfactualBoostWindow = recent;
+        // Preserve non-AREA global weighting exactly for AREA-only comparisons.
+        if (policy.lambda !== undefined && !d.isPinkManaged) {
+          clone.__score = d.historicalScore * d.realtimeBoost * d.pinkMismatchBoostFactor * effective;
+          d.score = clone.__score;
+        }
+        d.slotScore = d.realtimeBoost * d.pinkMismatchBoostFactor * effective *
+          basic * d.prideBandPriorWeight * recent;
+      } else if (variant === "dayRelativeArea") {
         const area = String(p.area ?? "");
-        const expected = history.length * (areaCounts.get(area) ?? 0) / Math.max(1, pool.length);
-        const observed = observedCounts.get(area) ?? 0;
-        const boost = area
-          ? 1 + settings.weight * clamp((observed - expected) / (expected + settings.smoothingCount), 0, 1)
-          : 1;
+        const { expected, observed, boost } = dayArea.details.get(area);
         d.slotScore = getCandidateSlotScore(p) / (d.recentAreaAppliedBoost ?? 1) * boost;
         d.recentAreaCounterfactualBoostWindow = boost;
         d.recentAreaAppliedBoost = boost;
@@ -1803,18 +1908,30 @@
       parameters: {
         ...settings,
         diagnosticOnly: true,
-        ...(variant === "dayRelativeArea" ? {
-          dayKey, dayBoundary: "JST-04:00", historySource: "prior-normal-copies",
-          sampleCount: history.length, populationSource: "scoredCandidates",
+        ...(isArea ? {
+          weight: scoringConfig.experimental.dayRelativeArea.weight,
+          smoothingCount: scoringConfig.experimental.dayRelativeArea.smoothingCount,
+          dayKey: dayArea.dayKey, dayBoundary: "JST-04:00", historySource: "prior-normal-copies",
+          sampleCount: dayArea.sampleCount, populationSource: "scoredCandidates",
           populationCount: pool.length, replaces: "recent-area-only",
-          basicAreaPreserved: true,
+          basicAreaPreserved: policy?.area !== "day-only",
           basicAreaPopulationSource: "filtered-classified-candidates",
-          combinedAreaFormula: "basicAreaBoost * dayRelativeAreaBoost",
+          combinedAreaFormula: policy?.area === "day-only"
+            ? "dayRelativeAreaBoost" : "basicAreaBoost * dayRelativeAreaBoost",
           globalScoreUnchanged: true,
-          observedAreaCounts: Object.fromEntries(observedCounts),
-          candidateAreaCounts: Object.fromEntries(areaCounts),
+          observedAreaCounts: Object.fromEntries(dayArea.observedCounts),
+          candidateAreaCounts: Object.fromEntries(dayArea.areaCounts),
           formula: "1 + weight * clamp((observed - expected) / (expected + smoothingCount), 0, 1)"
+        } : policy ? {
+          phaseScope: policy.lambda === undefined ? "unchanged" : "yellow-only",
+          pinkPhaseUnchanged: true, scoringTrustApplied: false,
+          unavailablePhaseCount, unavailablePhaseRule: "preserve-observed-phase",
+          ...(recentHistory ? {
+            recentMatch: { weight: recentHistory.config.weight, windowSize: recentHistory.config.windowSize,
+              includePreviousDays: true, historySource: "prior-normal-copies" }
+          } : {})
         } : { replaces: "yellow-effective-phase-weight", pinkUnchanged: true, scoringTrustApplied: false }),
+        populationAndSlotPlan: "same-as-production",
         slotPlan: slotPlan.map(entry => ({ ...entry }))
       },
       selected
@@ -2008,6 +2125,7 @@
 
   const ViewerMatching = {
     MATCHING_SCRIPT_VERSION,
+    SCORING_POLICY_COMPARISONS,
     resolveScoringConfig,
     getScoringConfigSnapshot,
     getMatchingSlotCounts,
@@ -2066,6 +2184,7 @@
     selectWildcardCandidates,
     applyPinkManagedSlotCap,
     buildShadowCandidateComparison,
+    buildShadowCandidateComparisons,
     buildCandidateResurfacingDiagnostics
   };
 

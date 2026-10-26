@@ -322,6 +322,113 @@ test("AREA replacement preserves basic boost once in slot/cross scoring and leav
   assert.equal(JSON.stringify(pool), before);
 });
 
+test("policy comparisons independently rescore Phase and AREA without learning or future history", () => {
+  const context = createMatchingContext();
+  const M = context.ViewerMatching;
+  const config = M.resolveScoringConfig({ meta: { schemaVersion: 1, version: "policy-test" } });
+  const at = Date.parse("2026-10-26T10:00:00+09:00");
+  const pool = Array.from({ length: 12 }, (_, i) => {
+    const pink = i === 0;
+    const metrics = context.ViewerDomain.computePhaseMetrics(700, 345, pink ? 0.03 : 0.10, 90);
+    const effective = 1 - 0.55 * (1 - metrics.finalPhaseScore);
+    return Object.freeze({
+      name: `POLICY_${i}`, shopname: "S", area: "A", __rankKey: "R7",
+      __score: 0.1 * effective, __slotScore: effective * 1.05,
+      __crossBucket: true, __wildcard: true,
+      __detail: Object.freeze({
+        ...metrics, phaseAnchorAtMs: at - 700000,
+        phaseAnchorType: pink ? "pink-last-copy" : "last-update",
+        cycleSec: 345, isPinkManaged: pink, phaseWeight: 0.55, phaseTrust: 0,
+        effectivePhaseScore: effective, historicalScore: 0.1,
+        realtimeBoost: 1, pinkMismatchBoostFactor: 1,
+        areaBoost: 1.05, recentAreaAppliedBoost: 1,
+        prideBandPriorWeight: 1, slotBucket: "R7", slotScore: effective * 1.05,
+        tierProbability: 1, tierCandidateCount: 12
+      })
+    });
+  });
+  const history = [
+    { t: at - 86400000, area: "A" },
+    { t: at - 1, area: "A" },
+    ...Array.from({ length: 5 }, (_, i) => ({ t: at + i + 1, area: "B" }))
+  ];
+  const plan = [{ bucket: "R7", slots: 8 }];
+  const before = JSON.stringify({ pool, history, plan, config });
+  for (const policy of M.SCORING_POLICY_COMPARISONS) {
+    const result = M.buildShadowCandidateComparison(pool, {
+      variant: policy.variant, scoringConfig: config, slotPlan: plan,
+      copyAreaHistory: history, evaluationTimeMs: at
+    });
+    assert.equal(result.status, "computed");
+    assert.equal(result.selected.length, 10);
+    assert.equal(new Set(result.selected.map(p => p.name)).size, 10);
+    assert.equal(result.parameters.populationAndSlotPlan, "same-as-production");
+    const recent = 1 + 0.3 * Math.sqrt(2 / 5);
+    for (const p of result.selected) {
+      const old = pool.find(q => q.name === p.name);
+      const d = p.__detail;
+      const phase = policy.lambda !== undefined && !d.isPinkManaged
+        ? context.ViewerDomain.computePhaseMetrics(700, 345, policy.lambda, policy.scaleSec)
+        : old.__detail;
+      const effective = 1 - 0.55 * (1 - phase.finalPhaseScore);
+      const basic = policy.area && policy.area !== "basic-recent" ? 1 : 1.05;
+      const boost = policy.area?.includes("recent") ? recent : 1;
+      assert.ok(Math.abs(d.finalPhaseScore - phase.finalPhaseScore) < 1e-12);
+      assert.ok(Math.abs(p.__score - 0.1 * effective) < 1e-12);
+      assert.ok(Math.abs(p.__slotScore - effective * basic * boost) < 1e-12);
+      assert.ok(Math.abs(M.getCandidateCrossBucketScore(p) -
+        effective * basic * boost / 12) < 1e-12);
+      if (d.isPinkManaged) assert.equal(d.finalPhaseScore, old.__detail.finalPhaseScore);
+    }
+    if (policy.area === "day-only") assert.equal(result.parameters.sampleCount, 1);
+    assert.equal(JSON.stringify({ pool, history, plan, config }), before);
+  }
+  const options = { scoringConfig: config, slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at };
+  const variants = [
+    { variant: "dayRelativeArea", id: "day-relative-area" },
+    { variant: "yellowPhase", id: "yellow-phase-weight-070" },
+    ...M.SCORING_POLICY_COMPARISONS
+  ];
+  const buildDailyKey = context.ViewerPersistence.buildDailyKey;
+  let dailyKeyCalls = 0;
+  context.ViewerPersistence.buildDailyKey = (...args) => {
+    dailyKeyCalls++;
+    return buildDailyKey(...args);
+  };
+  const individual = variants.map(({ variant, id }) => ({
+    id, ...M.buildShadowCandidateComparison(pool, { ...options, variant })
+  }));
+  const individualKeyCalls = dailyKeyCalls;
+  dailyKeyCalls = 0;
+  const batch = M.buildShadowCandidateComparisons(pool, options);
+  assert.equal(JSON.stringify(batch), JSON.stringify(individual));
+  assert.equal(dailyKeyCalls * 2, individualKeyCalls);
+  assert.equal(JSON.stringify({ pool, history, plan, config }), before);
+  const fresh = M.buildShadowCandidateComparisons(pool, {
+    ...options, copyAreaHistory: [], evaluationTimeMs: at + 86400000
+  });
+  assert.equal(fresh.find(c => c.id === "day-relative-area").parameters.sampleCount, 0);
+  assert.ok(fresh.find(c => c.id === "area-basic-recent").selected.every(p =>
+    p.__detail.recentAreaAppliedBoost === 1));
+  config.experimental.dayRelativeArea.enabled = false;
+  config.experimental.yellowPhase.enabled = false;
+  const disabledBatch = M.buildShadowCandidateComparisons(pool, options);
+  assert.ok(disabledBatch.slice(0, 2).every(c => c.status === "disabled" && c.selected.length === 0));
+  assert.deepEqual(Array.from(M.buildShadowCandidateComparisons([], options), c => c.selected.length),
+    Array(variants.length).fill(0));
+  const missing = [null, at + 1].map((anchor, i) => ({
+    ...pool[i], __detail: { ...pool[i].__detail, isPinkManaged: false,
+      phaseAnchorAtMs: anchor, phaseAnchorType: anchor === null ? "unavailable" : "last-update" }
+  }));
+  const unknown = M.buildShadowCandidateComparison(missing, {
+    variant: "yellowError60", scoringConfig: config, slotPlan: plan, evaluationTimeMs: at
+  });
+  assert.equal(unknown.parameters.unavailablePhaseCount, 2);
+  for (const p of unknown.selected) {
+    assert.equal(p.__detail.finalPhaseScore, missing.find(q => q.name === p.name).__detail.finalPhaseScore);
+  }
+});
+
 function resurfacingFixture() {
   const matching = createMatchingContext().ViewerMatching;
   const at = Date.parse("2026-10-26T10:00:00+09:00");
@@ -594,15 +701,34 @@ test("normal selection preserves zero Ruby slots and the donor bucket's second c
   assert.equal(slotPlan[1].slots, 0);
 });
 
-test("recent AREA defaults retain five matches and 30 percent without Pink scoring settings", () => {
+test("normal slot selection groups candidates once and preserves stable score ties", () => {
+  const { selectNormalCandidatesBySlots } = createMatchingContext().ViewerMatching;
+  let rankReads = 0;
+  const candidates = ["R6", "R7"].flatMap(rank => Array.from({ length: 3 }, (_, i) => ({
+    name: `${rank}_${i}`, __slotScore: 1 - i * 0.1,
+    get __rankKey() { rankReads++; return rank; }
+  })));
+  const plan = [{ bucket: "R6", slots: 2 }, { bucket: "R7", slots: 2 }];
+  const state = {};
+  const selected = selectNormalCandidatesBySlots(candidates, 4, {}, plan, { state });
+  assert.equal(rankReads, candidates.length);
+  assert.deepEqual(Array.from(selected, p => p.name), ["R6_0", "R7_0", "R6_1", "R7_1"]);
+  assert.deepEqual(Array.from(selected, p => p.__slotBucket), ["R6", "R7", "R6", "R7"]);
+  assert.equal(JSON.stringify(state.matchingSlotPlan), JSON.stringify(plan));
+  assert.ok(candidates.every(p => p.__slotScore === (p.name.endsWith("_0") ? 1 :
+    p.name.endsWith("_1") ? 0.9 : 0.8)));
+});
+
+test("recent AREA is disabled by default but retains history and explicit diagnostic settings", () => {
   const { getRecentAreaBoostConfig, applyCandidateAreaHistoryBoost } = createMatchingContext().ViewerMatching;
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scoring_config.json"), "utf8"));
   const defaults = getRecentAreaBoostConfig();
   const configured = getRecentAreaBoostConfig(config);
   assert.equal(defaults.windowSize, 5);
   assert.equal(configured.windowSize, 5);
-  assert.equal(configured.weight, 0.3);
-  assert.equal(configured.maxMultiplier, 1.3);
+  assert.equal(defaults.enabled, false);
+  assert.equal(configured.weight, 0);
+  assert.equal(configured.maxMultiplier, 1);
   assert.equal(Object.hasOwn(config.candidateSelection, "maxPinkManagedSlots"), false);
   assert.equal(Object.hasOwn(config, "realtimeBoost"), false);
   const history = [{ area: "old" }, ...Array.from({ length: 5 }, () => ({ area: "recent" }))];
@@ -611,11 +737,15 @@ test("recent AREA defaults retain five matches and 30 percent without Pink scori
   }));
   applyCandidateAreaHistoryBoost(candidates, { copyAreaHistory: history, scoringConfig: config });
   assert.equal(candidates[0].__slotScore, 1);
+  assert.equal(candidates[1].__slotScore, 1);
+  assert.equal(candidates[1].__detail.recentAreaMatchCount5, 5);
+  config.candidateSelection.areaBoost.recentMatch.enabled = true;
+  applyCandidateAreaHistoryBoost(candidates, { copyAreaHistory: history, scoringConfig: config });
   assert.equal(candidates[1].__slotScore, 1.3);
   applyCandidateAreaHistoryBoost(candidates, { copyAreaHistory: history, scoringConfig: config });
   assert.equal(candidates[1].__slotScore, 1.3);
   assert.equal(getRecentAreaBoostConfig({
-    candidateSelection: { areaBoost: { recentMatch: { weight: 1 } } }
+    candidateSelection: { areaBoost: { recentMatch: { enabled: true, weight: 1 } } }
   }).weight, 0.3);
   assert.equal(getRecentAreaBoostConfig({
     candidateSelection: { areaBoost: { recentMatch: { enabled: false } } }
@@ -648,9 +778,18 @@ test("scoring config resolves defaults, validates inputs and records effective v
   } } });
   assert.equal(getScoringConfigSnapshot(capped).effective.phase.yellow.weight, 0.55);
   assert.equal(capped.phase.yellow.weight, 0.8);
-  assert.equal(snapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0.3);
+  assert.equal(config.candidateSelection.slotAllocation.relativePopulationAdjustment.enabled, true);
+  assert.equal(config.phaseError.yellowLambda, 0.10);
+  assert.equal(config.phaseError.pinkLambda, 0.03);
+  assert.equal(config.candidateSelection.areaBoost.recentMatch.enabled, false);
+  assert.equal(snapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
   assert.equal(getMatchingSlotCounts(config).normal, 8);
   const defaults = resolveScoringConfig({ meta: { schemaVersion: 1, version: "minimal" } });
+  assert.equal(config.viewerDefaults.filterMinutes, 15);
+  assert.equal(defaults.viewerDefaults.filterMinutes, 15);
+  assert.equal(resolveScoringConfig({ ...source, viewerDefaults: {
+    ...source.viewerDefaults, filterMinutes: 30
+  } }).viewerDefaults.filterMinutes, 30);
   assert.equal(defaults.historical.reliabilityK, 100);
   assert.equal(defaults.phase.pink.weight, defaults.phase.weight);
   assert.equal(defaults.candidateSelection.areaBoost.recentMatch.windowSize, 5);

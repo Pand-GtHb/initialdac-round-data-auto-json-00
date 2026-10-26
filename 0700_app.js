@@ -79,10 +79,6 @@
     pruneCandidateEventsStore
   } = ViewerPersistence || {};
 
-  function getActiveLogDB() {
-    return getLogDB();
-  }
-
   const {
     PRODUCTION_BASE_URL,
     fetchJSON,
@@ -118,7 +114,7 @@
     assignCandidateCrossBucketRanks,
     selectCrossBucketCandidates,
     selectWildcardCandidates,
-    buildShadowCandidateComparison,
+    buildShadowCandidateComparisons,
     buildCandidateResurfacingDiagnostics
   } = ViewerMatching || {};
 
@@ -165,13 +161,13 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v6-resurfacing-area-20261026";
-const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v16_resurfacing_diagnostics";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v8-phase-area-policy-20261026";
+const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v17_phase_area_policy";
 const MAX_LOG_LINES = 100;
-const DEFAULT_FILTER_MINUTES = 30;
+const DEFAULT_FILTER_MINUTES = 15;
 const DEFAULT_MY_RANK_KEY = "R7";
 /*
- * 本番選出・学習・保存上限は維持する。
+ * 診断比較は本番選出・学習・保存上限を変更しない。
  * 候補外記録のsearchMemoは部分文字列でもよく、相手名ではない。
  * CSVの自ランク・店舗・前後の実績と照合し、曖昧なら未確定を維持する。
  * 比較案は完全な選出可能候補で計算し、結果だけ保存する。
@@ -213,8 +209,19 @@ function buildAnalysisDiagnostics() {
     slotScore: getCandidateSlotScore(p),
     score: getCandidateSelectionScore(p),
     crossBucketScore: getCandidateCrossBucketScore(p),
+    selectionRoute: p.__wildcard ? "global-high-score"
+      : p.__crossBucket ? "individual-probability" : "normal",
     phaseWeight: p.__detail?.phaseWeight ?? null,
     effectivePhaseScore: p.__detail?.effectivePhaseScore ?? null,
+    phaseScore: p.__detail?.phaseScore ?? null,
+    phaseDecay: p.__detail?.decay ?? null,
+    finalPhaseScore: p.__detail?.finalPhaseScore ?? null,
+    phaseError: p.__detail?.phaseError ?? null,
+    phaseAnchorAtMs: p.__detail?.phaseAnchorAtMs ?? null,
+    phaseAnchorType: p.__detail?.phaseAnchorType ?? null,
+    cycleSec: p.__detail?.cycleSec ?? null,
+    phaseCycleCount: p.__detail?.cycleCount ?? null,
+    isPinkManaged: Boolean(p.__detail?.isPinkManaged),
     recentAreaBoost: p.__detail?.recentAreaAppliedBoost ?? null,
     basicAreaBoost: p.__detail?.areaBoost ?? null,
     combinedAreaBoost: Number.isFinite(p.__detail?.areaBoost) &&
@@ -287,17 +294,13 @@ function buildAnalysisDiagnostics() {
     rescue: rescue ? { ...identify(rescue), rescueScore: rescueScore(rescue) } : null,
     replacement: eligibleViewer && rescue && cross ? identify(cross) : null
   }));
-  for (const [variant, id] of [
-    ["dayRelativeArea", "day-relative-area"],
-    ["yellowPhase", "yellow-phase-weight-070"]
-  ]) {
-    const result = buildShadowCandidateComparison(State.matchingScoredAll, {
-      variant, scoringConfig: State.scoringConfig,
-      slotPlan: State.matchingSlotPlan,
-      copyAreaHistory: State.copyAreaHistory,
-      evaluationTimeMs: State.matchingContext.evaluationTimeMs
-    });
-    comparisons.push(finish(id, result.parameters, result.selected, {
+  for (const result of buildShadowCandidateComparisons(State.matchingScoredAll, {
+    scoringConfig: State.scoringConfig,
+    slotPlan: State.matchingSlotPlan,
+    copyAreaHistory: State.copyAreaHistory,
+    evaluationTimeMs: State.matchingContext.evaluationTimeMs
+  })) {
+    comparisons.push(finish(result.id, result.parameters, result.selected, {
       status: result.status, evaluatedCandidateCount: State.matchingScoredAll.length
     }));
   }
@@ -3192,7 +3195,7 @@ function initializePinkCycleState() {
 
 async function seedPhaseAdjustFromCopyHistory() {
 
-  const activeDb = getActiveLogDB();
+  const activeDb = getLogDB();
   if (!activeDb) {
     return;
   }
@@ -3400,7 +3403,7 @@ function normalizeCopyAreaHistory(
 }
 
 async function loadCopyAreaHistory() {
-  const activeDb = getActiveLogDB();
+  const activeDb = getLogDB();
   if (!activeDb) {
     State.copyAreaHistory = [];
     return;
@@ -3777,7 +3780,7 @@ function getPlayerPhaseDetail(
          isPink
            ? "pinkLambda"
            : "yellowLambda"
-       ] ?? 0.03
+       ] ?? (isPink ? 0.03 : 0.10)
    );
 
  const metrics =
@@ -3956,7 +3959,7 @@ function getYellowPhaseScore(player, nowMs = Date.now()) {
     Number(
       State.scoringConfig
         ?.phaseError
-        ?.yellowLambda ?? 0.03
+        ?.yellowLambda ?? 0.10
     );
 
   return computePhaseMetrics(
@@ -4139,7 +4142,7 @@ function computePhaseContext(player, nowMs = Date.now()) {
      Number(
        State.scoringConfig
          ?.phaseError
-         ?.yellowLambda ?? 0.03
+         ?.yellowLambda ?? 0.10
      );
 
    diffSec =
@@ -5785,7 +5788,7 @@ async function exportTodayViewerLogsAsJSON() {
 
   };
 
-  let activeDb = getActiveLogDB();
+  let activeDb = getLogDB();
   if (!activeDb && typeof initLogDB === "function") {
     try {
       activeDb = await initLogDB();

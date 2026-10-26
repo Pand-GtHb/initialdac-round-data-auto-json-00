@@ -38,11 +38,57 @@ test('App constants and configuration are exported', () => {
   assert.equal(ViewerApp.STATE.SUMMARY, 'summary');
   assert.equal(ViewerApp.STATE.DETAIL, 'detail');
   assert.equal(ViewerApp.STATE.MATCHING, 'matching');
-  assert.equal(ViewerApp.DEFAULT_FILTER_MINUTES, 30);
+  assert.equal(ViewerApp.DEFAULT_FILTER_MINUTES, 15);
   assert.equal(ViewerApp.DEFAULT_MY_RANK_KEY, 'R7');
   assert.equal(typeof ViewerApp.ANALYSIS_SCRIPT_VERSION, 'string');
   assert.ok(Array.isArray(ViewerApp.ALL_CANDIDATES_COLUMNS));
   assert.ok(ViewerApp.ALL_CANDIDATES_COLUMNS.includes('slotScore'));
+});
+
+test('Time filter defaults to 15 minutes and preserves explicit selections', () => {
+  const previousConfig = ViewerApp.State.scoringConfig;
+  const previousGetElementById = document.getElementById;
+  try {
+    document.getElementById = () => null;
+    ViewerApp.State.scoringConfig = null;
+    assert.equal(ViewerApp.readRangeMinutes(), 15);
+    const source = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8'));
+    ViewerApp.State.scoringConfig = ViewerMatching.resolveScoringConfig(source);
+    assert.equal(ViewerApp.readRangeMinutes(), 15);
+    ViewerApp.State.scoringConfig.viewerDefaults.filterMinutes = 60;
+    assert.equal(ViewerApp.readRangeMinutes(), 60);
+    document.getElementById = id => id === 'rangeSelect' ? { value: '30' } : null;
+    assert.equal(ViewerApp.readRangeMinutes(), 30);
+  } finally {
+    ViewerApp.State.scoringConfig = previousConfig;
+    document.getElementById = previousGetElementById;
+  }
+});
+
+test('Default time filter includes exactly 15 minutes before generatedAt, not prediction time', () => {
+  const { State } = ViewerApp;
+  const previous = {
+    scoringConfig: State.scoringConfig, generatedAt: State.generatedAt,
+    latestUpdateAt: State.latestUpdateAt, all: State.all, filtered: State.filtered
+  };
+  const previousGetElementById = document.getElementById;
+  try {
+    document.getElementById = () => null;
+    State.scoringConfig = null;
+    State.generatedAt = '2026/10/26 18:00:00';
+    State.latestUpdateAt = '2026/10/26 18:10:00';
+    State.all = [
+      { updateDate: '2026/10/26 17:44:59' },
+      { updateDate: '2026/10/26 17:45:00' },
+      { updateDate: '2026/10/26 17:45:01' },
+      { updateDate: '2026/10/26 18:00:10' }
+    ];
+    ViewerApp.applyFilters();
+    assert.deepEqual(State.filtered, State.all.slice(1));
+  } finally {
+    Object.assign(State, previous);
+    document.getElementById = previousGetElementById;
+  }
 });
 
 test('Pink cycle learning respects zero shift and zero alpha settings', () => {
@@ -295,7 +341,7 @@ test('Pink scoring uses Phase only even with legacy activity state and a Phase m
   }
 });
 
-test('Yellow and Pink apply identical Phase scoring independently of learning trust', () => {
+test('Yellow and Pink share Phase weight but use independent decay, without scoring trust', () => {
   const { State } = ViewerApp;
   const previous = { ...State };
   try {
@@ -333,9 +379,11 @@ test('Yellow and Pink apply identical Phase scoring independently of learning tr
       assert.equal(yellow.phaseTrust, trust);
       assert.equal(pink.phaseTrust, 1 - trust);
       assert.equal(pink.phaseError, yellow.phaseError);
-      assert.equal(pink.finalPhaseScore, yellow.finalPhaseScore);
-      assert.equal(pink.effectivePhaseScore, yellow.effectivePhaseScore);
-      assert.equal(pink.score, yellow.score);
+      assert.ok(Math.abs(yellow.decay - Math.exp(-0.10 * 2)) < 1e-12);
+      assert.ok(Math.abs(pink.decay - Math.exp(-0.03 * 2)) < 1e-12);
+      assert.ok(yellow.finalPhaseScore < pink.finalPhaseScore);
+      assert.ok(yellow.effectivePhaseScore < pink.effectivePhaseScore);
+      assert.ok(yellow.score < pink.score);
       if (baseline !== undefined) assert.equal(pink.score, baseline);
       baseline = pink.score;
       assert.equal(JSON.stringify({
@@ -471,6 +519,9 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     const diagnostics = ViewerApp.buildAnalysisDiagnostics();
     assert.deepEqual(diagnostics.comparisons.map(c => c.id), [
       'pride-rescue-cross-slot', 'day-relative-area', 'yellow-phase-weight-070',
+      'yellow-phase-decay-003', 'yellow-phase-error-060', 'yellow-phase-no-decay',
+      'area-basic-recent', 'area-recent-only', 'area-none', 'area-day-relative-only',
+      'previous-phase-area-policy',
       'resurfacing-rank-score', 'resurfacing-phase'
     ]);
     for (const c of diagnostics.comparisons) {
@@ -488,9 +539,12 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     assert.ok(record);
     assert.equal(record.scriptVersion, ViewerApp.ANALYSIS_SCRIPT_VERSION);
     assert.equal(record.matchingScriptVersion, ViewerMatching.MATCHING_SCRIPT_VERSION);
+    assert.equal(record.scoringConfigSnapshot.effective.phaseError.yellowLambda, 0.10);
+    assert.equal(record.scoringConfigSnapshot.effective.phaseError.pinkLambda, 0.03);
+    assert.equal(record.scoringConfigSnapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
     assert.equal(Object.hasOwn(record, 'softmaxBacktest'), false);
     assert.equal(record.analysisDiagnostics.storageCoverage.complete, true);
-    assert.equal(record.logSchemaVersion, 'slot_area_v16_resurfacing_diagnostics');
+    assert.equal(record.logSchemaVersion, 'slot_area_v17_phase_area_policy');
     assert.equal(record.analysisDiagnostics.resurfacing.diagnosticOnly, true);
     assert.deepEqual(record.analysisDiagnostics.resurfacing, diagnostics.resurfacing);
     assert.deepEqual(record.analysisDiagnostics.comparisons, diagnostics.comparisons);
@@ -503,6 +557,10 @@ test('saved shadow diagnostics and timing logs do not change production candidat
       assert.equal(row.length, record.allCandidatesColumns.length);
       assert.equal(row[record.allCandidatesColumns.indexOf('phaseAnchorType')], 'last-update');
       assert.equal(typeof row[record.allCandidatesColumns.indexOf('lastUpdateAgeSec')], 'number');
+      const decoded = Object.fromEntries(record.allCandidatesColumns.map((key, i) => [key, row[i]]));
+      assert.equal(decoded.recentAreaCounterfactualBoostWindow, 1);
+      assert.ok(Math.abs(decoded.slotScore -
+        decoded.effectivePhaseScore * decoded.areaBoost * decoded.prideBandPriorWeight) < 1e-12);
     }
     assert.equal(record.candidates[0].scoreBreakdown.phaseAnchorType, 'last-update');
     const names = State.matchingList.map(p => p.name);
