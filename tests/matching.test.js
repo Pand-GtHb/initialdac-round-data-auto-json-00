@@ -266,6 +266,9 @@ test("day-relative AREA shadow uses prior same-day copies and never mutates prod
   assert.equal(result.parameters.sampleCount, 3);
   assert.equal(result.parameters.populationCount, 12);
   assert.equal(result.parameters.dayKey, "20261019");
+  assert.equal(result.parameters.basicAreaPreserved, true);
+  assert.equal(result.parameters.combinedAreaFormula, "basicAreaBoost * dayRelativeAreaBoost");
+  assert.equal(result.parameters.globalScoreUnchanged, true);
   assert.equal(result.selected.length, 10);
   assert.equal(new Set(result.selected.map(p => p.name)).size, 10);
   const rare = result.selected.find(p => p.area === "rare");
@@ -288,6 +291,151 @@ test("day-relative AREA shadow uses prior same-day copies and never mutates prod
   });
   assert.equal(empty.parameters.sampleCount, 0);
   assert.ok(empty.selected.every(p => p.__slotScore === 1));
+});
+
+test("AREA replacement preserves basic boost once in slot/cross scoring and leaves global score alone", () => {
+  const { buildShadowCandidateComparison, resolveScoringConfig, getCandidateCrossBucketScore } =
+    createMatchingContext().ViewerMatching;
+  const config = resolveScoringConfig({ meta: { schemaVersion: 1, version: "test" } });
+  const at = Date.parse("2026-10-26T10:00:00+09:00");
+  const pool = Array.from({ length: 12 }, (_, i) => ({
+    name: `AREA_${i}`, shopname: "S", area: i < 2 ? "rare" : "common",
+    __rankKey: "R7", __score: 0.2, __slotScore: 0.8 * 1.05 * 1.3,
+    __detail: {
+      slotBucket: "R7", slotScore: 0.8 * 1.05 * 1.3,
+      effectivePhaseScore: 0.8, areaBoost: 1.05, recentAreaAppliedBoost: 1.3,
+      tierProbability: 1, tierCandidateCount: 12
+    }
+  }));
+  const before = JSON.stringify(pool);
+  const result = buildShadowCandidateComparison(pool, {
+    variant: "dayRelativeArea", scoringConfig: config,
+    slotPlan: [{ bucket: "R7", slots: 8 }], evaluationTimeMs: at,
+    copyAreaHistory: [{ t: at - 1, area: "rare" }, { t: at - 2, area: "rare" },
+      { t: at - 3, area: "common" }]
+  });
+  const rare = result.selected.find(p => p.area === "rare");
+  assert.equal(rare.__detail.areaBoost, 1.05);
+  assert.ok(Math.abs(rare.__slotScore - 0.8 * 1.05 * 1.18) < 1e-12);
+  assert.ok(Math.abs(getCandidateCrossBucketScore(rare) - 1 / 12 * 0.8 * 1.05 * 1.18) < 1e-12);
+  assert.equal(rare.__score, 0.2);
+  assert.equal(JSON.stringify(pool), before);
+});
+
+function resurfacingFixture() {
+  const matching = createMatchingContext().ViewerMatching;
+  const at = Date.parse("2026-10-26T10:00:00+09:00");
+  const pool = (phase, score, changes = {}) => Array.from({ length: 12 }, (_, i) => {
+    const slot = i === 10 ? score : 1 - i * 0.03;
+    return Object.freeze({
+      name: `REBOUND_${i}`, shopname: "S", __rankKey: "R7",
+      __score: slot / 10, __slotScore: slot,
+      __crossBucket: i === 8 || i === 9, __wildcard: i === 9,
+      __detail: Object.freeze({
+        slotBucket: "R7", slotScore: slot, effectivePhaseScore: slot,
+        phaseScore: 1, phaseError: i === 10 ? phase : 90,
+        phaseAnchorAtMs: at - 600000, phaseAnchorType: "last-update", cycleSec: 345,
+        areaBoost: 1.05, recentAreaAppliedBoost: 1.1, cooldownRemainingSec: 0,
+        tierProbability: 1, tierCandidateCount: 12,
+        ...(i === 10 ? changes : {})
+      })
+    });
+  });
+  const run = (players, time, previousState, overrides = {}) =>
+    matching.buildCandidateResurfacingDiagnostics(players, {
+      evaluationTimeMs: time, viewerTier: "R7", scoringConfigVersion: "test",
+      slotPlan: [{ bucket: "R7", slots: 8 }], current: players.slice(0, 10),
+      previousState, ...overrides
+    });
+  const first = pool(70, 0.8);
+  const initial = run(first, at, null, { current: first.slice(1, 11) });
+  const second = run(pool(100, 0.2), at + 60000, initial.state);
+  return { matching, at, pool, run, initial, second };
+}
+
+function findResurfacingObservation(result, name) {
+  return result.diagnostics.observations.map(row => Object.fromEntries(
+    result.diagnostics.observationColumns.map((key, i) => [key, row[i]])
+  )).find(p => p.name === name);
+}
+
+test("resurfacing shadows use fresh improvement, preserve nine slots, and never refresh rescue history", () => {
+  const { at, pool, run, initial, second } = resurfacingFixture();
+  assert.equal(initial.diagnostics.comparableSnapshot, false);
+  assert.ok(second.comparisons.every(c => !c.applied));
+  const players = pool(30, 0.96, { phaseAnchorAtMs: at - 300000, areaBoost: 1.04 });
+  const before = JSON.stringify({ players, state: second.state });
+  const result = run(players, at + 120000, second.state);
+  assert.equal(result.diagnostics.comparableSnapshot, true);
+  assert.ok(result.diagnostics.observations.every(row =>
+    row.length === result.diagnostics.observationColumns.length));
+  for (const c of result.comparisons) {
+    assert.equal(c.applied, true);
+    assert.equal(c.rescue.name, "REBOUND_10");
+    assert.equal(c.selected.length, 10);
+    assert.equal(new Set(c.selected.map(p => p.name)).size, 10);
+    assert.deepEqual(c.selected.slice(0, 9).map(p => p.name), players.slice(0, 9).map(p => p.name));
+    assert.equal(c.selected[9].name, "REBOUND_10");
+  }
+  const observed = findResurfacingObservation(result, "REBOUND_10");
+  assert.equal(observed.phaseImprovementSec, 70);
+  assert.ok(observed.slotRankImprovement >= 3);
+  assert.equal(observed.previousPhaseError, 100);
+  assert.equal(observed.normalBoundaryScore, players[7].__slotScore);
+  assert.ok(observed.crossBoundaryRatio > 1);
+  assert.ok(observed.causes.includes("phase-anchor-changed"));
+  assert.ok(observed.causes.includes("basic-area-changed"));
+  assert.equal(observed.lastSelectedAtMs, at);
+  const historyKey = `R7|${observed.key}`;
+  assert.equal(result.state.history.find(h => h.key === historyKey).at, at);
+  assert.equal(JSON.stringify({ players, state: second.state }), before);
+  assert.deepEqual(run(players, at + 120000, second.state), result);
+  const unchanged = run(players, at + 180000, result.state);
+  assert.ok(unchanged.comparisons.every(c => !c.applied), "No improvement means no continued rescue");
+  const expired = run(players, at + 31 * 60000, second.state);
+  assert.equal(expired.comparisons[0].applied, false);
+  assert.equal(expired.comparisons[1].applied, true, "Phase recovery does not require past selection");
+  assert.equal(expired.state.history.some(h => h.key === historyKey), false);
+});
+
+test("resurfacing rejects missing Phase, cooldown, ambiguous identities and changed contexts", () => {
+  const { at, pool, run, second, matching } = resurfacingFixture();
+  const time = at + 120000;
+  for (const changes of [
+    { cooldownRemainingSec: 1 }, { cooldownRemainingSec: null }
+  ]) {
+    assert.ok(run(pool(30, 0.96, changes), time, second.state).comparisons.every(c => !c.applied));
+  }
+  const unknown = run(pool(0, 0.96, { phaseScore: 0 }), time, second.state);
+  assert.equal(unknown.comparisons[1].applied, false);
+  assert.equal(findResurfacingObservation(unknown, "REBOUND_10").phaseError, null);
+  assert.equal(run(pool(0, 0.96), time, second.state).comparisons[1].applied, true);
+  const duplicates = pool(30, 0.96);
+  duplicates.push(duplicates[10]);
+  assert.ok(run(duplicates, time, second.state).comparisons.every(c => !c.applied));
+  const rankChanged = pool(30, 0.96);
+  rankChanged[10] = { ...rankChanged[10], __rankKey: "R6" };
+  assert.ok(run(rankChanged, time, second.state).comparisons.every(c => !c.applied));
+  const managed = run(pool(30, 0.96, { isPinkManaged: true }), time, second.state);
+  assert.ok(managed.comparisons.every(c => !c.applied));
+  assert.equal(findResurfacingObservation(managed, "REBOUND_10"), undefined);
+  for (const overrides of [{ viewerTier: "R6" }, { scoringConfigVersion: "changed" }]) {
+    const result = run(pool(30, 0.96), time, second.state, overrides);
+    assert.equal(result.diagnostics.comparableSnapshot, false);
+    assert.ok(result.comparisons.every(c => !c.applied));
+  }
+  for (const invalidTime of [at, Date.parse("2026-10-27T04:00:00+09:00")]) {
+    const result = run(pool(30, 0.96), invalidTime, second.state);
+    assert.equal(result.diagnostics.comparableSnapshot, false);
+    assert.ok(result.comparisons.every(c => !c.applied));
+  }
+  assert.throws(() => matching.buildCandidateResurfacingDiagnostics([], {
+    evaluationTimeMs: NaN
+  }), /finite evaluation time/);
+  const tiny = run([], time, second.state);
+  assert.ok(tiny.comparisons.every(c => !c.applied && c.selected.length === 0));
+  const noWildcard = pool(30, 0.96).map(p => ({ ...p, __wildcard: false }));
+  assert.ok(run(noWildcard, time, second.state).comparisons.every(c => !c.applied));
 });
 
 test("Yellow Phase shadow applies 0.70 to all selection routes and leaves Pink unchanged", () => {

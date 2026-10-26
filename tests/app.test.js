@@ -470,7 +470,8 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     });
     const diagnostics = ViewerApp.buildAnalysisDiagnostics();
     assert.deepEqual(diagnostics.comparisons.map(c => c.id), [
-      'pride-rescue-cross-slot', 'day-relative-area', 'yellow-phase-weight-070'
+      'pride-rescue-cross-slot', 'day-relative-area', 'yellow-phase-weight-070',
+      'resurfacing-rank-score', 'resurfacing-phase'
     ]);
     for (const c of diagnostics.comparisons) {
       assert.equal(c.candidates.length, 10);
@@ -489,6 +490,10 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     assert.equal(record.matchingScriptVersion, ViewerMatching.MATCHING_SCRIPT_VERSION);
     assert.equal(Object.hasOwn(record, 'softmaxBacktest'), false);
     assert.equal(record.analysisDiagnostics.storageCoverage.complete, true);
+    assert.equal(record.logSchemaVersion, 'slot_area_v16_resurfacing_diagnostics');
+    assert.equal(record.analysisDiagnostics.resurfacing.diagnosticOnly, true);
+    assert.deepEqual(record.analysisDiagnostics.resurfacing, diagnostics.resurfacing);
+    assert.deepEqual(record.analysisDiagnostics.comparisons, diagnostics.comparisons);
     const excluded = record.filteredPopulationAfterTimeAndRankFilters.pinkCooldownExcludedCandidates[0];
     assert.equal(excluded.name, 'SHADOW_0');
     assert.equal(excluded.cooldownRemainingSec, 457.5);
@@ -505,8 +510,17 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     State.scoringConfig.experimental.yellowPhase.enabled = false;
     ViewerApp.buildMatchingCandidates(buildOptions);
     assert.deepEqual(State.matchingList.map(p => p.name), names);
-    assert.ok(ViewerApp.buildAnalysisDiagnostics().comparisons.slice(1).every(c =>
+    assert.ok(ViewerApp.buildAnalysisDiagnostics().comparisons.slice(1, 3).every(c =>
       c.status === 'disabled' && c.candidates.length === 0 && c.removed.length === 0));
+    const historyBeforePreview = JSON.stringify(State.matchingResurfacingState);
+    ViewerApp.buildMatchingCandidates({
+      ...buildOptions, mode: 'preview', evaluationTimeMs: now + 300000
+    });
+    assert.equal(State.matchingResurfacing, null);
+    assert.equal(JSON.stringify(State.matchingResurfacingState), historyBeforePreview);
+    ViewerApp.buildMatchingCandidates({ ...buildOptions, evaluationTimeMs: now + 60000 });
+    assert.equal(State.matchingResurfacing.diagnostics.previousEvaluationTimeMs, now);
+    assert.equal(State.matchingResurfacing.diagnostics.comparableSnapshot, true);
   } finally {
     globalThis.document.querySelectorAll = origQSA;
     ViewerPersistence.setLogDB(previousDB);

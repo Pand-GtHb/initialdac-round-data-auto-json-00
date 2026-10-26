@@ -13,7 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
-  const MATCHING_SCRIPT_VERSION = "matching-common-phase-v3-20261019";
+  const MATCHING_SCRIPT_VERSION = "matching-diagnostics-v4-20261026";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -1732,15 +1732,16 @@
     const settings = scoringConfig.experimental[variant];
     if (!settings.enabled) return { status: "disabled", parameters: { ...settings }, selected: [] };
 
-    const dayKey = ViewerPersistence.buildDailyKey(new Date(evaluationTimeMs), 540);
-    const history = copyAreaHistory.filter(record =>
+    const isArea = variant === "dayRelativeArea";
+    const dayKey = isArea ? ViewerPersistence.buildDailyKey(new Date(evaluationTimeMs), 540) : null;
+    const history = isArea ? copyAreaHistory.filter(record =>
       Number.isFinite(record.t) && record.t <= evaluationTimeMs &&
       ViewerPersistence.buildDailyKey(new Date(record.t), 540) === dayKey &&
       String(record.area ?? "") !== ""
-    );
+    ) : [];
     const areaCounts = new Map();
     const observedCounts = new Map();
-    for (const p of pool) {
+    for (const p of isArea ? pool : []) {
       const area = String(p.area ?? "");
       areaCounts.set(area, (areaCounts.get(area) ?? 0) + 1);
     }
@@ -1801,10 +1802,15 @@
       status: "computed",
       parameters: {
         ...settings,
+        diagnosticOnly: true,
         ...(variant === "dayRelativeArea" ? {
           dayKey, dayBoundary: "JST-04:00", historySource: "prior-normal-copies",
           sampleCount: history.length, populationSource: "scoredCandidates",
           populationCount: pool.length, replaces: "recent-area-only",
+          basicAreaPreserved: true,
+          basicAreaPopulationSource: "filtered-classified-candidates",
+          combinedAreaFormula: "basicAreaBoost * dayRelativeAreaBoost",
+          globalScoreUnchanged: true,
           observedAreaCounts: Object.fromEntries(observedCounts),
           candidateAreaCounts: Object.fromEntries(areaCounts),
           formula: "1 + weight * clamp((observed - expected) / (expected + smoothingCount), 0, 1)"
@@ -1812,6 +1818,191 @@
         slotPlan: slotPlan.map(entry => ({ ...entry }))
       },
       selected
+    };
+  }
+
+  /*
+   * Log-only comparisons; the live ten and learning remain untouched.
+   * Compare adjacent production predictions, not inferred continuous UI history.
+   * Session history expires after 30 minutes/JST04 and shadows never refresh it.
+   * Boundary scores are references: allocation/diversity can override score order.
+   */
+  function buildCandidateResurfacingDiagnostics(pool, {
+    current = [], previousState = null, evaluationTimeMs, viewerTier,
+    slotPlan = [], scoringConfigVersion
+  }) {
+    if (!Number.isFinite(evaluationTimeMs)) {
+      throw new Error("Resurfacing diagnostics require a finite evaluation time");
+    }
+    const identify = ViewerDomain.buildPlayerIdentityKey;
+    const dayKey = ViewerPersistence.buildDailyKey(new Date(evaluationTimeMs), 540);
+    const previous = previousState?.snapshot;
+    const timeOrdered = Boolean(previous && previous.at < evaluationTimeMs);
+    const sameDay = previous?.dayKey === dayKey;
+    const sameConfig = previous?.scoringConfigVersion === scoringConfigVersion;
+    const comparable = Boolean(timeOrdered && sameDay && sameConfig && previous.viewerTier === viewerTier);
+    const history = new Map(!comparable ? [] : previousState.history
+      .filter(entry => evaluationTimeMs - entry.at <= 30 * 60000)
+      .map(entry => [entry.key, entry]));
+    const selectedKeys = new Set(current.map(identify));
+    const populations = new Map();
+    const keyCounts = new Map();
+    for (const p of pool) {
+      const bucket = getMatchingSlotBucketKey(p.__rankKey);
+      const group = populations.get(bucket) ?? [];
+      group.push(p);
+      populations.set(bucket, group);
+      const key = identify(p);
+      keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
+    }
+    const bucketRanks = new Map();
+    const buckets = {};
+    for (const [bucket, group] of populations) {
+      [...group].sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a))
+        .forEach((p, i) => bucketRanks.set(p, i + 1));
+      const normal = current.filter(p => !p.__crossBucket &&
+        getMatchingSlotBucketKey(p.__rankKey) === bucket);
+      buckets[bucket] = {
+        count: group.length, members: group.map(identify).sort().join("\n"),
+        slots: slotPlan.find(entry => entry.bucket === bucket)?.slots ?? 0,
+        normalBoundaryScore: normal.length ? Math.min(...normal.map(getCandidateSlotScore)) : null
+      };
+    }
+    const finite = value => typeof value === "number" && Number.isFinite(value) ? value : null;
+    const candidates = pool.map(p => {
+      const d = p.__detail ?? {};
+      return {
+        key: identify(p), name: p.name, shopname: p.shopname ?? "",
+        rankKey: p.__rankKey, bucket: getMatchingSlotBucketKey(p.__rankKey),
+        uniqueIdentity: keyCounts.get(identify(p)) === 1,
+        selected: selectedKeys.has(identify(p)),
+        slotScore: getCandidateSlotScore(p), slotRank: bucketRanks.get(p),
+        crossBucketScore: getCandidateCrossBucketScore(p), score: getCandidateSelectionScore(p),
+        phaseError: d.phaseScore > 0 ? finite(d.phaseError) : null,
+        phaseAnchorAtMs: finite(d.phaseAnchorAtMs), phaseAnchorType: d.phaseAnchorType ?? "unavailable",
+        cycleSec: finite(d.cycleSec), basicAreaBoost: finite(d.areaBoost),
+        recentAreaBoost: finite(d.recentAreaAppliedBoost),
+        effectivePhaseScore: finite(d.effectivePhaseScore),
+        prideBandPriorWeight: finite(d.prideBandPriorWeight),
+        isPinkManaged: Boolean(d.isPinkManaged), cooldownRemainingSec: finite(d.cooldownRemainingSec)
+      };
+    });
+    for (const p of candidates) {
+      const key = `${viewerTier}|${p.key}`;
+      const last = history.get(key);
+      if (!p.uniqueIdentity || (last &&
+        (last.rankKey !== p.rankKey || last.isPinkManaged !== p.isPinkManaged))) history.delete(key);
+    }
+    const oldByKey = new Map((comparable ? previous.candidates : []).map(p => [p.key, p]));
+    const cross = current.find(p => p.__crossBucket && !p.__wildcard);
+    const wildcard = current.find(p => p.__wildcard);
+    const ratio = (value, boundary) => boundary > 0 ? value / boundary : null;
+    const observations = [];
+    for (const p of candidates.filter(p => !p.selected)) {
+      const old = oldByKey.get(p.key);
+      const last = history.get(`${viewerTier}|${p.key}`);
+      const sameRank = Boolean(old && old.rankKey === p.rankKey);
+      const available = Boolean(sameRank && p.uniqueIdentity && old.uniqueIdentity &&
+        p.isPinkManaged === old.isPinkManaged);
+      const phaseImprovementSec = available && p.phaseError !== null && old.phaseError !== null
+        ? old.phaseError - p.phaseError : null;
+      const slotRankImprovement = available ? old.slotRank - p.slotRank : null;
+      const slotScoreIncreaseRatio = available && old.slotScore > 0 ? p.slotScore / old.slotScore - 1 : null;
+      const recentSelection = Boolean(last && last.rankKey === p.rankKey);
+      if (!recentSelection && !(phaseImprovementSec > 0) && !(slotScoreIncreaseRatio > 0)) continue;
+      const oldBucket = previous?.buckets[p.bucket];
+      const bucket = buckets[p.bucket];
+      const causes = [];
+      if (available) {
+        if (p.phaseAnchorAtMs !== old.phaseAnchorAtMs || p.phaseAnchorType !== old.phaseAnchorType) {
+          causes.push("phase-anchor-changed");
+        } else if (p.phaseAnchorAtMs !== null && p.cycleSec === old.cycleSec && p.phaseError !== null) {
+          causes.push("phase-time-progression");
+        }
+        if (p.cycleSec !== old.cycleSec) causes.push("cycle-changed");
+        if (p.basicAreaBoost !== old.basicAreaBoost) causes.push("basic-area-changed");
+        if (p.recentAreaBoost !== old.recentAreaBoost) causes.push("recent-area-changed");
+        if (p.prideBandPriorWeight !== old.prideBandPriorWeight) causes.push("pride-band-prior-changed");
+        if (bucket.members !== oldBucket.members) causes.push("competitor-population-changed");
+        if (bucket.slots !== oldBucket.slots) causes.push("slot-allocation-changed");
+        if (slotRankImprovement > 0 && !(slotScoreIncreaseRatio > 0)) causes.push("relative-rank-only");
+      }
+      observations.push({
+        ...p, comparisonStatus: available ? "comparable" : "unavailable",
+        unavailableReason: available ? null : !comparable ? "snapshot-context-changed-or-missing"
+          : !sameRank ? "opponent-rank-changed-or-missing" : "identity-or-management-changed",
+        previouslyAbsent: available ? !old.selected : null,
+        recentSelection, lastSelectedAtMs: recentSelection ? last.at : null,
+        previousPhaseError: available ? old.phaseError : null, phaseImprovementSec,
+        previousPhaseAnchorAtMs: available ? old.phaseAnchorAtMs : null,
+        previousPhaseAnchorType: available ? old.phaseAnchorType : null,
+        previousCycleSec: available ? old.cycleSec : null,
+        previousBasicAreaBoost: available ? old.basicAreaBoost : null,
+        previousRecentAreaBoost: available ? old.recentAreaBoost : null,
+        previousEffectivePhaseScore: available ? old.effectivePhaseScore : null,
+        previousSlotRank: available ? old.slotRank : null, slotRankImprovement,
+        previousSlotScore: available ? old.slotScore : null, slotScoreIncreaseRatio,
+        normalBoundaryScore: bucket.normalBoundaryScore,
+        normalBoundaryRatio: ratio(p.slotScore, bucket.normalBoundaryScore),
+        crossBoundaryScore: cross ? getCandidateCrossBucketScore(cross) : null,
+        crossBoundaryRatio: ratio(p.crossBucketScore, cross && getCandidateCrossBucketScore(cross)),
+        globalBoundaryScore: wildcard ? getCandidateSelectionScore(wildcard) : null,
+        globalBoundaryRatio: ratio(p.score, wildcard && getCandidateSelectionScore(wildcard)),
+        currentBucketCount: bucket.count, previousBucketCount: available ? oldBucket.count : null,
+        currentBucketSlots: bucket.slots, previousBucketSlots: available ? oldBucket.slots : null,
+        causes
+      });
+    }
+    const definitions = [
+      ["resurfacing-rank-score", {
+        requiresRecentSelection: true, historyMinutes: 30, minRankImprovement: 3, minScoreIncreaseRatio: 0.05
+      }, p => p.recentSelection && p.slotRankImprovement >= 3 && p.slotScoreIncreaseRatio >= 0.05],
+      ["resurfacing-phase", {
+        requiresRecentSelection: false, minPhaseImprovementSec: 30, maxPhaseErrorSec: 45
+      }, p => p.phaseImprovementSec >= 30 && p.phaseError !== null && p.phaseError <= 45]
+    ];
+    const comparisons = definitions.map(([id, thresholds, predicate]) => {
+      const eligible = observations.filter(p => p.comparisonStatus === "comparable" &&
+        p.previouslyAbsent && p.cooldownRemainingSec !== null && p.cooldownRemainingSec <= 0 &&
+        p.slotScore > 0 && p.score > 0 && predicate(p))
+        .sort((a, b) => b.crossBucketScore - a.crossBucketScore || a.key.localeCompare(b.key));
+      const picked = wildcard ? eligible[0] : null;
+      return {
+        id, status: "computed", parameters: {
+          ...thresholds, replacementRule: "replace-global-wildcard-only",
+          ranking: "current-cross-bucket-score", diagnosticOnly: true,
+          requiresPreviousAbsence: true, sameOwnAndOpponentRank: true
+        },
+        evaluatedCandidateCount: pool.length, eligibleCandidateCount: eligible.length,
+        applied: Boolean(picked), rescue: picked ?? null,
+        selected: picked ? current.map(p => p === wildcard
+          ? pool.find(q => identify(q) === picked.key) : p) : current.slice()
+      };
+    });
+    for (const p of candidates.filter(p => p.selected && p.uniqueIdentity)) {
+      const key = `${viewerTier}|${p.key}`;
+      history.set(key, {
+        key, at: evaluationTimeMs, rankKey: p.rankKey, isPinkManaged: p.isPinkManaged
+      });
+    }
+    const observationColumns = Object.keys(observations[0] ?? {});
+    return {
+      diagnostics: {
+        version: "resurfacing-v1-20261026", diagnosticOnly: true,
+        historySource: "session-production-predictions-only", historyMinutes: 30,
+        causeMeaning: "observed-changes-not-proof-of-player-activity",
+        boundaryMeaning: "reference-selected-scores-not-guaranteed-cutoffs",
+        previousEvaluationTimeMs: timeOrdered ? previous.at : null,
+        comparisonIntervalSec: timeOrdered ? (evaluationTimeMs - previous.at) / 1000 : null,
+        comparableSnapshot: comparable,
+        observationColumns,
+        observations: observations.map(p => observationColumns.map(key => p[key]))
+      },
+      comparisons,
+      state: {
+        snapshot: { at: evaluationTimeMs, dayKey, viewerTier, scoringConfigVersion, candidates, buckets },
+        history: [...history.values()]
+      }
     };
   }
 
@@ -1874,7 +2065,8 @@
     selectCrossBucketCandidates,
     selectWildcardCandidates,
     applyPinkManagedSlotCap,
-    buildShadowCandidateComparison
+    buildShadowCandidateComparison,
+    buildCandidateResurfacingDiagnostics
   };
 
   if (typeof module !== "undefined" && module.exports) {

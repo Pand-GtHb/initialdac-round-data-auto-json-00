@@ -68,7 +68,6 @@
     LOG_STORAGE_LIMITS,
     LOG_STORE,
     buildDailyKey,
-    readStoredArraySafe,
     saveCopyRecordToStorage,
     getLocalStorageUsage,
     isPinkTargetStale,
@@ -119,7 +118,8 @@
     assignCandidateCrossBucketRanks,
     selectCrossBucketCandidates,
     selectWildcardCandidates,
-    buildShadowCandidateComparison
+    buildShadowCandidateComparison,
+    buildCandidateResurfacingDiagnostics
   } = ViewerMatching || {};
 
   const {
@@ -165,16 +165,17 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v5-common-phase-20261019";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v6-resurfacing-area-20261026";
+const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v16_resurfacing_diagnostics";
 const MAX_LOG_LINES = 100;
 const DEFAULT_FILTER_MINUTES = 30;
 const DEFAULT_MY_RANK_KEY = "R7";
 /*
- * -10: 本番選出・学習・保存上限は維持する。
+ * 本番選出・学習・保存上限は維持する。
  * 候補外記録のsearchMemoは部分文字列でもよく、相手名ではない。
  * CSVの自ランク・店舗・前後の実績と照合し、曖昧なら未確定を維持する。
  * 比較案は完全な選出可能候補で計算し、結果だけ保存する。
- * phase-tiebreakは通常Ruby枠のみ、PRIDE救済は既存横断枠を置換する仮説。
+ * 再浮上はセッション内の本番選出履歴だけを参照し、比較案を履歴に戻さない。
  */
 function analysisChecksum(value) {
   const text = JSON.stringify(value);
@@ -215,6 +216,10 @@ function buildAnalysisDiagnostics() {
     phaseWeight: p.__detail?.phaseWeight ?? null,
     effectivePhaseScore: p.__detail?.effectivePhaseScore ?? null,
     recentAreaBoost: p.__detail?.recentAreaAppliedBoost ?? null,
+    basicAreaBoost: p.__detail?.areaBoost ?? null,
+    combinedAreaBoost: Number.isFinite(p.__detail?.areaBoost) &&
+      Number.isFinite(p.__detail?.recentAreaAppliedBoost)
+      ? p.__detail.areaBoost * p.__detail.recentAreaAppliedBoost : null,
     areaExpectedCount: p.__detail?.diagnosticAreaExpectedCount ?? null,
     areaObservedCount: p.__detail?.diagnosticAreaObservedCount ?? null
   });
@@ -239,13 +244,16 @@ function buildAnalysisDiagnostics() {
     }
   }
 
+  const currentKeys = new Set(current.map(buildPlayerIdentityKey));
   const finish = (id, parameters, selected, extra = {}) => {
+    const selectedKeys = new Set(selected.map(buildPlayerIdentityKey));
     return {
       id, parameters, status: "computed",
       evaluatedCandidateCount: pool.length,
       candidates: selected.map(identify),
-      added: selected.filter(p => !current.includes(p)).map(identify),
-      removed: current.filter(p => !selected.includes(p)).map(identify),
+      added: selected.filter(p => !currentKeys.has(buildPlayerIdentityKey(p))).map(identify),
+      removed: extra.status === "disabled" ? []
+        : current.filter(p => !selectedKeys.has(buildPlayerIdentityKey(p))).map(identify),
       ...extra
     };
   };
@@ -279,7 +287,6 @@ function buildAnalysisDiagnostics() {
     rescue: rescue ? { ...identify(rescue), rescueScore: rescueScore(rescue) } : null,
     replacement: eligibleViewer && rescue && cross ? identify(cross) : null
   }));
-  const currentKeys = new Set(current.map(buildPlayerIdentityKey));
   for (const [variant, id] of [
     ["dayRelativeArea", "day-relative-area"],
     ["yellowPhase", "yellow-phase-weight-070"]
@@ -290,16 +297,16 @@ function buildAnalysisDiagnostics() {
       copyAreaHistory: State.copyAreaHistory,
       evaluationTimeMs: State.matchingContext.evaluationTimeMs
     });
-    const selectedKeys = new Set(result.selected.map(buildPlayerIdentityKey));
-    comparisons.push({
-      id, status: result.status, parameters: result.parameters,
-      evaluatedCandidateCount: State.matchingScoredAll.length,
-      candidates: result.selected.map(identify),
-      added: result.selected.filter(p => !currentKeys.has(buildPlayerIdentityKey(p))).map(identify),
-      removed: result.status === "computed"
-        ? current.filter(p => !selectedKeys.has(buildPlayerIdentityKey(p))).map(identify)
-        : []
-    });
+    comparisons.push(finish(id, result.parameters, result.selected, {
+      status: result.status, evaluatedCandidateCount: State.matchingScoredAll.length
+    }));
+  }
+  for (const result of State.matchingResurfacing?.comparisons ?? []) {
+    comparisons.push(finish(result.id, result.parameters, result.selected, {
+      evaluatedCandidateCount: result.evaluatedCandidateCount,
+      eligibleCandidateCount: result.eligibleCandidateCount,
+      applied: result.applied, rescue: result.rescue
+    }));
   }
 
   return {
@@ -307,6 +314,10 @@ function buildAnalysisDiagnostics() {
     evaluatedAt: State.matchingContext.evaluationTimeMs,
     phasePopulationSource: "scoredCandidates",
     phasePopulation,
+    resurfacing: State.matchingResurfacing?.diagnostics ?? {
+      status: "unavailable", reason: State.matchingContext.mode === "preview"
+        ? "preview-not-observed" : "no-prediction-in-session"
+    },
     comparisons,
     computationMs: performance.now() - startedAt,
     provenance: {
@@ -560,6 +571,8 @@ const State = {
   matchingCooldownExcludedCandidates: [],
   matchingRankedAll: [],
   matchingScoredAll: [],
+  matchingResurfacing: null,
+  matchingResurfacingState: null,
   matchingTierCounts: {},
   matchingSlotPlan: [],
   matchingSlotAllocationDiagnostics: null,
@@ -692,6 +705,8 @@ function syncMyRankSelection(
     State.matchingFilteredPopulationSnapshot = null;
     State.matchingCrossBucketDiagnostics = null;
     State.matchingPinkCapDiagnostics = null;
+    State.matchingResurfacing = null;
+    State.matchingResurfacingState = null;
     State.matchingContext = {
       mode: "matching",
       clickedAtMs: null,
@@ -4785,14 +4800,11 @@ function buildMatchingCandidates(
     }
   );
 
-  const wildcardSelected =
-    typeof selectWildcardCandidates === "function"
-      ? selectWildcardCandidates(
-          scoreEligible,
-          [...normalSelected, ...crossBucketSelected],
-          slotCounts.wildcard
-        )
-      : [];
+  const wildcardSelected = selectWildcardCandidates(
+    scoreEligible,
+    [...normalSelected, ...crossBucketSelected],
+    slotCounts.wildcard
+  );
 
   wildcardSelected.forEach(
     p => {
@@ -4803,13 +4815,12 @@ function buildMatchingCandidates(
     }
   );
 
-  const selected = [
+  const finalSelected = [
     ...normalSelected,
     ...crossBucketSelected,
     ...wildcardSelected
   ];
 
-  const finalSelected = selected;
   const pinkManagedCount = finalSelected.filter(p => p.__detail?.isPinkManaged).length;
 
   State.matchingCrossBucketDiagnostics = {
@@ -4867,6 +4878,21 @@ function buildMatchingCandidates(
 
   State.matchingList =
     finalSelected;
+
+  State.matchingResurfacing = null;
+  if (mode === "matching") {
+    const resurfacing = buildCandidateResurfacingDiagnostics(scoredAll, {
+      current: finalSelected,
+      previousState: State.matchingResurfacingState,
+      evaluationTimeMs, viewerTier: State.myRankKey,
+      slotPlan: State.matchingSlotPlan,
+      scoringConfigVersion: analysisChecksum(State.scoringConfig)
+    });
+    State.matchingResurfacingState = resurfacing.state;
+    State.matchingResurfacing = {
+      diagnostics: resurfacing.diagnostics, comparisons: resurfacing.comparisons
+    };
+  }
 
   log(
     `候補生成: Base=${base.length} / Selected=${finalSelected.length}` +
@@ -6307,7 +6333,7 @@ function saveCopyEventUnified(
         Date.now(),
 
       logSchemaVersion:
-        "slot_area_v15_common_phase",
+        ANALYSIS_LOG_SCHEMA_VERSION,
       scriptVersion: ANALYSIS_SCRIPT_VERSION,
       matchingScriptVersion: MATCHING_SCRIPT_VERSION,
 
@@ -6540,7 +6566,7 @@ function saveCopyEventUnified(
       Date.now(),
 
     logSchemaVersion:
-      "slot_area_v15_common_phase",
+      ANALYSIS_LOG_SCHEMA_VERSION,
     scriptVersion: ANALYSIS_SCRIPT_VERSION,
     matchingScriptVersion: MATCHING_SCRIPT_VERSION,
 
@@ -7293,7 +7319,7 @@ function saveCandidateEvent(
     t: now,
 
     logSchemaVersion:
-      "slot_area_v15_common_phase",
+      ANALYSIS_LOG_SCHEMA_VERSION,
     scriptVersion: ANALYSIS_SCRIPT_VERSION,
     matchingScriptVersion: MATCHING_SCRIPT_VERSION,
 
