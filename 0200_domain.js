@@ -199,38 +199,6 @@
     };
   }
 
-  function getPhaseWindowHalfWidthSec(
-    cycleSec,
-    cycleCount,
-    threshold,
-    lambda,
-    phaseErrorScaleSec = DEFAULT_PHASE_ERROR_SCALE_SEC
-  ) {
-    const decay = Math.exp(-Number(lambda) * Number(cycleCount));
-    const requiredPhaseScore = decay > 0 ? Number(threshold) / decay : Infinity;
-
-    if (!isFinite(requiredPhaseScore) || requiredPhaseScore >= 1) {
-      return 0;
-    }
-
-    if (requiredPhaseScore <= 0) {
-      return Math.max(0, Number(cycleSec) / 2);
-    }
-
-    const safePhaseErrorScaleSec =
-      Number.isFinite(Number(phaseErrorScaleSec)) && Number(phaseErrorScaleSec) > 0
-        ? Number(phaseErrorScaleSec)
-        : DEFAULT_PHASE_ERROR_SCALE_SEC;
-
-    return Math.max(
-      0,
-      Math.min(
-        cycleSec / 2,
-        safePhaseErrorScaleSec * Math.sqrt(-2 * Math.log(requiredPhaseScore))
-      )
-    );
-  }
-
   function calcStats(list, total) {
     const cnt = list ? list.length : 0;
     const percent = total ? Math.round((cnt / total) * 100) : 0;
@@ -384,7 +352,6 @@
     buildPlayerIdentityKey,
     computePhaseMetrics,
     buildPhaseDirectionDetail,
-    getPhaseWindowHalfWidthSec,
     calcStats,
     buildRankPopulationSnapshot,
     normalizeHistoricalMatchupDistribution

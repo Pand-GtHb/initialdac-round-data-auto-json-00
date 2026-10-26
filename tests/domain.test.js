@@ -112,19 +112,9 @@ test("Phase direction detail", () => {
   assert.equal(detailUpcoming.phaseBucket, "upcoming_30_60");
 });
 
-test("Phase window half width", () => {
-  const width = domain.getPhaseWindowHalfWidthSec(345, 1, 0.5, 0.03, 90);
-  assert.ok(width > 0 && width <= 345 / 2);
-
-  const zeroWidth = domain.getPhaseWindowHalfWidthSec(345, 50, 0.99, 0.1, 90);
-  assert.equal(zeroWidth, 0);
-});
-
-test("Yellow lambda 0.06 keeps a Phase window through 5 cycles and closes at 6", () => {
-  const width = cycle => domain.getPhaseWindowHalfWidthSec(345, cycle, 0.7, 0.06, 90);
-  assert.ok(Math.abs(width(5) - 30.3007) < 0.001);
+test("Yellow lambda 0.06 keeps Phase matches through 5 cycles and closes at 6", () => {
   assert.ok(domain.computePhaseMetrics(345 * 5, 345, 0.06, 90).finalPhaseScore > 0.7);
-  assert.equal(width(6), 0);
+  assert.ok(domain.computePhaseMetrics(345 * 5 + 30, 345, 0.06, 90).finalPhaseScore > 0.7);
   assert.ok(domain.computePhaseMetrics(345 * 6, 345, 0.06, 90).finalPhaseScore < 0.7);
 });
 

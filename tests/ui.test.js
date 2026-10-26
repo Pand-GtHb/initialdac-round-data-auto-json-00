@@ -67,37 +67,6 @@ test("renderStars outputs correct stars and line breaks", () => {
   assert.equal(renderStars(8), "★★★★<br>★★★★");
 });
 
-test("Phase monitor uses the same configured scale, trust and base cycle as scoring", () => {
-  const context = createUIContext();
-  vm.runInContext(appSource, context);
-  context.State.scoringConfig = {
-    phase: { yellow: { baseCycleSec: 360, minSamples: 8 } },
-    phaseError: { yellowScaleSec: 120 }
-  };
-  context.State.yellowSamples = [{}, {}];
-  context.State.phaseAdjust.yellow = 0;
-  const scales = [];
-  context.getFilterToMs = now => now;
-  context.readRangeMinutes = () => 15;
-  context.formatClockHms = () => "12:00:00";
-  context.formatClockHm = () => "12:00";
-  context.ViewerDomain = {
-    ...context.ViewerDomain,
-    getPhaseWindowHalfWidthSec: (...args) => {
-      scales.push(args[4]);
-      return 30;
-    }
-  };
-  // Reload the UI module so its domain helper binding uses the recording function.
-  vm.runInContext(uiSource, context);
-  const html = context.ViewerUI.buildPhaseCycleRowHTML("yellow", Date.now());
-  assert.match(html, /基準360秒/);
-  assert.match(html, /信頼度50%/);
-  assert.doesNotMatch(html, /採点には乗算しない|周期の根拠/);
-  assert.ok(scales.length > 0);
-  assert.ok(scales.every(scale => scale === 120));
-});
-
 test("buildFilterGroupHTML generates expected checkbox labels", () => {
   const context = createUIContext();
   const { buildFilterGroupHTML } = context.ViewerUI;
@@ -115,30 +84,6 @@ test("buildFilterGroupHTML generates expected checkbox labels", () => {
   assert.ok(html.includes('Item1'));
   assert.ok(html.includes('value="2"'));
   assert.ok(html.includes('Item2'));
-});
-
-test("Pink monitor shows compact cycle and interval trust without learning evidence row", () => {
-  const context = createUIContext();
-  vm.runInContext(appSource, context);
-  context.State.scoringConfig = {
-    phase: { pink: { baseCycleSec: 345, maxShiftSec: 45, minSamples: 8 } },
-    phaseError: {}
-  };
-  context.State.phaseAdjust.pink = 2.2;
-  context.State.pinkTargets = {};
-  context.State.pinkCycleState = {
-    version: 1, source: "encounter-learning", sampleCount: 3,
-    trust: Math.sqrt(3 / 8), lastLearnedAt: 1792300000000
-  };
-  context.getFilterToMs = now => now;
-  context.readRangeMinutes = () => 15;
-  context.formatClockHms = () => "12:00:00";
-  context.formatClockHm = () => "12:00";
-  const html = context.ViewerUI.buildPhaseCycleRowHTML("pink", Date.now());
-  assert.match(html, /347\.2秒/);
-  assert.match(html, /当日間隔の信頼度0%/);
-  assert.doesNotMatch(html, /採点には乗算しない|周期の根拠|保存周期の学習|当日再対戦|最終学習/);
-  assert.match(html, /許容幅はdecay反映/);
 });
 
 test("shortenStoreName abbreviates long Japanese store names", () => {

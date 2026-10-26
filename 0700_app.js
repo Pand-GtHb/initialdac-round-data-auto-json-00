@@ -803,52 +803,6 @@ function formatYMDHM(date) {
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
 
-/* =========================================================
- [2060] Date Utility:formatClockHms（旧 [6150]）
-========================================================= */
-/*
- * 学習中のYellow/Pink周期を「現在時刻」を起点として
- * 1〜3周期前（過去方向）の窓（許容誤差帯）で可視化するための
- * 汎用モニターバー。
- *
- * 左端＝現在時刻で固定し、右にいくほど過去
- * （1周期前・2周期前・3周期前）を表す。
- *
- * 特定プレイヤーの実測値ではなく、学習済みの
- * 周期長・調整値・サンプル信頼度・許容誤差幅を
- * 一目で確認できるようにする目的の表示。
- */
-
-function formatClockHms(ms) {
-
-  return new Date(ms).toLocaleTimeString(
-    "ja-JP",
-    { hour12: false }
-  );
-}
-
-/* =========================================================
- [2070] Date Utility:formatClockHm（旧 [6150b]）
-========================================================= */
-/*
- * バー内の時刻表示用（秒なし・時:分のみ）。
- * 帯自体がある程度の幅（許容誤差）を持つ表示のため、
- * 秒単位の厳密性は不要という判断による。
- */
-
-function formatClockHm(ms) {
-
-  const d = new Date(ms);
-
-  const hh =
-    String(d.getHours()).padStart(2, "0");
-
-  const mm =
-    String(d.getMinutes()).padStart(2, "0");
-
-  return `${hh}:${mm}`;
-}
-
 function updateReloadViewerTime() {
   const timeEl = document.getElementById("reloadViewerTime");
   if (!timeEl) return;
@@ -4014,72 +3968,6 @@ function isMatchingCandidateByCopyPhase(player, nowMs = Date.now()) {
    const signal =
      computePhaseSignal(player, "pink", nowMs);
    return signal.active;
-}
-
-/* =========================================================
- [7400] Phase Context:getFilterToMs【State】（旧 [6150c]）
-========================================================= */
-function getFilterToMs(nowMs = Date.now()) {
-
-  const generatedAt =
-    parseDateJST(
-      State.generatedAt
-    );
-
-  if (
-    generatedAt &&
-    isFinite(generatedAt.getTime())
-  ) {
-    return generatedAt.getTime();
-  }
-
-  const latestUpdateAt =
-    parseDateJST(
-      State.latestUpdateAt
-    );
-
-  if (
-    latestUpdateAt &&
-    isFinite(latestUpdateAt.getTime())
-  ) {
-    return latestUpdateAt.getTime();
-  }
-
-  return nowMs;
-}
-
-/* =========================================================
- [7410] Phase Context:getPinkSampleCount【State】（旧 [6151]）
-========================================================= */
-function getPinkSampleCount() {
-
-  const targets =
-    Object.values(
-      State.pinkTargets || {}
-    );
-
-  let count = 0;
-
-  for (const entry of targets) {
-
-    const history =
-      entry.history || [];
-
-    if (history.length < 2) {
-      continue;
-    }
-
-    /* Pink対象ごとの有効な履歴間隔（ペア）数を正しく累計 */
-    for (let i = 1; i < history.length; i++) {
-      const latest = Number(history[i] || 0);
-      const prev = Number(history[i - 1] || 0);
-      if (latest && prev && latest > prev) {
-        count++;
-      }
-    }
-  }
-
-  return count;
 }
 
 /* =========================================================
@@ -8508,8 +8396,6 @@ async function init() {
     buildDailyKey,
     parseDateJST,
     formatYMDHM,
-    formatClockHms,
-    formatClockHm,
     updateReloadViewerTime,
     ensureReloadViewerTime,
     computeSampleTrust,
@@ -8587,8 +8473,6 @@ async function init() {
     getYellowPhaseScore,
     isMatchingCandidateByPhase,
     isMatchingCandidateByCopyPhase,
-    getFilterToMs,
-    getPinkSampleCount,
     getCandidateTimingLog,
     computePhaseContext,
     getPlayerCycleCount,
