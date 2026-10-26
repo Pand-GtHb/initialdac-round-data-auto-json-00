@@ -384,12 +384,7 @@ function buildPhaseCycleRowHTML(mode, nowMs = Date.now()) {
       ] ?? (isPink ? 0.55 : 0.7)
     );
 
-  const lambda =
-    Number(
-      errCfg[
-        isPink ? "pinkLambda" : "yellowLambda"
-      ] ?? (isPink ? 0.03 : 0.10)
-    );
+  const lambda = getPhaseLambda(mode);
 
   const samples =
     isPink
@@ -2589,11 +2584,6 @@ function renderMatchingTable() {
 
   area.innerHTML = `
     ${buildSummaryModeNavHTML("both")}
-    ${buildPhaseCycleMonitorHTML(
-      State.matchingContext
-        ?.evaluationTimeMs ??
-      Date.now()
-    )}
 
     <div
       id="matchingRankCounts"

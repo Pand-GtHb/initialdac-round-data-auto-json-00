@@ -240,6 +240,18 @@ test("setThemeHeaderColor updates root CSS property", () => {
   assert.equal(setPropVal, "#e91e63");
 });
 
+test("MATCHING and PREVIEW render no Phase cycle graph", () => {
+  for (const mode of ["matching", "preview"]) {
+    const context = createUIContext({ matchingContext: { mode }, matchingList: [], searchText: "" });
+    const area = { innerHTML: "", querySelector: () => null, querySelectorAll: () => [] };
+    context.document.getElementById = id => id === "matchingArea" || id === "area-summary-view-styles" ? area : null;
+    context.document.documentElement = { style: { setProperty() {} } };
+    context.ViewerUI.renderMatchingTable();
+    assert.match(area.innerHTML, /matchingTableBody/);
+    assert.doesNotMatch(area.innerHTML, /許容幅|信頼度|周期 /);
+  }
+});
+
 test("AREA search skips Phase and chart aggregation while unfiltered view retains it", () => {
   const context = createUIContext({ searchText: "PLAYER" });
   const area = { innerHTML: "", querySelector: () => null, querySelectorAll: () => [] };

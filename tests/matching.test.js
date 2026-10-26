@@ -329,7 +329,7 @@ test("policy comparisons independently rescore Phase and AREA without learning o
   const at = Date.parse("2026-10-26T10:00:00+09:00");
   const pool = Array.from({ length: 12 }, (_, i) => {
     const pink = i === 0;
-    const metrics = context.ViewerDomain.computePhaseMetrics(700, 345, pink ? 0.03 : 0.10, 90);
+    const metrics = context.ViewerDomain.computePhaseMetrics(700, 345, pink ? 0.03 : 0.06, 90);
     const effective = 1 - 0.55 * (1 - metrics.finalPhaseScore);
     return Object.freeze({
       name: `POLICY_${i}`, shopname: "S", area: "A", __rankKey: "R7",
@@ -779,7 +779,7 @@ test("scoring config resolves defaults, validates inputs and records effective v
   assert.equal(getScoringConfigSnapshot(capped).effective.phase.yellow.weight, 0.55);
   assert.equal(capped.phase.yellow.weight, 0.8);
   assert.equal(config.candidateSelection.slotAllocation.relativePopulationAdjustment.enabled, true);
-  assert.equal(config.phaseError.yellowLambda, 0.10);
+  assert.equal(config.phaseError.yellowLambda, 0.06);
   assert.equal(config.phaseError.pinkLambda, 0.03);
   assert.equal(config.candidateSelection.areaBoost.recentMatch.enabled, false);
   assert.equal(snapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);

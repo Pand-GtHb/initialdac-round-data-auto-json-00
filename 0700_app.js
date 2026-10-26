@@ -161,8 +161,8 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v8-phase-area-policy-20261026";
-const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v17_phase_area_policy";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v9-yellow-cycle5-20261026";
+const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v18_yellow_cycle5";
 const MAX_LOG_LINES = 100;
 const DEFAULT_FILTER_MINUTES = 15;
 const DEFAULT_MY_RANK_KEY = "R7";
@@ -923,6 +923,15 @@ function computeSampleTrust(
 }
 
 
+
+function getPhaseLambda(mode = "yellow") {
+  const isPink = mode === "pink";
+  const value = Number(
+    State.scoringConfig?.phaseError?.[isPink ? "pinkLambda" : "yellowLambda"]
+  );
+
+  return Number.isFinite(value) ? value : (isPink ? 0.03 : 0.06);
+}
 
 function getPhaseErrorScaleSec(
   mode = "yellow"
@@ -3675,12 +3684,7 @@ function computePhaseSignal(player, mode = "pink", nowMs = Date.now()) {
    };
  }
 
- const lambda =
-   Number(
-     State.scoringConfig
-       ?.phaseError
-       ?.pinkLambda ?? 0.03
-   );
+ const lambda = getPhaseLambda("pink");
 
  const metrics =
    computePhaseMetrics(
@@ -3773,15 +3777,7 @@ function getPlayerPhaseDetail(
    };
  }
 
- const lambda =
-   Number(
-     State.scoringConfig
-       ?.phaseError?.[
-         isPink
-           ? "pinkLambda"
-           : "yellowLambda"
-       ] ?? (isPink ? 0.03 : 0.10)
-   );
+ const lambda = getPhaseLambda(mode);
 
  const metrics =
    computePhaseMetrics(
@@ -3955,12 +3951,7 @@ function getYellowPhaseScore(player, nowMs = Date.now()) {
   const diffSec =
     (nowMs - anchor) / 1000;
 
-  const lambda =
-    Number(
-      State.scoringConfig
-        ?.phaseError
-        ?.yellowLambda ?? 0.10
-    );
+  const lambda = getPhaseLambda("yellow");
 
   return computePhaseMetrics(
     diffSec,
@@ -4138,12 +4129,7 @@ function computePhaseContext(player, nowMs = Date.now()) {
      parseDateJST(player?.updateDate)?.getTime();
    cycleSec =
      getCurrentCycle(player);
-   const lambda =
-     Number(
-       State.scoringConfig
-         ?.phaseError
-         ?.yellowLambda ?? 0.10
-     );
+   const lambda = getPhaseLambda("yellow");
 
    diffSec =
      anchor
@@ -8527,6 +8513,7 @@ async function init() {
     updateReloadViewerTime,
     ensureReloadViewerTime,
     computeSampleTrust,
+    getPhaseLambda,
     getPhaseErrorScaleSec,
 
     // Data Appliers

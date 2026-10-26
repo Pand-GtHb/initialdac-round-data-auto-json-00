@@ -379,7 +379,7 @@ test('Yellow and Pink share Phase weight but use independent decay, without scor
       assert.equal(yellow.phaseTrust, trust);
       assert.equal(pink.phaseTrust, 1 - trust);
       assert.equal(pink.phaseError, yellow.phaseError);
-      assert.ok(Math.abs(yellow.decay - Math.exp(-0.10 * 2)) < 1e-12);
+      assert.ok(Math.abs(yellow.decay - Math.exp(-0.06 * 2)) < 1e-12);
       assert.ok(Math.abs(pink.decay - Math.exp(-0.03 * 2)) < 1e-12);
       assert.ok(yellow.finalPhaseScore < pink.finalPhaseScore);
       assert.ok(yellow.effectivePhaseScore < pink.effectivePhaseScore);
@@ -519,7 +519,7 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     const diagnostics = ViewerApp.buildAnalysisDiagnostics();
     assert.deepEqual(diagnostics.comparisons.map(c => c.id), [
       'pride-rescue-cross-slot', 'day-relative-area', 'yellow-phase-weight-070',
-      'yellow-phase-decay-003', 'yellow-phase-error-060', 'yellow-phase-no-decay',
+      'yellow-phase-decay-010', 'yellow-phase-decay-003', 'yellow-phase-error-060', 'yellow-phase-no-decay',
       'area-basic-recent', 'area-recent-only', 'area-none', 'area-day-relative-only',
       'previous-phase-area-policy',
       'resurfacing-rank-score', 'resurfacing-phase'
@@ -539,12 +539,12 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     assert.ok(record);
     assert.equal(record.scriptVersion, ViewerApp.ANALYSIS_SCRIPT_VERSION);
     assert.equal(record.matchingScriptVersion, ViewerMatching.MATCHING_SCRIPT_VERSION);
-    assert.equal(record.scoringConfigSnapshot.effective.phaseError.yellowLambda, 0.10);
+    assert.equal(record.scoringConfigSnapshot.effective.phaseError.yellowLambda, 0.06);
     assert.equal(record.scoringConfigSnapshot.effective.phaseError.pinkLambda, 0.03);
     assert.equal(record.scoringConfigSnapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
     assert.equal(Object.hasOwn(record, 'softmaxBacktest'), false);
     assert.equal(record.analysisDiagnostics.storageCoverage.complete, true);
-    assert.equal(record.logSchemaVersion, 'slot_area_v17_phase_area_policy');
+    assert.equal(record.logSchemaVersion, 'slot_area_v18_yellow_cycle5');
     assert.equal(record.analysisDiagnostics.resurfacing.diagnosticOnly, true);
     assert.deepEqual(record.analysisDiagnostics.resurfacing, diagnostics.resurfacing);
     assert.deepEqual(record.analysisDiagnostics.comparisons, diagnostics.comparisons);

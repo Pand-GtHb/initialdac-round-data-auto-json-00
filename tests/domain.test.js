@@ -120,6 +120,14 @@ test("Phase window half width", () => {
   assert.equal(zeroWidth, 0);
 });
 
+test("Yellow lambda 0.06 keeps a Phase window through 5 cycles and closes at 6", () => {
+  const width = cycle => domain.getPhaseWindowHalfWidthSec(345, cycle, 0.7, 0.06, 90);
+  assert.ok(Math.abs(width(5) - 30.3007) < 0.001);
+  assert.ok(domain.computePhaseMetrics(345 * 5, 345, 0.06, 90).finalPhaseScore > 0.7);
+  assert.equal(width(6), 0);
+  assert.ok(domain.computePhaseMetrics(345 * 6, 345, 0.06, 90).finalPhaseScore < 0.7);
+});
+
 test("Calc stats calculation", () => {
   const list = [{ point: 1000 }, { point: 2000 }, { point: 3000 }];
   const stats = domain.calcStats(list, 10);

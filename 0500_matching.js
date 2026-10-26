@@ -13,7 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
-  const MATCHING_SCRIPT_VERSION = "matching-policy-v6-phase-area-20261026";
+  const MATCHING_SCRIPT_VERSION = "matching-policy-v7-yellow-cycle5-20261026";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -101,7 +101,7 @@
         yellow: { weight: 0.55, baseCycleSec: 345, alpha: 0.12, maxShiftSec: 30, minSamples: 8, maxSampleAgeSec: 2700 },
         pink: { weight: 0.55, baseCycleSec: 345, alpha: 0.18, maxShiftSec: 45, minSamples: 8 }
       },
-      phaseError: { scaleSec: 90, yellowThreshold: 0.7, pinkThreshold: 0.55, yellowLambda: 0.10, pinkLambda: 0.03 },
+      phaseError: { scaleSec: 90, yellowThreshold: 0.7, pinkThreshold: 0.55, yellowLambda: 0.06, pinkLambda: 0.03 },
       experimental: {
         dayRelativeArea: { enabled: true, weight: 0.30, smoothingCount: 2 },
         yellowPhase: { enabled: true, weight: 0.70 }
@@ -1729,6 +1729,7 @@
   }
 
   const SCORING_POLICY_COMPARISONS = Object.freeze([
+    Object.freeze({ variant: "yellowDecay010", id: "yellow-phase-decay-010", lambda: 0.10, scaleSec: 90 }),
     Object.freeze({ variant: "yellowPrevious", id: "yellow-phase-decay-003", lambda: 0.03, scaleSec: 90 }),
     Object.freeze({ variant: "yellowError60", id: "yellow-phase-error-060", lambda: 0.03, scaleSec: 60 }),
     Object.freeze({ variant: "yellowNoDecay", id: "yellow-phase-no-decay", lambda: 0, scaleSec: 90 }),
