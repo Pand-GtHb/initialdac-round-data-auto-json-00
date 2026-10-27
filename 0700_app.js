@@ -7072,6 +7072,30 @@ function recordClickFromCopiedInfo(
 /* =========================================================
  [13030] Copy Use Case:undoLastCopiedInfo【State】【永続化】（旧 [7105]）
 ========================================================= */
+function refreshMatchingAfterUndo() {
+  if (!isCurrentView(STATE.MATCHING)) {
+    State.matchingCooldownHeld = [];
+    return;
+  }
+  const clickedAtMs = Date.now();
+  const offsetSec = Number(State.matchingContext?.offsetSec) || 0;
+  try {
+    // 取消済みコピーは保持対象から外れ、cooldown解除なら通常候補として再選出される
+    buildMatchingCandidates({
+      clickedAtMs,
+      evaluationTimeMs: clickedAtMs + offsetSec * 1000,
+      offsetSec,
+      mode: "matching",
+      saveEvent: false
+    });
+    renderMatchingHeader();
+    renderMatchingTable();
+  } catch (error) {
+    State.matchingCooldownHeld = [];
+    console.error("[UNDO] matching refresh failed", error);
+  }
+}
+
 function undoLastCopiedInfo() {
   if (!State.recentClicks || State.recentClicks.length === 0) {
     if (typeof log === "function") {
@@ -7138,6 +7162,8 @@ function undoLastCopiedInfo() {
   }
 
   savePinkStateToStorage();
+
+  refreshMatchingAfterUndo();
 
   /* 5. 取り消しイベントのログ記録 */
   logEvent("match-copied-undo", {
@@ -8084,6 +8110,9 @@ function showMatchingCandidates(
     mode,
     saveEvent
   });
+
+  // 候補の再生成ではcooldown対象を表に残さない（残すのはコピー直後の再描画のみ）
+  State.matchingCooldownHeld = [];
 
   renderMatchingHeader();
 

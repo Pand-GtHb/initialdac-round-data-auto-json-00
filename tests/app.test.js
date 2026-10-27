@@ -1265,3 +1265,22 @@ test('Startup record carries versions and checksums without per-event bloat', as
   assert.ok('configChecksum' in record);
   assert.deepEqual(record.assetCacheKeys, {});
 });
+test('Undo clears held cooldown rows and restores Pink state', () => {
+  const prev = { clicks: State.recentClicks, held: State.matchingCooldownHeld, pink: State.pinkTargets, enc: State.encounterHistory };
+  try {
+    const key = 'undo-test-key';
+    State.pinkTargets = {};
+    State.encounterHistory = {};
+    State.matchingCooldownHeld = [{ player: { name: 'A', shopname: 'S' }, index: 0 }];
+    State.recentClicks = [{ name: 'A', shopname: 'S', __undoApplied: true, __undoIdentityKey: key, __undoSnapshot: { pinkEntry: null, encounterEntry: null, yellowSamples: [], phaseAdjust: State.phaseAdjust, pinkCycleState: State.pinkCycleState } }];
+    State.pinkTargets[key] = { lastCopiedAt: Date.now() };
+    assert.equal(ViewerApp.undoLastCopiedInfo(), true);
+    assert.equal(State.pinkTargets[key], undefined);
+    assert.deepEqual(State.matchingCooldownHeld, []);
+  } finally {
+    State.recentClicks = prev.clicks;
+    State.matchingCooldownHeld = prev.held;
+    State.pinkTargets = prev.pink;
+    State.encounterHistory = prev.enc;
+  }
+});
