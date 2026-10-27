@@ -161,8 +161,8 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v11-cycle4-shadow-strength-20261027";
-const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v20_cycle4_shadow_strength";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v12-opponent-features-20261028";
+const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v21_opponent_features";
 const MAX_LOG_LINES = 100;
 const DEFAULT_FILTER_MINUTES = 15;
 const DEFAULT_MY_RANK_KEY = "R7";
@@ -274,9 +274,6 @@ function buildAnalysisDiagnostics() {
     phaseAnchorType: p.__detail?.phaseAnchorType ?? null,
     cycleSec: p.__detail?.cycleSec ?? null,
     phaseCycleCount: p.__detail?.cycleCount ?? null,
-    strengthTier: getStrengthTierLabels(
-      p.__detail?.effectivePhaseScore, p.__detail?.areaBoost
-    ).join("+") || "none",
     isPinkManaged: Boolean(p.__detail?.isPinkManaged),
     recentAreaBoost: p.__detail?.recentAreaAppliedBoost ?? null,
     basicAreaBoost: p.__detail?.areaBoost ?? null,
@@ -354,8 +351,7 @@ function buildAnalysisDiagnostics() {
     scoringConfig: State.scoringConfig,
     slotPlan: State.matchingSlotPlan,
     copyAreaHistory: State.copyAreaHistory,
-    evaluationTimeMs: State.matchingContext.evaluationTimeMs,
-    getStrengthTierLabels
+    evaluationTimeMs: State.matchingContext.evaluationTimeMs
   })) {
     comparisons.push(finish(result.id, result.parameters, result.selected, {
       status: result.status, evaluatedCandidateCount: State.matchingScoredAll.length
@@ -541,8 +537,15 @@ const ALL_CANDIDATES_COLUMNS = [
   "pinkPhaseMatched",
   "pinkMismatchBoostFactor",
   "historicalScore",
+  "historicalMatched",
   "historicalBackoff",
   "tierProbability",
+  "pooledTierProbability",
+  "tierCandidateCount",
+  "candidateCountAlpha",
+  "ownSampleCount",
+  "adjacentSampleCount",
+  "minOwnSamplesForNoBackoff",
   "playerBoost",
   "rankBoost",
   "realtimeBoost",
@@ -558,6 +561,8 @@ const ALL_CANDIDATES_COLUMNS = [
   "prideBandPriorWeight",
   "areaBucketCount",
   "areaTotalCount",
+  "areaBucketTotal",
+  "areaBucketTrust",
   "areaDensity",
   "areaBoost",
   "recentAreaMatchCount5",
@@ -589,6 +594,7 @@ const ALL_CANDIDATES_COLUMNS = [
   "peakDirection",
   "phaseBucket",
   "phaseScore",
+  "phaseCycleCount",
   "decay",
   "finalPhaseScore",
   "effectivePhaseScore",
@@ -596,8 +602,7 @@ const ALL_CANDIDATES_COLUMNS = [
   "phaseSampleCount",
   "phaseTrust",
   "phaseAdjustValue",
-  ...CANDIDATE_TIMING_COLUMNS,
-  "strengthTier"
+  ...CANDIDATE_TIMING_COLUMNS
 ];
 
 const MAX_YELLOW_PHASE_WEIGHT = 0.55;
@@ -3958,71 +3963,39 @@ function buildPlayerPhaseSummaryText(
  return `${detail.mode === "pink" ? "Pink" : "Yellow"}=${detail.cycleSec.toFixed(1)}秒　${detail.cycleCount}サイクル／${signedLabel}`;
 }
 
-/* =========================================================
- [7206] Phase Detail:buildPlayerStrengthLines【State】
- MATCHING/PREVIEWで選出された候補の強み・順位を、予測時点の保存値から作る。
- 強みは表示の目安であり採点には使わない（閾値は10/23〜10/26の表示候補分布に基づく）。
-========================================================= */
-function extractStrengthSource(candidate) {
-  const detail = candidate?.__detail ?? {};
-  return {
-    phase: Number(detail.effectivePhaseScore),
-    area: Number(detail.areaBoost),
-    globalRank: candidate.__scoreRank ?? null,
-    slotRank: detail.slotRank ?? null,
-    wildcard: Boolean(candidate.__wildcard),
-    crossBucket: Boolean(candidate.__crossBucket)
-  };
+function buildPlayerRankSummaryText(player) {
+ const identityKey =
+   buildPlayerIdentityKey(player);
+ const candidate =
+   (State.matchingRankedAll || []).find(
+     item => buildPlayerIdentityKey(item) === identityKey
+   );
+
+ if (!candidate) {
+   return "";
+ }
+
+ const globalRank =
+   Number(candidate.__scoreRank);
+ const slotRank =
+   Number(candidate.__slotRank ?? candidate.__detail?.slotRank);
+
+ if (!Number.isInteger(globalRank) || globalRank < 1) {
+   return "";
+ }
+
+ const slotLabel =
+   Number.isInteger(slotRank) && slotRank > 0
+     ? `${slotRank}位`
+     : "対象外";
+
+ return `順位：全体 ${globalRank}位／枠内 ${slotLabel}`;
 }
 
-// 強みの判定は表示と分析ログで共通（閾値は10/23〜10/26の表示候補分布に基づく表示の目安で、採点には使わない）
-function getStrengthTierLabels(phase, area) {
-  const labels = [];
-  if (Number(phase) >= 0.96) labels.push("Phase★★★");
-  else if (Number(phase) >= 0.90) labels.push("Phase★★");
-  if (Number(area) >= 1.04) labels.push("AREA＋");
-  return labels;
-}
-
-function buildPlayerStrengthLines(player) {
-  const key = buildPlayerIdentityKey(player);
-  const selected = (State.matchingList || []).find(
-    p => buildPlayerIdentityKey(p) === key
-  );
-  let source = selected ? extractStrengthSource(selected) : null;
-  let fromCopy = false;
-
-  // cooldown中の表示残し行は採点対象外のため、コピー直前の保存値を使う
-  if (!source) {
-    const click = (State.recentClicks || []).find(
-      r => r?.strengthSnapshot && buildPlayerIdentityKey(r) === key
-    );
-    source = click?.strengthSnapshot ?? null;
-    fromCopy = Boolean(source);
-  }
-  if (!source) return [];
-
-  const strengths = getStrengthTierLabels(source.phase, source.area);
-  const suffix = fromCopy ? "（cooldown/コピー前）" : "";
-
-  const route = source.wildcard
-    ? "（全体高スコア）"
-    : source.crossBucket
-      ? "（帯外・個体確率）"
-      : "";
-
-  return [
-    `強み：${strengths.length ? strengths.join(" ") : "なし（枠の補充）"}${suffix}`,
-    `順位：全体 ${source.globalRank ?? "－"}位／枠内 ${source.slotRank ?? "－"}位${route}${suffix}`
-  ];
-}
 /* =========================================================
  [7207] Phase Detail:showPlayerPhaseDetailDialog【DOM】
 ========================================================= */
-function showPlayerPhaseDetailDialog(
- player,
- { showStrength = false } = {}
-) {
+function showPlayerPhaseDetailDialog(player) {
  const overlay =
    document.createElement("div");
 
@@ -4032,30 +4005,19 @@ function showPlayerPhaseDetailDialog(
  const closeButton =
    document.createElement("button");
 
- const detail =
+ const phaseLine =
+   document.createElement("div");
+ const rankLine =
    document.createElement("div");
 
- const strength =
-   document.createElement("div");
-
- const strengthLines =
-   showStrength
-     ? buildPlayerStrengthLines(player)
-     : [];
-
- strengthLines.forEach(line => {
-   const row = document.createElement("div");
-   row.textContent = line;
-   strength.append(row);
- });
-
- strength.style.cssText =
-   "margin-top:6px;font-size:15px;font-weight:normal;line-height:1.5;color:#444;";
  overlay.style.cssText =
    "position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,0.35);box-sizing:border-box;";
 
  dialog.style.cssText =
    "width:min(420px,100%);padding:20px;border-radius:10px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,0.28);font-size:20px;font-weight:bold;line-height:1.6;color:#222;";
+
+ rankLine.style.cssText =
+   "color:#555;font-weight:normal;";
 
  closeButton.type = "button";
  closeButton.textContent = "閉じる";
@@ -4063,11 +4025,14 @@ function showPlayerPhaseDetailDialog(
    "display:block;margin:16px 0 0 auto;padding:8px 14px;border:1px solid #999;border-radius:5px;background:#f5f5f5;font-size:16px;cursor:pointer;";
 
  const updateDetail = () => {
-   detail.textContent =
+   phaseLine.textContent =
      buildPlayerPhaseSummaryText(
        player,
        Date.now()
      );
+   rankLine.textContent =
+     buildPlayerRankSummaryText(player);
+   rankLine.hidden = !rankLine.textContent;
  };
 
  updateDetail();
@@ -4093,8 +4058,8 @@ function showPlayerPhaseDetailDialog(
  );
 
  dialog.append(
-   detail,
-   strength,
+   phaseLine,
+   rankLine,
    closeButton
  );
  overlay.append(dialog);
@@ -4516,6 +4481,8 @@ function calcMatchingScoreDetail(
             Number(historical.tierProbability ?? historical.score),
         pooledTierProbability:
             Number(historical.pooledTierProbability ?? historical.score),
+        candidateCountAlpha:
+            Number(historical.candidateCountAlpha ?? 0),
         tierCandidateCount:
             Number(historical.tierCandidateCount ?? 1),
         minOwnSamplesForNoBackoff:
@@ -6211,6 +6178,8 @@ function buildScoreBreakdownLog(
       Number(detail.tierProbability ?? 0),
     pooledTierProbability:
       Number(detail.pooledTierProbability ?? 0),
+    candidateCountAlpha:
+      Number(detail.candidateCountAlpha ?? 0),
     tierCandidateCount:
       Number(detail.tierCandidateCount ?? 1),
     minOwnSamplesForNoBackoff:
@@ -6329,6 +6298,8 @@ function buildScoreBreakdownLog(
       Number(detail.diffSec ?? 0),
     phaseScore:
       Number(detail.phaseScore ?? 0),
+    phaseCycleCount:
+      Number.isFinite(detail.cycleCount) ? detail.cycleCount : null,
     decay:
       Number(detail.decay ?? 0),
     finalPhaseScore:
@@ -6380,8 +6351,15 @@ function buildAllCandidateRow(
     d.pinkPhaseMatched ? 1 : 0,
     Number(d.pinkMismatchBoostFactor ?? 1),
     Number(d.historicalScore ?? 0),
+    d.historicalMatched ? 1 : 0,
     d.historicalBackoff ? 1 : 0,
     Number(d.tierProbability ?? 0),
+    Number(d.pooledTierProbability ?? 0),
+    Number(d.tierCandidateCount ?? 0),
+    Number(d.candidateCountAlpha ?? 0),
+    Number(d.ownSampleCount ?? 0),
+    Number(d.adjacentSampleCount ?? 0),
+    Number(d.minOwnSamplesForNoBackoff ?? 0),
     Number(d.playerBoost ?? 1),
     Number(d.rankBoost ?? 1),
     Number(d.realtimeBoost ?? 1),
@@ -6397,6 +6375,8 @@ function buildAllCandidateRow(
     Number(d.prideBandPriorWeight ?? 1),
     Number(d.areaBucketCount ?? 0),
     Number(d.areaTotalCount ?? 0),
+    Number(d.areaBucketTotal ?? 0),
+    Number(d.areaBucketTrust ?? 0),
     Number(d.areaDensity ?? 0),
     Number(d.areaBoost ?? 1),
     Number(d.recentAreaMatchCount5 ?? 0),
@@ -6428,6 +6408,7 @@ function buildAllCandidateRow(
     d.peakDirection ?? "unknown",
     d.phaseBucket ?? "unknown",
     Number(d.phaseScore ?? 0),
+    Number.isFinite(d.cycleCount) ? d.cycleCount : null,
     Number(d.decay ?? 0),
     Number(d.finalPhaseScore ?? 0),
     Number(d.effectivePhaseScore ?? 0),
@@ -6435,8 +6416,7 @@ function buildAllCandidateRow(
     Number(d.phaseSampleCount ?? 0),
     Number(d.phaseTrust ?? 1),
     Number(d.phaseAdjustValue ?? 0),
-    ...CANDIDATE_TIMING_COLUMNS.map(key => d[key] ?? null),
-    getStrengthTierLabels(d.effectivePhaseScore, d.areaBoost).join("+") || "none"
+    ...CANDIDATE_TIMING_COLUMNS.map(key => d[key] ?? null)
   ];
 
 }
@@ -6549,6 +6529,9 @@ function saveCopyEventUnified(
 
       candidateEventId:
         candidateEventIdForCopy,
+
+      selectionRouteAtPrediction:
+        null,
 
       predictionSnapshotAvailable:
         false,
@@ -6688,6 +6671,18 @@ function saveCopyEventUnified(
     displayedIndex >= 0
       ? displayedIndex + 1
       : null;
+  const selectedAtPrediction =
+    displayedIndex >= 0 ? displayedCandidates[displayedIndex] : null;
+  const selectionRouteAtPrediction =
+    !scoredAtPrediction
+      ? null
+      : !selectedAtPrediction
+        ? "not-selected"
+        : selectedAtPrediction.__wildcard
+          ? "global-score-wildcard"
+          : selectedAtPrediction.__crossBucket
+            ? "individual-probability"
+            : "normal-rank-slot";
 
   /*
    * Pink管理対象の再登場分析用
@@ -6771,13 +6766,7 @@ function saveCopyEventUnified(
     wasInTop10:
       predictedRank !== null,
 
-    strengthTierAtPrediction:
-      scoredAtPrediction
-        ? getStrengthTierLabels(
-            scoredAtPrediction.__detail?.effectivePhaseScore,
-            scoredAtPrediction.__detail?.areaBoost
-          ).join("+") || "none"
-        : null,
+    selectionRouteAtPrediction,
 
     predictionSnapshotAvailable:
       Boolean(scoredAtPrediction),
@@ -7037,16 +7026,6 @@ function recordClickFromCopiedInfo(
           normalizePlayerName(p.name ?? "") === normalizedName &&
           normalizePlayerName(p.shopname ?? "") === normalizedShop
       ),
-
-    strengthSnapshot:
-      (() => {
-        const selected = (State.matchingList || []).find(
-          p =>
-            normalizePlayerName(p.name ?? "") === normalizedName &&
-            normalizePlayerName(p.shopname ?? "") === normalizedShop
-        );
-        return selected ? extractStrengthSource(selected) : null;
-      })(),
 
     /*
      * コピークリック前の状態に戻すためのスナップショット
@@ -8840,9 +8819,8 @@ async function init() {
     computePhaseSignal,
     getPlayerPhaseDetail,
     buildPlayerPhaseSummaryText,
+    buildPlayerRankSummaryText,
     showPlayerPhaseDetailDialog,
-    buildPlayerStrengthLines,
-    getStrengthTierLabels,
     buildStartupRecord,
     getYellowPhaseScore,
     isMatchingCandidateByPhase,

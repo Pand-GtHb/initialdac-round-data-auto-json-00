@@ -648,7 +648,7 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     assert.equal(record.scoringConfigSnapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
     assert.equal(Object.hasOwn(record, 'softmaxBacktest'), false);
     assert.equal(record.analysisDiagnostics.storageCoverage.complete, true);
-    assert.equal(record.logSchemaVersion, 'slot_area_v20_cycle4_shadow_strength');
+    assert.equal(record.logSchemaVersion, 'slot_area_v21_opponent_features');
     assert.equal(record.analysisDiagnostics.resurfacing.diagnosticOnly, true);
     assert.deepEqual(record.analysisDiagnostics.resurfacing, diagnostics.resurfacing);
     assert.deepEqual(record.analysisDiagnostics.comparisons, diagnostics.comparisons);
@@ -1313,57 +1313,110 @@ test('Cooldown-held copied players are displayed at their pre-copy position with
     State.matchingCooldownHeld = previous;
   }
 });
-test('Strength lines show strengths and global/slot ranks only for selected candidates', () => {
-  const { State, buildPlayerStrengthLines } = ViewerApp;
-  const previous = State.matchingList;
-  try {
-    State.matchingList = [
-      { name: 'a', shopname: 's', __scoreRank: 3, __detail: { effectivePhaseScore: 0.97, areaBoost: 1.045, slotRank: 1 } },
-      { name: 'b', shopname: 's', __scoreRank: 12, __crossBucket: true, __detail: { effectivePhaseScore: 0.92, areaBoost: 1.03, slotRank: 4 } },
-      { name: 'c', shopname: 's', __scoreRank: 20, __crossBucket: true, __wildcard: true, __detail: { effectivePhaseScore: 0.8, areaBoost: 1.02, slotRank: 9 } }
-    ];
-    assert.deepEqual(buildPlayerStrengthLines({ name: 'a', shopname: 's' }), [
-      '強み：Phase★★★ AREA＋', '順位：全体 3位／枠内 1位'
-    ]);
-    assert.deepEqual(buildPlayerStrengthLines({ name: 'b', shopname: 's' }), [
-      '強み：Phase★★', '順位：全体 12位／枠内 4位（帯外・個体確率）'
-    ]);
-    assert.deepEqual(buildPlayerStrengthLines({ name: 'c', shopname: 's' }), [
-      '強み：なし（枠の補充）', '順位：全体 20位／枠内 9位（全体高スコア）'
-    ]);
-    assert.deepEqual(buildPlayerStrengthLines({ name: 'x', shopname: 's' }), []);
-  } finally {
-    State.matchingList = previous;
-  }
+test('strength and feature-label display helpers are removed', () => {
+  assert.equal(ViewerApp.buildPlayerStrengthLines, undefined);
+  assert.equal(ViewerApp.getStrengthTierLabels, undefined);
 });
-test('Strength lines fall back to the pre-copy snapshot for cooldown-held rows', () => {
-  const { State, buildPlayerStrengthLines } = ViewerApp;
-  const prevList = State.matchingList;
-  const prevClicks = State.recentClicks;
+test('Phase detail rank summary shows global and slot ranks without strength labels', () => {
+  const previous = State.matchingRankedAll;
   try {
-    State.matchingList = [];
-    State.recentClicks = [{
-      name: 'p', shopname: 's',
-      strengthSnapshot: { phase: 0.97, area: 1.02, globalRank: 2, slotRank: 1, wildcard: false, crossBucket: false }
+    State.matchingRankedAll = [{
+      name: 'ranked-player', shopname: 'S',
+      __scoreRank: 1, __slotRank: 1, __detail: { slotRank: 1 }
     }];
-    assert.deepEqual(buildPlayerStrengthLines({ name: 'p', shopname: 's' }), [
-      '強み：Phase★★★（cooldown/コピー前）', '順位：全体 2位／枠内 1位（cooldown/コピー前）'
-    ]);
+    assert.equal(
+      ViewerApp.buildPlayerRankSummaryText({ name: 'ranked-player', shopname: 'S' }),
+      '順位：全体 1位／枠内 1位'
+    );
+    assert.equal(
+      ViewerApp.buildPlayerRankSummaryText({ name: 'unranked-player', shopname: 'S' }),
+      ''
+    );
   } finally {
-    State.matchingList = prevList;
-    State.recentClicks = prevClicks;
+    State.matchingRankedAll = previous;
   }
 });
-test('Candidate log rows carry strengthTier and copy events record it at prediction', () => {
-  const idx = ViewerApp.ALL_CANDIDATES_COLUMNS.indexOf('strengthTier');
-  assert.equal(idx, ViewerApp.ALL_CANDIDATES_COLUMNS.length - 1);
-  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.97, 1.045), ['Phase★★★', 'AREA＋']);
-  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.92, 1.03), ['Phase★★']);
-  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.8, 1.02), []);
+test('Phase popup renders Phase and rank as separate rows and omits the strength row', () => {
+  const previous = {
+    matchingRankedAll: State.matchingRankedAll,
+    document: globalThis.document,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval
+  };
+  const elements = [];
+  const makeElement = () => {
+    const element = {
+      style: {},
+      children: [],
+      addEventListener() {},
+      append(...children) { this.children.push(...children); },
+      remove() {}
+    };
+    elements.push(element);
+    return element;
+  };
+  try {
+    State.matchingRankedAll = [{
+      name: 'popup-player', shopname: 'S',
+      __scoreRank: 1, __slotRank: 1
+    }];
+    globalThis.document = {
+      createElement: makeElement,
+      body: { append() {} }
+    };
+    globalThis.setInterval = () => 1;
+    globalThis.clearInterval = () => {};
+
+    ViewerApp.showPlayerPhaseDetailDialog({ name: 'popup-player', shopname: 'S' });
+
+    const phaseLine = elements[3];
+    const rankLine = elements[4];
+    assert.ok(phaseLine.textContent.length > 0);
+    assert.equal(rankLine.textContent, '順位：全体 1位／枠内 1位');
+    assert.equal(rankLine.hidden, false);
+    assert.doesNotMatch(`${phaseLine.textContent}${rankLine.textContent}`, /強み/);
+  } finally {
+    State.matchingRankedAll = previous.matchingRankedAll;
+    globalThis.document = previous.document;
+    globalThis.setInterval = previous.setInterval;
+    globalThis.clearInterval = previous.clearInterval;
+  }
+});
+test('candidate logs preserve numeric Phase, AREA, matchup and selection features', () => {
+  const columns = ViewerApp.ALL_CANDIDATES_COLUMNS;
+  for (const key of [
+    'historicalScore', 'historicalMatched', 'historicalBackoff',
+    'tierProbability', 'pooledTierProbability', 'tierCandidateCount',
+    'candidateCountAlpha', 'ownSampleCount', 'adjacentSampleCount',
+    'phaseCycleCount', 'phaseError', 'phaseScore', 'effectivePhaseScore',
+    'areaBucketCount', 'areaTotalCount', 'areaBucketTotal', 'areaBucketTrust',
+    'areaDensity', 'areaBoost', 'globalScoreRank', 'slotRank',
+    'crossBucketSelectionReason'
+  ]) assert.ok(columns.includes(key), key);
+  assert.equal(columns.includes('strengthTier'), false);
+
+  const source = {
+    name: 'feature-test', __scoreRank: 1,
+    __detail: {
+      historicalScore: 0.12, historicalMatched: true, historicalBackoff: false,
+      tierProbability: 0.4, pooledTierProbability: 0.4, tierCandidateCount: 8,
+      candidateCountAlpha: 0.35, ownSampleCount: 120, adjacentSampleCount: 0,
+      cycleCount: 4, phaseError: 22, phaseScore: 0.97, effectivePhaseScore: 0.96,
+      areaBucketCount: 5, areaTotalCount: 9, areaBucketTotal: 40,
+      areaBucketTrust: 0.8, areaDensity: 0.7, areaBoost: 1.035,
+      slotRank: 1
+    }
+  };
+  const row = ViewerApp.buildAllCandidateRow(source);
+  const decoded = Object.fromEntries(columns.map((key, index) => [key, row[index]]));
+  assert.equal(decoded.historicalScore, source.__detail.historicalScore);
+  assert.equal(decoded.candidateCountAlpha, source.__detail.candidateCountAlpha);
+  assert.equal(decoded.phaseCycleCount, source.__detail.cycleCount);
+  assert.equal(decoded.areaBucketTrust, source.__detail.areaBucketTrust);
 });
 test('Startup record carries versions and checksums without per-event bloat', async () => {
   const record = await ViewerApp.buildStartupRecord();
-  assert.equal(record.logSchemaVersion, 'slot_area_v20_cycle4_shadow_strength');
+  assert.equal(record.logSchemaVersion, 'slot_area_v21_opponent_features');
   assert.ok(record.scriptVersion);
   assert.ok(record.matchingScriptVersion);
   assert.ok('configChecksum' in record);

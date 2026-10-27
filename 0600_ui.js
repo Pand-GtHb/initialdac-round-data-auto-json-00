@@ -2067,10 +2067,7 @@ function renderPlayerRowsToBody(
               row.dataset.updated || ""
           };
 
-          showPlayerPhaseDetailDialog(
-            player,
-            { showStrength: tbodyId === "matchingTableBody" }
-          );
+          showPlayerPhaseDetailDialog(player);
         }
       );
     });
