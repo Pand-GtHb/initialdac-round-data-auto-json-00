@@ -161,8 +161,8 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v10-strength-tier-20261027";
-const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v19_strength_tier";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v11-cycle4-shadow-strength-20261027";
+const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v20_cycle4_shadow_strength";
 const MAX_LOG_LINES = 100;
 const DEFAULT_FILTER_MINUTES = 15;
 const DEFAULT_MY_RANK_KEY = "R7";
@@ -252,6 +252,8 @@ function buildAnalysisDiagnostics() {
   const startedAt = performance.now();
   const pool = State.matchingRankedAll;
   const current = State.matchingList;
+  const generatedAtMs = parseDateJST(State.generatedAt)?.getTime();
+  const evaluationTimeMs = State.matchingContext.evaluationTimeMs;
   const identify = p => ({
     name: p.name,
     shopname: p.shopname ?? "",
@@ -265,12 +267,16 @@ function buildAnalysisDiagnostics() {
     effectivePhaseScore: p.__detail?.effectivePhaseScore ?? null,
     phaseScore: p.__detail?.phaseScore ?? null,
     phaseDecay: p.__detail?.decay ?? null,
+    phaseDecayLambda: p.__detail?.phaseDecayLambda ?? null,
     finalPhaseScore: p.__detail?.finalPhaseScore ?? null,
     phaseError: p.__detail?.phaseError ?? null,
     phaseAnchorAtMs: p.__detail?.phaseAnchorAtMs ?? null,
     phaseAnchorType: p.__detail?.phaseAnchorType ?? null,
     cycleSec: p.__detail?.cycleSec ?? null,
     phaseCycleCount: p.__detail?.cycleCount ?? null,
+    strengthTier: getStrengthTierLabels(
+      p.__detail?.effectivePhaseScore, p.__detail?.areaBoost
+    ).join("+") || "none",
     isPinkManaged: Boolean(p.__detail?.isPinkManaged),
     recentAreaBoost: p.__detail?.recentAreaAppliedBoost ?? null,
     basicAreaBoost: p.__detail?.areaBoost ?? null,
@@ -348,7 +354,8 @@ function buildAnalysisDiagnostics() {
     scoringConfig: State.scoringConfig,
     slotPlan: State.matchingSlotPlan,
     copyAreaHistory: State.copyAreaHistory,
-    evaluationTimeMs: State.matchingContext.evaluationTimeMs
+    evaluationTimeMs: State.matchingContext.evaluationTimeMs,
+    getStrengthTierLabels
   })) {
     comparisons.push(finish(result.id, result.parameters, result.selected, {
       status: result.status, evaluatedCandidateCount: State.matchingScoredAll.length
@@ -364,7 +371,10 @@ function buildAnalysisDiagnostics() {
 
   return {
     version: ANALYSIS_SCRIPT_VERSION,
-    evaluatedAt: State.matchingContext.evaluationTimeMs,
+    evaluatedAt: evaluationTimeMs,
+    integratedDataAgeSecAtPrediction:
+      Number.isFinite(generatedAtMs) && Number.isFinite(evaluationTimeMs)
+        ? (evaluationTimeMs - generatedAtMs) / 1000 : null,
     phasePopulationSource: "scoredCandidates",
     phasePopulation,
     resurfacing: State.matchingResurfacing?.diagnostics ?? {
@@ -1029,6 +1039,72 @@ function applyLatestRoundJson(
 
   log(
     "latest_round.json 読み込み完了"
+  );
+}
+
+function isIntegratedDataBehindLatestUpdate(
+  latestUpdateAt = State.latestUpdateAt,
+  generatedAt = State.generatedAt
+) {
+  const latestTime =
+    parseDateJST(latestUpdateAt)?.getTime();
+  const generatedTime =
+    parseDateJST(generatedAt)?.getTime();
+
+  return Number.isFinite(latestTime) &&
+    (
+      !Number.isFinite(generatedTime) ||
+      generatedTime < latestTime
+    );
+}
+
+function clearStaleMatchingCandidates() {
+  const wasMatchingView =
+    isCurrentView(STATE.MATCHING);
+
+  State.activeCandidateEventId = null;
+  State.latestCandidateEventIdForCopy = null;
+  State.matchingList = [];
+  State.matchingScoredAll = [];
+  State.matchingFilteredPopulationCount = 0;
+  State.matchingCooldownExcludedCandidates = [];
+  State.matchingCooldownHeld = [];
+  State.matchingResurfacing = null;
+  State.matchingResurfacingState = null;
+  State.matchingTierCounts = {};
+  State.matchingSlotPlan = [];
+  State.matchingSlotAllocationDiagnostics = null;
+  State.matchingFilteredPopulationSnapshot = null;
+  State.matchingCrossBucketDiagnostics = null;
+  State.matchingPinkCapDiagnostics = null;
+
+  if (wasMatchingView) {
+    renderMatchingHeader();
+    renderMatchingTable();
+  }
+
+  return wasMatchingView;
+}
+
+function blockStaleCandidateUse() {
+  if (!isIntegratedDataBehindLatestUpdate()) {
+    return false;
+  }
+
+  clearStaleMatchingCandidates();
+  logError(
+    "最新世代のintegrated_data.jsonが未取得のため候補を停止しました：" +
+    `データ=${State.generatedAt || "不明"} / ` +
+    `最新=${State.latestUpdateAt || "不明"}。Reload成功後に再試行してください。`
+  );
+  return true;
+}
+
+async function settleInitialJsonRequests(fetchers) {
+  return Promise.allSettled(
+    fetchers.map(fetcher =>
+      Promise.resolve().then(fetcher)
+    )
   );
 }
 
@@ -1822,6 +1898,25 @@ async function reloadLatestDataPreferPrefetch() {
 
   } catch (e) {
 
+    if (latestObserved) {
+      const wasBehind =
+        isIntegratedDataBehindLatestUpdate();
+      State.latestUpdateAt = latestObserved;
+
+      if (
+        isIntegratedDataBehindLatestUpdate() &&
+        !wasBehind
+      ) {
+        State.pendingPrefetchForUpdateAt =
+          latestObserved;
+        if (clearStaleMatchingCandidates()) {
+          logError(
+            "最新データを取得できないため、古い候補をクリアしました。"
+          );
+        }
+      }
+    }
+
     logError(
       "Reload失敗：既存データを保持します：" +
       e.message
@@ -1925,15 +2020,12 @@ async function checkUpdate() {
       prev &&
       prev !== latest;
 
-    const latestTime =
-      parseDateJST(latest)?.getTime();
-    const generatedTime =
-      parseDateJST(State.generatedAt)?.getTime();
+    const wasIntegratedDataBehind =
+      isIntegratedDataBehindLatestUpdate();
     const integratedDataBehind =
-      Number.isFinite(latestTime) &&
-      (
-        !Number.isFinite(generatedTime) ||
-        generatedTime < latestTime
+      isIntegratedDataBehindLatestUpdate(
+        latest,
+        State.generatedAt
       );
 
     if (integratedDataBehind) {
@@ -1954,6 +2046,16 @@ async function checkUpdate() {
       }
     }
     State.latestUpdateAt = latest;
+
+    if (
+      integratedDataBehind &&
+      !wasIntegratedDataBehind &&
+      clearStaleMatchingCandidates()
+    ) {
+      logError(
+        "新しい世代が公開されたため、古い候補をクリアしました。Reloadしてください。"
+      );
+    }
 
     /* =====================================
      * 更新検知
@@ -3876,9 +3978,9 @@ function extractStrengthSource(candidate) {
 // 強みの判定は表示と分析ログで共通（閾値は10/23〜10/26の表示候補分布に基づく表示の目安で、採点には使わない）
 function getStrengthTierLabels(phase, area) {
   const labels = [];
-  if (Number(phase) >= 0.96) labels.push("Phase◎");
-  else if (Number(phase) >= 0.90) labels.push("Phase○");
-  if (Number(area) >= 1.04) labels.push("AREA○");
+  if (Number(phase) >= 0.96) labels.push("Phase★★★");
+  else if (Number(phase) >= 0.90) labels.push("Phase★★");
+  if (Number(area) >= 1.04) labels.push("AREA＋");
   return labels;
 }
 
@@ -4532,6 +4634,10 @@ function buildMatchingCandidates(
     offsetSec = 0
   } = {}
 ) {
+
+  if (blockStaleCandidateUse()) {
+    return false;
+  }
 
   if (!saveEvent) {
     State.latestCandidateEventIdForCopy =
@@ -5412,6 +5518,13 @@ function copyToClipboard(
     log(
       "PREVIEWではコピー操作と実績記録を行いません"
     );
+    return;
+  }
+
+  if (
+    isCurrentView(STATE.MATCHING) &&
+    blockStaleCandidateUse()
+  ) {
     return;
   }
 
@@ -8083,6 +8196,10 @@ function showMatchingCandidates(
       ? "preview"
       : "matching";
 
+  if (blockStaleCandidateUse()) {
+    return false;
+  }
+
   const offsetSec =
     Number(
       normalizedOptions.offsetSec
@@ -8465,90 +8582,125 @@ async function init() {
 
   buildPrideFilters();
 
-  try {
-
-    const [
-      areaJson,
-      latestRoundJson,
-      latestUpdateJson,
-      historicalMatchupDistributionJson,
-      scoringConfigJson,
-      roundDataJson
-    ] = await Promise.all([
-      fetchAreaListJson(),
-      fetchLatestRoundJson(),
-      fetchLatestUpdateJson(),
-      fetchHistoricalMatchupDistributionJson(),
-      fetchScoringConfigJson(),
-      fetchRoundDataJson()
+  const initialResourceNames = [
+    "areaList.json",
+    "latest_round.json",
+    "latest_update.json",
+    "historical_matchup_distribution.json",
+    "scoring_config.json",
+    "integrated_data.json"
+  ];
+  const initialResults =
+    await settleInitialJsonRequests([
+      fetchAreaListJson,
+      fetchLatestRoundJson,
+      fetchLatestUpdateJson,
+      fetchHistoricalMatchupDistributionJson,
+      fetchScoringConfigJson,
+      fetchRoundDataJson
     ]);
 
-    applyAreaListJson(areaJson);
+  const [
+    areaResult,
+    latestRoundResult,
+    latestUpdateResult,
+    historicalResult,
+    scoringConfigResult,
+    roundDataResult
+  ] = initialResults;
+  const initialFailures =
+    initialResults
+      .map((result, index) => (
+        result.status === "rejected"
+          ? `${initialResourceNames[index]}: ${result.reason?.message ?? result.reason}`
+          : null
+      ))
+      .filter(Boolean);
 
-    applyLatestRoundJson(
-      latestRoundJson
+  if (initialFailures.length > 0) {
+    logError(
+      "初期並列取得の一部に失敗（失敗したデータだけ再取得します）：" +
+      initialFailures.join(" / ")
     );
+  }
 
-    applyLatestUpdateJson(
-      latestUpdateJson
+  const recoveryTasks = [];
+  if (areaResult.status === "rejected") {
+    recoveryTasks.push(loadAreaList());
+  }
+  if (latestRoundResult.status === "rejected") {
+    recoveryTasks.push(loadLatestRound());
+  }
+  if (latestUpdateResult.status === "rejected") {
+    recoveryTasks.push(loadLatestUpdate());
+  }
+  if (historicalResult.status === "rejected") {
+    recoveryTasks.push(loadHistoricalMatchupDistribution());
+  }
+  if (scoringConfigResult.status === "rejected") {
+    recoveryTasks.push(loadScoringConfig());
+  }
+
+  let roundDataJson =
+    roundDataResult.status === "fulfilled"
+      ? roundDataResult.value
+      : null;
+  let roundDataLoaded =
+    roundDataResult.status === "fulfilled";
+
+  if (!roundDataLoaded) {
+    recoveryTasks.push(
+      (async () => {
+        try {
+          roundDataJson = await fetchRoundDataJson();
+          roundDataLoaded = true;
+        } catch (error) {
+          logError(
+            "integrated_data.json の取得に失敗：" +
+            error.message
+          );
+          State.generatedAt = "";
+          State.all = [];
+          State.filtered = [];
+        }
+      })()
     );
+  }
 
-    applyHistoricalMatchupDistributionJson(
-      historicalMatchupDistributionJson
-    );
+  if (areaResult.status === "fulfilled") {
+    applyAreaListJson(areaResult.value);
+  }
+  if (latestRoundResult.status === "fulfilled") {
+    applyLatestRoundJson(latestRoundResult.value);
+  }
+  if (latestUpdateResult.status === "fulfilled") {
+    applyLatestUpdateJson(latestUpdateResult.value);
+  }
+  if (historicalResult.status === "fulfilled") {
+    applyHistoricalMatchupDistributionJson(historicalResult.value);
+  }
+  if (scoringConfigResult.status === "fulfilled") {
+    applyScoringConfigJson(scoringConfigResult.value);
+  }
 
-    applyScoringConfigJson(
-      scoringConfigJson
-    );
+  await Promise.all(recoveryTasks);
 
-    await loadCopyAreaHistory();
+  await loadCopyAreaHistory();
 
-    await seedPhaseAdjustFromCopyHistory();
+  await seedPhaseAdjustFromCopyHistory();
 
+  if (roundDataLoaded) {
     applyRoundDataJson(
       roundDataJson,
       {
         resetReloadButton: true
       }
     );
-
-    log(
-      "初期データ取得完了"
-    );
-
-  } catch (e) {
-
-    logError(
-      "初期化並列取得に失敗：" +
-      e.message
-    );
-
-    await loadAreaList();
-
-    await loadLatestRound();
-
-    await loadLatestUpdate();
-
-    await loadHistoricalMatchupDistribution();
-
-    await loadScoringConfig();
-
-    await loadCopyAreaHistory();
-
-    await seedPhaseAdjustFromCopyHistory();
-
-    try {
-        const roundDataJson = await fetchRoundDataJson();
-        applyRoundDataJson(roundDataJson, { resetReloadButton: true });
-        } catch (err) {
-          logError("integrated_data.json の取得に失敗：" + err.message);
-        State.all = [];
-          State.filtered = [];
-        }
-    log(
-      "初期データ取得完了"
-    );
   }
+
+  log(
+    "初期データ取得完了"
+  );
 
   applyFilters();
 
@@ -8620,6 +8772,7 @@ async function init() {
     getPhaseErrorScaleSec,
 
     // Data Appliers
+    isIntegratedDataBehindLatestUpdate,
     applyAreaListJson,
     applyLatestRoundJson,
     applyLatestUpdateJson,
@@ -8640,6 +8793,7 @@ async function init() {
     pruneCandidateEventsStore,
 
     // Data Loaders & Watch Loop
+    settleInitialJsonRequests,
     fetchJSON,
     fetchAreaListJson,
     fetchLatestRoundJson,

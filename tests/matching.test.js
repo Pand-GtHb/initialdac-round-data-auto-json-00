@@ -367,8 +367,11 @@ test("policy comparisons independently rescore Phase and AREA without learning o
     for (const p of result.selected) {
       const old = pool.find(q => q.name === p.name);
       const d = p.__detail;
-      const phase = policy.lambda !== undefined && !d.isPinkManaged
-        ? context.ViewerDomain.computePhaseMetrics(700, 345, policy.lambda, policy.scaleSec)
+      const expectedLambda = policy.noDecayThroughCycleCount !== undefined
+        ? 0
+        : policy.lambda;
+      const phase = expectedLambda !== undefined && !d.isPinkManaged
+        ? context.ViewerDomain.computePhaseMetrics(700, 345, expectedLambda, policy.scaleSec)
         : old.__detail;
       const effective = 1 - 0.55 * (1 - phase.finalPhaseScore);
       const basic = policy.area && policy.area !== "basic-recent" ? 1 : 1.05;
@@ -383,6 +386,62 @@ test("policy comparisons independently rescore Phase and AREA without learning o
     if (policy.area === "day-only") assert.equal(result.parameters.sampleCount, 1);
     assert.equal(JSON.stringify({ pool, history, plan, config }), before);
   }
+
+  const cyclePool = pool.map((candidate, i) => {
+    if (candidate.__detail.isPinkManaged) return candidate;
+    const cycleCount = i % 6;
+    const diffSec = cycleCount * 345 + 17;
+    return {
+      ...candidate,
+      __detail: {
+        ...candidate.__detail,
+        phaseAnchorAtMs: at - diffSec * 1000,
+        phaseAnchorType: "last-update"
+      }
+    };
+  });
+  const cutoffResult = M.buildShadowCandidateComparison(cyclePool, {
+    variant: "yellowNoDecayThrough4", scoringConfig: config,
+    slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at,
+    getStrengthTierLabels: (phase, area) => {
+      if (phase >= 0.96) return ["Phase★★★"];
+      if (phase >= 0.90) return ["Phase★★"];
+      return area >= 1.04 ? ["AREA＋"] : [];
+    }
+  });
+  assert.deepEqual({ ...cutoffResult.parameters.cycleCounts }, {
+    "0": 1, "1": 2, "2": 2, "3": 2, "4": 2, "5+": 2, unknown: 0
+  });
+  assert.equal(cutoffResult.parameters.lambdaAfterCutoff, config.phaseError.yellowLambda);
+  for (const candidate of cutoffResult.selected.filter(p => !p.__detail.isPinkManaged)) {
+    const cycles = candidate.__detail.cycleCount;
+    assert.equal(candidate.__detail.phaseDecayLambda, cycles <= 4 ? 0 : config.phaseError.yellowLambda);
+  }
+
+  const transitionCandidate = cyclePool[5];
+  const fourCycleDiff = 4 * transitionCandidate.__detail.cycleSec;
+  transitionCandidate.__detail.phaseAnchorAtMs = at - fourCycleDiff * 1000;
+  const currentMetrics = context.ViewerDomain.computePhaseMetrics(
+    fourCycleDiff, transitionCandidate.__detail.cycleSec, config.phaseError.yellowLambda, 90
+  );
+  transitionCandidate.__detail.effectivePhaseScore =
+    1 - transitionCandidate.__detail.phaseWeight * (1 - currentMetrics.finalPhaseScore);
+  transitionCandidate.__detail.areaBoost = 1;
+  const transitionResult = M.buildShadowCandidateComparison(cyclePool, {
+    variant: "yellowNoDecayThrough4", scoringConfig: config,
+    slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at,
+    getStrengthTierLabels: (phase, area) => {
+      if (phase >= 0.96) return ["Phase★★★"];
+      if (phase >= 0.90) return ["Phase★★"];
+      return area >= 1.04 ? ["AREA＋"] : [];
+    }
+  });
+  assert.ok(transitionResult.strengthTierTransitions.some(change =>
+    change.name === transitionCandidate.name &&
+    change.currentStrengthTier === "none" &&
+    change.counterfactualStrengthTier === "Phase★★★" &&
+    change.phaseCycleCount === 4
+  ));
   const options = { scoringConfig: config, slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at };
   const variants = [
     { variant: "dayRelativeArea", id: "day-relative-area" },

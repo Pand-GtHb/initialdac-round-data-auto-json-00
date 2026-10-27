@@ -91,6 +91,106 @@ test('Default time filter includes exactly 15 minutes before generatedAt, not pr
   }
 });
 
+test('Initial JSON request results preserve successes and isolate failures', async () => {
+  let successCalls = 0;
+  let failureCalls = 0;
+  const results = await ViewerApp.settleInitialJsonRequests([
+    () => {
+      successCalls++;
+      return Promise.resolve({ name: 'loaded' });
+    },
+    () => {
+      failureCalls++;
+      return Promise.reject(new Error('offline'));
+    }
+  ]);
+
+  assert.equal(successCalls, 1);
+  assert.equal(failureCalls, 1);
+  assert.equal(results[0].status, 'fulfilled');
+  assert.deepEqual(results[0].value, { name: 'loaded' });
+  assert.equal(results[1].status, 'rejected');
+  assert.match(results[1].reason.message, /offline/);
+});
+
+test('Known stale integrated data blocks matching and preview candidate generation', () => {
+  const { State } = ViewerApp;
+  const previous = {
+    generatedAt: State.generatedAt,
+    latestUpdateAt: State.latestUpdateAt,
+    currentView: State.currentView,
+    matchingContext: State.matchingContext,
+    matchingList: State.matchingList,
+    matchingScoredAll: State.matchingScoredAll,
+    matchingFilteredPopulationCount: State.matchingFilteredPopulationCount,
+    activeCandidateEventId: State.activeCandidateEventId,
+    latestCandidateEventIdForCopy: State.latestCandidateEventIdForCopy
+  };
+  const previousDocumentHead = document.head;
+  try {
+    State.generatedAt = '2026/10/27 16:01:02';
+    State.latestUpdateAt = '2026-10-27 16:16:02';
+    State.currentView = ViewerApp.STATE.SUMMARY;
+    State.matchingList = [{ name: 'STALE' }];
+    State.matchingScoredAll = [{ name: 'STALE' }];
+    State.matchingFilteredPopulationCount = 1;
+    State.activeCandidateEventId = 123;
+    State.latestCandidateEventIdForCopy = 123;
+
+    assert.equal(
+      ViewerApp.isIntegratedDataBehindLatestUpdate(),
+      true
+    );
+    assert.equal(
+      ViewerApp.isIntegratedDataBehindLatestUpdate(
+        '2026-10-27 16:01:02',
+        '2026/10/27 16:01:02'
+      ),
+      false
+    );
+    assert.equal(
+      ViewerApp.isIntegratedDataBehindLatestUpdate('', '2026/10/27 16:01:02'),
+      false
+    );
+    document.head = { appendChild: () => {} };
+    State.currentView = ViewerApp.STATE.MATCHING;
+    State.matchingContext = { mode: 'matching' };
+    ViewerApp.copyToClipboard('STALE', 'STALE', 'SHOP');
+    assert.deepEqual(State.matchingList, []);
+    assert.equal(State.latestCandidateEventIdForCopy, null);
+
+    State.currentView = ViewerApp.STATE.SUMMARY;
+    assert.equal(
+      ViewerApp.showMatchingCandidates({
+        mode: 'matching',
+        saveEvent: true
+      }),
+      false
+    );
+    assert.equal(
+      ViewerApp.showMatchingCandidates({
+        mode: 'preview'
+      }),
+      false
+    );
+    assert.equal(
+      ViewerApp.buildMatchingCandidates({
+        saveEvent: false
+      }),
+      false
+    );
+    assert.equal(State.currentView, ViewerApp.STATE.SUMMARY);
+    assert.deepEqual(State.matchingList, []);
+    assert.deepEqual(State.matchingScoredAll, []);
+    assert.equal(State.matchingFilteredPopulationCount, 0);
+    assert.equal(State.activeCandidateEventId, null);
+    assert.equal(State.latestCandidateEventIdForCopy, null);
+  } finally {
+    Object.assign(State, previous);
+    document.head = previousDocumentHead;
+  }
+});
+
 test('Pink cycle learning respects zero shift and zero alpha settings', () => {
   const { State } = ViewerApp;
   const previous = {
@@ -219,13 +319,15 @@ test('analysis diagnostics do not count unavailable Phase as a zero-error match'
   const previous = {
     scoringConfig: State.scoringConfig, matchingScoredAll: State.matchingScoredAll,
     matchingRankedAll: State.matchingRankedAll, matchingList: State.matchingList,
-    matchingContext: State.matchingContext
+    matchingContext: State.matchingContext, generatedAt: State.generatedAt
   };
   try {
     State.scoringConfig = ViewerMatching.resolveScoringConfig(
       JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8'))
     );
-    State.matchingContext = { evaluationTimeMs: Date.now() };
+    const evaluationTimeMs = Date.parse('2026-01-01T00:01:00+09:00');
+    State.generatedAt = '2026/01/01 00:00:00';
+    State.matchingContext = { evaluationTimeMs };
     State.matchingRankedAll = [];
     State.matchingList = [];
     State.matchingScoredAll = [
@@ -235,6 +337,7 @@ test('analysis diagnostics do not count unavailable Phase as a zero-error match'
     const diagnostics = ViewerApp.buildAnalysisDiagnostics();
     assert.equal(diagnostics.phasePopulation.R7.phaseUnknown, 1);
     assert.equal(diagnostics.phasePopulation.R7.phaseUnder30, 1);
+    assert.equal(diagnostics.integratedDataAgeSecAtPrediction, 60);
     assert.equal(diagnostics.provenance.scoringConfigVersion, State.scoringConfig.meta.version);
     assert.equal(Object.hasOwn(diagnostics.provenance, 'scoringConfigSnapshot'), false);
   } finally {
@@ -519,7 +622,8 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     const diagnostics = ViewerApp.buildAnalysisDiagnostics();
     assert.deepEqual(diagnostics.comparisons.map(c => c.id), [
       'pride-rescue-cross-slot', 'day-relative-area', 'yellow-phase-weight-070',
-      'yellow-phase-decay-010', 'yellow-phase-decay-003', 'yellow-phase-error-060', 'yellow-phase-no-decay',
+      'yellow-phase-decay-010', 'yellow-phase-decay-003', 'yellow-phase-no-decay-through-4',
+      'yellow-phase-error-060', 'yellow-phase-no-decay',
       'area-basic-recent', 'area-recent-only', 'area-none', 'area-day-relative-only',
       'previous-phase-area-policy',
       'resurfacing-rank-score', 'resurfacing-phase'
@@ -544,7 +648,7 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     assert.equal(record.scoringConfigSnapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
     assert.equal(Object.hasOwn(record, 'softmaxBacktest'), false);
     assert.equal(record.analysisDiagnostics.storageCoverage.complete, true);
-    assert.equal(record.logSchemaVersion, 'slot_area_v19_strength_tier');
+    assert.equal(record.logSchemaVersion, 'slot_area_v20_cycle4_shadow_strength');
     assert.equal(record.analysisDiagnostics.resurfacing.diagnosticOnly, true);
     assert.deepEqual(record.analysisDiagnostics.resurfacing, diagnostics.resurfacing);
     assert.deepEqual(record.analysisDiagnostics.comparisons, diagnostics.comparisons);
@@ -1219,10 +1323,10 @@ test('Strength lines show strengths and global/slot ranks only for selected cand
       { name: 'c', shopname: 's', __scoreRank: 20, __crossBucket: true, __wildcard: true, __detail: { effectivePhaseScore: 0.8, areaBoost: 1.02, slotRank: 9 } }
     ];
     assert.deepEqual(buildPlayerStrengthLines({ name: 'a', shopname: 's' }), [
-      '強み：Phase◎ AREA○', '順位：全体 3位／枠内 1位'
+      '強み：Phase★★★ AREA＋', '順位：全体 3位／枠内 1位'
     ]);
     assert.deepEqual(buildPlayerStrengthLines({ name: 'b', shopname: 's' }), [
-      '強み：Phase○', '順位：全体 12位／枠内 4位（帯外・個体確率）'
+      '強み：Phase★★', '順位：全体 12位／枠内 4位（帯外・個体確率）'
     ]);
     assert.deepEqual(buildPlayerStrengthLines({ name: 'c', shopname: 's' }), [
       '強み：なし（枠の補充）', '順位：全体 20位／枠内 9位（全体高スコア）'
@@ -1243,7 +1347,7 @@ test('Strength lines fall back to the pre-copy snapshot for cooldown-held rows',
       strengthSnapshot: { phase: 0.97, area: 1.02, globalRank: 2, slotRank: 1, wildcard: false, crossBucket: false }
     }];
     assert.deepEqual(buildPlayerStrengthLines({ name: 'p', shopname: 's' }), [
-      '強み：Phase◎（cooldown/コピー前）', '順位：全体 2位／枠内 1位（cooldown/コピー前）'
+      '強み：Phase★★★（cooldown/コピー前）', '順位：全体 2位／枠内 1位（cooldown/コピー前）'
     ]);
   } finally {
     State.matchingList = prevList;
@@ -1253,13 +1357,13 @@ test('Strength lines fall back to the pre-copy snapshot for cooldown-held rows',
 test('Candidate log rows carry strengthTier and copy events record it at prediction', () => {
   const idx = ViewerApp.ALL_CANDIDATES_COLUMNS.indexOf('strengthTier');
   assert.equal(idx, ViewerApp.ALL_CANDIDATES_COLUMNS.length - 1);
-  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.97, 1.045), ['Phase◎', 'AREA○']);
-  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.92, 1.03), ['Phase○']);
+  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.97, 1.045), ['Phase★★★', 'AREA＋']);
+  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.92, 1.03), ['Phase★★']);
   assert.deepEqual(ViewerApp.getStrengthTierLabels(0.8, 1.02), []);
 });
 test('Startup record carries versions and checksums without per-event bloat', async () => {
   const record = await ViewerApp.buildStartupRecord();
-  assert.equal(record.logSchemaVersion, 'slot_area_v19_strength_tier');
+  assert.equal(record.logSchemaVersion, 'slot_area_v20_cycle4_shadow_strength');
   assert.ok(record.scriptVersion);
   assert.ok(record.matchingScriptVersion);
   assert.ok('configChecksum' in record);
