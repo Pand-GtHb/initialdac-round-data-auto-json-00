@@ -572,7 +572,7 @@ const State = {
   matchingList: [],
   matchingFilteredPopulationCount: 0,
   matchingCooldownExcludedCandidates: [],
-  matchingRankedAll: [],
+  matchingCooldownHeld: [],
   matchingScoredAll: [],
   matchingResurfacing: null,
   matchingResurfacingState: null,
@@ -700,6 +700,7 @@ function syncMyRankSelection(
     State.matchingList = [];
     State.matchingFilteredPopulationCount = 0;
     State.matchingCooldownExcludedCandidates = [];
+    State.matchingCooldownHeld = [];
     State.matchingScoredAll = [];
     State.matchingRankedAll = [];
     State.matchingTierCounts = {};
@@ -3805,10 +3806,45 @@ function buildPlayerPhaseSummaryText(
 }
 
 /* =========================================================
+ [7206] Phase Detail:buildPlayerStrengthLines【State】
+ MATCHING/PREVIEWで選出された候補の強み・順位を、予測時点の保存値から作る。
+ 強みは表示の目安であり採点には使わない（閾値は10/23〜10/26の表示候補分布に基づく）。
+========================================================= */
+function buildPlayerStrengthLines(player) {
+  const key = buildPlayerIdentityKey(player);
+  const selected = (State.matchingList || []).find(
+    p => buildPlayerIdentityKey(p) === key
+  );
+  if (!selected) return [];
+
+  const detail = selected.__detail ?? {};
+  const phase = Number(detail.effectivePhaseScore);
+  const area = Number(detail.areaBoost);
+  const strengths = [];
+  if (phase >= 0.96) strengths.push("Phase◎");
+  else if (phase >= 0.90) strengths.push("Phase○");
+  if (area >= 1.04) strengths.push("AREA○");
+
+  const route = selected.__wildcard
+    ? "（全体高スコア）"
+    : selected.__crossBucket
+      ? "（帯外・個体確率）"
+      : "";
+  const globalRank = selected.__scoreRank ?? "－";
+  const slotRank = detail.slotRank ?? "－";
+
+  return [
+    `強み：${strengths.length ? strengths.join(" ") : "なし（枠の補充）"}`,
+    `順位：全体 ${globalRank}位／枠内 ${slotRank}位${route}`
+  ];
+}
+
+/* =========================================================
  [7207] Phase Detail:showPlayerPhaseDetailDialog【DOM】
 ========================================================= */
 function showPlayerPhaseDetailDialog(
- player
+ player,
+ { showStrength = false } = {}
 ) {
  const overlay =
    document.createElement("div");
@@ -3822,6 +3858,22 @@ function showPlayerPhaseDetailDialog(
  const detail =
    document.createElement("div");
 
+ const strength =
+   document.createElement("div");
+
+ const strengthLines =
+   showStrength
+     ? buildPlayerStrengthLines(player)
+     : [];
+
+ strengthLines.forEach(line => {
+   const row = document.createElement("div");
+   row.textContent = line;
+   strength.append(row);
+ });
+
+ strength.style.cssText =
+   "margin-top:6px;font-size:15px;font-weight:normal;line-height:1.5;color:#444;";
  overlay.style.cssText =
    "position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,0.35);box-sizing:border-box;";
 
@@ -3865,6 +3917,7 @@ function showPlayerPhaseDetailDialog(
 
  dialog.append(
    detail,
+   strength,
    closeButton
  );
  overlay.append(dialog);
@@ -4509,6 +4562,22 @@ function buildMatchingCandidates(
 
     });
   const afterCooldownSet = new Set(afterCooldown);
+  State.matchingCooldownHeld =
+    filteredByUi
+      .filter(p => !afterCooldownSet.has(p))
+      .map(p => {
+        const click = (State.recentClicks || []).find(
+          r =>
+            normalizePlayerName(r?.name ?? "") === normalizePlayerName(p.name ?? "") &&
+            normalizePlayerName(r?.shopname ?? "") === normalizePlayerName(p.shopname ?? "")
+        );
+        const index = Number(click?.matchingListIndex);
+        return Number.isInteger(index) && index >= 0
+          ? { player: p, index }
+          : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.index - b.index);
   State.matchingFilteredPopulationCount =
     filteredByUi.length;
   State.matchingCooldownExcludedCandidates =
@@ -4805,6 +4874,21 @@ function buildMatchingCandidates(
 /* #################################################################
  [LAYER 9000] Filtering / Summary
  ################################################################# */
+
+/* =========================================================
+ コピー直後のcooldown中の相手を、表示だけコピー前の位置に戻す。
+ 採点・枠配分・ログ対象の候補リストは変更しない。
+========================================================= */
+function getMatchingDisplayList(list = State.matchingList || []) {
+  const held = State.matchingCooldownHeld || [];
+  if (!held.length) return list;
+
+  const rows = [...list];
+  for (const { player, index } of held) {
+    rows.splice(Math.min(index, rows.length), 0, player);
+  }
+  return rows;
+}
 
 /* =========================================================
  [9000] Filter Engine:applyFilters【State】【DOM】（旧 [5000]）
@@ -5175,7 +5259,7 @@ function applyMatchingFilter(
     if (matchingHeaderEl) matchingHeaderEl.style.display = "none";
     if (matchingEmptyEl) matchingEmptyEl.style.display = "none";
     if (matchingTableWrap) matchingTableWrap.style.display = "block";
-    renderMatchingRows(base);
+    renderMatchingRows(getMatchingDisplayList(base));
 
     if (rankSectionEl) rankSectionEl.style.display = "none";
     return;
@@ -6748,6 +6832,13 @@ function recordClickFromCopiedInfo(
 
     predictedRank:
       predictedRank,
+
+    matchingListIndex:
+      (State.matchingList || []).findIndex(
+        p =>
+          normalizePlayerName(p.name ?? "") === normalizedName &&
+          normalizePlayerName(p.shopname ?? "") === normalizedShop
+      ),
 
     /*
      * コピークリック前の状態に戻すためのスナップショット
@@ -8470,6 +8561,7 @@ async function init() {
     getPlayerPhaseDetail,
     buildPlayerPhaseSummaryText,
     showPlayerPhaseDetailDialog,
+    buildPlayerStrengthLines,
     getYellowPhaseScore,
     isMatchingCandidateByPhase,
     isMatchingCandidateByCopyPhase,
@@ -8491,6 +8583,7 @@ async function init() {
     filterSummaryBySearch,
     applyPlayerFilter,
     applyMatchingFilter,
+    getMatchingDisplayList,
     applyFilterAndRefreshSummary,
 
     // Browser Actions & Export

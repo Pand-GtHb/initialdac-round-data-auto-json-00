@@ -433,6 +433,7 @@ async function bootstrap() {
             State.matchingList = [];
             State.matchingFilteredPopulationCount = 0;
             State.matchingCooldownExcludedCandidates = [];
+            State.matchingCooldownHeld = [];
 
             renderMatchingHeader();
             renderMatchingTable();

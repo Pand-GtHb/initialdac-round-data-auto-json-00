@@ -2060,7 +2060,8 @@ function renderPlayerRowsToBody(
           };
 
           showPlayerPhaseDetailDialog(
-            player
+            player,
+            { showStrength: tbodyId === "matchingTableBody" }
           );
         }
       );
@@ -2233,7 +2234,9 @@ function renderMatchingTable() {
     applyMatchingFilter(State.searchText);
   } else {
     renderMatchingRows(
-      State.matchingList
+      typeof getMatchingDisplayList === "function"
+        ? getMatchingDisplayList(State.matchingList)
+        : State.matchingList
     );
   }
 }

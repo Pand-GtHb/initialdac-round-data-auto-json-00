@@ -1187,3 +1187,48 @@ test('applyMatchingFilter handles cross-search between MATCHING candidates and R
   globalThis.document.getElementById = origGetElementById;
   ViewerApp.State.searchText = '';
 });
+
+test('Cooldown-held copied players are displayed at their pre-copy position without altering the scored list', () => {
+  const { State, getMatchingDisplayList } = ViewerApp;
+  const previous = State.matchingCooldownHeld;
+  try {
+    const list = [{ name: 'a' }, { name: 'b' }, { name: 'c' }];
+    State.matchingCooldownHeld = [];
+    assert.equal(getMatchingDisplayList(list), list);
+
+    State.matchingCooldownHeld = [
+      { player: { name: 'held1' }, index: 1 },
+      { player: { name: 'held2' }, index: 9 }
+    ];
+    assert.deepEqual(
+      getMatchingDisplayList(list).map(p => p.name),
+      ['a', 'held1', 'b', 'c', 'held2']
+    );
+    assert.deepEqual(list.map(p => p.name), ['a', 'b', 'c']);
+  } finally {
+    State.matchingCooldownHeld = previous;
+  }
+});
+test('Strength lines show strengths and global/slot ranks only for selected candidates', () => {
+  const { State, buildPlayerStrengthLines } = ViewerApp;
+  const previous = State.matchingList;
+  try {
+    State.matchingList = [
+      { name: 'a', shopname: 's', __scoreRank: 3, __detail: { effectivePhaseScore: 0.97, areaBoost: 1.045, slotRank: 1 } },
+      { name: 'b', shopname: 's', __scoreRank: 12, __crossBucket: true, __detail: { effectivePhaseScore: 0.92, areaBoost: 1.03, slotRank: 4 } },
+      { name: 'c', shopname: 's', __scoreRank: 20, __crossBucket: true, __wildcard: true, __detail: { effectivePhaseScore: 0.8, areaBoost: 1.02, slotRank: 9 } }
+    ];
+    assert.deepEqual(buildPlayerStrengthLines({ name: 'a', shopname: 's' }), [
+      '強み：Phase◎ AREA○', '順位：全体 3位／枠内 1位'
+    ]);
+    assert.deepEqual(buildPlayerStrengthLines({ name: 'b', shopname: 's' }), [
+      '強み：Phase○', '順位：全体 12位／枠内 4位（帯外・個体確率）'
+    ]);
+    assert.deepEqual(buildPlayerStrengthLines({ name: 'c', shopname: 's' }), [
+      '強み：なし（枠の補充）', '順位：全体 20位／枠内 9位（全体高スコア）'
+    ]);
+    assert.deepEqual(buildPlayerStrengthLines({ name: 'x', shopname: 's' }), []);
+  } finally {
+    State.matchingList = previous;
+  }
+});
