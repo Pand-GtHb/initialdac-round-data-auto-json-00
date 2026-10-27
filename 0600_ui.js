@@ -316,8 +316,8 @@ function buildPlayerRowHTML(
     <tr
       class="${rowStateClass}${crossBucketClass}"
       data-updated="${p.updateDate}"
-      data-name="${safeName}"
-      data-shopname="${safeShop}"
+      data-name="${escapeHtmlAttr(p.name ?? "")}"
+      data-shopname="${escapeHtmlAttr(fullShop)}"
     >
       <td
         class="center clickable"
@@ -380,7 +380,7 @@ function buildPlayerRowHTML(
             text-align:left;
             cursor:pointer;
           "
-          title="タップしてPhaseを表示"
+          title="タップして情報を表示"
         >${p.updateDate}</button>
       </td>
 
@@ -1545,6 +1545,14 @@ function getRankFillStyle(rankKey) {
   }
 
   return `background: ${base};`;
+}
+
+function escapeHtmlAttr(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function getRankLegendStyle(rankKey) {

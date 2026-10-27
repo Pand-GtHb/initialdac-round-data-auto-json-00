@@ -161,8 +161,8 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v9-yellow-cycle5-20261026";
-const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v18_yellow_cycle5";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v10-strength-tier-20261027";
+const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v19_strength_tier";
 const MAX_LOG_LINES = 100;
 const DEFAULT_FILTER_MINUTES = 15;
 const DEFAULT_MY_RANK_KEY = "R7";
@@ -180,6 +180,56 @@ function analysisChecksum(value) {
     hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+const STARTUP_TRACKED_SCRIPTS = ["0500_matching.js", "0600_ui.js", "0700_app.js"];
+
+/*
+ * 起動時に1回だけ、どのスクリプト・設定で運用したかを記録する。
+ * イベントごとには保存しない（ログ肥大化の回避）。
+ */
+async function buildStartupRecord() {
+  const assetCacheKeys = {};
+  const scriptChecksum = {};
+  if (typeof document !== "undefined" && typeof fetch === "function") {
+    for (const script of document.querySelectorAll("script[src]")) {
+      const src = script.getAttribute("src") || "";
+      const file = src.split("?")[0];
+      if (!STARTUP_TRACKED_SCRIPTS.includes(file)) continue;
+      assetCacheKeys[file] = src.split("?")[1] ?? null;
+      try {
+        const response = await fetch(src, { cache: "force-cache" });
+        scriptChecksum[file] = analysisChecksum((await response.text()).replace(/\r\n/g, "\n"));
+      } catch {
+        scriptChecksum[file] = null;
+      }
+    }
+  }
+
+  const location = typeof globalThis.location !== "undefined" ? globalThis.location : null;
+  const userAgent = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+  return {
+    logSchemaVersion: ANALYSIS_LOG_SCHEMA_VERSION,
+    scriptVersion: ANALYSIS_SCRIPT_VERSION,
+    matchingScriptVersion: MATCHING_SCRIPT_VERSION,
+    configVersion: State.scoringConfig?.version ?? null,
+    configChecksum: State.scoringConfig ? analysisChecksum(State.scoringConfig) : null,
+    scriptChecksum,
+    assetCacheKeys,
+    environment: {
+      host: !location ? null : /github\.io$/.test(location.hostname) ? "published" : "local",
+      device: /Mobi|Android|iPhone|iPad/i.test(userAgent) ? "mobile" : "pc"
+    },
+    filterMinutesDefault: State.scoringConfig?.viewerDefaults?.filterMinutes ?? null
+  };
+}
+
+async function recordViewerStartup() {
+  try {
+    logEvent("startup", await buildStartupRecord());
+  } catch (error) {
+    console.error("[LOG] startup record failed", error);
+  }
 }
 
 
@@ -536,7 +586,8 @@ const ALL_CANDIDATES_COLUMNS = [
   "phaseSampleCount",
   "phaseTrust",
   "phaseAdjustValue",
-  ...CANDIDATE_TIMING_COLUMNS
+  ...CANDIDATE_TIMING_COLUMNS,
+  "strengthTier"
 ];
 
 const MAX_YELLOW_PHASE_WEIGHT = 0.55;
@@ -3810,35 +3861,59 @@ function buildPlayerPhaseSummaryText(
  MATCHING/PREVIEWで選出された候補の強み・順位を、予測時点の保存値から作る。
  強みは表示の目安であり採点には使わない（閾値は10/23〜10/26の表示候補分布に基づく）。
 ========================================================= */
+function extractStrengthSource(candidate) {
+  const detail = candidate?.__detail ?? {};
+  return {
+    phase: Number(detail.effectivePhaseScore),
+    area: Number(detail.areaBoost),
+    globalRank: candidate.__scoreRank ?? null,
+    slotRank: detail.slotRank ?? null,
+    wildcard: Boolean(candidate.__wildcard),
+    crossBucket: Boolean(candidate.__crossBucket)
+  };
+}
+
+// 強みの判定は表示と分析ログで共通（閾値は10/23〜10/26の表示候補分布に基づく表示の目安で、採点には使わない）
+function getStrengthTierLabels(phase, area) {
+  const labels = [];
+  if (Number(phase) >= 0.96) labels.push("Phase◎");
+  else if (Number(phase) >= 0.90) labels.push("Phase○");
+  if (Number(area) >= 1.04) labels.push("AREA○");
+  return labels;
+}
+
 function buildPlayerStrengthLines(player) {
   const key = buildPlayerIdentityKey(player);
   const selected = (State.matchingList || []).find(
     p => buildPlayerIdentityKey(p) === key
   );
-  if (!selected) return [];
+  let source = selected ? extractStrengthSource(selected) : null;
+  let fromCopy = false;
 
-  const detail = selected.__detail ?? {};
-  const phase = Number(detail.effectivePhaseScore);
-  const area = Number(detail.areaBoost);
-  const strengths = [];
-  if (phase >= 0.96) strengths.push("Phase◎");
-  else if (phase >= 0.90) strengths.push("Phase○");
-  if (area >= 1.04) strengths.push("AREA○");
+  // cooldown中の表示残し行は採点対象外のため、コピー直前の保存値を使う
+  if (!source) {
+    const click = (State.recentClicks || []).find(
+      r => r?.strengthSnapshot && buildPlayerIdentityKey(r) === key
+    );
+    source = click?.strengthSnapshot ?? null;
+    fromCopy = Boolean(source);
+  }
+  if (!source) return [];
 
-  const route = selected.__wildcard
+  const strengths = getStrengthTierLabels(source.phase, source.area);
+  const suffix = fromCopy ? "（cooldown/コピー前）" : "";
+
+  const route = source.wildcard
     ? "（全体高スコア）"
-    : selected.__crossBucket
+    : source.crossBucket
       ? "（帯外・個体確率）"
       : "";
-  const globalRank = selected.__scoreRank ?? "－";
-  const slotRank = detail.slotRank ?? "－";
 
   return [
-    `強み：${strengths.length ? strengths.join(" ") : "なし（枠の補充）"}`,
-    `順位：全体 ${globalRank}位／枠内 ${slotRank}位${route}`
+    `強み：${strengths.length ? strengths.join(" ") : "なし（枠の補充）"}${suffix}`,
+    `順位：全体 ${source.globalRank ?? "－"}位／枠内 ${source.slotRank ?? "－"}位${route}${suffix}`
   ];
 }
-
 /* =========================================================
  [7207] Phase Detail:showPlayerPhaseDetailDialog【DOM】
 ========================================================= */
@@ -5820,7 +5895,8 @@ async function exportTodayViewerLogsAsJSON() {
               Number(event?.t ?? 0);
 
             return (
-              event?.e === "runtime" &&
+              (event?.e === "runtime" ||
+                event?.e === "startup") &&
               ts >= startTs &&
               ts <= endTs
             );
@@ -6246,7 +6322,8 @@ function buildAllCandidateRow(
     Number(d.phaseSampleCount ?? 0),
     Number(d.phaseTrust ?? 1),
     Number(d.phaseAdjustValue ?? 0),
-    ...CANDIDATE_TIMING_COLUMNS.map(key => d[key] ?? null)
+    ...CANDIDATE_TIMING_COLUMNS.map(key => d[key] ?? null),
+    getStrengthTierLabels(d.effectivePhaseScore, d.areaBoost).join("+") || "none"
   ];
 
 }
@@ -6581,6 +6658,14 @@ function saveCopyEventUnified(
     wasInTop10:
       predictedRank !== null,
 
+    strengthTierAtPrediction:
+      scoredAtPrediction
+        ? getStrengthTierLabels(
+            scoredAtPrediction.__detail?.effectivePhaseScore,
+            scoredAtPrediction.__detail?.areaBoost
+          ).join("+") || "none"
+        : null,
+
     predictionSnapshotAvailable:
       Boolean(scoredAtPrediction),
 
@@ -6839,6 +6924,16 @@ function recordClickFromCopiedInfo(
           normalizePlayerName(p.name ?? "") === normalizedName &&
           normalizePlayerName(p.shopname ?? "") === normalizedShop
       ),
+
+    strengthSnapshot:
+      (() => {
+        const selected = (State.matchingList || []).find(
+          p =>
+            normalizePlayerName(p.name ?? "") === normalizedName &&
+            normalizePlayerName(p.shopname ?? "") === normalizedShop
+        );
+        return selected ? extractStrengthSource(selected) : null;
+      })(),
 
     /*
      * コピークリック前の状態に戻すためのスナップショット
@@ -8428,6 +8523,8 @@ async function init() {
 
   applyFilters();
 
+  recordViewerStartup();
+
   buildSummary();
 
   renderSummary();
@@ -8562,6 +8659,8 @@ async function init() {
     buildPlayerPhaseSummaryText,
     showPlayerPhaseDetailDialog,
     buildPlayerStrengthLines,
+    getStrengthTierLabels,
+    buildStartupRecord,
     getYellowPhaseScore,
     isMatchingCandidateByPhase,
     isMatchingCandidateByCopyPhase,

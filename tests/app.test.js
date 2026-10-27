@@ -544,7 +544,7 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     assert.equal(record.scoringConfigSnapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
     assert.equal(Object.hasOwn(record, 'softmaxBacktest'), false);
     assert.equal(record.analysisDiagnostics.storageCoverage.complete, true);
-    assert.equal(record.logSchemaVersion, 'slot_area_v18_yellow_cycle5');
+    assert.equal(record.logSchemaVersion, 'slot_area_v19_strength_tier');
     assert.equal(record.analysisDiagnostics.resurfacing.diagnosticOnly, true);
     assert.deepEqual(record.analysisDiagnostics.resurfacing, diagnostics.resurfacing);
     assert.deepEqual(record.analysisDiagnostics.comparisons, diagnostics.comparisons);
@@ -1231,4 +1231,37 @@ test('Strength lines show strengths and global/slot ranks only for selected cand
   } finally {
     State.matchingList = previous;
   }
+});
+test('Strength lines fall back to the pre-copy snapshot for cooldown-held rows', () => {
+  const { State, buildPlayerStrengthLines } = ViewerApp;
+  const prevList = State.matchingList;
+  const prevClicks = State.recentClicks;
+  try {
+    State.matchingList = [];
+    State.recentClicks = [{
+      name: 'p', shopname: 's',
+      strengthSnapshot: { phase: 0.97, area: 1.02, globalRank: 2, slotRank: 1, wildcard: false, crossBucket: false }
+    }];
+    assert.deepEqual(buildPlayerStrengthLines({ name: 'p', shopname: 's' }), [
+      '強み：Phase◎（cooldown/コピー前）', '順位：全体 2位／枠内 1位（cooldown/コピー前）'
+    ]);
+  } finally {
+    State.matchingList = prevList;
+    State.recentClicks = prevClicks;
+  }
+});
+test('Candidate log rows carry strengthTier and copy events record it at prediction', () => {
+  const idx = ViewerApp.ALL_CANDIDATES_COLUMNS.indexOf('strengthTier');
+  assert.equal(idx, ViewerApp.ALL_CANDIDATES_COLUMNS.length - 1);
+  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.97, 1.045), ['Phase◎', 'AREA○']);
+  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.92, 1.03), ['Phase○']);
+  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.8, 1.02), []);
+});
+test('Startup record carries versions and checksums without per-event bloat', async () => {
+  const record = await ViewerApp.buildStartupRecord();
+  assert.equal(record.logSchemaVersion, 'slot_area_v19_strength_tier');
+  assert.ok(record.scriptVersion);
+  assert.ok(record.matchingScriptVersion);
+  assert.ok('configChecksum' in record);
+  assert.deepEqual(record.assetCacheKeys, {});
 });
