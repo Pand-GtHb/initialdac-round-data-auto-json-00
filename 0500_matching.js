@@ -13,7 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
-  const MATCHING_SCRIPT_VERSION = "matching-policy-v7-yellow-cycle5-20261026";
+  const MATCHING_SCRIPT_VERSION = "matching-policy-v8-yellow-cycle5-shadow-20261027";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -1731,6 +1731,10 @@
   const SCORING_POLICY_COMPARISONS = Object.freeze([
     Object.freeze({ variant: "yellowDecay010", id: "yellow-phase-decay-010", lambda: 0.10, scaleSec: 90 }),
     Object.freeze({ variant: "yellowPrevious", id: "yellow-phase-decay-003", lambda: 0.03, scaleSec: 90 }),
+    Object.freeze({
+      variant: "yellowNoDecayThrough4", id: "yellow-phase-no-decay-through-4",
+      lambda: null, noDecayThroughCycleCount: 4, scaleSec: 90
+    }),
     Object.freeze({ variant: "yellowError60", id: "yellow-phase-error-060", lambda: 0.03, scaleSec: 60 }),
     Object.freeze({ variant: "yellowNoDecay", id: "yellow-phase-no-decay", lambda: 0, scaleSec: 90 }),
     Object.freeze({ variant: "areaRecent", id: "area-basic-recent", area: "basic-recent" }),
@@ -1786,7 +1790,8 @@
   }
 
   function evaluateShadowCandidateComparison(pool, {
-    variant, scoringConfig, slotPlan = [], copyAreaHistory = [], evaluationTimeMs
+    variant, scoringConfig, slotPlan = [], copyAreaHistory = [], evaluationTimeMs,
+    getStrengthTierLabels = () => []
   }, context) {
     const policy = SCORING_POLICY_COMPARISONS.find(entry => entry.variant === variant);
     if (!policy && !["dayRelativeArea", "yellowPhase"].includes(variant)) {
@@ -1794,6 +1799,36 @@
     }
     const settings = policy ? { enabled: true, ...policy } : scoringConfig.experimental[variant];
     if (!settings.enabled) return { status: "disabled", parameters: { ...settings }, selected: [] };
+
+    const phasePolicyEnabled = policy &&
+      (policy.lambda !== undefined || policy.noDecayThroughCycleCount !== undefined);
+    const configuredYellowLambda = Number(
+      scoringConfig.phaseError?.yellowLambda ?? scoringConfig.phaseError?.lambda ?? 0.06
+    );
+    const phaseCycleCounts = {
+      "0": 0, "1": 0, "2": 0, "3": 0, "4": 0, "5+": 0, unknown: 0
+    };
+    if (policy?.noDecayThroughCycleCount !== undefined) {
+      for (const candidate of pool) {
+        const detail = candidate.__detail ?? {};
+        if (detail.isPinkManaged) continue;
+        const diffSec = (evaluationTimeMs - detail.phaseAnchorAtMs) / 1000;
+        const cycleCount =
+          typeof detail.phaseAnchorAtMs === "number" &&
+          detail.phaseAnchorType !== "unavailable" &&
+          Number.isFinite(detail.cycleSec) && detail.cycleSec > 0 &&
+          Number.isFinite(diffSec) && diffSec >= 0
+            ? Math.floor(diffSec / detail.cycleSec)
+            : detail.cycleCount;
+        if (!Number.isFinite(cycleCount) || cycleCount < 0) {
+          phaseCycleCounts.unknown++;
+        } else {
+          const key = cycleCount > policy.noDecayThroughCycleCount
+            ? "5+" : String(cycleCount);
+          phaseCycleCounts[key] = (phaseCycleCounts[key] ?? 0) + 1;
+        }
+      }
+    }
 
     const isArea = variant === "dayRelativeArea" || policy?.area === "day-only";
     let dayArea = null;
@@ -1820,6 +1855,9 @@
     let unavailablePhaseCount = 0;
 
     // All selection flags and score details belong to diagnostic clones only.
+    const originalDetailsByKey = new Map(pool.map(p => [
+      ViewerDomain.buildPlayerIdentityKey(p), p.__detail ?? {}
+    ]));
     const clones = pool.map(p => {
       const clone = { ...p, __detail: { ...p.__detail } };
       for (const key of ["__crossBucket", "__wildcard", "__pinkCapBackfill",
@@ -1827,12 +1865,21 @@
       const d = clone.__detail;
       if (policy) {
         let effective = d.effectivePhaseScore;
-        if (policy.lambda !== undefined && !d.isPinkManaged) {
+        if (phasePolicyEnabled && !d.isPinkManaged) {
           const diffSec = (evaluationTimeMs - d.phaseAnchorAtMs) / 1000;
           if (typeof d.phaseAnchorAtMs === "number" && Number.isFinite(d.phaseAnchorAtMs) &&
               d.phaseAnchorType !== "unavailable" && Number.isFinite(d.cycleSec) &&
               d.cycleSec > 0 && Number.isFinite(diffSec) && diffSec >= 0) {
-            Object.assign(d, ViewerDomain.computePhaseMetrics(diffSec, d.cycleSec, policy.lambda, policy.scaleSec));
+            const cycleCount = Math.floor(diffSec / d.cycleSec);
+            const lambda = policy.noDecayThroughCycleCount !== undefined
+              ? cycleCount <= policy.noDecayThroughCycleCount ? 0 : configuredYellowLambda
+              : policy.lambda;
+            Object.assign(d, ViewerDomain.computePhaseMetrics(
+              diffSec, d.cycleSec, lambda,
+              policy.scaleSec ?? scoringConfig.phaseError?.yellowScaleSec ??
+                scoringConfig.phaseError?.scaleSec ?? 90
+            ));
+            d.phaseDecayLambda = lambda;
             effective = 1 - d.phaseWeight * (1 - d.finalPhaseScore);
           } else {
             unavailablePhaseCount++;
@@ -1860,7 +1907,7 @@
         d.recentAreaAppliedBoost = recent;
         d.recentAreaCounterfactualBoostWindow = recent;
         // Preserve non-AREA global weighting exactly for AREA-only comparisons.
-        if (policy.lambda !== undefined && !d.isPinkManaged) {
+        if (phasePolicyEnabled && !d.isPinkManaged) {
           clone.__score = d.historicalScore * d.realtimeBoost * d.pinkMismatchBoostFactor * effective;
           d.score = clone.__score;
         }
@@ -1904,6 +1951,30 @@
       p.__crossBucketSelectionReason = "global-high-score";
     });
     const selected = [...normal, ...cross, ...wildcard];
+    const selectedKeys = new Set(selected.map(ViewerDomain.buildPlayerIdentityKey));
+    const strengthTierTransitions = variant === "yellowNoDecayThrough4"
+      ? clones.flatMap(candidate => {
+        const key = ViewerDomain.buildPlayerIdentityKey(candidate);
+        const original = originalDetailsByKey.get(key) ?? {};
+        const currentStrengthTier =
+          getStrengthTierLabels(original.effectivePhaseScore, original.areaBoost).join("+") || "none";
+        const counterfactualStrengthTier =
+          getStrengthTierLabels(candidate.__detail.effectivePhaseScore, candidate.__detail.areaBoost)
+            .join("+") || "none";
+        if (currentStrengthTier !== "none" || counterfactualStrengthTier === "none") return [];
+        return [{
+          name: candidate.name,
+          shopname: candidate.shopname ?? "",
+          rankKey: candidate.__rankKey,
+          currentStrengthTier,
+          counterfactualStrengthTier,
+          phaseCycleCount: candidate.__detail.cycleCount ?? null,
+          currentEffectivePhaseScore: original.effectivePhaseScore ?? null,
+          counterfactualEffectivePhaseScore: candidate.__detail.effectivePhaseScore ?? null,
+          selectedInCounterfactual: selectedKeys.has(key)
+        }];
+      })
+      : [];
     return {
       status: "computed",
       parameters: {
@@ -1925,6 +1996,13 @@
           formula: "1 + weight * clamp((observed - expected) / (expected + smoothingCount), 0, 1)"
         } : policy ? {
           phaseScope: policy.lambda === undefined ? "unchanged" : "yellow-only",
+          ...(policy.noDecayThroughCycleCount !== undefined ? {
+            phaseScope: "yellow-cycle-count",
+            lambdaAfterCutoff: configuredYellowLambda,
+            noDecayThroughCycleCount: policy.noDecayThroughCycleCount,
+            cycleCountBasis: "floor((evaluationTimeMs-phaseAnchorAtMs)/cycleSec)",
+            cycleCounts: phaseCycleCounts
+          } : {}),
           pinkPhaseUnchanged: true, scoringTrustApplied: false,
           unavailablePhaseCount, unavailablePhaseRule: "preserve-observed-phase",
           ...(recentHistory ? {
@@ -1935,6 +2013,11 @@
         populationAndSlotPlan: "same-as-production",
         slotPlan: slotPlan.map(entry => ({ ...entry }))
       },
+      ...(variant === "yellowNoDecayThrough4" ? {
+        strengthTierTransitionRule: "current-none-to-counterfactual-strength",
+        strengthTierTransitionCount: strengthTierTransitions.length,
+        strengthTierTransitions
+      } : {}),
       selected
     };
   }
