@@ -402,12 +402,7 @@ test("policy comparisons independently rescore Phase and AREA without learning o
   });
   const cutoffResult = M.buildShadowCandidateComparison(cyclePool, {
     variant: "yellowNoDecayThrough4", scoringConfig: config,
-    slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at,
-    getStrengthTierLabels: (phase, area) => {
-      if (phase >= 0.96) return ["Phase★★★"];
-      if (phase >= 0.90) return ["Phase★★"];
-      return area >= 1.04 ? ["AREA＋"] : [];
-    }
+    slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at
   });
   assert.deepEqual({ ...cutoffResult.parameters.cycleCounts }, {
     "0": 1, "1": 2, "2": 2, "3": 2, "4": 2, "5+": 2, unknown: 0
@@ -418,30 +413,7 @@ test("policy comparisons independently rescore Phase and AREA without learning o
     assert.equal(candidate.__detail.phaseDecayLambda, cycles <= 4 ? 0 : config.phaseError.yellowLambda);
   }
 
-  const transitionCandidate = cyclePool[5];
-  const fourCycleDiff = 4 * transitionCandidate.__detail.cycleSec;
-  transitionCandidate.__detail.phaseAnchorAtMs = at - fourCycleDiff * 1000;
-  const currentMetrics = context.ViewerDomain.computePhaseMetrics(
-    fourCycleDiff, transitionCandidate.__detail.cycleSec, config.phaseError.yellowLambda, 90
-  );
-  transitionCandidate.__detail.effectivePhaseScore =
-    1 - transitionCandidate.__detail.phaseWeight * (1 - currentMetrics.finalPhaseScore);
-  transitionCandidate.__detail.areaBoost = 1;
-  const transitionResult = M.buildShadowCandidateComparison(cyclePool, {
-    variant: "yellowNoDecayThrough4", scoringConfig: config,
-    slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at,
-    getStrengthTierLabels: (phase, area) => {
-      if (phase >= 0.96) return ["Phase★★★"];
-      if (phase >= 0.90) return ["Phase★★"];
-      return area >= 1.04 ? ["AREA＋"] : [];
-    }
-  });
-  assert.ok(transitionResult.strengthTierTransitions.some(change =>
-    change.name === transitionCandidate.name &&
-    change.currentStrengthTier === "none" &&
-    change.counterfactualStrengthTier === "Phase★★★" &&
-    change.phaseCycleCount === 4
-  ));
+  assert.equal(Object.hasOwn(cutoffResult, "strengthTierTransitions"), false);
   const options = { scoringConfig: config, slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at };
   const variants = [
     { variant: "dayRelativeArea", id: "day-relative-area" },

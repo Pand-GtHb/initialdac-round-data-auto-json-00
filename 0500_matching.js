@@ -13,7 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
-  const MATCHING_SCRIPT_VERSION = "matching-policy-v8-yellow-cycle5-shadow-20261027";
+  const MATCHING_SCRIPT_VERSION = "matching-policy-v9-cycle4-phase-features-20261028";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -528,6 +528,10 @@
           : ownCell?.pooledTierProbability ?? 1.0,
       tierCandidateCount,
       minOwnSamplesForNoBackoff: ctx.minOwnSamplesForNoBackoff,
+      candidateCountAlpha: Number(
+        (scoringConfig ?? getState()?.scoringConfig)?.historical?.candidateCountAlpha ??
+        HISTORICAL_CANDIDATE_COUNT_ALPHA
+      ),
       ownReliability,
       ownSampleCount: ctx.ownDistribution.total,
       adjacentSampleCount: ctx.adjacentDistribution?.total ?? 0,
@@ -1790,8 +1794,7 @@
   }
 
   function evaluateShadowCandidateComparison(pool, {
-    variant, scoringConfig, slotPlan = [], copyAreaHistory = [], evaluationTimeMs,
-    getStrengthTierLabels = () => []
+    variant, scoringConfig, slotPlan = [], copyAreaHistory = [], evaluationTimeMs
   }, context) {
     const policy = SCORING_POLICY_COMPARISONS.find(entry => entry.variant === variant);
     if (!policy && !["dayRelativeArea", "yellowPhase"].includes(variant)) {
@@ -1855,9 +1858,6 @@
     let unavailablePhaseCount = 0;
 
     // All selection flags and score details belong to diagnostic clones only.
-    const originalDetailsByKey = new Map(pool.map(p => [
-      ViewerDomain.buildPlayerIdentityKey(p), p.__detail ?? {}
-    ]));
     const clones = pool.map(p => {
       const clone = { ...p, __detail: { ...p.__detail } };
       for (const key of ["__crossBucket", "__wildcard", "__pinkCapBackfill",
@@ -1951,30 +1951,6 @@
       p.__crossBucketSelectionReason = "global-high-score";
     });
     const selected = [...normal, ...cross, ...wildcard];
-    const selectedKeys = new Set(selected.map(ViewerDomain.buildPlayerIdentityKey));
-    const strengthTierTransitions = variant === "yellowNoDecayThrough4"
-      ? clones.flatMap(candidate => {
-        const key = ViewerDomain.buildPlayerIdentityKey(candidate);
-        const original = originalDetailsByKey.get(key) ?? {};
-        const currentStrengthTier =
-          getStrengthTierLabels(original.effectivePhaseScore, original.areaBoost).join("+") || "none";
-        const counterfactualStrengthTier =
-          getStrengthTierLabels(candidate.__detail.effectivePhaseScore, candidate.__detail.areaBoost)
-            .join("+") || "none";
-        if (currentStrengthTier !== "none" || counterfactualStrengthTier === "none") return [];
-        return [{
-          name: candidate.name,
-          shopname: candidate.shopname ?? "",
-          rankKey: candidate.__rankKey,
-          currentStrengthTier,
-          counterfactualStrengthTier,
-          phaseCycleCount: candidate.__detail.cycleCount ?? null,
-          currentEffectivePhaseScore: original.effectivePhaseScore ?? null,
-          counterfactualEffectivePhaseScore: candidate.__detail.effectivePhaseScore ?? null,
-          selectedInCounterfactual: selectedKeys.has(key)
-        }];
-      })
-      : [];
     return {
       status: "computed",
       parameters: {
@@ -2013,11 +1989,6 @@
         populationAndSlotPlan: "same-as-production",
         slotPlan: slotPlan.map(entry => ({ ...entry }))
       },
-      ...(variant === "yellowNoDecayThrough4" ? {
-        strengthTierTransitionRule: "current-none-to-counterfactual-strength",
-        strengthTierTransitionCount: strengthTierTransitions.length,
-        strengthTierTransitions
-      } : {}),
       selected
     };
   }
