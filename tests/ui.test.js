@@ -238,3 +238,63 @@ test("AREA search skips Phase and chart aggregation while unfiltered view retain
   assert.match(area.innerHTML, /TOTAL_1/);
   assert.match(area.innerHTML, /area-summary-list/);
 });
+
+test("AREA detail snapshots rank filters once for all players", () => {
+  const players = Array.from({ length: 100 }, (_, i) => ({
+    name: `PLAYER_${i}`, area: i < 80 ? "1" : "2",
+    __rankKey: i % 2 ? "R6" : "R7", starCnt: i % 2 ? 6 : 7
+  }));
+  const context = createUIContext({ detailOriginal: players, searchText: "" });
+  const area = { innerHTML: "", querySelector: () => null, querySelectorAll: () => [] };
+  context.document.getElementById = id => id === "detailArea" ? area
+    : id === "area-summary-view-styles" ? {} : null;
+  context.getAreaDisplayName = () => "AREA";
+  context.setupAreaNavigation = () => {};
+  let rubyReads = 0;
+  let prideReads = 0;
+  let predicates = 0;
+  context.readSelectedStars = () => { rubyReads++; return [7]; };
+  context.readSelectedPrides = () => { prideReads++; return []; };
+  context.isPlayerIncludedInRankFilters = (player, filters) => {
+    predicates++;
+    return filters.selectedStars.includes(player.starCnt);
+  };
+  context.ViewerUI.renderAreaDetailTable(1);
+  assert.equal(rubyReads, 1);
+  assert.equal(prideReads, 1);
+  assert.equal(predicates, 80);
+  assert.match(area.innerHTML, /title="★7: 40人"/);
+  assert.doesNotMatch(area.innerHTML, /title="★6:/);
+});
+
+test("Row highlighting shares its timestamp and skips Yellow checks for active Pink", () => {
+  const context = createUIContext();
+  const rows = ["pink", "yellow", "neither"].map(name => ({
+    dataset: { name, shopname: "S", updated: "2026-10-29T10:00:00Z" },
+    classes: new Set(["match-row-pink", "match-row-yellow"])
+  }));
+  for (const row of rows) {
+    row.classList = {
+      remove: (...names) => names.forEach(name => row.classes.delete(name)),
+      add: name => row.classes.add(name)
+    };
+  }
+  const pinkCalls = [];
+  const yellowCalls = [];
+  context.isMatchingCandidateByCopyPhase = (player, now) => {
+    pinkCalls.push([player.name, now]);
+    return player.name === "pink";
+  };
+  context.isMatchingCandidateByPhase = (player, now) => {
+    yellowCalls.push([player.name, now]);
+    return player.name === "yellow";
+  };
+  context.ViewerUI.highlightMatchingRows({ querySelectorAll: () => rows });
+  assert.deepEqual(pinkCalls.map(c => c[0]), ["pink", "yellow", "neither"]);
+  assert.deepEqual(yellowCalls.map(c => c[0]), ["yellow", "neither"]);
+  assert.equal(new Set([...pinkCalls, ...yellowCalls].map(c => c[1])).size, 1);
+  assert.equal(typeof pinkCalls[0][1], "number");
+  assert.deepEqual(Array.from(rows[0].classes), ["match-row-pink"]);
+  assert.deepEqual(Array.from(rows[1].classes), ["match-row-yellow"]);
+  assert.equal(rows[2].classes.size, 0);
+});

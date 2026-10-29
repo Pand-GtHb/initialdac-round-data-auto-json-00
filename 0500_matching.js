@@ -13,7 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
-  const MATCHING_SCRIPT_VERSION = "matching-policy-v9-cycle4-phase-features-20261028";
+  const MATCHING_SCRIPT_VERSION = "matching-policy-v10-yellow-cycle4-20261029";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -101,7 +101,10 @@
         yellow: { weight: 0.55, baseCycleSec: 345, alpha: 0.12, maxShiftSec: 30, minSamples: 8, maxSampleAgeSec: 2700 },
         pink: { weight: 0.55, baseCycleSec: 345, alpha: 0.18, maxShiftSec: 45, minSamples: 8 }
       },
-      phaseError: { scaleSec: 90, yellowThreshold: 0.7, pinkThreshold: 0.55, yellowLambda: 0.06, pinkLambda: 0.03 },
+      phaseError: {
+        scaleSec: 90, yellowThreshold: 0.7, pinkThreshold: 0.55,
+        yellowLambda: 0.06, pinkLambda: 0.03, yellowNoDecayThroughCycleCount: 0
+      },
       experimental: {
         dayRelativeArea: { enabled: true, weight: 0.30, smoothingCount: 2 },
         yellowPhase: { enabled: true, weight: 0.70 }
@@ -170,6 +173,7 @@
       number(name, 0, Number.MAX_SAFE_INTEGER, true);
     }
     number("viewerDefaults.filterMinutes", 1, Number.MAX_SAFE_INTEGER, true);
+    number("phaseError.yellowNoDecayThroughCycleCount", 0, Number.MAX_SAFE_INTEGER, true);
     if (![15, 30, 60, 120, 180].includes(config.viewerDefaults.filterMinutes)) {
       invalid("viewerDefaults.filterMinutes must match a filter option: 15, 30, 60, 120, 180");
     }
@@ -203,7 +207,8 @@
       schemaVersion: config.meta.schemaVersion, version: config.meta.version, effective,
       phaseScoring: {
         formula: "1 - phaseWeight * (1 - finalPhaseScore)",
-        finalPhaseFormula: "exp(-0.5 * (phaseError / scaleSec)^2) * exp(-lambda * cycleCount)",
+        finalPhaseFormula: "exp(-0.5 * (phaseError / scaleSec)^2) * exp(-effectiveLambda * cycleCount)",
+        effectiveLambda: "Yellow: cycleCount <= yellowNoDecayThroughCycleCount ? 0 : yellowLambda; Pink: pinkLambda",
         scoringTrustApplied: false,
         phaseTrustRole: "cycle-learning-diagnostic"
       }
@@ -1129,17 +1134,8 @@
     let ledger;
     try {
       const raw = storage ? storage.getItem(storageKey) : null;
-      ledger = raw ? JSON.parse(raw) : {
-        version: 1, lastGenerationMs: null, credit: 0, granted: false,
-        countedGenerations: 0, grantedGenerations: 0
-      };
-      if (ledger?.version !== 1 ||
-          !(ledger.lastGenerationMs === null || Number.isFinite(ledger.lastGenerationMs)) ||
-          !Number.isFinite(ledger.credit) || ledger.credit < 0 || ledger.credit > 1 ||
-          typeof ledger.granted !== "boolean" ||
-          !Number.isSafeInteger(ledger.countedGenerations) || ledger.countedGenerations < 0 ||
-          !Number.isSafeInteger(ledger.grantedGenerations) || ledger.grantedGenerations < 0 ||
-          ledger.grantedGenerations > ledger.countedGenerations) {
+      ledger = raw ? JSON.parse(raw) : ViewerPersistence.createDefaultR6PrideLedger();
+      if (!ViewerPersistence.isValidR6PrideLedger(ledger)) {
         throw new Error("invalid R6 PRIDE frequency ledger");
       }
     } catch (error) {
@@ -1733,6 +1729,7 @@
   }
 
   const SCORING_POLICY_COMPARISONS = Object.freeze([
+    Object.freeze({ variant: "yellowDecay006", id: "yellow-phase-decay-006", lambda: 0.06, scaleSec: 90 }),
     Object.freeze({ variant: "yellowDecay010", id: "yellow-phase-decay-010", lambda: 0.10, scaleSec: 90 }),
     Object.freeze({ variant: "yellowPrevious", id: "yellow-phase-decay-003", lambda: 0.03, scaleSec: 90 }),
     Object.freeze({

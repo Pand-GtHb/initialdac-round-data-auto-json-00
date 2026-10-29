@@ -113,82 +113,172 @@ test('Initial JSON request results preserve successes and isolate failures', asy
   assert.match(results[1].reason.message, /offline/);
 });
 
-test('Known stale integrated data blocks matching and preview candidate generation', () => {
-  const { State } = ViewerApp;
-  const previous = {
-    generatedAt: State.generatedAt,
-    latestUpdateAt: State.latestUpdateAt,
-    currentView: State.currentView,
-    matchingContext: State.matchingContext,
-    matchingList: State.matchingList,
-    matchingScoredAll: State.matchingScoredAll,
-    matchingFilteredPopulationCount: State.matchingFilteredPopulationCount,
-    activeCandidateEventId: State.activeCandidateEventId,
-    latestCandidateEventIdForCopy: State.latestCandidateEventIdForCopy
-  };
-  const previousDocumentHead = document.head;
-  try {
-    State.generatedAt = '2026/10/27 16:01:02';
-    State.latestUpdateAt = '2026-10-27 16:16:02';
-    State.currentView = ViewerApp.STATE.SUMMARY;
-    State.matchingList = [{ name: 'STALE' }];
-    State.matchingScoredAll = [{ name: 'STALE' }];
-    State.matchingFilteredPopulationCount = 1;
-    State.activeCandidateEventId = 123;
-    State.latestCandidateEventIdForCopy = 123;
-
-    assert.equal(
-      ViewerApp.isIntegratedDataBehindLatestUpdate(),
-      true
-    );
-    assert.equal(
-      ViewerApp.isIntegratedDataBehindLatestUpdate(
-        '2026-10-27 16:01:02',
-        '2026/10/27 16:01:02'
-      ),
-      false
-    );
-    assert.equal(
-      ViewerApp.isIntegratedDataBehindLatestUpdate('', '2026/10/27 16:01:02'),
-      false
-    );
-    document.head = { appendChild: () => {} };
-    State.currentView = ViewerApp.STATE.MATCHING;
-    State.matchingContext = { mode: 'matching' };
-    ViewerApp.copyToClipboard('STALE', 'STALE', 'SHOP');
-    assert.deepEqual(State.matchingList, []);
-    assert.equal(State.latestCandidateEventIdForCopy, null);
-
-    State.currentView = ViewerApp.STATE.SUMMARY;
-    assert.equal(
-      ViewerApp.showMatchingCandidates({
-        mode: 'matching',
-        saveEvent: true
-      }),
-      false
-    );
-    assert.equal(
-      ViewerApp.showMatchingCandidates({
-        mode: 'preview'
-      }),
-      false
-    );
-    assert.equal(
-      ViewerApp.buildMatchingCandidates({
-        saveEvent: false
-      }),
-      false
-    );
-    assert.equal(State.currentView, ViewerApp.STATE.SUMMARY);
-    assert.deepEqual(State.matchingList, []);
-    assert.deepEqual(State.matchingScoredAll, []);
-    assert.equal(State.matchingFilteredPopulationCount, 0);
-    assert.equal(State.activeCandidateEventId, null);
-    assert.equal(State.latestCandidateEventIdForCopy, null);
-  } finally {
-    Object.assign(State, previous);
-    document.head = previousDocumentHead;
+function createLoadedDataApp() {
+  const vm = require('node:vm');
+  const records = [];
+  const errors = [];
+  const warnings = [];
+  const clipboard = [];
+  const storage = {};
+  const context = vm.createContext({
+    console, Date, setTimeout, clearTimeout, performance, TextEncoder,
+    localStorage: {
+      getItem: key => storage[key] ?? null,
+      setItem: (key, value) => { storage[key] = String(value); },
+      removeItem: key => { delete storage[key]; },
+      key: i => Object.keys(storage)[i],
+      get length() { return Object.keys(storage).length; }
+    },
+    document: {
+      getElementById: () => null,
+      querySelectorAll: selector => selector.includes('.ruby-filter:checked')
+        ? [{ value: '6' }, { value: '7' }] : [],
+      createElement: () => ({ style: {} }),
+      head: { appendChild() {} }
+    },
+    navigator: { clipboard: { writeText: async text => { clipboard.push(text); } } }
+  });
+  for (const file of ['0100_utils.js', '0200_domain.js', '0300_persistence.js',
+    '0400_data.js', '0500_matching.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
+  context.ViewerPersistence.logEvent = (type, record) => records.push({ e: type, ...record });
+  context.ViewerData.fetchLatestUpdateJson = (...args) => context.latestUpdateRequest(...args);
+  context.ViewerData.fetchRoundDataJson = (...args) => context.roundDataRequest(...args);
+  context.ViewerUI = {
+    log() {}, logWarn: message => warnings.push(message), logError: message => errors.push(message),
+    renderMatchingHeader() {}, renderMatchingTable() {}, renderSummary() {},
+    renderDetailTable() {}, switchDisplayView() {}, startProgress() {}, stopProgress() {}
+  };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '0700_app.js'), 'utf8'), context);
+  const app = context.ViewerApp;
+  app.applyScoringConfigJson(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+  const { State } = app;
+  State.generatedAt = new Date(Date.now() - 600000).toISOString();
+  State.latestUpdateAt = new Date(Date.now() - 60000).toISOString();
+  State.all = Array.from({ length: 15 }, (_, i) => ({
+    name: `LOADED_${i}`, shopname: `SHOP_${i}`,
+    onlineBattleRankId: context.ViewerDomain.RUBY_ID,
+    starCnt: i < 10 ? 6 : 7, area: '1',
+    updateDate: new Date(Date.now() - 690000).toISOString()
+  }));
+  app.applyFilters();
+  return { app, context, records, errors, warnings, clipboard };
+}
+
+test('Newer published data does not block matching, preview, or candidate regeneration', () => {
+  const { app, records, errors } = createLoadedDataApp();
+  const { State } = app;
+  assert.equal(app.isIntegratedDataBehindLatestUpdate(), true);
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  assert.equal(State.currentView, app.STATE.MATCHING);
+  assert.equal(State.matchingList.length, 10);
+  assert.equal(State.matchingScoredAll.length, 15);
+  const saved = records.find(r => r.e === 'candidate');
+  assert(saved);
+  assert.equal(saved.integratedDataGeneratedAt, State.generatedAt);
+  assert.equal(saved.latestUpdateAt, State.latestUpdateAt);
+  assert.equal(State.latestCandidateEventIdForCopy, saved.id);
+  app.showMatchingCandidates({ mode: 'preview', push: false });
+  assert.equal(State.matchingContext.mode, 'preview');
+  assert.equal(State.matchingList.length, 10);
+  assert.equal(State.latestCandidateEventIdForCopy, null);
+  app.buildMatchingCandidates({ saveEvent: false });
+  assert.equal(State.matchingList.length, 10);
+  assert.equal(errors.length, 0);
+});
+
+test('Update detection retains loaded candidates, ranks and prediction links', async () => {
+  const { app, context, errors, warnings } = createLoadedDataApp();
+  const { State } = app;
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  const list = State.matchingList;
+  const ranked = State.matchingRankedAll;
+  const predictionId = State.latestCandidateEventIdForCopy;
+  State.latestUpdateAt = State.generatedAt;
+  const newer = new Date().toISOString();
+  context.latestUpdateRequest = async () => ({ lastUpdated: newer });
+  context.roundDataRequest = async () => { throw new Error('prefetch offline'); };
+  await app.checkUpdate();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(State.latestUpdateAt, newer);
+  assert.equal(State.pendingPrefetchForUpdateAt, newer);
+  assert.equal(State.matchingList, list);
+  assert.equal(State.matchingRankedAll, ranked);
+  assert.equal(State.latestCandidateEventIdForCopy, predictionId);
+  assert.equal(State.activeCandidateEventId, predictionId);
+  assert.equal(State.prefetchInFlight, null);
+  assert(warnings.some(message => message.includes('prefetch offline')));
+  assert.equal(errors.length, 0);
+});
+
+test('Reload failure preserves loaded data and predictions and reports the fetch error', async () => {
+  const { app, context, errors } = createLoadedDataApp();
+  const { State } = app;
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  const data = State.all;
+  const filtered = State.filtered;
+  const list = State.matchingList;
+  const generatedAt = State.generatedAt;
+  const predictionId = State.latestCandidateEventIdForCopy;
+  const newer = new Date().toISOString();
+  context.latestUpdateRequest = async () => ({ lastUpdated: newer });
+  context.roundDataRequest = async () => { throw new Error('offline'); };
+  assert.equal(await app.reloadLatestDataPreferPrefetch(), false);
+  assert.equal(State.all, data);
+  assert.equal(State.filtered, filtered);
+  assert.equal(State.generatedAt, generatedAt);
+  assert.equal(State.matchingList, list);
+  assert.equal(State.latestCandidateEventIdForCopy, predictionId);
+  assert.equal(State.activeCandidateEventId, predictionId);
+  assert.equal(State.latestUpdateAt, newer);
+  assert.equal(State.pendingPrefetchForUpdateAt, newer);
+  assert.equal(State.currentView, app.STATE.MATCHING);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /offline/);
+});
+
+test('Copy after update detection keeps saved prediction ranks and runs normal copy processing', async () => {
+  const { app, records, clipboard, errors } = createLoadedDataApp();
+  const { State } = app;
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  const predictionId = State.latestCandidateEventIdForCopy;
+  const player = State.matchingList[0];
+  const predictedRank = player.displayRank;
+  const scoreRank = player.__scoreRank;
+  app.copyToClipboard(player.name, player.name, player.shopname);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(clipboard, [player.name]);
+  const copy = records.find(r => r.e === 'copy');
+  assert(copy);
+  assert.equal(copy.candidateEventId, predictionId);
+  assert.equal(copy.predictionSnapshotAvailable, true);
+  assert.equal(copy.scoreSource, 'prediction');
+  assert.equal(copy.predictedRank, predictedRank);
+  assert.equal(copy.scoreRank, scoreRank);
+  assert.equal(copy.wasInTop10, true);
+  assert.equal(copy.integratedDataGeneratedAtAtCopy, State.generatedAt);
+  assert.equal(copy.latestUpdateAtAtCopy, State.latestUpdateAt);
+  assert.equal(State.recentClicks[0].name, player.name);
+  assert(app.getPinkTarget(player));
+  assert(State.matchingScoredAll.length > 0);
+  assert.equal(errors.length, 0);
+});
+
+test('Reload latest-update failure returns false without losing candidates or masking the fetch error', async () => {
+  const { app, context, errors } = createLoadedDataApp();
+  const { State } = app;
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  const list = State.matchingList;
+  const latest = State.latestUpdateAt;
+  const predictionId = State.latestCandidateEventIdForCopy;
+  context.latestUpdateRequest = async () => { throw new Error('latest offline'); };
+  assert.equal(await app.reloadLatestDataPreferPrefetch(), false);
+  assert.equal(State.matchingList, list);
+  assert.equal(State.latestUpdateAt, latest);
+  assert.equal(State.latestCandidateEventIdForCopy, predictionId);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /latest offline/);
 });
 
 test('Pink cycle learning respects zero shift and zero alpha settings', () => {
@@ -482,17 +572,62 @@ test('Yellow and Pink share Phase weight but use independent decay, without scor
       assert.equal(yellow.phaseTrust, trust);
       assert.equal(pink.phaseTrust, 1 - trust);
       assert.equal(pink.phaseError, yellow.phaseError);
-      assert.ok(Math.abs(yellow.decay - Math.exp(-0.06 * 2)) < 1e-12);
+      assert.equal(yellow.decay, 1);
       assert.ok(Math.abs(pink.decay - Math.exp(-0.03 * 2)) < 1e-12);
-      assert.ok(yellow.finalPhaseScore < pink.finalPhaseScore);
-      assert.ok(yellow.effectivePhaseScore < pink.effectivePhaseScore);
-      assert.ok(yellow.score < pink.score);
+      assert.ok(yellow.finalPhaseScore > pink.finalPhaseScore);
+      assert.ok(yellow.effectivePhaseScore > pink.effectivePhaseScore);
+      assert.ok(yellow.score > pink.score);
       if (baseline !== undefined) assert.equal(pink.score, baseline);
       baseline = pink.score;
       assert.equal(JSON.stringify({
         diag: State.phaseDiag, adjust: State.phaseAdjust, targets: State.pinkTargets
       }), learningBefore);
     }
+  } finally {
+    Object.assign(State, previous);
+  }
+});
+
+test('Yellow no-decay cutoff is shared by scoring, phase judgment and live detail at exact boundaries', () => {
+  const { State } = ViewerApp;
+  const previous = { ...State };
+  try {
+    State.scoringConfig = ViewerMatching.resolveScoringConfig(
+      JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+    State.phaseAdjust = { yellow: 0, pink: 0 };
+    State.pinkTargets = {};
+    State.yellowSamples = [];
+    State.myRankKey = 'R7';
+    const anchor = Date.parse('2026-10-29T17:00:00+09:00');
+    const player = {
+      name: 'CUTOFF', shopname: 'S', area: '1',
+      onlineBattleRankId: ViewerDomain.RUBY_ID, starCnt: 7,
+      updateDate: '2026/10/29 17:00:00'
+    };
+    for (const diffSec of [0, 100, 345, 4 * 345, 4 * 345 + 70, 5 * 345 - .001, 5 * 345, 5 * 345 + 30, 6 * 345]) {
+      const now = anchor + diffSec * 1000;
+      const cycle = Math.floor(diffSec / 345);
+      const lambda = cycle <= 4 ? 0 : .06;
+      const expected = ViewerDomain.computePhaseMetrics(diffSec, 345, lambda, 90);
+      const detail = ViewerApp.calcMatchingScoreDetail(player, { R7: 1 }, null, now);
+      assert.equal(ViewerApp.getPhaseLambda('yellow', diffSec, 345), lambda);
+      assert.equal(detail.decay, expected.decay);
+      assert.equal(detail.finalPhaseScore, expected.finalPhaseScore);
+      assert.equal(ViewerApp.getYellowPhaseScore(player, now), expected.finalPhaseScore);
+      assert.equal(ViewerApp.isMatchingCandidateByPhase(player, now), expected.finalPhaseScore > .7);
+      const live = ViewerApp.getPlayerPhaseDetail(player, now);
+      assert.equal(live.cycleCount, expected.cycleCount);
+      assert.equal(live.phaseError, expected.phaseError);
+      assert.equal(ViewerApp.getPhaseLambda('pink', diffSec, 345), .03);
+    }
+    assert.equal(ViewerApp.getYellowPhaseScore(player, anchor - 1), 0);
+    assert.equal(ViewerApp.isMatchingCandidateByPhase(player, anchor - 1), false);
+    const missing = { ...player, updateDate: null };
+    assert.equal(ViewerApp.getYellowPhaseScore(missing, anchor), 0);
+    assert(ViewerApp.getPlayerPhaseDetail(missing, anchor).error);
+    State.scoringConfig.phaseError.yellowNoDecayThroughCycleCount = 0;
+    assert.equal(ViewerApp.getPhaseLambda('yellow', 690, 345), .06);
+    assert.equal(ViewerApp.getYellowPhaseScore(player, anchor + 690000), Math.exp(-.06 * 2));
   } finally {
     Object.assign(State, previous);
   }
@@ -622,7 +757,7 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     const diagnostics = ViewerApp.buildAnalysisDiagnostics();
     assert.deepEqual(diagnostics.comparisons.map(c => c.id), [
       'pride-rescue-cross-slot', 'day-relative-area', 'yellow-phase-weight-070',
-      'yellow-phase-decay-010', 'yellow-phase-decay-003', 'yellow-phase-no-decay-through-4',
+      'yellow-phase-decay-006', 'yellow-phase-decay-010', 'yellow-phase-decay-003', 'yellow-phase-no-decay-through-4',
       'yellow-phase-error-060', 'yellow-phase-no-decay',
       'area-basic-recent', 'area-recent-only', 'area-none', 'area-day-relative-only',
       'previous-phase-area-policy',
@@ -644,6 +779,10 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     assert.equal(record.scriptVersion, ViewerApp.ANALYSIS_SCRIPT_VERSION);
     assert.equal(record.matchingScriptVersion, ViewerMatching.MATCHING_SCRIPT_VERSION);
     assert.equal(record.scoringConfigSnapshot.effective.phaseError.yellowLambda, 0.06);
+    assert.equal(record.scoringConfigSnapshot.effective.phaseError.yellowNoDecayThroughCycleCount, 4);
+    const productionNames = record.candidates.map(p => `${p.name}|${p.shopname}`).sort();
+    const cutoffShadow = record.analysisDiagnostics.comparisons.find(c => c.id === 'yellow-phase-no-decay-through-4');
+    assert.deepEqual(cutoffShadow.candidates.map(p => `${p.name}|${p.shopname}`).sort(), productionNames);
     assert.equal(record.scoringConfigSnapshot.effective.phaseError.pinkLambda, 0.03);
     assert.equal(record.scoringConfigSnapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
     assert.equal(Object.hasOwn(record, 'softmaxBacktest'), false);
@@ -1108,6 +1247,8 @@ test('manual copies still reach IndexedDB after local quota failure and show exp
   assert.equal(stored.length, 1);
   assert.equal(stored[0].candidateEventId, 123);
   assert.equal(stored[0].searchMemo, 'outside memo');
+  assert.equal(stored[0].logSchemaVersion, 'slot_area_v21_opponent_features');
+  assert.equal(stored[0].scriptVersion, context.ViewerApp.ANALYSIS_SCRIPT_VERSION);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /quota exhausted/);
   assert.match(usage.textContent, /1\.00 MiB/);
@@ -1421,6 +1562,52 @@ test('Startup record carries versions and checksums without per-event bloat', as
   assert.ok(record.matchingScriptVersion);
   assert.ok('configChecksum' in record);
   assert.deepEqual(record.assetCacheKeys, {});
+});
+
+test('Startup reads the resolved config version and reports checksum retrieval failures', async () => {
+  const { app, context, warnings } = createLoadedDataApp();
+  warnings.length = 0;
+  const sources = ['0500_matching.js?cb=36', '0600_ui.js?cb=40', '0700_app.js?cb=46'];
+  context.document.querySelectorAll = () => sources.map(src => ({ getAttribute: () => src }));
+  const requested = [];
+  context.fetch = async (src, options) => {
+    requested.push(src);
+    assert.equal(options.cache, 'force-cache');
+    if (src.startsWith('0500')) return { ok: false, status: 503, text: () => assert.fail('must not checksum an HTTP error page') };
+    if (src.startsWith('0600')) throw new Error('offline');
+    return { ok: true, text: async () => 'script\r\ntext' };
+  };
+  const record = await app.buildStartupRecord();
+  assert.equal(record.configVersion, app.State.scoringConfig.meta.version);
+  assert.equal(record.configChecksum, app.analysisChecksum(app.State.scoringConfig));
+  assert.equal(record.scriptChecksum['0500_matching.js'], null);
+  assert.equal(record.scriptChecksum['0600_ui.js'], null);
+  assert.equal(record.scriptChecksum['0700_app.js'], app.analysisChecksum('script\ntext'));
+  assert.deepEqual(requested, sources);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /0500_matching.*HTTP 503/);
+  assert.match(warnings[1], /0600_ui.*offline/);
+});
+
+test('Rank filters accept a shared snapshot without additional DOM queries', () => {
+  const { app, context } = createLoadedDataApp();
+  const filters = { selectedStars: [7], selectedPrides: ['P_B'] };
+  const ruby = starCnt => ({ onlineBattleRankId: context.ViewerDomain.RUBY_ID, starCnt });
+  let reads = 0;
+  context.document.querySelectorAll = selector => {
+    reads++;
+    return selector.includes('.ruby') ? [{ value: '7' }] : [{ value: 'P_B' }];
+  };
+  for (const [player, included] of [
+    [ruby(7), true], [ruby(6), false],
+    [{ pridePoint: 100 }, true], [{ pridePoint: 99 }, false], [{}, false]
+  ]) {
+    assert.equal(app.isPlayerIncludedInRankFilters(player, filters), included);
+  }
+  assert.equal(reads, 0);
+  assert.equal(app.isPlayerIncludedInRankFilters(ruby(7)), true);
+  assert.equal(app.isPlayerIncludedInRankFilters({ pridePoint: 100 }), true);
+  assert.equal(reads, 2);
 });
 test('Undo clears held cooldown rows and restores Pink state', () => {
   const prev = { clicks: State.recentClicks, held: State.matchingCooldownHeld, pink: State.pinkTargets, enc: State.encounterHistory };
