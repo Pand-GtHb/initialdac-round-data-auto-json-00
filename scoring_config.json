@@ -1,25 +1,25 @@
 {
   "meta": {
     "schemaVersion": 1,
-    "version": "scoring_config_v38_yellow_cycle5_20261026",
+    "version": "scoring_config_v39_yellow_no_decay_through4_20261029",
     "parameterNotes": {
       "validation": "schemaVersion=1。未指定項目は既定値で補完し、型・範囲・枠数合計10・未定義の設定名を読込時に検証。不正設定は通知して読込を中断する。",
       "effectiveValues": "予測ログのscoringConfigSnapshotにversionと既定値補完後の設定を保存。phase.yellow.weightはyellowMaxWeight適用後、recentMatch.weightは無効時0を記録。",
       "slots": "normal・crossBucket・wildcardは非負の整数で合計10。Pink表示上限は撤廃し、選出後の差し替えは行わない。",
       "recentMatch": "本番では直近AREA加点を無効とし基本AREAのみ適用。weight・maxWeight・windowSizeは診断の加点復元にも使用するため保持。weightとmaxWeightは0～1、weightはmaxWeight以下。windowSizeは保存可能なコピー件数以内の正の整数。",
-      "phase": "Yellowの経過周期減衰係数を0.06とし(5周期経過でも誤差約30秒以内ならしきい値0.70を超える)、Pinkは0.03を維持。誤差幅は双方90秒、採点重みは双方0.55。採点倍率は1-weight×(1-finalPhaseScore)でphaseTrustは乗算しない。phaseTrustは周期学習の診断値。周期学習・起点・cooldownは維持。yellowMaxWeightはYellow重み上限。yellow.weight・pink.weight省略時はphase.weightを使用。yellow.maxSampleAgeSecはYellow学習サンプルの最大経過秒数。",
+      "phase": "YellowはyellowNoDecayThroughCycleCount=4により経過0～4周期の減衰倍率を1とする。5周期以上はexp(-yellowLambda×経過周期数)でyellowLambda=0.06を維持し、経過周期数から4を引かない。5周期の倍率は約0.741。設定省略時は0（従来の周期減衰）として過去設定と互換を保つ。Pinkは周期減衰0.03を維持。誤差幅は双方90秒、採点重みは双方0.55。採点・表示・判定は同じ減衰を使用。採点倍率は1-weight×(1-finalPhaseScore)でphaseTrustは乗算しない。phaseTrustは周期学習の診断値。周期学習・起点・cooldownは維持。yellowMaxWeightはYellow重み上限。yellow.weight・pink.weight省略時はphase.weightを使用。yellow.maxSampleAgeSecはYellow学習サンプルの最大経過秒数。",
       "policyComparisons": "本番と同じ時間母集団・人口補正済み通常枠で独立再選出。Yellow減衰0.10/誤差90秒、減衰0.03/誤差90秒、減衰0.03/誤差60秒、減衰なし/誤差90秒、基本×直近AREA、直近AREAのみ、AREAなし、当日相対AREAのみ、変更前PhaseとAREAの組合せを固定IDでログ保存。Yellow重み0.70と基本×当日相対AREAも維持。過去ログは改変せず、比較は学習・本番選出に影響しない。直近履歴は予測以前の通常コピー（過去日含む）、当日履歴はJST4時以降のみ。Phase起点不明の比較は観測値を維持し件数を記録。",
-      "filterMinutes": "既定値は15分。画面の選択肢と同じ15・30・60・120・180分を指定する。integrated_dataの更新時刻を基準とする下限フィルターで、選択した時間幅は候補人口・枠配分にも反映する。",
-      "cleanup": "未使用のdiagnosticRecentWeightは削除。直近AREAの診断復元重みはrecentMatch.weight、Phase診断専用重みはdiagnosticPhaseWeightで管理。診断のAREA人口・当日履歴・直近履歴集計は同一予測内で共有し、別予測には持ち越さない。softmaxBacktestは診断処理・設定とも撤去し、過去ログは変更しない。",
+      "filterMinutes": "既定値は15分。画面の選択肢と同じ15・30・60・120・180分を指定する。読込済みintegrated_dataの更新時刻を基準とする下限フィルターで、選択した時間幅は候補人口・枠配分にも反映する。新世代を検知しても取得成功までは読込済みデータで候補表示・再生成・コピー・予測紐付けを継続する。更新検知だけでは候補を消去しない。Reload失敗時も既存データと候補を保持し、取得エラーは通知する。",
+      "cleanup": "未使用のdiagnosticRecentWeightは削除。直近AREAの診断復元重みはrecentMatch.weight、Phase診断専用重みはdiagnosticPhaseWeightで管理。診断のAREA人口・当日履歴・直近履歴集計は同一予測内で共有し、別予測には持ち越さない。softmaxBacktestは診断処理・設定とも撤去し、過去ログは変更しない。RP統計は中間配列と全件引数展開を使わず1回走査で集計。AREA詳細はランクフィルターを描画ごとに1回取得し、行ハイライトは共通評価時刻でPinkを優先判定する。R6台帳の既定値と検証は永続化モジュールへ集約。startupのconfigVersionはmeta.version、候補外メモのlogSchemaVersionは通常ログと同じスキーマ版を記録する。checksum取得失敗はnullと警告を記録し、HTTPエラー本文をchecksum化しない。採点・選出・cooldownおよび旧形式再現APIは変更しない。",
       "shadowDiagnostics": "診断は本番候補・枠配分・学習を変更しない。既存PRIDE救済を維持し、day-relative-areaとyellow-phase-weight-070を独立に保存。dayRelativeAreaはJST午前4時区切りの当日かつ予測時点以前の通常コピー履歴を使用。候補AREA人数/全スコア対象人数×履歴件数を期待件数とし、1+weight×clamp((実績件数-期待件数)/(期待件数+smoothingCount),0,1)で直近AREA加点のみ置換。基本AREA加点は維持。Yellow案はPhase得点を維持して適用重みを0.70へ置換し、本番と同じく信頼度は採点へ乗算しない。Pinkは変更しない。両案とも本番と同じ通常/横断/ワイルドカード枠で、Pink上限なしで再選出。実績履歴はViewerに保存された最大200件内で、未観測の対戦を含まない。",
       "candidateTimingLogs": "全スコア対象のallCandidates末尾・表示候補/コピーのscoreBreakdown・cooldown除外にPhase起点時刻(ms)/種類、LastUpdate原文/時刻(ms)/経過秒、Pink最終コピー時刻(ms)/経過秒、cooldown残秒/適用周期秒/総秒、Phase周期秒を保存。欠測はnull。Phase起点はlast-updateまたはpink-last-copy、欠測はunavailable。経過時間は予測評価時点基準、コピーの再計算時はその評価時点基準。cooldownは適用周期×1.5。candidate/copy/日次exportのscriptVersionとmatchingScriptVersionでアプリ・選出モジュールの実装版を識別し、export内の過去イベント版は書き換えない。自カード/プレー区間情報は追加しない。",
       "pinkScoring": "Pinkの個人・ランク活動加点、専用の追加Phase不一致減衰、表示上限は撤廃済み。Phase起点・周期学習・保存復元・1.5周期cooldownは維持。Pink減衰は0.03で、AREAはYellowと同じ基本加点のみ。realtimeBoostとcandidateSelection.maxPinkManagedSlotsは廃止し指定時は未知キーエラー。旧活動保存データは削除せず読み書きしない。旧分析列は互換性のため倍率1・加点0、pinkMismatchEnabled/pinkCapEnabled=false、廃止パラメータはnull。過去イベントは書き換えず、通常8＋横断1＋wildcard1は維持。",
       "pinkStartup": "Pinkは起動時の過去Phase誤差による再シードを行わない。学習方式version=1・基準周期・補正上限が一致する保存補正と学習根拠を復元する。旧方式・不正・非互換の保存値は通知して一度だけ基準周期（既定345秒）へ移行し、対戦履歴・Yellowは保持する。通常の再対戦学習と採点式は変更しない。モニターは保存周期の学習根拠と当日間隔の信頼度を区別し、candidateEventsと日次exportにpinkCycleStateを保存する。",
-      "opponentFeatureDiagnostics": "yellow-phase-no-decay-through-4はYellowの評価時0～4サイクルを減衰なし、5サイクル以上を現行yellowLambdaでshadow再選出する診断専用比較。採点・表示・コピーには影響しない。強み・特徴ラベルは表示せず、Yellow/PinkのPhase情報のみを表示する。候補ログはhistorical確率・信頼性とサンプル数、Phase誤差・スコア・周期数・起点/cooldown、AREA人口・密度・加点、全体/枠内順位、候補選出経路を数値で記録する。candidateEventIdで通常コピー実績と照合し、候補特性と結果の関係を分析する。診断は本番選出を変更しない。"
+      "opponentFeatureDiagnostics": "Yellowの0～4サイクル減衰なしを本番採用し、yellow-phase-no-decay-through-4は本番一致確認用shadowとして維持する。yellow-phase-decay-006は従来の全周期lambda=0.06による独立比較として保存する。過去イベントを新設定で上書き解釈しない。強み・特徴ラベルは表示せず、Yellow/PinkのPhase情報のみを表示する。候補ログはhistorical確率・信頼性とサンプル数、Phase誤差・スコア・周期数・起点/cooldown、AREA人口・密度・加点、全体/枠内順位、候補選出経路を数値で記録する。candidateEventIdで通常コピー実績と照合し、候補特性と結果の関係を分析する。診断は本番選出を変更しない。"
     },
     "createdAt": "2026-09-26T09:15:11+09:00",
-    "modifiedAt": "2026-10-26T22:43:37+09:00",
-    "description": "Filter既定15分・自ランク既定値はviewerDefaultsで管理。表示は通常8＋個体確率クロス1＋総合スコアwildcard1。通常枠はhistorical確率とrelativePopulationAdjustmentで配分しRubyフロア保証なし。人口は時間・ランクフィルター後かつPink cooldown前の分類人数で、ゲーム全体の待機人数ではない。R6/R7/R8かつ全ランク選択・最小人数を満たす場合のみ下位/上位を基準人口比で補正し、同格係数は1。係数は設定範囲に制限し最大移動枠数を維持。寄付元は過剰枠かつ容量に余裕がある最少人口バケット（同数は補正確率・名前順）。基準は10/1～10/5の重複除外57スナップショット、R8は暫定。本番AREAは基本加点のみで直近加点は診断専用。PhaseはYellow減衰0.06/Pink減衰0.03、誤差幅90秒、重み双方0.55、採点trust乗算なし。Pink活動加点・追加不一致減衰・上限は撤廃済み。起点・周期学習・保存復元・cooldown・PRIDE帯補正は維持。Phase/AREA比較診断は同一母集団・枠で再選出し本番や学習を変更しない。候補起点・cooldown・採点内訳・実装版とともにログへ保存する。"
+    "modifiedAt": "2026-10-29T22:45:00+09:00",
+    "description": "Filter既定15分・自ランク既定値はviewerDefaultsで管理。表示は通常8＋個体確率クロス1＋総合スコアwildcard1。通常枠はhistorical確率とrelativePopulationAdjustmentで配分しRubyフロア保証なし。人口は時間・ランクフィルター後かつPink cooldown前の分類人数で、ゲーム全体の待機人数ではない。R6/R7/R8かつ全ランク選択・最小人数を満たす場合のみ下位/上位を基準人口比で補正し、同格係数は1。係数は設定範囲に制限し最大移動枠数を維持。寄付元は過剰枠かつ容量に余裕がある最少人口バケット（同数は補正確率・名前順）。基準は10/1～10/5の重複除外57スナップショット、R8は暫定。本番AREAは基本加点のみで直近加点は診断専用。PhaseはYellow0～4周期減衰なし・5周期以上lambda=0.06、Pink減衰0.03、誤差幅90秒、重み双方0.55、採点trust乗算なし。新世代取得に失敗しても読込済みデータで予測・コピーを継続する。Pink活動加点・追加不一致減衰・上限は撤廃済み。起点・周期学習・保存復元・cooldown・PRIDE帯補正は維持。Phase/AREA比較診断は同一母集団・枠で再選出し本番や学習を変更しない。候補起点・cooldown・採点内訳・実装版とともにログへ保存する。"
   },
   "viewerDefaults": {
     "filterMinutes": 15,
@@ -119,6 +119,7 @@
     "yellowThreshold": 0.70,
     "pinkThreshold": 0.55,
     "yellowLambda": 0.06,
+    "yellowNoDecayThroughCycleCount": 4,
     "pinkLambda": 0.03
   },
   "experimental": {

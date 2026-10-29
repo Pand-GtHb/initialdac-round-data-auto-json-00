@@ -161,7 +161,7 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v12-opponent-features-20261028";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v14-script-cleanup-20261029";
 const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v21_opponent_features";
 const MAX_LOG_LINES = 100;
 const DEFAULT_FILTER_MINUTES = 15;
@@ -199,9 +199,11 @@ async function buildStartupRecord() {
       assetCacheKeys[file] = src.split("?")[1] ?? null;
       try {
         const response = await fetch(src, { cache: "force-cache" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         scriptChecksum[file] = analysisChecksum((await response.text()).replace(/\r\n/g, "\n"));
-      } catch {
+      } catch (error) {
         scriptChecksum[file] = null;
+        logWarn(`起動ログ：${file}のchecksum取得失敗：${error.message}`);
       }
     }
   }
@@ -212,7 +214,7 @@ async function buildStartupRecord() {
     logSchemaVersion: ANALYSIS_LOG_SCHEMA_VERSION,
     scriptVersion: ANALYSIS_SCRIPT_VERSION,
     matchingScriptVersion: MATCHING_SCRIPT_VERSION,
-    configVersion: State.scoringConfig?.version ?? null,
+    configVersion: State.scoringConfig?.meta?.version ?? null,
     configChecksum: State.scoringConfig ? analysisChecksum(State.scoringConfig) : null,
     scriptChecksum,
     assetCacheKeys,
@@ -427,7 +429,7 @@ function recordUnmatchedSearchMemo() {
       : null;
   const t = Date.now();
   const record = {
-    t, dk: buildDailyKey(), logSchemaVersion: ANALYSIS_SCRIPT_VERSION,
+    t, dk: buildDailyKey(), logSchemaVersion: ANALYSIS_LOG_SCHEMA_VERSION,
     scriptVersion: ANALYSIS_SCRIPT_VERSION,
     matchingScriptVersion: MATCHING_SCRIPT_VERSION,
     recordKind: "unmatched-search-memo",
@@ -945,8 +947,17 @@ function computeSampleTrust(
 
 
 
-function getPhaseLambda(mode = "yellow") {
+function getPhaseLambda(mode = "yellow", diffSec, cycleSec) {
   const isPink = mode === "pink";
+  if (
+    !isPink &&
+    Number.isFinite(diffSec) && diffSec >= 0 &&
+    Number.isFinite(cycleSec) && cycleSec > 0 &&
+    Math.floor(diffSec / cycleSec) <=
+      (State.scoringConfig?.phaseError?.yellowNoDecayThroughCycleCount ?? 0)
+  ) {
+    return 0;
+  }
   const value = Number(
     State.scoringConfig?.phaseError?.[isPink ? "pinkLambda" : "yellowLambda"]
   );
@@ -1061,48 +1072,6 @@ function isIntegratedDataBehindLatestUpdate(
       !Number.isFinite(generatedTime) ||
       generatedTime < latestTime
     );
-}
-
-function clearStaleMatchingCandidates() {
-  const wasMatchingView =
-    isCurrentView(STATE.MATCHING);
-
-  State.activeCandidateEventId = null;
-  State.latestCandidateEventIdForCopy = null;
-  State.matchingList = [];
-  State.matchingScoredAll = [];
-  State.matchingFilteredPopulationCount = 0;
-  State.matchingCooldownExcludedCandidates = [];
-  State.matchingCooldownHeld = [];
-  State.matchingResurfacing = null;
-  State.matchingResurfacingState = null;
-  State.matchingTierCounts = {};
-  State.matchingSlotPlan = [];
-  State.matchingSlotAllocationDiagnostics = null;
-  State.matchingFilteredPopulationSnapshot = null;
-  State.matchingCrossBucketDiagnostics = null;
-  State.matchingPinkCapDiagnostics = null;
-
-  if (wasMatchingView) {
-    renderMatchingHeader();
-    renderMatchingTable();
-  }
-
-  return wasMatchingView;
-}
-
-function blockStaleCandidateUse() {
-  if (!isIntegratedDataBehindLatestUpdate()) {
-    return false;
-  }
-
-  clearStaleMatchingCandidates();
-  logError(
-    "最新世代のintegrated_data.jsonが未取得のため候補を停止しました：" +
-    `データ=${State.generatedAt || "不明"} / ` +
-    `最新=${State.latestUpdateAt || "不明"}。Reload成功後に再試行してください。`
-  );
-  return true;
 }
 
 async function settleInitialJsonRequests(fetchers) {
@@ -1718,11 +1687,11 @@ async function prefetchLatestRoundData(
 async function reloadLatestDataPreferPrefetch() {
 
   startProgress();
+  let latestObserved = "";
 
   try {
 
     const maxAttempts = 3;
-    let latestObserved = "";
     let verifiedRoundData = null;
     let verifiedLatestAt = "";
     let verifiedFromPrefetch = false;
@@ -1904,21 +1873,11 @@ async function reloadLatestDataPreferPrefetch() {
   } catch (e) {
 
     if (latestObserved) {
-      const wasBehind =
-        isIntegratedDataBehindLatestUpdate();
       State.latestUpdateAt = latestObserved;
 
-      if (
-        isIntegratedDataBehindLatestUpdate() &&
-        !wasBehind
-      ) {
+      if (isIntegratedDataBehindLatestUpdate()) {
         State.pendingPrefetchForUpdateAt =
           latestObserved;
-        if (clearStaleMatchingCandidates()) {
-          logError(
-            "最新データを取得できないため、古い候補をクリアしました。"
-          );
-        }
       }
     }
 
@@ -2025,8 +1984,6 @@ async function checkUpdate() {
       prev &&
       prev !== latest;
 
-    const wasIntegratedDataBehind =
-      isIntegratedDataBehindLatestUpdate();
     const integratedDataBehind =
       isIntegratedDataBehindLatestUpdate(
         latest,
@@ -2051,16 +2008,6 @@ async function checkUpdate() {
       }
     }
     State.latestUpdateAt = latest;
-
-    if (
-      integratedDataBehind &&
-      !wasIntegratedDataBehind &&
-      clearStaleMatchingCandidates()
-    ) {
-      logError(
-        "新しい世代が公開されたため、古い候補をクリアしました。Reloadしてください。"
-      );
-    }
 
     /* =====================================
      * 更新検知
@@ -3890,7 +3837,7 @@ function getPlayerPhaseDetail(
    };
  }
 
- const lambda = getPhaseLambda(mode);
+ const lambda = getPhaseLambda(mode, diffSec, cycleSec);
 
  const metrics =
    computePhaseMetrics(
@@ -4100,7 +4047,7 @@ function getYellowPhaseScore(player, nowMs = Date.now()) {
   const diffSec =
     (nowMs - anchor) / 1000;
 
-  const lambda = getPhaseLambda("yellow");
+  const lambda = getPhaseLambda("yellow", diffSec, cycleSec);
 
   return computePhaseMetrics(
     diffSec,
@@ -4212,12 +4159,11 @@ function computePhaseContext(player, nowMs = Date.now()) {
      parseDateJST(player?.updateDate)?.getTime();
    cycleSec =
      getCurrentCycle(player);
-   const lambda = getPhaseLambda("yellow");
-
    diffSec =
      anchor
        ? (nowMs - anchor) / 1000
        : 0;
+   const lambda = getPhaseLambda("yellow", diffSec, cycleSec);
 
    metrics =
      anchor && cycleSec
@@ -4601,10 +4547,6 @@ function buildMatchingCandidates(
     offsetSec = 0
   } = {}
 ) {
-
-  if (blockStaleCandidateUse()) {
-    return false;
-  }
 
   if (!saveEvent) {
     State.latestCandidateEventIdForCopy =
@@ -5488,13 +5430,6 @@ function copyToClipboard(
     return;
   }
 
-  if (
-    isCurrentView(STATE.MATCHING) &&
-    blockStaleCandidateUse()
-  ) {
-    return;
-  }
-
   const afterCopySuccess = () => {
 
     const copyRecord =
@@ -6036,10 +5971,8 @@ async function exportTodayViewerLogsAsJSON() {
  *   情報量が小さいため、こちらを使う。
  *
  * slim=true:
- *   Phase傾向分析（signedPhaseError・phaseBucket・
- *   phaseScore系）に必要な項目のみへ絞った軽量版。
- *   allCandidates（候補全件・件数が多くログ肥大化の主因）で
- *   使用する。
+ *   過去の軽量オブジェクト形式を再現する互換用。
+ *   現行allCandidatesはbuildAllCandidateRowで配列化する。
  */
 function buildScoreBreakdownLog(
   detail,
@@ -8175,10 +8108,6 @@ function showMatchingCandidates(
       ? "preview"
       : "matching";
 
-  if (blockStaleCandidateUse()) {
-    return false;
-  }
-
   const offsetSec =
     Number(
       normalizedOptions.offsetSec
@@ -8521,7 +8450,7 @@ function readSelectedPrides() {
     );
 }
 
-function isPlayerIncludedInRankFilters(player) {
+function isPlayerIncludedInRankFilters(player, filters = null) {
   const rankKey =
     getPlayerRankKey(player);
 
@@ -8530,12 +8459,12 @@ function isPlayerIncludedInRankFilters(player) {
   }
 
   if (rankKey.startsWith("R")) {
-    return readSelectedStars().includes(
+    return (filters?.selectedStars ?? readSelectedStars()).includes(
       Number(player.starCnt)
     );
   }
 
-  return readSelectedPrides().includes(rankKey);
+  return (filters?.selectedPrides ?? readSelectedPrides()).includes(rankKey);
 }
 
 

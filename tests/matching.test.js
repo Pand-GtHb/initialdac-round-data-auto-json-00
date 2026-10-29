@@ -52,6 +52,50 @@ test("Matching constants export and values", () => {
   assert.equal(matching.POPULATION_RANK_KEYS.length, 15);
 });
 
+test("R6 frequency uses the shared ledger defaults and validation without changing decisions", () => {
+  const context = createMatchingContext();
+  const persistence = context.ViewerPersistence;
+  const defaultLedger = persistence.createDefaultR6PrideLedger;
+  const validate = persistence.isValidR6PrideLedger;
+  let defaultCalls = 0;
+  let validationCalls = 0;
+  persistence.createDefaultR6PrideLedger = () => { defaultCalls++; return defaultLedger(); };
+  persistence.isValidR6PrideLedger = ledger => { validationCalls++; return validate(ledger); };
+  const warnings = [];
+  context.console = { warn: (...args) => warnings.push(args) };
+  const messages = [];
+  let stored = null;
+  const options = {
+    distribution: { total: 10, prideProbabilityTotal: 0.3 },
+    generationMs: 1000, storageKey: "test-ledger",
+    storage: { getItem: key => { assert.equal(key, "test-ledger"); return stored; } },
+    log: message => messages.push(message)
+  };
+  const result = context.ViewerMatching.prepareR6PrideFrequency(0.5, true, options);
+  assert.equal(defaultCalls, 1);
+  assert.equal(validationCalls, 1);
+  assert.equal(result.ledger.credit, 0.3);
+  assert.equal(result.ledger.countedGenerations, 1);
+  assert.equal(result.ledger.lastGenerationMs, 1000);
+  assert.equal(result.allowPride, false);
+  assert.equal(result.diagnostics.reason, "credit-below-one");
+  for (const patch of [
+    { version: 2 }, { credit: -1 }, { credit: 1.1 }, { granted: 1 },
+    { lastGenerationMs: "1000" }, { countedGenerations: 0.5 },
+    { grantedGenerations: 1 }, { grantedGenerations: -1 }
+  ]) {
+    stored = JSON.stringify({ ...defaultLedger(), ...patch });
+    const invalid = context.ViewerMatching.prepareR6PrideFrequency(0.5, true, options);
+    assert.equal(invalid.ledger, null);
+    assert.equal(invalid.allowPride, false);
+    assert.equal(invalid.diagnostics.reason, "storage-read-failed");
+  }
+  assert.equal(defaultCalls, 1);
+  assert.equal(validationCalls, 9);
+  assert.equal(warnings.length, 8);
+  assert.equal(messages.length, 8);
+});
+
 test("getMatchingSlotBucketKey maps ruby and pride ranks", () => {
   const context = createMatchingContext();
   const { getMatchingSlotBucketKey } = context.ViewerMatching;
@@ -811,11 +855,15 @@ test("scoring config resolves defaults, validates inputs and records effective v
   assert.equal(capped.phase.yellow.weight, 0.8);
   assert.equal(config.candidateSelection.slotAllocation.relativePopulationAdjustment.enabled, true);
   assert.equal(config.phaseError.yellowLambda, 0.06);
+  assert.equal(config.phaseError.yellowNoDecayThroughCycleCount, 4);
+  assert.equal(snapshot.effective.phaseError.yellowNoDecayThroughCycleCount, 4);
+  assert.match(snapshot.phaseScoring.effectiveLambda, /yellowNoDecayThroughCycleCount/);
   assert.equal(config.phaseError.pinkLambda, 0.03);
   assert.equal(config.candidateSelection.areaBoost.recentMatch.enabled, false);
   assert.equal(snapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
   assert.equal(getMatchingSlotCounts(config).normal, 8);
   const defaults = resolveScoringConfig({ meta: { schemaVersion: 1, version: "minimal" } });
+  assert.equal(defaults.phaseError.yellowNoDecayThroughCycleCount, 0);
   assert.equal(config.viewerDefaults.filterMinutes, 15);
   assert.equal(defaults.viewerDefaults.filterMinutes, 15);
   assert.equal(resolveScoringConfig({ ...source, viewerDefaults: {
@@ -853,6 +901,9 @@ test("scoring config resolves defaults, validates inputs and records effective v
     [["candidateSelection", "slots", "wildCard"], 0],
     [["candidateSelection", "areaBoost", "diagnosticRecentWeight"], 0.1],
     [["phaseError", "scaleSec"], 0],
+    [["phaseError", "yellowNoDecayThroughCycleCount"], -1],
+    [["phaseError", "yellowNoDecayThroughCycleCount"], 4.5],
+    [["phaseError", "yellowNoDecayThroughCycleCount"], "4"],
     [["phaseError", "yellowScaleSec"], "90"],
     [["experimental", "dayRelativeArea", "weight"], 1.1],
     [["experimental", "dayRelativeArea", "smoothingCount"], 0],

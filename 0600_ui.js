@@ -1978,9 +1978,12 @@ function renderAreaDetailTable(areaNo) {
 
   const areaKey = String(areaNo);
   const areaName = getAreaDisplayName(areaKey);
+  const rankFilters = {
+    selectedStars: readSelectedStars(),
+    selectedPrides: readSelectedPrides()
+  };
   const list = (State.searchText ? applyPlayerFilter(State.searchText, true) : (State.detailOriginal || []).slice())
-    .filter(p => String(p.area ?? "") === areaKey)
-    .filter(isPlayerIncludedInRankFilters);
+    .filter(p => String(p.area ?? "") === areaKey && isPlayerIncludedInRankFilters(p, rankFilters));
   area.innerHTML = `
     ${buildSummaryModeNavHTML()}
 
@@ -2086,6 +2089,7 @@ function highlightMatchingRows(
 
   if (!tbody) return;
 
+  const nowMs = Date.now();
   tbody.querySelectorAll("tr").forEach(tr => {
 
     const updated =
@@ -2103,21 +2107,14 @@ function highlightMatchingRows(
       updateDate: updated
     };
 
-    const isYellow =
-      isMatchingCandidateByPhase(
-        rowPlayer
-      );
-
     const isPink =
       isMatchingCandidateByCopyPhase(
-        rowPlayer
+        rowPlayer,
+        nowMs
       );
 
     tr.classList.remove(
-      "match-row-yellow"
-    );
-
-    tr.classList.remove(
+      "match-row-yellow",
       "match-row-pink"
     );
 
@@ -2127,7 +2124,7 @@ function highlightMatchingRows(
         "match-row-pink"
       );
 
-    } else if (isYellow) {
+    } else if (isMatchingCandidateByPhase(rowPlayer, nowMs)) {
 
       tr.classList.add(
         "match-row-yellow"
