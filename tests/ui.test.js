@@ -194,7 +194,32 @@ test("MATCHING and PREVIEW render no Phase cycle graph", () => {
     context.ViewerUI.renderMatchingTable();
     assert.match(area.innerHTML, /matchingTableBody/);
     assert.doesNotMatch(area.innerHTML, /許容幅|信頼度|周期 /);
+    assert.equal(area.innerHTML.includes('id="monitorCountdownHeader"'), mode === "preview");
   }
+});
+
+test("MONITOR header countdown uses the shared deadline and pauses or stops without labels", () => {
+  const context = createUIContext({
+    monitorRefreshAtMs: 20000, monitorIntervalMs: 10000
+  });
+  context.Date = class extends Date { static now() { return 15000; } };
+  const header = { style: {} };
+  context.document.getElementById = id => id === 'monitorCountdownHeader' ? header : null;
+  context.ViewerUI.syncMonitorCountdown();
+  assert.equal(header.style.animationName, 'monitor-countdown');
+  assert.equal(header.style.animationDuration, '10000ms');
+  assert.equal(header.style.animationDelay, '-5000ms');
+  assert.equal(header.style.animationPlayState, 'running');
+  context.document.hidden = true;
+  context.ViewerUI.syncMonitorCountdown();
+  assert.equal(header.style.animationPlayState, 'paused');
+  assert.equal(header.style.animationDelay, '-5000ms');
+  context.State.monitorRefreshAtMs = null;
+  context.ViewerUI.syncMonitorCountdown();
+  assert.equal(header.style.animationName, 'none');
+  assert.match(uiSource, /to \{ background-size: 0% 100%; \}/);
+  assert.match(uiSource, /#monitorCountdownHeader th\s*\{\s*background: transparent !important;\s*color: var\(--monitor-text-color\) !important;/);
+  assert.match(uiSource, /\.summary-mode-btn-preview\.active\s*\{\s*background: var\(--monitor-band-color\);/);
 });
 
 test("AREA search skips Phase and chart aggregation while unfiltered view retains it", () => {

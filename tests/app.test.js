@@ -130,6 +130,8 @@ function createLoadedDataApp({ realData = false } = {}) {
       get length() { return Object.keys(storage).length; }
     },
     document: {
+      addEventListener() {},
+      removeEventListener() {},
       getElementById: () => null,
       querySelectorAll: selector => selector.includes('.ruby-filter:checked')
         ? [{ value: '6' }, { value: '7' }] : [],
@@ -188,6 +190,104 @@ test('Newer published data does not block matching, preview, or candidate regene
   app.buildMatchingCandidates({ saveEvent: false });
   assert.equal(State.matchingList.length, 10);
   assert.equal(errors.length, 0);
+  app.stopMonitor();
+});
+
+test('MONITOR repeats every ten seconds with a rolling offset, without saves, copying or history pushes', () => {
+  const { app, context, records, clipboard } = createLoadedDataApp();
+  let now = Date.now();
+  context.Date = class extends Date { static now() { return now; } };
+  const timers = new Map();
+  let sequence = 0;
+  context.setTimeout = (callback, delay) => {
+    assert.equal(delay, 10000);
+    timers.set(++sequence, callback);
+    return sequence;
+  };
+  context.clearTimeout = id => timers.delete(id);
+  const listeners = new Map();
+  context.document.addEventListener = (event, callback) => listeners.set(event, callback);
+  context.document.removeEventListener = (event, callback) => {
+    if (listeners.get(event) === callback) listeners.delete(event);
+  };
+  context.history = { pushState() { assert.fail('automatic refresh must not push history'); } };
+  app.State.previewOffsetSec = 15;
+  app.showMatchingCandidates({ mode: 'preview', offsetSec: 15, push: false });
+  assert.equal(app.State.matchingContext.evaluationTimeMs, now + 15000);
+  assert.equal(timers.size, 1);
+  now += 10000;
+  const [id, callback] = timers.entries().next().value;
+  timers.delete(id);
+  callback();
+  assert.equal(app.State.matchingContext.evaluationTimeMs, now + 15000);
+  assert.equal(timers.size, 1);
+  assert.equal(records.filter(r => r.e === 'candidate').length, 0);
+  app.State.previewOffsetSec = 5;
+  app.State.searchText = 'LOADED';
+  app.refreshMonitor();
+  assert.equal(app.State.matchingContext.evaluationTimeMs, now + 5000);
+  assert.equal(app.State.searchText, 'LOADED');
+  assert.equal(timers.size, 1);
+  app.copyToClipboard('name', 'name', 'shop');
+  assert.equal(records.filter(r => r.e === 'copy').length, 0);
+  assert.equal(clipboard.length, 0);
+  context.document.hidden = true;
+  listeners.get('visibilitychange')();
+  assert.equal(timers.size, 0);
+  const previous = app.State.matchingContext.evaluationTimeMs;
+  now += 30000;
+  context.document.hidden = false;
+  listeners.get('visibilitychange')();
+  assert(app.State.matchingContext.evaluationTimeMs > previous);
+  assert.equal(timers.size, 1);
+  app.setCurrentView(app.STATE.SUMMARY);
+  assert.equal(timers.size, 0);
+  assert.equal(listeners.size, 0);
+  app.showMatchingCandidates({ mode: 'preview', push: false });
+  app.showMatchingCandidates({ mode: 'matching', push: false });
+  assert.equal(timers.size, 0);
+  assert.equal(listeners.size, 0);
+});
+
+test('MONITOR stops explicitly on automatic generation errors', () => {
+  const { app, context, errors } = createLoadedDataApp();
+  context.setTimeout = () => 1;
+  context.clearTimeout = () => {};
+  app.showMatchingCandidates({ mode: 'preview', push: false });
+  context.document.querySelectorAll = () => { throw new Error('monitor render failed'); };
+  app.refreshMonitor();
+  assert.equal(app.State.monitorTimer, null);
+  assert.equal(app.State.monitorVisibilityHandler, null);
+  assert(errors.some(message => message.includes('monitor render failed')));
+});
+
+test('Live three-group selection logs and copies group ranks and bypasses population transfers', async () => {
+  const { app, records } = createLoadedDataApp();
+  app.State.myRankKey = 'R6';
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  const event = records.find(r => r.e === 'candidate');
+  assert.equal(app.State.matchingSlotAllocationDiagnostics.reason, 'three-group-fixed-quotas');
+  assert.equal(app.State.matchingSlotPlan.reduce((sum, p) => sum + p.slots, 0), 8);
+  assert(app.State.matchingSlotPlan.every(p => p.selectionPolicy === 'three-group'));
+  const pool = event.allCandidates.map(values =>
+    Object.fromEntries(event.allCandidatesColumns.map((key, index) => [key, values[index]])));
+  assert(pool.every(p => ['same', 'higher'].includes(p.slotBucket)));
+  assert(pool.every(p => Number.isInteger(p.slotRank) && p.slotRank > 0));
+  const unchangedShadow = event.analysisDiagnostics.comparisons.find(
+    comparison => comparison.id === 'yellow-phase-no-decay-through-4');
+  assert.deepEqual(
+    Array.from(unchangedShadow.candidates, p => p.name).sort(),
+    Array.from(app.State.matchingList, p => p.name).sort()
+  );
+  const selected = app.State.matchingList[0];
+  assert.match(app.buildPlayerRankSummaryText(selected), /枠内/);
+  app.copyToClipboard(selected.name, selected.name, selected.shopname);
+  await new Promise(resolve => setImmediate(resolve));
+  const copy = records.find(r => r.e === 'copy');
+  assert.equal(copy.slotBucket, selected.__detail.slotBucket);
+  assert.equal(copy.slotRankAtPrediction, selected.__slotRank);
+  assert.equal(copy.predictionSnapshotAvailable, true);
+  assert.equal(copy.scoreSource, 'prediction');
 });
 
 test('Update detection retains loaded candidates, ranks and prediction links', async () => {
@@ -970,7 +1070,7 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     assert.equal(record.scoringConfigSnapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
     assert.equal(Object.hasOwn(record, 'softmaxBacktest'), false);
     assert.equal(record.analysisDiagnostics.storageCoverage.complete, true);
-    assert.equal(record.logSchemaVersion, 'slot_area_v21_opponent_features');
+    assert.equal(record.logSchemaVersion, 'slot_area_v22_three_group');
     assert.equal(record.analysisDiagnostics.resurfacing.diagnosticOnly, true);
     assert.deepEqual(record.analysisDiagnostics.resurfacing, diagnostics.resurfacing);
     assert.deepEqual(record.analysisDiagnostics.comparisons, diagnostics.comparisons);
@@ -1430,7 +1530,7 @@ test('manual copies still reach IndexedDB after local quota failure and show exp
   assert.equal(stored.length, 1);
   assert.equal(stored[0].candidateEventId, 123);
   assert.equal(stored[0].searchMemo, 'outside memo');
-  assert.equal(stored[0].logSchemaVersion, 'slot_area_v21_opponent_features');
+  assert.equal(stored[0].logSchemaVersion, 'slot_area_v22_three_group');
   assert.equal(stored[0].scriptVersion, context.ViewerApp.ANALYSIS_SCRIPT_VERSION);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /quota exhausted/);
@@ -1483,6 +1583,7 @@ test('buildMatchingCandidates correctly integrates normal, crossBucket and wildc
   try {
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8'));
     config.candidateSelection.slots = { normal: 7, crossBucket: 1, wildcard: 2 };
+    config.candidateSelection.slotAllocation.threeGroupEnabled = false;
     ViewerApp.applyScoringConfigJson(config);
     ViewerApp.State.historicalMatchupDistribution = {
       historicalSupportSize: 2,
@@ -1740,7 +1841,7 @@ test('candidate logs preserve numeric Phase, AREA, matchup and selection feature
 });
 test('Startup record carries versions and checksums without per-event bloat', async () => {
   const record = await ViewerApp.buildStartupRecord();
-  assert.equal(record.logSchemaVersion, 'slot_area_v21_opponent_features');
+  assert.equal(record.logSchemaVersion, 'slot_area_v22_three_group');
   assert.ok(record.scriptVersion);
   assert.ok(record.matchingScriptVersion);
   assert.ok('configChecksum' in record);

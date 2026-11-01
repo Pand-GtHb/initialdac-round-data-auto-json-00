@@ -13,7 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
-  const MATCHING_SCRIPT_VERSION = "matching-policy-v10-yellow-cycle4-20261029";
+  const MATCHING_SCRIPT_VERSION = "matching-policy-v11-three-group-20261101";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -80,6 +80,8 @@
       candidateSelection: {
         slots: getMatchingSlotCounts(null),
         slotAllocation: {
+          threeGroupEnabled: false,
+          threeGroupDiversityGapThreshold: 0.12,
           prideBandPriorExponent: DEFAULT_PRIDE_BAND_PRIOR_EXPONENT,
           prideBandDiversityGapThreshold: DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD,
           r6PridePopulationThreshold: R6_PRIDE_POPULATION_THRESHOLD,
@@ -159,6 +161,7 @@
     for (const name of [
       "historical.candidateCountAlpha", "candidateSelection.slotAllocation.prideBandPriorExponent",
       "candidateSelection.slotAllocation.prideBandDiversityGapThreshold", "candidateSelection.slotAllocation.r6PridePopulationThreshold",
+      "candidateSelection.slotAllocation.threeGroupDiversityGapThreshold",
       "candidateSelection.areaBoost.weight", "candidateSelection.areaBoost.recentMatch.weight",
       "candidateSelection.areaBoost.recentMatch.maxWeight",
       "candidateSelection.areaBoost.diagnosticPhaseWeight", "phase.weight", "phase.yellowMaxWeight",
@@ -186,6 +189,10 @@
     for (const key of ["normal", "crossBucket", "wildcard"]) number(`candidateSelection.slots.${key}`, 0, 10, true);
     if (Object.values(config.candidateSelection.slots).reduce((sum, n) => sum + n, 0) !== 10) {
       invalid("candidateSelection.slots must total 10");
+    }
+    if (config.candidateSelection.slotAllocation.threeGroupEnabled &&
+        config.candidateSelection.slots.normal !== 8) {
+      invalid("threeGroupEnabled requires 8 normal slots");
     }
     if (!POPULATION_RANK_KEYS.includes(config.viewerDefaults.myRankKey)) invalid("viewerDefaults.myRankKey is invalid");
     if (source.phase?.yellow?.weight === undefined) config.phase.yellow.weight = config.phase.weight;
@@ -1095,6 +1102,27 @@
     }));
   }
 
+  function getThreeGroupBucket(rankKey, viewerTier) {
+    if (!/^R[67]$/.test(viewerTier)) return null;
+    if (/^P_/.test(rankKey)) return viewerTier === "R7" ? "higher" : "outside-normal";
+    if (!/^R[1-8]$/.test(rankKey)) return "outside-normal";
+    const rank = Number(rankKey.slice(1));
+    const own = Number(viewerTier.slice(1));
+    return rank < own ? "lower" : rank === own ? "same" : "higher";
+  }
+
+  function buildThreeGroupSlotPlan(candidates, viewerTier, scoringConfig) {
+    if (!scoringConfig?.candidateSelection?.slotAllocation?.threeGroupEnabled ||
+        !/^R[67]$/.test(viewerTier)) return null;
+    const quotas = viewerTier === "R6" ? [4, 2, 2] : [3, 1, 4];
+    return ["lower", "same", "higher"].map((bucket, index) => {
+      const capacity = candidates.filter(p => getThreeGroupBucket(p.__rankKey, viewerTier) === bucket).length;
+      return { bucket, viewerTier, selectionPolicy: "three-group",
+        requestedSlots: quotas[index], slots: Math.min(capacity, quotas[index]),
+        capacity, probability: quotas[index] / 8, rawQuota: quotas[index] };
+    });
+  }
+
   function prepareR6PrideFrequency(populationShare, advanceBudget, options = {}) {
     const state = options.state ?? getState();
     const distribution = options.distribution ?? getHistoricalDistribution(state?.historicalMatchupDistribution, "R6");
@@ -1457,7 +1485,7 @@
     );
 
     const configuredGapThreshold = Number(
-      (options.scoringConfig ?? getState()?.scoringConfig)
+      options.gapThreshold ?? (options.scoringConfig ?? getState()?.scoringConfig)
         ?.candidateSelection?.slotAllocation?.prideBandDiversityGapThreshold ??
       DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD
     );
@@ -1521,6 +1549,14 @@
     const plan = Array.isArray(slotPlanOverride)
       ? slotPlanOverride.map(entry => ({ ...entry }))
       : buildMatchingSlotPlan(candidates, slotCount, bucketProbabilities);
+    const groupTier = plan.find(entry => entry.selectionPolicy === "three-group")?.viewerTier;
+    if (groupTier && slotCount !== 8) throw new Error("Three-group selection requires 8 normal slots");
+    const bucketOf = player => groupTier
+      ? getThreeGroupBucket(player.__rankKey, groupTier)
+      : getMatchingSlotBucketKey(player.__rankKey);
+    const eligible = groupTier
+      ? candidates.filter(player => bucketOf(player) !== "outside-normal")
+      : candidates;
 
     if (plan.length === 0) {
       if (state) state.matchingSlotPlan = [];
@@ -1532,9 +1568,22 @@
     const selected = [];
     const poolsByBucket = new Map();
     for (const player of candidates) {
-      const bucket = getMatchingSlotBucketKey(player.__rankKey);
+      const bucket = bucketOf(player);
       if (!poolsByBucket.has(bucket)) poolsByBucket.set(bucket, []);
       poolsByBucket.get(bucket).push(player);
+    }
+    if (groupTier) {
+      for (const [bucket, pool] of poolsByBucket) {
+        [...pool].sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a) ||
+          getCandidateSelectionScore(b) - getCandidateSelectionScore(a)).forEach((player, index) => {
+          player.__slotBucket = bucket;
+          player.__slotRank = bucket === "outside-normal" ? null : index + 1;
+          if (player.__detail) {
+            player.__detail.slotBucket = bucket;
+            player.__detail.slotRank = player.__slotRank;
+          }
+        });
+      }
     }
 
     for (const entry of plan) {
@@ -1544,10 +1593,16 @@
 
       const pool = poolsByBucket.get(entry.bucket) ?? [];
 
-      const bucketSelected = entry.bucket === "PRIDE"
-        ? selectPrideSlotCandidates(pool, entry.slots, options)
+      const diversityOptions = groupTier === "R7" && entry.bucket === "higher"
+        ? { ...options, gapThreshold:
+            (options.scoringConfig ?? state?.scoringConfig)?.candidateSelection?.slotAllocation
+              ?.threeGroupDiversityGapThreshold ?? 0.12 }
+        : options;
+      const bucketSelected = entry.bucket === "PRIDE" || (groupTier === "R7" && entry.bucket === "higher")
+        ? selectPrideSlotCandidates(pool, entry.slots, diversityOptions)
         : [...pool]
-            .sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a))
+            .sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a) ||
+              (groupTier ? getCandidateSelectionScore(b) - getCandidateSelectionScore(a) : 0))
             .slice(0, entry.slots);
 
       for (const player of bucketSelected) {
@@ -1556,22 +1611,25 @@
       }
     }
 
-    const targetCount = Math.min(slotCount, candidates.length);
+    const targetCount = Math.min(slotCount, eligible.length);
 
     if (selected.length < targetCount) {
-      const fallback = [...candidates]
+      const fallback = [...eligible]
         .filter(player => !selected.includes(player))
-        .sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a))
+        .sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a) ||
+          (groupTier ? getCandidateSelectionScore(b) - getCandidateSelectionScore(a) : 0))
         .slice(0, targetCount - selected.length);
 
       for (const player of fallback) {
-        player.__slotBucket = getMatchingSlotBucketKey(player.__rankKey);
+        player.__slotBucket = bucketOf(player);
         selected.push(player);
       }
     }
 
     if (state) {
-      state.matchingSlotPlan = plan;
+      state.matchingSlotPlan = groupTier ? plan.map(entry => ({
+        ...entry, slots: selected.filter(player => bucketOf(player) === entry.bucket).length
+      })) : plan;
     }
 
     return selected.sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a));
@@ -2014,10 +2072,13 @@
       .filter(entry => evaluationTimeMs - entry.at <= 30 * 60000)
       .map(entry => [entry.key, entry]));
     const selectedKeys = new Set(current.map(identify));
+    const groupTier = slotPlan.find(entry => entry.selectionPolicy === "three-group")?.viewerTier;
+    const bucketOf = p => groupTier ? getThreeGroupBucket(p.__rankKey, groupTier)
+      : getMatchingSlotBucketKey(p.__rankKey);
     const populations = new Map();
     const keyCounts = new Map();
     for (const p of pool) {
-      const bucket = getMatchingSlotBucketKey(p.__rankKey);
+      const bucket = bucketOf(p);
       const group = populations.get(bucket) ?? [];
       group.push(p);
       populations.set(bucket, group);
@@ -2030,7 +2091,7 @@
       [...group].sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a))
         .forEach((p, i) => bucketRanks.set(p, i + 1));
       const normal = current.filter(p => !p.__crossBucket &&
-        getMatchingSlotBucketKey(p.__rankKey) === bucket);
+        bucketOf(p) === bucket);
       buckets[bucket] = {
         count: group.length, members: group.map(identify).sort().join("\n"),
         slots: slotPlan.find(entry => entry.bucket === bucket)?.slots ?? 0,
@@ -2042,7 +2103,7 @@
       const d = p.__detail ?? {};
       return {
         key: identify(p), name: p.name, shopname: p.shopname ?? "",
-        rankKey: p.__rankKey, bucket: getMatchingSlotBucketKey(p.__rankKey),
+        rankKey: p.__rankKey, bucket: bucketOf(p),
         uniqueIdentity: keyCounts.get(identify(p)) === 1,
         selected: selectedKeys.has(identify(p)),
         slotScore: getCandidateSlotScore(p), slotRank: bucketRanks.get(p),
@@ -2224,6 +2285,7 @@
     assignCandidateSlotRanks,
     buildMatchingSlotBucketProbabilities,
     buildMatchingSlotPlan,
+    buildThreeGroupSlotPlan,
     prepareR6PrideFrequency,
     getRelativePopulationAdjustmentConfig,
     adjustSlotsByRelativePopulation,

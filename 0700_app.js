@@ -107,6 +107,7 @@
     getCandidateSlotScore,
     buildMatchingSlotBucketProbabilities,
     buildMatchingSlotPlan,
+    buildThreeGroupSlotPlan,
     adjustSlotsByRelativePopulation,
     selectNormalCandidatesBySlots,
     getCandidateSelectionScore,
@@ -161,9 +162,10 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v15-fetch-single-flight-20261101";
-const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v21_opponent_features";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v17-monitor-auto-refresh-20261101";
+const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v22_three_group";
 const MAX_LOG_LINES = 100;
+const MONITOR_INTERVAL_MS = 10000;
 const DEFAULT_FILTER_MINUTES = 15;
 const DEFAULT_MY_RANK_KEY = "R7";
 /*
@@ -322,7 +324,7 @@ function buildAnalysisDiagnostics() {
   const comparisons = [];
 
   const rescuePool = pool.filter(p =>
-    p.__detail?.slotBucket === "PRIDE" &&
+    /^P_/.test(p.__rankKey) &&
     !current.includes(p) && !p.__detail?.isPinkManaged &&
     typeof p.__detail?.phaseError === "number" &&
     Number.isFinite(p.__detail.phaseError) &&
@@ -652,6 +654,10 @@ const State = {
   matchingPinkCapDiagnostics: null,
   matchingOffsetSec: 0,
   previewOffsetSec: 0,
+  monitorTimer: null,
+  monitorRefreshAtMs: null,
+  monitorIntervalMs: MONITOR_INTERVAL_MS,
+  monitorVisibilityHandler: null,
   matchingContext: {
     mode: "matching",
     clickedAtMs: null,
@@ -727,7 +733,60 @@ function isCurrentView(view) {
  [1110] View State:setCurrentView【State】（旧 [0210]）
 ========================================================= */
 function setCurrentView(view) {
+  if (view !== STATE.MATCHING) stopMonitor();
   State.currentView = view;
+}
+
+function stopMonitor() {
+  if (State.monitorTimer !== null) {
+    clearTimeout(State.monitorTimer);
+    State.monitorTimer = null;
+  }
+  State.monitorRefreshAtMs = null;
+  ViewerUI?.syncMonitorCountdown?.();
+  if (State.monitorVisibilityHandler) {
+    document.removeEventListener("visibilitychange", State.monitorVisibilityHandler);
+    State.monitorVisibilityHandler = null;
+  }
+}
+
+function refreshMonitor() {
+  if (State.currentView !== STATE.MATCHING || State.matchingContext?.mode !== "preview") {
+    stopMonitor();
+    return;
+  }
+  if (document.hidden) return;
+  try {
+    showMatchingCandidates({
+      mode: "preview", offsetSec: State.previewOffsetSec, push: false
+    });
+    if (State.searchText) applyMatchingFilter(State.searchText);
+  } catch (error) {
+    stopMonitor();
+    logError(`MONITOR自動更新を停止しました：${error.message}`);
+  }
+}
+
+function startMonitor() {
+  stopMonitor();
+  State.monitorVisibilityHandler = () => {
+    if (document.hidden) {
+      if (State.monitorTimer !== null) clearTimeout(State.monitorTimer);
+      State.monitorTimer = null;
+      ViewerUI?.syncMonitorCountdown?.();
+    } else {
+      refreshMonitor();
+    }
+  };
+  document.addEventListener("visibilitychange", State.monitorVisibilityHandler);
+  if (!document.hidden) {
+    State.monitorRefreshAtMs = Date.now() + MONITOR_INTERVAL_MS;
+    State.monitorTimer = setTimeout(() => {
+      State.monitorTimer = null;
+      refreshMonitor();
+    }, MONITOR_INTERVAL_MS);
+  }
+  ViewerUI?.syncMonitorCountdown?.();
 }
 
 /* =========================================================
@@ -4859,7 +4918,7 @@ function buildMatchingCandidates(
   );
 
   /* =====================================
-   * STEP7: 履歴分布を通常8枠へ配分し、自ランク基準の人口構成で補正
+   * STEP7: R6/R7は3群固定枠、その他は従来の履歴・人口補正
    * STEP8: 個人推定確率によるバケット横断1枠を追加
    * ===================================== */
   const enabledRankKeys = [
@@ -4888,8 +4947,16 @@ function buildMatchingCandidates(
       slotCounts.normal,
       slotBucketProbabilities
     );
-  const adjustedSlotPlan =
-    adjustSlotsByRelativePopulation(
+  const threeGroupPlan = buildThreeGroupSlotPlan(
+    scoreEligible, mapRankKeyToTierKey(State.myRankKey), State.scoringConfig
+  );
+  const adjustedSlotPlan = threeGroupPlan
+    ? { plan: threeGroupPlan, diagnostics: {
+        enabled: true, applied: false, reason: "three-group-fixed-quotas",
+        selectionPolicy: "three-group", viewerTier: mapRankKeyToTierKey(State.myRankKey),
+        slotPlanBeforeAdjustment: originalSlotPlan, slotPlanAfterAdjustment: threeGroupPlan
+      } }
+    : adjustSlotsByRelativePopulation(
       originalSlotPlan,
       filteredPopulation,
       enabledRankKeys,
@@ -4906,6 +4973,10 @@ function buildMatchingCandidates(
       slotBucketProbabilities,
       adjustedSlotPlan.plan
     );
+  if (threeGroupPlan) {
+    State.matchingSlotAllocationDiagnostics.slotPlanAfterAdjustment =
+      State.matchingSlotPlan.map(entry => ({ ...entry }));
+  }
 
   const crossBucketSelected =
     selectCrossBucketCandidates(
@@ -5511,7 +5582,7 @@ function copyToClipboard(
       "preview"
   ) {
     log(
-      "PREVIEWではコピー操作と実績記録を行いません"
+      "MONITORではコピー操作と実績記録を行いません"
     );
     return;
   }
@@ -7748,6 +7819,11 @@ function saveCandidateEvent(
           ?.prideBandDiversityGapThreshold ??
         DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD
       ),
+    threeGroupEnabled: Boolean(
+      State.scoringConfig?.candidateSelection?.slotAllocation?.threeGroupEnabled
+    ),
+    threeGroupDiversityGapThreshold:
+      State.scoringConfig?.candidateSelection?.slotAllocation?.threeGroupDiversityGapThreshold ?? null,
 
     /*
      * 【2026-09 ログ拡充】ownSampleCount等は同一candidateEvent内
@@ -8174,6 +8250,7 @@ function showAreaDetail(
 function showMatchingCandidates(
   options = true
 ) {
+  stopMonitor();
 
   const normalizedOptions =
     typeof options === "boolean"
@@ -8236,6 +8313,7 @@ function showMatchingCandidates(
   switchDisplayView(
     STATE.MATCHING
   );
+  if (mode === "preview") startMonitor();
 
   if (push) {
 
@@ -8746,6 +8824,9 @@ async function init() {
     State,
     isCurrentView,
     setCurrentView,
+    refreshMonitor,
+    stopMonitor,
+    MONITOR_INTERVAL_MS,
     syncMyRankSelection,
 
     // Diagnostics / Analysis
