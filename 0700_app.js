@@ -84,11 +84,11 @@
     fetchJSON,
     fetchAreaListJson,
     fetchLatestRoundJson,
-    fetchLatestUpdateJson,
+    fetchLatestUpdateJson: requestLatestUpdateJson,
     fetchHistoricalMatchupDistributionJson,
     fetchScoringConfigJson,
     fetchUpdateWatchConfigJson,
-    fetchRoundDataJson
+    fetchRoundDataJson: requestRoundDataJson
   } = ViewerData || {};
 
   const {
@@ -161,7 +161,7 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v14-script-cleanup-20261029";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v15-fetch-single-flight-20261101";
 const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v21_opponent_features";
 const MAX_LOG_LINES = 100;
 const DEFAULT_FILTER_MINUTES = 15;
@@ -673,6 +673,7 @@ const State = {
   prefetchedRoundData: null,
   prefetchedForUpdateAt: "",
   prefetchInFlight: null,
+  reloadInFlight: null,
 
   phaseAdjust: {
     yellow: 0,
@@ -1388,12 +1389,39 @@ async function loadLatestRound() {
 /* =========================================================
  [5220] Data Loader:loadLatestUpdate【State】（旧 [3300]）
 ========================================================= */
+function recordDataFetchDiagnostic(diagnostic) {
+  if (
+    diagnostic.path === "latest_update.json" &&
+    diagnostic.purpose === "watch" &&
+    diagnostic.result === "success" &&
+    diagnostic.elapsedMs < 1000
+  ) return;
+  logEvent("runtime", {
+    logSchemaVersion: "data_fetch_v1",
+    severity: diagnostic.result === "error" ? "warn" : "info",
+    message: "data-fetch",
+    ...diagnostic
+  });
+}
+
+function fetchLatestUpdateJson(options = {}) {
+  return requestLatestUpdateJson({
+    ...options, onDiagnostic: recordDataFetchDiagnostic
+  });
+}
+
+function fetchRoundDataJson(options = {}) {
+  return requestRoundDataJson({
+    ...options, onDiagnostic: recordDataFetchDiagnostic
+  });
+}
+
 async function loadLatestUpdate() {
 
   try {
 
     const json =
-      await fetchLatestUpdateJson();
+      await fetchLatestUpdateJson({ purpose: "startup-recovery" });
 
     applyLatestUpdateJson(
       json
@@ -1617,7 +1645,9 @@ async function prefetchLatestRoundData(
         );
 
         const json =
-          await fetchRoundDataJson();
+          await fetchRoundDataJson({
+            purpose: "prefetch", expectedGeneration: lastUpdatedValue
+          });
 
         const expectedTime =
           parseDateJST(lastUpdatedValue)?.getTime();
@@ -1632,6 +1662,16 @@ async function prefetchLatestRoundData(
           logWarn(
             `先読み世代不一致：期待=${lastUpdatedValue} / ` +
             `取得=${json?.generatedAt ?? "none"}。監視窓内で再試行します`
+          );
+          return;
+        }
+
+        const latestTime =
+          parseDateJST(State.latestUpdateAt)?.getTime();
+        if (Number.isFinite(latestTime) && latestTime > generatedTime) {
+          logWarn(
+            `先読み中に新世代を検知：取得=${json.generatedAt} / ` +
+            `最新=${State.latestUpdateAt}。旧世代は保持しません`
           );
           return;
         }
@@ -1684,9 +1724,20 @@ async function prefetchLatestRoundData(
 /* =========================================================
  [5310] Reload:reloadLatestDataPreferPrefetch【State】（旧 [3700]）
 ========================================================= */
-async function reloadLatestDataPreferPrefetch() {
+function reloadLatestDataPreferPrefetch() {
+  if (State.reloadInFlight) return State.reloadInFlight;
+  State.reloadInFlight = performLatestDataReload().finally(() => {
+    State.reloadInFlight = null;
+  });
+  return State.reloadInFlight;
+}
+
+async function performLatestDataReload() {
 
   startProgress();
+  const reloadButton = document.getElementById("reloadBtn");
+  const wasDisabled = reloadButton?.disabled ?? false;
+  if (reloadButton) reloadButton.disabled = true;
   let latestObserved = "";
 
   try {
@@ -1702,7 +1753,7 @@ async function reloadLatestDataPreferPrefetch() {
       attempt++
     ) {
       const beforeJson =
-        await fetchLatestUpdateJson();
+        await fetchLatestUpdateJson({ purpose: "reload-before" });
       const beforeValue =
         beforeJson?.lastUpdated ??
         beforeJson?.latestUpdateAt ??
@@ -1718,6 +1769,10 @@ async function reloadLatestDataPreferPrefetch() {
         );
       }
       latestObserved = beforeLatest;
+
+      if (State.prefetchInFlight) {
+        await State.prefetchInFlight;
+      }
 
       const prefetchedData =
         State.prefetchedRoundData;
@@ -1744,14 +1799,16 @@ async function reloadLatestDataPreferPrefetch() {
       const roundDataJson =
         usePrefetch
           ? prefetchedData
-          : await fetchRoundDataJson();
+          : await fetchRoundDataJson({
+              purpose: "reload", expectedGeneration: beforeLatest
+            });
       const roundDataTime =
         parseDateJST(
           roundDataJson?.generatedAt
         )?.getTime();
 
       const afterJson =
-        await fetchLatestUpdateJson();
+        await fetchLatestUpdateJson({ purpose: "reload-after", fresh: true });
       const afterValue =
         afterJson?.lastUpdated ??
         afterJson?.latestUpdateAt ??
@@ -1770,6 +1827,8 @@ async function reloadLatestDataPreferPrefetch() {
 
       const stateLatestTime =
         parseDateJST(State.latestUpdateAt)?.getTime();
+      const loadedTime =
+        parseDateJST(State.generatedAt)?.getTime();
       const generationMatches =
         Number.isFinite(roundDataTime) &&
         roundDataTime === beforeTime &&
@@ -1777,6 +1836,10 @@ async function reloadLatestDataPreferPrefetch() {
         (
           !Number.isFinite(stateLatestTime) ||
           stateLatestTime <= afterTime
+        ) &&
+        (
+          !Number.isFinite(loadedTime) ||
+          loadedTime <= roundDataTime
         );
 
       if (generationMatches) {
@@ -1873,11 +1936,15 @@ async function reloadLatestDataPreferPrefetch() {
   } catch (e) {
 
     if (latestObserved) {
-      State.latestUpdateAt = latestObserved;
+      const observedTime = parseDateJST(latestObserved)?.getTime();
+      const currentTime = parseDateJST(State.latestUpdateAt)?.getTime();
+      if (!Number.isFinite(currentTime) || observedTime >= currentTime) {
+        State.latestUpdateAt = latestObserved;
+      }
 
       if (isIntegratedDataBehindLatestUpdate()) {
         State.pendingPrefetchForUpdateAt =
-          latestObserved;
+          State.latestUpdateAt;
       }
     }
 
@@ -1890,6 +1957,7 @@ async function reloadLatestDataPreferPrefetch() {
 
   } finally {
 
+    if (reloadButton) reloadButton.disabled = wasDisabled;
     stopProgress();
   }
 }
@@ -1961,7 +2029,7 @@ async function checkUpdate() {
       State.latestUpdateAt || "";
 
     const json =
-      await fetchLatestUpdateJson();
+      await fetchLatestUpdateJson({ purpose: "watch" });
 
     let latest =
       json?.lastUpdated ??
@@ -1977,6 +2045,23 @@ async function checkUpdate() {
     }
 
     if (!latest) {
+      return;
+    }
+
+    const latestTime = parseDateJST(latest)?.getTime();
+    const stateLatestTime = parseDateJST(State.latestUpdateAt)?.getTime();
+    const loadedTime = parseDateJST(State.generatedAt)?.getTime();
+    if (
+      Number.isFinite(latestTime) &&
+      (
+        (Number.isFinite(stateLatestTime) && latestTime < stateLatestTime) ||
+        (Number.isFinite(loadedTime) && latestTime < loadedTime)
+      )
+    ) {
+      logWarn(
+        `更新通知が旧世代です：通知=${latest} / ` +
+        `確認済み=${State.latestUpdateAt} / 読込済み=${State.generatedAt}。更新状態を維持します`
+      );
       return;
     }
 
@@ -2040,6 +2125,7 @@ async function checkUpdate() {
       State.pendingPrefetchForUpdateAt &&
       !State.prefetchedRoundData &&
       !State.prefetchInFlight &&
+      !State.reloadInFlight &&
       isWithinUpdateWatchWindow()
     ) {
       prefetchLatestRoundData(
@@ -8502,10 +8588,10 @@ async function init() {
     await settleInitialJsonRequests([
       fetchAreaListJson,
       fetchLatestRoundJson,
-      fetchLatestUpdateJson,
+      () => fetchLatestUpdateJson({ purpose: "startup" }),
       fetchHistoricalMatchupDistributionJson,
       fetchScoringConfigJson,
-      fetchRoundDataJson
+      () => fetchRoundDataJson({ purpose: "startup" })
     ]);
 
   const [
@@ -8560,7 +8646,7 @@ async function init() {
     recoveryTasks.push(
       (async () => {
         try {
-          roundDataJson = await fetchRoundDataJson();
+          roundDataJson = await fetchRoundDataJson({ purpose: "startup-recovery" });
           roundDataLoaded = true;
         } catch (error) {
           logError(

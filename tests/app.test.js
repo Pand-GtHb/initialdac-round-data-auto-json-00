@@ -113,7 +113,7 @@ test('Initial JSON request results preserve successes and isolate failures', asy
   assert.match(results[1].reason.message, /offline/);
 });
 
-function createLoadedDataApp() {
+function createLoadedDataApp({ realData = false } = {}) {
   const vm = require('node:vm');
   const records = [];
   const errors = [];
@@ -121,7 +121,7 @@ function createLoadedDataApp() {
   const clipboard = [];
   const storage = {};
   const context = vm.createContext({
-    console, Date, setTimeout, clearTimeout, performance, TextEncoder,
+    console, Date, setTimeout, clearTimeout, performance, TextEncoder, AbortController,
     localStorage: {
       getItem: key => storage[key] ?? null,
       setItem: (key, value) => { storage[key] = String(value); },
@@ -143,8 +143,10 @@ function createLoadedDataApp() {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
   }
   context.ViewerPersistence.logEvent = (type, record) => records.push({ e: type, ...record });
-  context.ViewerData.fetchLatestUpdateJson = (...args) => context.latestUpdateRequest(...args);
-  context.ViewerData.fetchRoundDataJson = (...args) => context.roundDataRequest(...args);
+  if (!realData) {
+    context.ViewerData.fetchLatestUpdateJson = (...args) => context.latestUpdateRequest(...args);
+    context.ViewerData.fetchRoundDataJson = (...args) => context.roundDataRequest(...args);
+  }
   context.ViewerUI = {
     log() {}, logWarn: message => warnings.push(message), logError: message => errors.push(message),
     renderMatchingHeader() {}, renderMatchingTable() {}, renderSummary() {},
@@ -279,6 +281,187 @@ test('Reload latest-update failure returns false without losing candidates or ma
   assert.equal(State.latestCandidateEventIdForCopy, predictionId);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /latest offline/);
+});
+
+test('Concurrent Reload calls share one operation, one render and a disabled button', async () => {
+  const { app, context, errors } = createLoadedDataApp();
+  const { State } = app;
+  const button = { disabled: false, style: {}, classList: { remove() {} } };
+  context.document.getElementById = id => id === 'reloadBtn' ? button : null;
+  const generation = new Date().toISOString();
+  let finish;
+  let bodyCalls = 0;
+  const manifestOptions = [];
+  context.latestUpdateRequest = async options => {
+    manifestOptions.push(options);
+    return { lastUpdated: generation };
+  };
+  context.roundDataRequest = () => {
+    bodyCalls++;
+    return new Promise(resolve => { finish = () => resolve({ generatedAt: generation, records: [] }); });
+  };
+  const first = app.reloadLatestDataPreferPrefetch();
+  const second = app.reloadLatestDataPreferPrefetch();
+  assert.equal(first, second);
+  assert.equal(button.disabled, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bodyCalls, 1);
+  finish();
+  assert.equal(await first, true);
+  assert.equal(await second, true);
+  assert.equal(State.generatedAt, generation);
+  assert.equal(State.reloadInFlight, null);
+  assert.equal(button.disabled, false);
+  assert.equal(manifestOptions.length, 2);
+  assert.equal(manifestOptions[1].purpose, 'reload-after');
+  assert.equal(manifestOptions[1].fresh, true);
+  assert.equal(errors.length, 0);
+});
+
+test('Reload waits for a pending prefetch and verifies its generation without another body request', async () => {
+  const { app, context, errors } = createLoadedDataApp();
+  const generation = new Date().toISOString();
+  let finish;
+  let bodyCalls = 0;
+  context.latestUpdateRequest = async () => ({ lastUpdated: generation });
+  context.roundDataRequest = () => {
+    bodyCalls++;
+    return new Promise(resolve => { finish = () => resolve({ generatedAt: generation, records: [] }); });
+  };
+  const prefetch = app.prefetchLatestRoundData(generation);
+  const reload = app.reloadLatestDataPreferPrefetch();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bodyCalls, 1);
+  finish();
+  await prefetch;
+  assert.equal(await reload, true);
+  assert.equal(bodyCalls, 1);
+  assert.equal(app.State.prefetchInFlight, null);
+  assert.equal(app.State.prefetchedRoundData, null);
+  assert.equal(errors.length, 0);
+});
+
+test('Failed pending prefetch releases Reload for a sequential retry, restoring its button on failure', async () => {
+  const { app, context, warnings, errors } = createLoadedDataApp();
+  const { State } = app;
+  const data = State.all;
+  const button = { disabled: false };
+  context.document.getElementById = id => id === 'reloadBtn' ? button : null;
+  const generation = new Date().toISOString();
+  let fail;
+  let calls = 0;
+  context.latestUpdateRequest = async () => ({ lastUpdated: generation });
+  context.roundDataRequest = () => {
+    calls++;
+    return calls === 1
+      ? new Promise((_resolve, reject) => { fail = () => reject(new Error('prefetch failed')); })
+      : Promise.reject(new Error('reload failed'));
+  };
+  const prefetch = app.prefetchLatestRoundData(generation);
+  const reload = app.reloadLatestDataPreferPrefetch();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1);
+  fail();
+  await prefetch;
+  assert.equal(await reload, false);
+  assert.equal(calls, 2);
+  assert.equal(State.all, data);
+  assert.equal(State.reloadInFlight, null);
+  assert.equal(button.disabled, false);
+  assert.equal(errors.length, 1);
+  assert(warnings.some(message => message.includes('prefetch failed')));
+});
+
+test('Watcher does not start a competing prefetch while Reload is waiting for data', async () => {
+  const { app, context } = createLoadedDataApp();
+  const generation = new Date().toISOString();
+  let finish;
+  let calls = 0;
+  context.latestUpdateRequest = async () => ({ lastUpdated: generation });
+  context.roundDataRequest = () => {
+    calls++;
+    return new Promise(resolve => { finish = () => resolve({ generatedAt: generation, records: [] }); });
+  };
+  const reload = app.reloadLatestDataPreferPrefetch();
+  await new Promise(resolve => setImmediate(resolve));
+  await app.checkUpdate();
+  assert.equal(calls, 1);
+  assert.equal(app.State.prefetchInFlight, null);
+  finish();
+  assert.equal(await reload, true);
+});
+
+test('Older watcher notifications cannot move the latest known generation backwards', async () => {
+  const { app, context, warnings } = createLoadedDataApp();
+  const latest = app.State.latestUpdateAt;
+  context.latestUpdateRequest = async () => ({ lastUpdated: app.State.generatedAt });
+  context.roundDataRequest = () => assert.fail('old notification must not trigger prefetch');
+  await app.checkUpdate();
+  assert.equal(app.State.latestUpdateAt, latest);
+  assert(warnings.some(message => message.includes('旧世代')));
+});
+
+test('Reload rejects an internally consistent old generation and never downgrades loaded data', async () => {
+  const { app, context, errors } = createLoadedDataApp();
+  const { State } = app;
+  const generatedAt = State.generatedAt;
+  const data = State.all;
+  const older = new Date(Date.parse(generatedAt) - 60000).toISOString();
+  State.latestUpdateAt = older;
+  context.setTimeout = callback => { queueMicrotask(callback); return 0; };
+  context.latestUpdateRequest = async () => ({ lastUpdated: older });
+  context.roundDataRequest = async () => ({ generatedAt: older, records: [] });
+  assert.equal(await app.reloadLatestDataPreferPrefetch(), false);
+  assert.equal(State.generatedAt, generatedAt);
+  assert.equal(State.all, data);
+  assert.equal(errors.length, 1);
+});
+
+test('A newer observation during prefetch keeps pending generation and discards the old prefetched body', async () => {
+  const { app, context, warnings } = createLoadedDataApp();
+  const generation = app.State.latestUpdateAt;
+  let finish;
+  context.roundDataRequest = () => new Promise(resolve => {
+    finish = () => resolve({ generatedAt: generation, records: [] });
+  });
+  const prefetch = app.prefetchLatestRoundData(generation);
+  const newer = new Date().toISOString();
+  app.State.latestUpdateAt = newer;
+  app.State.pendingPrefetchForUpdateAt = newer;
+  finish();
+  await prefetch;
+  assert.equal(app.State.prefetchedRoundData, null);
+  assert.equal(app.State.pendingPrefetchForUpdateAt, newer);
+  assert(warnings.some(message => message.includes('先読み中に新世代')));
+});
+
+test('Real data loader records shared request IDs and successful Reload timing in runtime logs', async () => {
+  const { app, context, records } = createLoadedDataApp({ realData: true });
+  const generation = new Date().toISOString();
+  let finish;
+  let calls = 0;
+  context.fetch = async url => {
+    if (url.includes('latest_update.json')) {
+      return { ok: true, status: 200, json: async () => ({ lastUpdated: generation }) };
+    }
+    calls++;
+    return new Promise(resolve => {
+      finish = () => resolve({ ok: true, status: 200, json: async () => ({ generatedAt: generation, records: [] }) });
+    });
+  };
+  const first = app.fetchRoundDataJson({ purpose: 'prefetch', expectedGeneration: generation });
+  const second = app.fetchRoundDataJson({ purpose: 'reload', expectedGeneration: generation });
+  finish();
+  await Promise.all([first, second]);
+  const bodyLogs = records.filter(r => r.message === 'data-fetch' && r.path === 'integrated_data.json');
+  assert.equal(calls, 1);
+  assert.equal(bodyLogs.length, 2);
+  assert.equal(bodyLogs[0].result, 'shared');
+  assert.equal(bodyLogs[0].requestId, bodyLogs[1].requestId);
+  assert.equal(bodyLogs[1].generatedAt, generation);
+  assert.equal(bodyLogs[1].logSchemaVersion, 'data_fetch_v1');
+  assert.equal(typeof bodyLogs[1].headersMs, 'number');
+  assert.equal(typeof bodyLogs[1].bodyMs, 'number');
 });
 
 test('Pink cycle learning respects zero shift and zero alpha settings', () => {

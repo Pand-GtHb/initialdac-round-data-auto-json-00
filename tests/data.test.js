@@ -177,3 +177,136 @@ test("browser entry loads data globals in correct order", () => {
     /<script src="0100_utils\.js\?cb=\d+"><\/script>\s*<script src="0200_domain\.js\?cb=\d+"><\/script>\s*<script src="0300_persistence\.js\?cb=\d+"><\/script>\s*<script src="0400_data\.js\?cb=\d+"><\/script>\s*<script src="0500_matching\.js\?cb=\d+"><\/script>\s*<script src="0600_ui\.js\?cb=\d+"><\/script>\s*<script src="0700_app\.js\?cb=\d+"><\/script>\s*<script src="0800_main\.js\?cb=\d+"><\/script>/
   );
 });
+
+test("Concurrent integrated requests share one retry chain and release it after success", async () => {
+  let finish;
+  let calls = 0;
+  const diagnostics = [];
+  const fetchImpl = async () => {
+    calls++;
+    if (calls === 1) throw new Error("temporary offline");
+    return new Promise(resolve => {
+      finish = () => resolve({ ok: true, status: 200, json: async () => ({ generatedAt: "new" }) });
+    });
+  };
+  const options = {
+    fetchImpl, baseUrl: "", delay: async () => {}, onDiagnostic: d => diagnostics.push(d)
+  };
+  const first = dataModule.fetchRoundDataJson({ ...options, purpose: "prefetch" });
+  const second = dataModule.fetchRoundDataJson({ ...options, purpose: "reload" });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 2);
+  finish();
+  const results = await Promise.all([first, second]);
+  assert.equal(results[0], results[1]);
+  assert.deepEqual(diagnostics.map(d => d.result), ["shared", "error", "success"]);
+  assert.equal(new Set(diagnostics.map(d => d.requestId)).size, 1);
+  const next = dataModule.fetchRoundDataJson(options);
+  assert.equal(calls, 3);
+  finish();
+  await next;
+});
+
+test("Shared rejection reaches every caller and does not cache the failure", async () => {
+  let calls = 0;
+  const options = {
+    baseUrl: "", maxRetry: 1,
+    fetchImpl: async () => { calls++; throw new Error("offline"); }
+  };
+  const results = await Promise.allSettled([
+    dataModule.fetchRoundDataJson(options), dataModule.fetchRoundDataJson(options)
+  ]);
+  assert.equal(calls, 1);
+  assert(results.every(result => result.status === "rejected" && result.reason.message === "offline"));
+  await assert.rejects(dataModule.fetchRoundDataJson(options), /offline/);
+  assert.equal(calls, 2);
+});
+
+test("Manifest sharing supports a fresh post-body check without reusing in-flight observations", async () => {
+  const finishes = [];
+  const options = {
+    baseUrl: "",
+    fetchImpl: () => new Promise(resolve => finishes.push(value =>
+      resolve({ ok: true, json: async () => ({ lastUpdated: value }) })))
+  };
+  const watcher = dataModule.fetchLatestUpdateJson(options);
+  const before = dataModule.fetchLatestUpdateJson(options);
+  const after = dataModule.fetchLatestUpdateJson({ ...options, fresh: true });
+  assert.equal(finishes.length, 2);
+  finishes[1]("new");
+  assert.equal((await after).lastUpdated, "new");
+  finishes[0]("old");
+  assert.equal((await watcher).lastUpdated, "old");
+  assert.equal((await before).lastUpdated, "old");
+  const next = dataModule.fetchLatestUpdateJson(options);
+  assert.equal(finishes.length, 3);
+  finishes[2]("new");
+  await next;
+});
+
+test("Sharing isolates different origins, fetch implementations and timeout policies", async () => {
+  const finishes = [];
+  const fetchImpl = () => new Promise(resolve => finishes.push(() =>
+    resolve({ ok: true, json: async () => ({}) })));
+  const options = { fetchImpl, baseUrl: "http://one" };
+  const promises = [
+    dataModule.fetchRoundDataJson(options),
+    dataModule.fetchRoundDataJson({ ...options, baseUrl: "http://two" }),
+    dataModule.fetchRoundDataJson({ ...options, timeouts: { "integrated_data.json": 30000 } }),
+    dataModule.fetchRoundDataJson({ ...options, fetchImpl: (...args) => fetchImpl(...args) })
+  ];
+  assert.equal(finishes.length, 4);
+  finishes.forEach(finish => finish());
+  await Promise.all(promises);
+});
+
+test("Fetch diagnostics distinguish response headers, body time, HTTP errors and retry attempts", async () => {
+  let clock = 0;
+  let calls = 0;
+  const diagnostics = [];
+  await dataModule.fetchJSON("integrated_data.json", {
+    baseUrl: "", maxRetry: 2, delay: async () => {}, perfNow: () => clock,
+    purpose: "reload", expectedGeneration: "new",
+    onDiagnostic: d => diagnostics.push(d),
+    fetchImpl: async () => {
+      calls++;
+      clock += 10;
+      return {
+        ok: calls > 1, status: calls === 1 ? 503 : 200,
+        json: async () => { clock += 30; return { generatedAt: "new" }; }
+      };
+    }
+  });
+  assert.equal(diagnostics.length, 2);
+  assert.equal(diagnostics[0].status, 503);
+  assert.equal(diagnostics[0].result, "error");
+  assert.equal(diagnostics[0].timedOut, false);
+  assert.equal(diagnostics[1].attempt, 2);
+  assert.equal(diagnostics[1].headersMs, 10);
+  assert.equal(diagnostics[1].bodyMs, 30);
+  assert.equal(diagnostics[1].elapsedMs, 40);
+  assert.equal(diagnostics[1].generatedAt, "new");
+  assert.equal(diagnostics[0].requestId, diagnostics[1].requestId);
+});
+
+test("Only the request timer is classified as timeout, not every AbortError", async () => {
+  const warnings = [];
+  const diagnostics = [];
+  await assert.rejects(dataModule.fetchJSON("integrated_data.json", {
+    maxRetry: 1, onWarn: message => warnings.push(message),
+    onDiagnostic: d => diagnostics.push(d),
+    fetchImpl: async () => { throw new DOMException("external abort", "AbortError"); }
+  }), { name: "AbortError" });
+  assert.equal(warnings.length, 0);
+  assert.equal(diagnostics[0].timedOut, false);
+  await assert.rejects(dataModule.fetchJSON("integrated_data.json", {
+    maxRetry: 1, timeouts: { "integrated_data.json": 15 },
+    onWarn: message => warnings.push(message), onDiagnostic: d => diagnostics.push(d),
+    fetchImpl: (_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new DOMException("timer abort", "AbortError")));
+    })
+  }), { name: "AbortError" });
+  assert.equal(warnings.length, 1);
+  assert.equal(diagnostics[1].timedOut, true);
+  assert.equal(diagnostics[1].headersMs, null);
+});
