@@ -162,7 +162,7 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v17-monitor-auto-refresh-20261101";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v18-monitor-log-row-20261102";
 const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v22_three_group";
 const MAX_LOG_LINES = 100;
 const MONITOR_INTERVAL_MS = 10000;
@@ -4797,9 +4797,9 @@ function buildMatchingCandidates(
 
     });
   const afterCooldownSet = new Set(afterCooldown);
+  const cooldownExcluded = filteredByUi.filter(p => !afterCooldownSet.has(p));
   State.matchingCooldownHeld =
-    filteredByUi
-      .filter(p => !afterCooldownSet.has(p))
+    cooldownExcluded
       .map(p => {
         const click = (State.recentClicks || []).find(
           r =>
@@ -4816,8 +4816,7 @@ function buildMatchingCandidates(
   State.matchingFilteredPopulationCount =
     filteredByUi.length;
   State.matchingCooldownExcludedCandidates =
-    filteredByUi
-      .filter(p => !afterCooldownSet.has(p))
+    cooldownExcluded
       .map(p => ({
         name: p.name,
         shopname: p.shopname ?? "",
@@ -5101,7 +5100,8 @@ function buildMatchingCandidates(
           .map(transfer => `${transfer.from}→${transfer.to}(+1)`).join(",")}` +
         ` population=${JSON.stringify(State.matchingSlotAllocationDiagnostics.population.shares)}`
       : ""}` +
-    `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
+    `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`,
+    mode === "preview" ? { replaceKey: "monitor-candidates" } : undefined
   );
 
   if (saveEvent) {

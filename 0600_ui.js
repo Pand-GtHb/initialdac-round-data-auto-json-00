@@ -2325,7 +2325,8 @@ function renderMatchingRows(
 ========================================================= */
 function appendLog(
   msg,
-  type = "info"
+  type = "info",
+  options = {}
 ) {
 
   /* =====================================
@@ -2348,10 +2349,14 @@ function appendLog(
 
   if (box) {
 
-    const line =
-      document.createElement(
-        "div"
-      );
+    const existingLine = type === "info" && options.replaceKey
+      ? Array.from(box.children).find(child => child.dataset?.logKey === options.replaceKey)
+      : null;
+    const line = existingLine || document.createElement("div");
+
+    if (type === "info" && options.replaceKey) {
+      line.dataset.logKey = options.replaceKey;
+    }
 
     line.textContent =
       `[${t}] ${msg}`;
@@ -2380,7 +2385,7 @@ function appendLog(
         "#00ff00";
     }
 
-    box.prepend(line);
+    if (!existingLine) box.prepend(line);
 
     while (
       box.children.length >
@@ -2582,10 +2587,11 @@ function allowLog(
 }
 
 const log =
-  msg =>
+  (msg, options) =>
     appendLog(
       msg,
-      "info"
+      "info",
+      options
     );
 
 const logWarn =
