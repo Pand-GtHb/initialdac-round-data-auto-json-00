@@ -224,9 +224,11 @@ test('MONITOR repeats every ten seconds with a rolling offset, without saves, co
   assert.equal(app.State.matchingContext.evaluationTimeMs, now + 15000);
   assert.equal(timers.size, 1);
   assert.equal(records.filter(r => r.e === 'candidate').length, 0);
-  const monitorMessages = messages.filter(entry => entry.message.startsWith('候補生成:'));
+  const monitorMessages = messages.filter(entry => entry.message.startsWith('MONITOR候補生成:'));
   assert.equal(monitorMessages.length, 2);
-  assert(monitorMessages.every(entry => entry.options?.replaceKey === 'monitor-candidates'));
+  const firstKey = monitorMessages[0].options.replaceKey;
+  assert(firstKey.startsWith('monitor-candidates-'));
+  assert(monitorMessages.every(entry => entry.options?.replaceKey === firstKey));
   app.State.previewOffsetSec = 5;
   app.State.searchText = 'LOADED';
   app.refreshMonitor();
@@ -245,14 +247,23 @@ test('MONITOR repeats every ten seconds with a rolling offset, without saves, co
   listeners.get('visibilitychange')();
   assert(app.State.matchingContext.evaluationTimeMs > previous);
   assert.equal(timers.size, 1);
+  assert.equal(messages.filter(entry => entry.message.startsWith('MONITOR候補生成:')).at(-1).options.replaceKey, firstKey);
   app.setCurrentView(app.STATE.SUMMARY);
   assert.equal(timers.size, 0);
   assert.equal(listeners.size, 0);
   app.showMatchingCandidates({ mode: 'preview', push: false });
+  const secondKey = messages.filter(entry => entry.message.startsWith('MONITOR候補生成:')).at(-1).options.replaceKey;
+  assert.notEqual(secondKey, firstKey);
   app.showMatchingCandidates({ mode: 'matching', push: false });
   assert.equal(messages.filter(entry => entry.message.startsWith('候補生成:')).at(-1).options, undefined);
   assert.equal(timers.size, 0);
   assert.equal(listeners.size, 0);
+  app.showMatchingCandidates({ mode: 'preview', push: false });
+  const thirdKey = messages.filter(entry => entry.message.startsWith('MONITOR候補生成:')).at(-1).options.replaceKey;
+  assert.notEqual(thirdKey, secondKey);
+  app.refreshMonitor();
+  assert.equal(messages.filter(entry => entry.message.startsWith('MONITOR候補生成:')).at(-1).options.replaceKey, thirdKey);
+  app.stopMonitor();
 });
 
 test('MONITOR stops explicitly on automatic generation errors', () => {

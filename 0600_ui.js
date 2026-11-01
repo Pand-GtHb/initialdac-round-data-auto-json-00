@@ -2372,6 +2372,13 @@ function appendLog(
         "#ff5555";
 
     } else if (
+      type === "info" &&
+      String(msg).startsWith("MONITOR候補生成:")
+    ) {
+
+      line.style.color = "#7dd3fc";
+
+    } else if (
       type === "warn" ||
       String(msg).includes("人口枠調整=")
     ) {
