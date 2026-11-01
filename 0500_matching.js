@@ -1427,9 +1427,7 @@
         frequency.creditAfter = frequency.reason === "storage-write-failed"
           ? frequency.creditBefore : ledger.credit;
         frequency.granted = transfers.some(transfer => transfer.to === "PRIDE");
-        if (frequency.reason !== "storage-write-failed") {
-          frequency.countedGeneration = frequency.countedGeneration;
-        } else {
+        if (frequency.reason === "storage-write-failed") {
           frequency.countedGeneration = false;
         }
         frequency.countedGenerations = frequency.reason === "storage-write-failed"

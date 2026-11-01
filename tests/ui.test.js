@@ -53,6 +53,50 @@ function createUIContext(customState = {}) {
   return context;
 }
 
+test("MONITOR info updates one row without moving warnings or changing runtime records", () => {
+  const context = createUIContext();
+  const box = {
+    children: [],
+    prepend(line) { this.children.unshift(line); },
+    removeChild(line) { this.children.splice(this.children.indexOf(line), 1); },
+    get lastChild() { return this.children.at(-1); }
+  };
+  context.document.getElementById = id => id === "logBox" ? box : null;
+  context.document.createElement = () => ({ dataset: {}, style: {} });
+  let time = "00:00:00";
+  context.getNowLabelJa = () => time;
+  const records = [];
+  context.logEvent = (type, payload) => records.push({ type, payload });
+  const { log, logWarn, logError, appendLog, MAX_LOG_LINES } = context.ViewerUI;
+  const options = { replaceKey: "monitor-candidates" };
+  log("候補生成: first", options);
+  const monitorLine = box.children[0];
+  logError("connection failed");
+  time = "00:00:10";
+  log("候補生成: second", options);
+  assert.equal(box.children.length, 2);
+  assert.equal(box.children[1], monitorLine);
+  assert.equal(monitorLine.textContent, "[00:00:10] 候補生成: second");
+  assert.equal(records.length, 1);
+  assert.equal(records[0].payload.severity, "error");
+  logWarn("先読み失敗");
+  appendLog("another failure", "error", options);
+  assert.equal(box.children.length, 4);
+  assert.equal(records.length, 3);
+  assert.equal(monitorLine.dataset.type, "info");
+  log("候補生成: MATCHING");
+  assert.equal(box.children.length, 5);
+  for (let i = 0; i < MAX_LOG_LINES; i++) log(`コピー: ${i}`);
+  assert.equal(box.children.length, MAX_LOG_LINES);
+  assert(!box.children.includes(monitorLine));
+  log("候補生成: recreated", options);
+  const replacement = box.children[0];
+  log("候補生成: updated", options);
+  assert.equal(box.children.length, MAX_LOG_LINES);
+  assert.equal(box.children[0], replacement);
+  assert.equal(box.children.filter(line => line.dataset.logKey === options.replaceKey).length, 1);
+});
+
 test("renderStars outputs correct stars and line breaks", () => {
   const context = createUIContext();
   const { renderStars } = context.ViewerUI;

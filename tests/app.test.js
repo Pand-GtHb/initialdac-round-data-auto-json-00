@@ -118,6 +118,7 @@ function createLoadedDataApp({ realData = false } = {}) {
   const records = [];
   const errors = [];
   const warnings = [];
+  const messages = [];
   const clipboard = [];
   const storage = {};
   const context = vm.createContext({
@@ -150,7 +151,8 @@ function createLoadedDataApp({ realData = false } = {}) {
     context.ViewerData.fetchRoundDataJson = (...args) => context.roundDataRequest(...args);
   }
   context.ViewerUI = {
-    log() {}, logWarn: message => warnings.push(message), logError: message => errors.push(message),
+    log: (message, options) => messages.push({ message, options }),
+    logWarn: message => warnings.push(message), logError: message => errors.push(message),
     renderMatchingHeader() {}, renderMatchingTable() {}, renderSummary() {},
     renderDetailTable() {}, switchDisplayView() {}, startProgress() {}, stopProgress() {}
   };
@@ -167,7 +169,7 @@ function createLoadedDataApp({ realData = false } = {}) {
     updateDate: new Date(Date.now() - 690000).toISOString()
   }));
   app.applyFilters();
-  return { app, context, records, errors, warnings, clipboard };
+  return { app, context, records, errors, warnings, clipboard, messages };
 }
 
 test('Newer published data does not block matching, preview, or candidate regeneration', () => {
@@ -194,7 +196,7 @@ test('Newer published data does not block matching, preview, or candidate regene
 });
 
 test('MONITOR repeats every ten seconds with a rolling offset, without saves, copying or history pushes', () => {
-  const { app, context, records, clipboard } = createLoadedDataApp();
+  const { app, context, records, clipboard, messages } = createLoadedDataApp();
   let now = Date.now();
   context.Date = class extends Date { static now() { return now; } };
   const timers = new Map();
@@ -222,6 +224,9 @@ test('MONITOR repeats every ten seconds with a rolling offset, without saves, co
   assert.equal(app.State.matchingContext.evaluationTimeMs, now + 15000);
   assert.equal(timers.size, 1);
   assert.equal(records.filter(r => r.e === 'candidate').length, 0);
+  const monitorMessages = messages.filter(entry => entry.message.startsWith('候補生成:'));
+  assert.equal(monitorMessages.length, 2);
+  assert(monitorMessages.every(entry => entry.options?.replaceKey === 'monitor-candidates'));
   app.State.previewOffsetSec = 5;
   app.State.searchText = 'LOADED';
   app.refreshMonitor();
@@ -245,6 +250,7 @@ test('MONITOR repeats every ten seconds with a rolling offset, without saves, co
   assert.equal(listeners.size, 0);
   app.showMatchingCandidates({ mode: 'preview', push: false });
   app.showMatchingCandidates({ mode: 'matching', push: false });
+  assert.equal(messages.filter(entry => entry.message.startsWith('候補生成:')).at(-1).options, undefined);
   assert.equal(timers.size, 0);
   assert.equal(listeners.size, 0);
 });
