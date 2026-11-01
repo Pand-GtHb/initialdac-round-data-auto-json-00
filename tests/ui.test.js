@@ -95,6 +95,22 @@ test("MONITOR info updates one row without moving warnings or changing runtime r
   assert.equal(box.children.length, MAX_LOG_LINES);
   assert.equal(box.children[0], replacement);
   assert.equal(box.children.filter(line => line.dataset.logKey === options.replaceKey).length, 1);
+  log("候補生成: MATCHING");
+  const matchingLine = box.children[0];
+  const nextSession = { replaceKey: "monitor-candidates-next" };
+  log("MONITOR候補生成: new MONITOR", nextSession);
+  const nextLine = box.children[0];
+  log("MONITOR候補生成: refreshed MONITOR", nextSession);
+  assert.equal(box.children[0], nextLine);
+  assert.equal(box.children[1], matchingLine);
+  assert.equal(box.children[2], replacement);
+  assert(nextLine.textContent.includes("refreshed MONITOR"));
+  assert.equal(nextLine.style.color, "#7dd3fc");
+  assert.equal(matchingLine.style.color, "#00ff00");
+  appendLog("MONITOR候補生成: failure", "error");
+  assert.equal(box.children[0].style.color, "#ff5555");
+  appendLog("MONITOR候補生成: warning", "warn");
+  assert.equal(box.children[0].style.color, "#ffeb3b");
 });
 
 test("renderStars outputs correct stars and line breaks", () => {

@@ -162,10 +162,11 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v18-monitor-log-row-20261102";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v19-monitor-log-sessions-20261102";
 const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v22_three_group";
 const MAX_LOG_LINES = 100;
 const MONITOR_INTERVAL_MS = 10000;
+let monitorLogSession = 0;
 const DEFAULT_FILTER_MINUTES = 15;
 const DEFAULT_MY_RANK_KEY = "R7";
 /*
@@ -4698,6 +4699,11 @@ function buildMatchingCandidates(
       null;
   }
 
+  if (mode === "preview" &&
+      (State.currentView !== STATE.MATCHING || State.matchingContext?.mode !== "preview")) {
+    monitorLogSession++;
+  }
+
   State.matchingContext = {
     mode,
     clickedAtMs,
@@ -5087,7 +5093,7 @@ function buildMatchingCandidates(
   }
 
   log(
-    `候補生成: Base=${base.length} / Selected=${finalSelected.length}` +
+    `${mode === "preview" ? "MONITOR候補生成" : "候補生成"}: Base=${base.length} / Selected=${finalSelected.length}` +
     `（通常${normalSelected.length}＋バケット横断${crossBucketSelected.length}` +
     `＋ワイルドカード${wildcardSelected.length}` +
     `／Pink ${pinkManagedCount}人・上限なし）` +
@@ -5101,7 +5107,7 @@ function buildMatchingCandidates(
         ` population=${JSON.stringify(State.matchingSlotAllocationDiagnostics.population.shares)}`
       : ""}` +
     `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`,
-    mode === "preview" ? { replaceKey: "monitor-candidates" } : undefined
+    mode === "preview" ? { replaceKey: `monitor-candidates-${monitorLogSession}` } : undefined
   );
 
   if (saveEvent) {
