@@ -671,11 +671,11 @@ function buildSummaryModeNavHTML(activeMode) {
         type="button"
         class="summary-mode-btn summary-mode-btn-preview${State.matchingContext?.mode === "preview" && activeMode === "both" ? " active" : ""}"
         data-matching-preview
-      >🔭 PREVIEW</button>
+      >🔭 MONITOR</button>
       ${buildMatchingOffsetSelectHTML(
         "previewOffsetSelect",
         State.previewOffsetSec,
-        "PREVIEWの予測時刻"
+        "MONITORの予測時刻"
       )}
     </div>
   `;
@@ -732,6 +732,8 @@ function ensureAreaSummaryStyles() {
   style.textContent = `
     :root {
       --theme-header-color: #168a45;
+      --monitor-band-color: #b9daf5;
+      --monitor-text-color: #17324d;
     }
 
     th {
@@ -742,6 +744,36 @@ function ensureAreaSummaryStyles() {
     .matching-cross-rank-table th {
       background: #168a45 !important;
       color: #fff !important;
+    }
+
+    #monitorCountdownHeader {
+      background-color: #edf2f7;
+      background-image: linear-gradient(var(--monitor-band-color), var(--monitor-band-color));
+      background-position: left center;
+      background-repeat: no-repeat;
+      background-size: 0% 100%;
+      animation-fill-mode: both;
+      animation-timing-function: linear;
+    }
+
+    #monitorCountdownHeader th {
+      background: transparent !important;
+      color: var(--monitor-text-color) !important;
+    }
+
+    @keyframes monitor-countdown {
+      from { background-size: 100% 100%; }
+      to { background-size: 0% 100%; }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --monitor-band-color: #244b70;
+        --monitor-text-color: #f1f5f9;
+      }
+      #monitorCountdownHeader {
+        background-color: #182536;
+      }
     }
 
     .area-summary-list {
@@ -779,13 +811,14 @@ function ensureAreaSummaryStyles() {
 
     .summary-mode-btn-preview,
     .summary-mode-btn-preview.active {
-      background: #2563a6;
+      background: var(--monitor-band-color);
       border-color: #1d4f84;
-      color: #fff;
+      color: var(--monitor-text-color);
     }
 
     .summary-mode-btn-preview:hover {
-      background: #1d4f84;
+      background: var(--monitor-band-color);
+      border-color: var(--monitor-text-color);
     }
 
     .summary-mode-btn.active {
@@ -1273,6 +1306,12 @@ function bindSummaryModeButtons(root) {
       e => {
         State.previewOffsetSec =
           Number(e.target.value) || 0;
+        if (State.currentView === STATE.MATCHING && State.matchingContext?.mode === "preview") {
+          showMatchingCandidates({
+            push: false, mode: "preview", offsetSec: State.previewOffsetSec
+          });
+          if (State.searchText) applyMatchingFilter(State.searchText);
+        }
       }
     );
   }
@@ -2192,7 +2231,7 @@ function renderMatchingTable() {
       <div id="matchingTableWrapper" style="overflow-x:auto;">
         <table>
           <thead>
-            <tr>
+            <tr${State.matchingContext?.mode === "preview" ? ' id="monitorCountdownHeader"' : ""}>
               <th>★・PRIDE</th>
               <th>プレイヤー名</th>
               <th>エリア</th>
@@ -2231,6 +2270,7 @@ function renderMatchingTable() {
   `;
 
   bindSummaryModeButtons(area);
+  syncMonitorCountdown();
 
   if (typeof applyMatchingFilter === "function" && State.searchText) {
     applyMatchingFilter(State.searchText);
@@ -2241,6 +2281,26 @@ function renderMatchingTable() {
         : State.matchingList
     );
   }
+}
+
+function syncMonitorCountdown() {
+  const header = document.getElementById("monitorCountdownHeader");
+  if (!header) return;
+  const deadline = State.monitorRefreshAtMs;
+  const duration = State.monitorIntervalMs;
+  if (!Number.isFinite(deadline) || !Number.isFinite(duration) || duration <= 0) {
+    header.style.animationName = "none";
+    return;
+  }
+  if (document.hidden) {
+    header.style.animationPlayState = "paused";
+    return;
+  }
+  const elapsed = Math.max(0, Math.min(duration, Date.now() - (deadline - duration)));
+  header.style.animationName = "monitor-countdown";
+  header.style.animationDuration = `${duration}ms`;
+  header.style.animationDelay = `-${elapsed}ms`;
+  header.style.animationPlayState = "running";
 }
 
 /* =========================================================
@@ -2411,7 +2471,7 @@ function allowLog(
 
   if (
     message.includes(
-      "PREVIEWではコピー操作"
+      "MONITORではコピー操作"
     )
   ) {
     return true;
@@ -2583,6 +2643,7 @@ const logError =
     highlightMatchingRows,
     renderMatchingHeader,
     renderMatchingTable,
+    syncMonitorCountdown,
     renderMatchingRows,
     appendLog,
     allowLog,

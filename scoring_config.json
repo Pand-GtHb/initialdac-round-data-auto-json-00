@@ -1,8 +1,9 @@
 {
   "meta": {
     "schemaVersion": 1,
-    "version": "scoring_config_v39_yellow_no_decay_through4_20261029",
+    "version": "scoring_config_v40_three_group_diversity12_20261101",
     "parameterNotes": {
+      "threeGroup": "threeGroupEnabled=trueのR6/R7は同格非拡張3群。R6下R1～R5/同R6/上R7・R8へ4/2/2枠、PRIDEは通常群外。R7下R1～R6/同R7/上R8・PRIDEへ3/1/4枠。群内は既存slotScore順、R7上位だけthreeGroupDiversityGapThreshold=0.12で未選出帯への機会を設ける。R8も別帯。固定帯保証なし。容量不足は通常対象群の残候補からスコア順補充。cross1/wild1は全pool対象を維持。R6/R7は人口枠移動・R6 PRIDE通常credit増枠を適用しない。R8以下その他自ランクは従来方式・8%帯多様性を維持。設定省略時はthreeGroupEnabled=falseで旧方式。ログslotBucket/slotRankは3群方式のとき群名/群内順位、PRIDE除外はoutside-normal/null。ランクはrankKeyで保持し、AREA集計のランク区分は変更しない。",
       "validation": "schemaVersion=1。未指定項目は既定値で補完し、型・範囲・枠数合計10・未定義の設定名を読込時に検証。不正設定は通知して読込を中断する。",
       "effectiveValues": "予測ログのscoringConfigSnapshotにversionと既定値補完後の設定を保存。phase.yellow.weightはyellowMaxWeight適用後、recentMatch.weightは無効時0を記録。",
       "slots": "normal・crossBucket・wildcardは非負の整数で合計10。Pink表示上限は撤廃し、選出後の差し替えは行わない。",
@@ -18,8 +19,8 @@
       "opponentFeatureDiagnostics": "Yellowの0～4サイクル減衰なしを本番採用し、yellow-phase-no-decay-through-4は本番一致確認用shadowとして維持する。yellow-phase-decay-006は従来の全周期lambda=0.06による独立比較として保存する。過去イベントを新設定で上書き解釈しない。強み・特徴ラベルは表示せず、Yellow/PinkのPhase情報のみを表示する。候補ログはhistorical確率・信頼性とサンプル数、Phase誤差・スコア・周期数・起点/cooldown、AREA人口・密度・加点、全体/枠内順位、候補選出経路を数値で記録する。candidateEventIdで通常コピー実績と照合し、候補特性と結果の関係を分析する。診断は本番選出を変更しない。"
     },
     "createdAt": "2026-09-26T09:15:11+09:00",
-    "modifiedAt": "2026-10-29T22:45:00+09:00",
-    "description": "Filter既定15分・自ランク既定値はviewerDefaultsで管理。表示は通常8＋個体確率クロス1＋総合スコアwildcard1。通常枠はhistorical確率とrelativePopulationAdjustmentで配分しRubyフロア保証なし。人口は時間・ランクフィルター後かつPink cooldown前の分類人数で、ゲーム全体の待機人数ではない。R6/R7/R8かつ全ランク選択・最小人数を満たす場合のみ下位/上位を基準人口比で補正し、同格係数は1。係数は設定範囲に制限し最大移動枠数を維持。寄付元は過剰枠かつ容量に余裕がある最少人口バケット（同数は補正確率・名前順）。基準は10/1～10/5の重複除外57スナップショット、R8は暫定。本番AREAは基本加点のみで直近加点は診断専用。PhaseはYellow0～4周期減衰なし・5周期以上lambda=0.06、Pink減衰0.03、誤差幅90秒、重み双方0.55、採点trust乗算なし。新世代取得に失敗しても読込済みデータで予測・コピーを継続する。Pink活動加点・追加不一致減衰・上限は撤廃済み。起点・周期学習・保存復元・cooldown・PRIDE帯補正は維持。Phase/AREA比較診断は同一母集団・枠で再選出し本番や学習を変更しない。候補起点・cooldown・採点内訳・実装版とともにログへ保存する。"
+    "modifiedAt": "2026-11-01T21:00:00+09:00",
+    "description": "通常8＋個体確率cross1＋global wildcard1。R6/R7は同格非拡張3群とR7上位帯多様性12%を採用。その他自ランクは従来のhistorical・人口補正方式を維持。詳細はparameterNotes.threeGroup。Phase減衰・AREA・時間母集団・cooldown・通信方式は変更しない。過去ログはイベントの実装版と設定で解釈する。"
   },
   "viewerDefaults": {
     "filterMinutes": 15,
@@ -37,6 +38,8 @@
       "wildcard": 1
     },
     "slotAllocation": {
+      "threeGroupEnabled": true,
+      "threeGroupDiversityGapThreshold": 0.12,
       "r6PridePopulationThreshold": 0.4,
       "prideBandPriorExponent": 0.5,
       "prideBandDiversityGapThreshold": 0.08,

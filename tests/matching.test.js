@@ -52,6 +52,94 @@ test("Matching constants export and values", () => {
   assert.equal(matching.POPULATION_RANK_KEYS.length, 15);
 });
 
+function groupPlayer(name, rankKey, score) {
+  return { name, shopname: name, __rankKey: rankKey, __slotScore: score, __score: score,
+    __detail: { slotScore: score, historicalScore: score, tierProbability: 0.5,
+      tierCandidateCount: 1, effectivePhaseScore: 1 } };
+}
+
+test("Three groups include previously zero-slot lower ranks and exclude R6 PRIDE from fallback", () => {
+  const m = createMatchingContext().ViewerMatching;
+  const config = m.resolveScoringConfig(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+  const candidates = [
+    ...[1, 2, 3, 4].map((r, i) => groupPlayer(`low${i}`, `R${r}`, 1 - i / 100)),
+    ...[0, 1].map(i => groupPlayer(`same${i}`, 'R6', 0.9 - i / 100)),
+    ...[7, 8].map((r, i) => groupPlayer(`up${i}`, `R${r}`, 0.8 - i / 100)),
+    groupPlayer('pride', 'P_D', 10)
+  ];
+  const state = {};
+  const plan = m.buildThreeGroupSlotPlan(candidates, 'R6', config);
+  assert.deepEqual(Array.from(plan, p => p.slots), [4, 2, 2]);
+  const normal = m.selectNormalCandidatesBySlots(candidates, 8, {}, plan, { state, scoringConfig: config });
+  assert.equal(normal.length, 8);
+  assert(normal.some(p => p.__rankKey === 'R1'));
+  assert(normal.some(p => p.__rankKey === 'R2'));
+  assert(!normal.some(p => p.__rankKey.startsWith('P_')));
+  assert.equal(candidates.at(-1).__detail.slotBucket, 'outside-normal');
+  assert.equal(candidates.at(-1).__detail.slotRank, null);
+  assert.equal(m.selectCrossBucketCandidates(candidates, normal, 1)[0].name, 'pride');
+  const sparse = candidates.filter(p => p.__rankKey !== 'R7' && p.__rankKey !== 'R8');
+  const sparsePlan = m.buildThreeGroupSlotPlan(sparse, 'R6', config);
+  const selected = m.selectNormalCandidatesBySlots(sparse, 8, {}, sparsePlan, { state, scoringConfig: config });
+  assert.equal(selected.length, 6);
+  assert(!selected.some(p => p.name === 'pride'));
+});
+
+test("R7 upper diversity uses 12% independently of legacy PRIDE 8% and logs group ranks", () => {
+  const m = createMatchingContext().ViewerMatching;
+  const config = m.resolveScoringConfig(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+  const candidates = [
+    ...[1, 2, 3].map(r => groupPlayer(`low${r}`, `R${r}`, 1)),
+    groupPlayer('same', 'R7', 1),
+    groupPlayer('ruby1', 'R8', 1.04), groupPlayer('pride1', 'P_D', 1.02),
+    groupPlayer('ruby2', 'R8', 1.01), groupPlayer('pride2', 'P_D', 1),
+    groupPlayer('other-band', 'P_F', 0.9)
+  ];
+  const state = {};
+  const plan = m.buildThreeGroupSlotPlan(candidates, 'R7', config);
+  const selected = m.selectNormalCandidatesBySlots(candidates, 8, {}, plan, { state, scoringConfig: config });
+  assert(selected.some(p => p.name === 'other-band'));
+  assert.equal(candidates.at(-1).__detail.slotBucket, 'higher');
+  assert.equal(candidates.at(-1).__detail.slotRank, 5);
+  const config8 = structuredClone(config);
+  config8.candidateSelection.slotAllocation.threeGroupDiversityGapThreshold = 0.08;
+  assert(!m.selectNormalCandidatesBySlots(candidates, 8, {}, plan, { state: {}, scoringConfig: config8 })
+    .some(p => p.name === 'other-band'));
+  assert.equal(config.candidateSelection.slotAllocation.prideBandDiversityGapThreshold, 0.08);
+  assert.equal(m.buildThreeGroupSlotPlan(candidates, 'R8', config), null);
+  config.candidateSelection.slotAllocation.threeGroupEnabled = false;
+  assert.equal(m.buildThreeGroupSlotPlan(candidates, 'R7', config), null);
+});
+
+test("Three-group capacity backfill records actual slots without duplicating candidates", () => {
+  const m = createMatchingContext().ViewerMatching;
+  const config = m.resolveScoringConfig(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+  const candidates = Array.from({ length: 12 }, (_, i) => groupPlayer(`p${i}`, 'R6', 1 - i / 100));
+  const state = {};
+  const plan = m.buildThreeGroupSlotPlan(candidates, 'R7', config);
+  const selected = m.selectNormalCandidatesBySlots(candidates, 8, {}, plan, { state, scoringConfig: config });
+  assert.equal(selected.length, 8);
+  assert.equal(new Set(selected).size, 8);
+  assert.equal(state.matchingSlotPlan[0].slots, 8);
+  assert.equal(state.matchingSlotPlan[0].requestedSlots, 3);
+  assert.equal(selected.at(-1).__slotRank, 8);
+});
+
+test("Three-group settings validate types, thresholds and eight-slot invariant", () => {
+  const m = createMatchingContext().ViewerMatching;
+  const source = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8'));
+  for (const value of [-1, 1.01, '0.12']) {
+    const config = structuredClone(source);
+    config.candidateSelection.slotAllocation.threeGroupDiversityGapThreshold = value;
+    assert.throws(() => m.resolveScoringConfig(config), /threeGroupDiversityGapThreshold/);
+  }
+  const config = structuredClone(source);
+  config.candidateSelection.slots = { normal: 7, crossBucket: 1, wildcard: 2 };
+  assert.throws(() => m.resolveScoringConfig(config), /requires 8 normal slots/);
+  delete source.candidateSelection.slotAllocation.threeGroupEnabled;
+  assert.equal(m.resolveScoringConfig(source).candidateSelection.slotAllocation.threeGroupEnabled, false);
+});
+
 test("R6 frequency uses the shared ledger defaults and validation without changing decisions", () => {
   const context = createMatchingContext();
   const persistence = context.ViewerPersistence;
