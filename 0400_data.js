@@ -27,7 +27,7 @@
 
   const DEFAULT_TIMEOUTS = Object.freeze({
     "latest_update.json": 8000,
-    "integrated_data.json": 20000,
+    "integrated_data.json": 60000,
     default: 10000
   });
 

@@ -12,11 +12,11 @@ test("Data constants and timeout mappings", () => {
   );
   assert.equal(dataModule.MAX_RETRY, 3);
   assert.equal(dataModule.DEFAULT_TIMEOUTS["latest_update.json"], 8000);
-  assert.equal(dataModule.DEFAULT_TIMEOUTS["integrated_data.json"], 20000);
+  assert.equal(dataModule.DEFAULT_TIMEOUTS["integrated_data.json"], 60000);
   assert.equal(dataModule.DEFAULT_TIMEOUTS.default, 10000);
 
   assert.equal(dataModule.getTimeoutForPath("latest_update.json"), 8000);
-  assert.equal(dataModule.getTimeoutForPath("integrated_data.json"), 20000);
+  assert.equal(dataModule.getTimeoutForPath("integrated_data.json"), 60000);
   assert.equal(dataModule.getTimeoutForPath("unknown.json"), 10000);
   assert.equal(
     dataModule.getTimeoutForPath("unknown.json", { default: 5000 }),
