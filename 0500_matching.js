@@ -13,7 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
-  const MATCHING_SCRIPT_VERSION = "matching-policy-v11-three-group-20261101";
+  const MATCHING_SCRIPT_VERSION = "matching-policy-v12-day-relative-area-20261116";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -89,6 +89,7 @@
         },
         areaBoost: {
           enabled: true, weight: DEFAULT_AREA_BOOST_WEIGHT, smoothingSampleSize: DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE,
+          dayRelativeEnabled: false,
           recentMatch: {
             enabled: DEFAULT_RECENT_AREA_BOOST_ENABLED,
             weight: DEFAULT_RECENT_AREA_BOOST_WEIGHT,
@@ -1798,6 +1799,7 @@
     Object.freeze({ variant: "areaRecentOnly", id: "area-recent-only", area: "recent-only" }),
     Object.freeze({ variant: "areaNone", id: "area-none", area: "none" }),
     Object.freeze({ variant: "areaDayOnly", id: "area-day-relative-only", area: "day-only" }),
+    Object.freeze({ variant: "areaWithoutDay", id: "area-without-day-relative", area: "without-day" }),
     Object.freeze({ variant: "previousPolicy", id: "previous-phase-area-policy",
       lambda: 0.03, scaleSec: 90, area: "basic-recent" })
   ]);
@@ -1840,6 +1842,29 @@
       return [area, { expected, observed, boost }];
     }));
     return { dayKey, sampleCount: history.length, areaCounts, observedCounts, details };
+  }
+
+  function applyCandidateDayRelativeAreaBoost(candidates, {
+    scoringConfig = getState()?.scoringConfig, copyAreaHistory = getState()?.copyAreaHistory ?? [],
+    evaluationTimeMs
+  } = {}) {
+    if (!scoringConfig?.candidateSelection?.areaBoost?.dayRelativeEnabled) return;
+    const context = buildShadowAreaContext(
+      candidates, copyAreaHistory, evaluationTimeMs, scoringConfig.experimental.dayRelativeArea);
+    for (const player of candidates) {
+      const detail = player.__detail;
+      const { expected, observed, boost } = context.details.get(String(player.area ?? ""));
+      const slotScore = getCandidateSlotScore(player) /
+        Math.max(Number(detail.recentAreaAppliedBoost ?? 1), Number.EPSILON) * boost;
+      detail.recentAreaAppliedBoost = boost;
+      detail.recentAreaCounterfactualBoostWindow = boost;
+      detail.recentAreaCounterfactualSlotScore = slotScore;
+      detail.diagnosticAreaExpectedCount = expected;
+      detail.diagnosticAreaObservedCount = observed;
+      detail.slotScore = slotScore;
+      player.__slotScore = slotScore;
+    }
+    assignCandidateSlotRanks(candidates, { assignRecentAreaRanks: true });
   }
 
   function buildShadowCandidateComparison(pool, options) {
@@ -1893,7 +1918,7 @@
         pool, copyAreaHistory, evaluationTimeMs, scoringConfig.experimental.dayRelativeArea);
     }
     let recentHistory = null;
-    if (policy?.area?.includes("recent")) {
+    if (policy?.area?.includes("recent") || policy?.area === "without-day") {
       if (!context.recentHistory) {
         const config = getRecentAreaBoostConfig({
           candidateSelection: { areaBoost: { recentMatch: {
@@ -1908,6 +1933,8 @@
       }
       recentHistory = context.recentHistory;
     }
+    const withoutDayConfig = policy?.area === "without-day"
+      ? getRecentAreaBoostConfig(scoringConfig) : null;
     let unavailablePhaseCount = 0;
 
     // All selection flags and score details belong to diagnostic clones only.
@@ -1941,11 +1968,12 @@
         let basic = d.areaBoost;
         let recent = d.recentAreaAppliedBoost;
         if (policy.area) {
-          basic = policy.area === "basic-recent" ? basic : 1;
+          basic = ["basic-recent", "without-day"].includes(policy.area) ? basic : 1;
           recent = 1;
           const area = String(p.area ?? "");
           if (recentHistory && area) {
-            recent = 1 + recentHistory.config.weight * Math.sqrt(
+            const weight = withoutDayConfig ? withoutDayConfig.weight : recentHistory.config.weight;
+            recent = 1 + weight * Math.sqrt(
               Number(recentHistory.recentWindowCounts[area] ?? 0) / recentHistory.config.windowSize);
           }
           if (policy.area === "day-only") {
@@ -1989,7 +2017,10 @@
     const eligible = clones.filter(p =>
       getCandidateSelectionScore(p) > 0 && getCandidateSlotScore(p) > 0);
     const slots = getMatchingSlotCounts(scoringConfig);
-    const normal = selectNormalCandidatesBySlots(eligible, slots.normal, {}, slotPlan, {
+    const selectionPlan = slotPlan.map(entry => entry.selectionPolicy === "three-group"
+      ? { ...entry, slots: Math.min(entry.capacity, entry.requestedSlots) }
+      : { ...entry });
+    const normal = selectNormalCandidatesBySlots(eligible, slots.normal, {}, selectionPlan, {
       state: {}, scoringConfig
     });
     const cross = selectCrossBucketCandidates(eligible, normal, slots.crossBucket);
@@ -2035,12 +2066,13 @@
           pinkPhaseUnchanged: true, scoringTrustApplied: false,
           unavailablePhaseCount, unavailablePhaseRule: "preserve-observed-phase",
           ...(recentHistory ? {
-            recentMatch: { weight: recentHistory.config.weight, windowSize: recentHistory.config.windowSize,
+            recentMatch: { weight: withoutDayConfig ? withoutDayConfig.weight : recentHistory.config.weight,
+              windowSize: recentHistory.config.windowSize,
               includePreviousDays: true, historySource: "prior-normal-copies" }
           } : {})
         } : { replaces: "yellow-effective-phase-weight", pinkUnchanged: true, scoringTrustApplied: false }),
         populationAndSlotPlan: "same-as-production",
-        slotPlan: slotPlan.map(entry => ({ ...entry }))
+        slotPlan: selectionPlan
       },
       selected
     };
@@ -2278,6 +2310,7 @@
     buildCopyAreaHistoryContext,
     getRecentAreaBoostConfig,
     applyCandidateAreaHistoryBoost,
+    applyCandidateDayRelativeAreaBoost,
     applyCandidateAreaPhaseDiagnostics,
     getCandidateSlotScore,
     assignCandidateSlotRanks,
