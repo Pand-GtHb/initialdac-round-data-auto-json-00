@@ -243,40 +243,6 @@ function buildPlayerRowHTML(
           ? "pink-managed"
           : "";
 
-  const safeName =
-    String(
-      p.name ?? ""
-    )
-      .replace(
-        /\\/g,
-        "\\\\"
-      )
-      .replace(
-        /'/g,
-        "\\'"
-      )
-      .replace(
-        /"/g,
-        '\\"'
-      );
-
-  const safeShop =
-    String(
-      fullShop ?? ""
-    )
-      .replace(
-        /\\/g,
-        "\\\\"
-      )
-      .replace(
-        /'/g,
-        "\\'"
-      )
-      .replace(
-        /"/g,
-        "&quot;"
-      );
-
   const copyValue =
     [
       isRuby
@@ -288,17 +254,12 @@ function buildPlayerRowHTML(
     ]
       .join("\t")
       .replace(
-        /\\/g,
-        "\\\\"
-      )
-      .replace(
-        /'/g,
-        "\\'"
-      )
-      .replace(
         /\r?\n/g,
         " "
       );
+  const copyHandler = value => escapeHtmlAttr(
+    `copyToClipboard(${JSON.stringify(value)},${JSON.stringify(p.name ?? "")},${JSON.stringify(fullShop)})`
+  );
 
   const rowStateClass =
     isPinkPhase
@@ -315,30 +276,22 @@ function buildPlayerRowHTML(
   return `
     <tr
       class="${rowStateClass}${crossBucketClass}"
-      data-updated="${p.updateDate}"
+      data-updated="${escapeHtmlAttr(p.updateDate ?? "")}"
       data-name="${escapeHtmlAttr(p.name ?? "")}"
       data-shopname="${escapeHtmlAttr(fullShop)}"
     >
       <td
         class="center clickable"
-        onclick="copyToClipboard(
-          '${copyValue}',
-          '${safeName}',
-          '${safeShop}'
-        )"
+        onclick="${copyHandler(copyValue)}"
       >
-        ${starOrLevel}
+        ${isRuby ? starOrLevel : escapeHtmlAttr(starOrLevel)}
       </td>
 
       <td
         class="left player-name clickable ${playerNameClass}"
-        onclick="copyToClipboard(
-          '${safeName}',
-          '${safeName}',
-          '${safeShop}'
-        )"
+        onclick="${copyHandler(p.name ?? "")}"
       >
-        ${p.name}${
+        ${escapeHtmlAttr(p.name ?? "")}${
           p.__crossBucket
             ? ' <span style="background:#e8f5e9;color:#246b2d;border-radius:3px;padding:0 4px;font-size:0.8em;" title="バケット横断枠：過去バケット確率を現在候補数で個人へ配分した推定確率により選出">X↑</span>'
             : ""
@@ -346,20 +299,16 @@ function buildPlayerRowHTML(
       </td>
 
       <td class="center">
-        ${areaName}
+        ${escapeHtmlAttr(areaName)}
       </td>
 
       <td
         class="left clickable"
-        data-fullname="${safeShop}"
-        onclick="copyToClipboard(
-          '${safeShop}',
-          '${safeName}',
-          '${safeShop}'
-        )"
+        data-fullname="${escapeHtmlAttr(fullShop)}"
+        onclick="${copyHandler(fullShop)}"
       >
         <div class="store-name">
-          ${shortShop}
+          ${escapeHtmlAttr(shortShop)}
         </div>
       </td>
 
@@ -381,13 +330,13 @@ function buildPlayerRowHTML(
             cursor:pointer;
           "
           title="タップして情報を表示"
-        >${p.updateDate}</button>
+        >${escapeHtmlAttr(p.updateDate ?? "")}</button>
       </td>
 
       <td class="center">
         ${
           titleUrl
-            ? `<img src="${titleUrl}" height="24">`
+            ? `<img src="${escapeHtmlAttr(titleUrl)}" height="24">`
             : ""
         }
       </td>

@@ -103,6 +103,7 @@
     applyCandidateSlotScores,
     getRecentAreaBoostConfig,
     applyCandidateAreaHistoryBoost,
+    applyCandidateDayRelativeAreaBoost,
     applyCandidateAreaPhaseDiagnostics,
     getCandidateSlotScore,
     buildMatchingSlotBucketProbabilities,
@@ -162,8 +163,8 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v19-monitor-log-sessions-20261102";
-const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v22_three_group";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v21-day-relative-area-20261116";
+const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v23_day_relative_area";
 const MAX_LOG_LINES = 100;
 const MONITOR_INTERVAL_MS = 10000;
 let monitorLogSession = 0;
@@ -1280,14 +1281,28 @@ function applyScoringConfigJson(
 /* =========================================================
  [3250] Data Applier:applyRoundDataJson【State】【DOM】（旧 [3610]）
 ========================================================= */
+function validateRoundDataJson(json) {
+  if (!Number.isFinite(parseDateJST(json?.generatedAt)?.getTime())) {
+    throw new Error("integrated_data.json の generatedAt が不正です");
+  }
+  if (!Array.isArray(json?.records) ||
+      json.records.some(record => !record || typeof record !== "object" || Array.isArray(record))) {
+    throw new Error("integrated_data.json の records が不正です");
+  }
+}
+
 function applyRoundDataJson(
   json,
   options = {}
 ) {
-
+  validateRoundDataJson(json);
+  const records = json.records.map(p => ({
+    ...p,
+    normalizedName: normalize(p.name),
+    areaName: getAreaDisplayName(p.area)
+  }));
   State.latestCandidateEventIdForCopy =
     null;
-
   const {
     resetReloadButton = true
   } = options;
@@ -1314,19 +1329,8 @@ function applyRoundDataJson(
       );
   }
 
-  const records =
-    json?.records || [];
-
   State.all =
-    records.map(p => ({
-      ...p,
-
-      normalizedName:
-        normalize(p.name),
-
-      areaName:
-        getAreaDisplayName(p.area)
-    }));
+    records;
 
   State.filtered =
     [...State.all];
@@ -1708,6 +1712,7 @@ async function prefetchLatestRoundData(
           await fetchRoundDataJson({
             purpose: "prefetch", expectedGeneration: lastUpdatedValue
           });
+        validateRoundDataJson(json);
 
         const expectedTime =
           parseDateJST(lastUpdatedValue)?.getTime();
@@ -2109,6 +2114,10 @@ async function checkUpdate() {
     }
 
     const latestTime = parseDateJST(latest)?.getTime();
+    if (!Number.isFinite(latestTime)) {
+      logWarn(`latest_update.json の更新時刻が不正です：${latest}。更新状態を維持します`);
+      return;
+    }
     const stateLatestTime = parseDateJST(State.latestUpdateAt)?.getTime();
     const loadedTime = parseDateJST(State.generatedAt)?.getTime();
     if (
@@ -3574,33 +3583,7 @@ function normalizeCopyAreaHistory(
       continue;
     }
 
-    const previous =
-      result[result.length - 1];
-    const samePlayer =
-      previous &&
-      normalizePlayerName(
-        previous.name ?? ""
-      ) ===
-        normalizePlayerName(
-          record.n ?? ""
-        ) &&
-      normalizePlayerName(
-        previous.shopname ?? ""
-      ) ===
-        normalizePlayerName(
-          record.shopname ?? ""
-        );
-    const withinDuplicateGuard =
-      samePlayer &&
-      Number(record.t ?? 0) -
-        Number(previous.t ?? 0) <
-        15000;
-
-    if (withinDuplicateGuard) {
-      continue;
-    }
-
-    result.push({
+    addAreaHistoryRecord(result, {
       t:
         Number(record.t ?? 0),
       name:
@@ -3610,11 +3593,30 @@ function normalizeCopyAreaHistory(
       area:
         String(record.area)
     });
+    if (result.length > LOG_STORAGE_LIMITS.copyAreaHistory) result.shift();
   }
 
   return result.slice(
     -LOG_STORAGE_LIMITS.copyAreaHistory
   );
+}
+
+function addAreaHistoryRecord(history, record) {
+  const name = normalizePlayerName(record.name ?? "");
+  const shop = normalizePlayerName(record.shopname ?? "");
+  if (name && shop && Number.isFinite(record.t)) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const previous = history[i];
+      const elapsed = record.t - previous.t;
+      if (elapsed < 0 || elapsed > 60000) continue;
+      if (normalizePlayerName(previous.name ?? "") === name &&
+          normalizePlayerName(previous.shopname ?? "") === shop) {
+        history.splice(i, 1);
+        break;
+      }
+    }
+  }
+  history.push(record);
 }
 
 async function loadCopyAreaHistory() {
@@ -3667,35 +3669,7 @@ function appendCopyAreaHistory(
     area:
       String(record.area)
   };
-  const previous =
-    State.copyAreaHistory[
-      State.copyAreaHistory.length - 1
-    ];
-  const isDuplicate =
-    previous &&
-    normalizePlayerName(
-      previous.name ?? ""
-    ) ===
-      normalizePlayerName(
-        nextRecord.name
-      ) &&
-    normalizePlayerName(
-      previous.shopname ?? ""
-    ) ===
-      normalizePlayerName(
-        nextRecord.shopname
-      ) &&
-    nextRecord.t -
-      Number(previous.t ?? 0) <
-      15000;
-
-  if (isDuplicate) {
-    return;
-  }
-
-  State.copyAreaHistory.push(
-    nextRecord
-  );
+  addAreaHistoryRecord(State.copyAreaHistory, nextRecord);
   State.copyAreaHistory =
     State.copyAreaHistory.slice(
       -LOG_STORAGE_LIMITS.copyAreaHistory
@@ -4885,12 +4859,16 @@ function buildMatchingCandidates(
 
   applyCandidateAreaHistoryBoost(
     scoredAll,
-    { assignSlotRanks: true }
+    { assignSlotRanks: true, copyAreaHistory: State.copyAreaHistory.filter(record => record.t <= evaluationTimeMs) }
   );
 
-  applyCandidateAreaPhaseDiagnostics(
-    scoredAll
-  );
+  applyCandidateDayRelativeAreaBoost(scoredAll, { evaluationTimeMs });
+
+  if (mode !== "preview") {
+    applyCandidateAreaPhaseDiagnostics(
+      scoredAll
+    );
+  }
 
   assignCandidateCrossBucketRanks(
     scoredAll
@@ -5659,7 +5637,11 @@ function copyToClipboard(
       )
     ) {
 
-      renderDetailTable();
+      if (State.currentDetailType === "area") {
+        renderAreaDetailTable(Number(State.currentDetailKey));
+      } else {
+        renderDetailTable();
+      }
 
     } else {
 
@@ -6660,6 +6642,9 @@ function saveCopyEventUnified(
     scoredAtPrediction;
 
   if (!scoredPlayer) {
+    const copyEvaluationTimeMs = candidateEventIdForCopy
+      ? Number(State.matchingContext?.evaluationTimeMs) || Date.now()
+      : Date.now();
     scoredPlayer =
       buildCandidateScore(
         player,
@@ -6667,12 +6652,7 @@ function saveCopyEventUnified(
         buildViewerHistoricalContext(
           State.myRankKey
         ),
-        candidateEventIdForCopy
-          ? Number(
-              State.matchingContext
-                ?.evaluationTimeMs
-            ) || Date.now()
-          : Date.now()
+        copyEvaluationTimeMs
       );
 
     applyCandidateSlotScores(
@@ -6691,13 +6671,16 @@ function saveCopyEventUnified(
         candidate =>
           buildPlayerIdentityKey(candidate) !==
           buildPlayerIdentityKey(scoredPlayer)
-      ),
+      ).map(candidate => ({ ...candidate, __detail: { ...candidate.__detail } })),
       scoredPlayer
     ];
 
     applyCandidateAreaHistoryBoost(
-      diagnosticCandidates
+      diagnosticCandidates,
+      { copyAreaHistory: State.copyAreaHistory.filter(record => record.t <= copyEvaluationTimeMs) }
     );
+
+    applyCandidateDayRelativeAreaBoost(diagnosticCandidates, { evaluationTimeMs: copyEvaluationTimeMs });
 
     applyCandidateAreaPhaseDiagnostics(
       diagnosticCandidates

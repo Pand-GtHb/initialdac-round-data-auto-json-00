@@ -127,6 +127,34 @@ test("renderStars outputs correct stars and line breaks", () => {
   assert.equal(renderStars(8), "★★★★<br>★★★★");
 });
 
+test("player rows display and copy names and shops containing HTML and quotes literally", () => {
+  const context = createUIContext();
+  context.getAreaDisplayName = () => 'Area & <North>';
+  context.isCopiedPlayer = () => false;
+  context.isMatchingCandidateByCopyPhase = () => false;
+  const player = {
+    name: `A "double" 'single' \\ <name>`,
+    shopname: `Shop "quoted" & 'store'`,
+    onlineBattleRankId: context.ViewerDomain.RUBY_ID,
+    starCnt: 6, point: 123, updateDate: '2026/11/15 14:30:00'
+  };
+  const html = context.ViewerUI.buildPlayerRowHTML(player);
+  assert(html.includes('A &quot;double&quot; \'single\' \\ &lt;name&gt;'));
+  assert(html.includes('Shop &quot;quoted&quot; &amp; \'store\''));
+  const handlers = [...html.matchAll(/onclick="([^"]*)"/g)].map(match =>
+    match[1].replace(/&quot;/g, '"').replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>').replace(/&amp;/g, '&'));
+  assert.equal(handlers.length, 3);
+  const calls = [];
+  context.copyToClipboard = (...args) => calls.push(args);
+  for (const handler of handlers) vm.runInContext(handler, context);
+  assert.deepEqual(calls, [
+    [`★★★★★★\t${player.name}\tArea & <North>\t${player.shopname}`, player.name, player.shopname],
+    [player.name, player.name, player.shopname],
+    [player.shopname, player.name, player.shopname]
+  ]);
+});
+
 test("buildFilterGroupHTML generates expected checkbox labels", () => {
   const context = createUIContext();
   const { buildFilterGroupHTML } = context.ViewerUI;

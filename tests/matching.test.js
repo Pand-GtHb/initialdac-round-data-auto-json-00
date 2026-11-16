@@ -454,6 +454,82 @@ test("AREA replacement preserves basic boost once in slot/cross scoring and leav
   assert.equal(JSON.stringify(pool), before);
 });
 
+test("live day-relative AREA changes selection and its without-day shadow reproduces the baseline", () => {
+  const M = createMatchingContext().ViewerMatching;
+  const config = M.resolveScoringConfig({ meta: { schemaVersion: 1, version: "test" } });
+  config.candidateSelection.areaBoost.dayRelativeEnabled = true;
+  const at = Date.parse("2026-11-16T10:00:00+09:00");
+  const history = [
+    { t: Date.parse("2026-11-16T03:59:59+09:00"), area: "rare" },
+    { t: Date.parse("2026-11-16T04:00:00+09:00"), area: "rare" },
+    { t: at - 2, area: "rare" }, { t: at - 1, area: "rare" },
+    { t: at + 1, area: "common" }
+  ];
+  const pool = Array.from({ length: 12 }, (_, i) => ({
+    name: `P${i}`, shopname: "S", area: i === 11 ? "rare" : "common",
+    __rankKey: "R7", __score: i === 11 ? 0.01 : 0.1 - i * 0.001,
+    __slotScore: (i === 11 ? 0.9 : 1) * 1.05,
+    __detail: {
+      slotScore: (i === 11 ? 0.9 : 1) * 1.05,
+      effectivePhaseScore: i === 11 ? 0.9 : 1, areaBoost: 1.05,
+      realtimeBoost: 1, pinkMismatchBoostFactor: 1, prideBandPriorWeight: 1,
+      recentAreaAppliedBoost: 1, tierProbability: i === 11 ? 0.9 : 1,
+      tierCandidateCount: 12
+    }
+  }));
+  const plan = [{ bucket: "R7", slots: 8 }];
+  const options = { scoringConfig: config, slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at };
+  const baseline = M.buildShadowCandidateComparison(pool, { ...options, variant: "areaWithoutDay" });
+  assert.equal(baseline.selected.some(p => p.name === "P11"), false);
+  const global = pool.map(p => p.__score);
+  M.applyCandidateDayRelativeAreaBoost(pool, options);
+  assert.deepEqual(pool.map(p => p.__score), global);
+  assert.equal(pool[11].__detail.diagnosticAreaObservedCount, 3);
+  assert.ok(pool[11].__slotScore > pool[0].__slotScore);
+  assert.ok(M.getCandidateCrossBucketScore(pool[11]) > 0.9 * 0.9 * 1.05 / 12);
+  const day = M.buildShadowCandidateComparison(pool, { ...options, variant: "dayRelativeArea" });
+  assert.ok(day.selected.some(p => p.name === "P11"));
+  const without = M.buildShadowCandidateComparison(pool, { ...options, variant: "areaWithoutDay" });
+  assert.deepEqual(Array.from(without.selected, p => p.name), Array.from(baseline.selected, p => p.name));
+  assert.ok(Math.abs(without.selected[0].__slotScore - baseline.selected[0].__slotScore) < 1e-12);
+  const wildcard = day.selected.find(p => p.__wildcard);
+  const used = new Set(day.selected.filter(p => !p.__wildcard).map(p => p.name));
+  assert.equal(wildcard.__score, Math.max(...pool.filter(p => !used.has(p.name)).map(p => p.__score)));
+});
+
+test("without-day comparison restores group quotas before shortage backfill", () => {
+  const M = createMatchingContext().ViewerMatching;
+  const config = M.resolveScoringConfig({ meta: { schemaVersion: 1, version: "test" } });
+  config.candidateSelection.slotAllocation.threeGroupEnabled = true;
+  config.candidateSelection.areaBoost.dayRelativeEnabled = true;
+  const at = Date.parse("2026-11-16T10:00:00+09:00");
+  const pool = [
+    ...Array.from({ length: 2 }, (_, i) => ({ name: `L${i}`, rank: "R5", area: "common", phase: 1 })),
+    ...Array.from({ length: 5 }, (_, i) => ({ name: `S${i}`, rank: "R6", area: "rare", phase: 0.9 })),
+    ...Array.from({ length: 5 }, (_, i) => ({ name: `H${i}`, rank: "R7", area: "common", phase: 1 }))
+  ].map(p => ({
+    name: p.name, shopname: "S", area: p.area, __rankKey: p.rank,
+    __score: 0.1, __slotScore: p.phase,
+    __detail: { slotScore: p.phase, effectivePhaseScore: p.phase, areaBoost: 1,
+      realtimeBoost: 1, pinkMismatchBoostFactor: 1, prideBandPriorWeight: 1,
+      recentAreaAppliedBoost: 1, tierProbability: 1, tierCandidateCount: 12 }
+  }));
+  const history = Array.from({ length: 10 }, (_, i) => ({ t: at - i - 1, area: "rare" }));
+  const plan = M.buildThreeGroupSlotPlan(pool, "R6", config);
+  const options = { scoringConfig: config, slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at };
+  const baseline = M.buildShadowCandidateComparison(pool, { ...options, variant: "areaWithoutDay" });
+  M.applyCandidateDayRelativeAreaBoost(pool, options);
+  const state = {};
+  M.selectNormalCandidatesBySlots(pool, 8, {}, plan, { state, scoringConfig: config });
+  assert.deepEqual(Array.from(state.matchingSlotPlan, entry => entry.slots), [2, 4, 2]);
+  const comparison = M.buildShadowCandidateComparison(pool, {
+    ...options, slotPlan: state.matchingSlotPlan, variant: "areaWithoutDay"
+  });
+  assert.deepEqual(Array.from(comparison.selected, p => p.name),
+    Array.from(baseline.selected, p => p.name));
+  assert.deepEqual(Array.from(comparison.parameters.slotPlan, entry => entry.slots), [2, 2, 2]);
+});
+
 test("policy comparisons independently rescore Phase and AREA without learning or future history", () => {
   const context = createMatchingContext();
   const M = context.ViewerMatching;
@@ -506,7 +582,7 @@ test("policy comparisons independently rescore Phase and AREA without learning o
         ? context.ViewerDomain.computePhaseMetrics(700, 345, expectedLambda, policy.scaleSec)
         : old.__detail;
       const effective = 1 - 0.55 * (1 - phase.finalPhaseScore);
-      const basic = policy.area && policy.area !== "basic-recent" ? 1 : 1.05;
+      const basic = policy.area && !["basic-recent", "without-day"].includes(policy.area) ? 1 : 1.05;
       const boost = policy.area?.includes("recent") ? recent : 1;
       assert.ok(Math.abs(d.finalPhaseScore - phase.finalPhaseScore) < 1e-12);
       assert.ok(Math.abs(p.__score - 0.1 * effective) < 1e-12);
