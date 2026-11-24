@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url || steps.deployment_final.outputs.page_url }}
 
     steps:
       - name: Checkout viewer from main
@@ -54,4 +54,28 @@ jobs:
 
       - name: Deploy to GitHub Pages
         id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Wait before retrying deployment
+        if: steps.deployment.outcome == 'failure'
+        run: |
+          echo "::warning::Pages deployment failed; retrying in 15 seconds."
+          sleep 15
+
+      - name: Retry deployment
+        id: deployment_retry
+        if: steps.deployment.outcome == 'failure'
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Wait before final deployment attempt
+        if: steps.deployment_retry.outcome == 'failure'
+        run: |
+          echo "::warning::Pages deployment retry failed; making one final attempt in 30 seconds."
+          sleep 30
+
+      - name: Final deployment attempt
+        id: deployment_final
+        if: steps.deployment_retry.outcome == 'failure'
         uses: actions/deploy-pages@v4
