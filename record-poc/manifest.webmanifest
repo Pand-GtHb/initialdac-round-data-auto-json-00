@@ -1,0 +1,14 @@
+{
+  "id": "./",
+  "name": "DAC 対戦記録 PoC",
+  "short_name": "DAC記録",
+  "lang": "ja",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eef4f1",
+  "theme_color": "#14634c",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

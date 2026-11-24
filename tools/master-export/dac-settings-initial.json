@@ -1,0 +1,20 @@
+{
+  "kind": "dac-settings-bundle",
+  "schemaVersion": 1,
+  "common": {
+    "kind": "dac-settings-design-draft",
+    "schemaVersion": 1,
+    "vehicles": [],
+    "courses": [],
+    "areas": [],
+    "stores": [],
+    "seasons": [],
+    "rounds": []
+  },
+  "personal": {
+    "kind": "dac-personal-settings-design-draft",
+    "schemaVersion": 1,
+    "teams": [],
+    "cards": []
+  }
+}

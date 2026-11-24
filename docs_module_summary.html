@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Initial D THE ARCADE Data Viewer - モジュール構成仕様書</title>
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 12mm 12mm 12mm 12mm;
+  }
+  body {
+    font-family: "Yu Gothic", "Meiryo", "Hiragino Kaku Gothic ProN", "MS PGothic", sans-serif;
+    color: #222;
+    line-height: 1.4;
+    font-size: 9.5pt;
+    margin: 0;
+    padding: 0;
+  }
+  h1 {
+    font-size: 15pt;
+    color: #0b3d68;
+    border-bottom: 2px solid #0078d4;
+    padding-bottom: 4px;
+    margin-top: 0;
+    margin-bottom: 8px;
+  }
+  .meta-info {
+    font-size: 8.5pt;
+    color: #666;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .lead {
+    font-size: 9pt;
+    margin-bottom: 12px;
+    background-color: #f4f8fc;
+    padding: 8px 12px;
+    border-left: 3.5px solid #0078d4;
+    border-radius: 2px;
+  }
+  h2 {
+    font-size: 11.5pt;
+    color: #0078d4;
+    margin-top: 12px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 3px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 10px;
+    font-size: 8.2pt;
+  }
+  th {
+    background-color: #0078d4;
+    color: #ffffff;
+    font-weight: 600;
+    text-align: left;
+    padding: 5px 6px;
+    border: 1px solid #0063b1;
+  }
+  td {
+    padding: 5px 6px;
+    border: 1px solid #d0d7de;
+    vertical-align: top;
+  }
+  tr:nth-child(even) td {
+    background-color: #f9fbfd;
+  }
+  .mod-name {
+    font-family: "Consolas", "Courier New", monospace;
+    font-weight: bold;
+    color: #0550ae;
+    white-space: nowrap;
+  }
+  .mod-layer {
+    font-weight: 600;
+    white-space: nowrap;
+    color: #24292f;
+  }
+  .layer-sub {
+    font-size: 7.5pt;
+    color: #57606a;
+    font-weight: normal;
+  }
+  .code-text {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 7.8pt;
+    color: #24292f;
+    background: #eaeef2;
+    padding: 1px 3px;
+    border-radius: 3px;
+    display: inline-block;
+    margin: 1px 1px;
+  }
+  .diagram-container {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-top: 6px;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 8.2pt;
+    line-height: 1.35;
+    color: #334155;
+    white-space: pre;
+  }
+  .footer-notes {
+    margin-top: 10px;
+    font-size: 8.2pt;
+    color: #444;
+    line-height: 1.45;
+  }
+  .footer-notes ul {
+    margin: 4px 0 0 16px;
+    padding: 0;
+  }
+  .page-break {
+    page-break-before: always;
+  }
+</style>
+</head>
+<body>
+
+  <h1>Initial D THE ARCADE Data Viewer<br><span style="font-size: 13pt; font-weight: normal; color: #475569;">モジュール分割構成および機能仕様書</span></h1>
+  
+  <div class="meta-info">
+    <span>作成日: 2026年10月13日</span>
+    <span>リポジトリ: Pand-GtHb/initialdac-round-data-auto-json-00</span>
+  </div>
+
+  <div class="lead">
+    旧一枚岩構成（約16,000行・380KBの単一スクリプト）から、責務に応じた8つの独立モジュールへの段階的分割が完了しました。<br>
+    各モジュール名には依存順・読み込み順を反映した4桁のプレフィックス（<code>0100_</code>〜<code>0800_</code>）を付与し、メンテナンス性と堅牢性を大幅に向上させています。
+  </div>
+
+  <h2>1. モジュール構成・機能一覧</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 17%;">モジュール名</th>
+        <th style="width: 19%;">レイヤー（層）</th>
+        <th style="width: 38%;">担当機能・主な処理内容</th>
+        <th style="width: 26%;">主な提供関数 / 定数</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="mod-name">0100_utils.js</td>
+        <td class="mod-layer">基盤ユーティリティ<br><span class="layer-sub">Pure Utilities</span></td>
+        <td>
+          ・外部依存のない純粋な計算・文字列処理<br>
+          ・プレイヤー名の全角/半角正規化（NFKC）、検索用文字列正規化<br>
+          ・周期フォールディング計算（<code>foldToCycle</code>）<br>
+          ・指数平滑移動平均・外れ値除去フィルタ
+        </td>
+        <td>
+          <span class="code-text">normalize</span><br>
+          <span class="code-text">normalizePlayerName</span><br>
+          <span class="code-text">fmt</span>, <span class="code-text">getZenkakuLength</span><br>
+          <span class="code-text">foldToCycle</span><br>
+          <span class="code-text">updateAdjust</span><br>
+          <span class="code-text">rejectFoldedOutliers</span>
+        </td>
+      </tr>
+      <tr>
+        <td class="mod-name">0200_domain.js</td>
+        <td class="mod-layer">ドメインモデル・定数<br><span class="layer-sub">Domain Models & Constants</span></td>
+        <td>
+          ・ゲーム仕様のコア定義と統計計算<br>
+          ・★1〜★8、PRIDE A〜G のランク定義・帯域分類・判定<br>
+          ・プレイヤー識別キー生成（店舗・名前等から一意キー作成）<br>
+          ・Yellow/Pink のフェーズ指標計算（Direction, Half-width）
+        </td>
+        <td>
+          <span class="code-text">RANKS</span>, <span class="code-text">RUBY_ID</span><br>
+          <span class="code-text">getRankDef</span>, <span class="code-text">isRubyRank</span><br>
+          <span class="code-text">classifyPrideBand</span><br>
+          <span class="code-text">getPlayerKey</span><br>
+          <span class="code-text">computePhaseMetrics</span>
+        </td>
+      </tr>
+      <tr>
+        <td class="mod-name">0300_persistence.js</td>
+        <td class="mod-layer">永続化層<br><span class="layer-sub">Persistence / Storage</span></td>
+        <td>
+          ・ブラウザの <code>localStorage</code> / <code>IndexedDB</code> 入出力の隠蔽<br>
+          ・日付境界（早朝4時切り替え）キー生成<br>
+          ・Pink管理対象リスト・リアルタイム活動ログの保存と復元<br>
+          ・R6 PRIDE頻度台帳の管理、肥大化防止の自動パージ
+        </td>
+        <td>
+          <span class="code-text">buildDailyKey</span><br>
+          <span class="code-text">readStoredArraySafe</span><br>
+          <span class="code-text">writeStoredArraySafe</span><br>
+          <span class="code-text">savePinkStateToStorage</span><br>
+          <span class="code-text">restorePinkStateFromStorage</span><br>
+          <span class="code-text">loadR6PrideLedger</span>
+        </td>
+      </tr>
+      <tr>
+        <td class="mod-name">0400_data.js</td>
+        <td class="mod-layer">データ通信層<br><span class="layer-sub">Data Access / Fetch</span></td>
+        <td>
+          ・外部JSONファイル（<code>areaList.json</code>, <code>integrated_data.json</code>等）の非同期通信<br>
+          ・指数バックオフによる自動リトライ、タイムアウト制御<br>
+          ・キャッシュバスティング（タイムスタンプクエリ付与）制御
+        </td>
+        <td>
+          <span class="code-text">fetchJSON</span><br>
+          <span class="code-text">fetchIntegratedData</span><br>
+          <span class="code-text">fetchScoringConfig</span><br>
+          <span class="code-text">fetchAreaList</span><br>
+          <span class="code-text">fetchWatchConfig</span><br>
+          <span class="code-text">TIMEOUTS</span>
+        </td>
+      </tr>
+      <tr>
+        <td class="mod-name">0500_matching.js</td>
+        <td class="mod-layer">マッチング・候補算出<br><span class="layer-sub">Matching Calculation</span></td>
+        <td>
+          ・対戦相手予測・マッチング候補者選定の中核アルゴリズム<br>
+          ・スロット配分計画（★ランク／PRIDE帯域別の枠数決定）<br>
+          ・対戦履歴ヒストリカルスコア、エリア密度ブースト算出<br>
+          ・Pink管理対象の上限制御（3枠キャップ）と枠埋め
+        </td>
+        <td>
+          <span class="code-text">buildMatchingSlotPlan</span><br>
+          <span class="code-text">calcHistoricalScore</span><br>
+          <span class="code-text">computeAreaBoost</span><br>
+          <span class="code-text">selectPrideCandidates</span><br>
+          <span class="code-text">applyPinkManagedSlotCap</span><br>
+          <span class="code-text">selectNormalCandidatesBySlots</span>
+        </td>
+      </tr>
+      <tr>
+        <td class="mod-name">0600_ui.js</td>
+        <td class="mod-layer">UI描画・HTML生成<br><span class="layer-sub">View Templates & Renderers</span></td>
+        <td>
+          ・画面表示用のHTML生成およびフォーマット<br>
+          ・★ランクアイコン表示（星の並び・改行制御）<br>
+          ・店舗名の省略表示（長い店舗名の最適化）<br>
+          ・ランク別バッジ・文字色スタイル判定、ログ抑制（<code>allowLog</code>）
+        </td>
+        <td>
+          <span class="code-text">renderStars</span><br>
+          <span class="code-text">shortenStoreName</span><br>
+          <span class="code-text">getRankColor</span><br>
+          <span class="code-text">buildRankCountBadgesHTML</span><br>
+          <span class="code-text">buildFilterGroupHTML</span><br>
+          <span class="code-text">allowLog</span>
+        </td>
+      </tr>
+      <tr>
+        <td class="mod-name">0700_app.js</td>
+        <td class="mod-layer">アプリケーション統括<br><span class="layer-sub">Application State & Use Cases</span></td>
+        <td>
+          ・全体状態（<code>State</code>：データリスト、選択ランク、キャッシュ等）の保持<br>
+          ・各種操作ユースケースの統括（フィルタ適用、候補リスト更新、CSV出力）<br>
+          ・下位モジュール（<code>0100</code>〜<code>0600</code>）の連携オーケストレーション
+        </td>
+        <td>
+          <span class="code-text">State</span><br>
+          <span class="code-text">init</span><br>
+          <span class="code-text">applyFilters</span><br>
+          <span class="code-text">showMatchingCandidates</span><br>
+          <span class="code-text">syncMyRankSelection</span><br>
+          <span class="code-text">exportAnalysisLog</span>, <span class="code-text">exportCSV</span>
+        </td>
+      </tr>
+      <tr>
+        <td class="mod-name">0800_main.js</td>
+        <td class="mod-layer">エントリーポイント<br><span class="layer-sub">Bootstrap & Event Binding</span></td>
+        <td>
+          ・画面読み込み時の初期化起動（ブートストラップ）<br>
+          ・二重初期化防止ガード<br>
+          ・UIイベントリスナー登録（ボタン押下、検索窓入力、ランク変更など）<br>
+          ・周期的な自動更新監視タイマーの開始
+        </td>
+        <td>
+          <span class="code-text">bootstrap</span><br>
+          <span class="code-text">bindUIEvents</span><br>
+          <span class="code-text">initSearchInput</span><br>
+          <span class="code-text">startUpdateWatchTimer</span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>2. 依存関係と読み込みアーキテクチャ</h2>
+
+  <div class="diagram-container">[0100_utils.js] (基盤ユーティリティ)
+      │
+      ▼
+[0200_domain.js] ────┐ (ドメイン定義・統計計算)
+      │              │
+      ▼              ▼
+[0300_persistence]  [0400_data]   [0500_matching]   [0600_ui] (独立専門機能群)
+ (永続化層)         (データ通信)   (マッチング算出)   (UI描画)
+      │                   │              │              │
+      └───────────────────┴──────┬───────┴──────────────┘
+                                 │
+                                 ▼
+                          [0700_app.js] (状態管理・業務ユースケース統括)
+                                 │
+                                 ▼
+                          [0800_main.js] (起動ブートストラップ・DOMイベント接続)</div>
+
+  <div class="footer-notes">
+    <strong>設計と配置の特記事項:</strong>
+    <ul>
+      <li><strong>並び順の整合性:</strong> 4桁の数値プレフィックス（0100〜0800）により、ファイル一覧上で常に依存関係通りの順序で表示されます。</li>
+      <li><strong>データファイルの保護:</strong> <code>areaList.json</code> や <code>scoring_config.json</code> などのデータファイルは改名せず維持しているため、GitHub Actions等の自動取得パイプラインを壊さず、ファイル名ソート順で自然に後方へまとまります。</li>
+      <li><strong>保守用の安全装置:</strong> <code>tests/</code> フォルダ（全64件の回帰テスト）および <code>tools/serve.js</code>（ローカル検証サーバー）により、今後の安全な改修体制が確立されています。</li>
+    </ul>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14634c">
+  <title>DAC 対戦記録 PoC</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css?v=139">
+  <script defer src="./catalog.js?v=132"></script>
+  <script defer src="./model.js?v=136"></script>
+  <script defer src="./storage.js?v=117"></script>
+  <script defer src="./maintenance.js?v=139"></script>
+  <script defer src="./app.js?v=139"></script>
+</head>
+<body>
+<header><div class="header-row"><h1>DAC 対戦記録 <small>PoC <span id="appVersion"></span></small></h1>
+  <div class="header-card-row">
+    <label class="header-card-label plain-label"><span class="header-caption">カード</span><select id="headerCard" disabled aria-label="記録するカード"></select></label>
+    <span class="header-rank-stars"><span class="header-rank" aria-label="ランク"><span class="header-caption">ランク </span><strong id="headerRank">未入力</strong></span><span class="header-stars" aria-label="星数"><span class="header-caption">星数 </span><strong id="headerStars" class="star-groups">未入力</strong></span></span>
+  </div>
+  </div>
+  <p id="error" role="alert" hidden></p>
+</header>
+<main>
+  <div class="top-navigation">
+  <nav class="tabs" aria-label="画面切り替え">
+    <button type="button" data-tab="viewer" aria-pressed="false">Viewer</button>
+    <button type="button" data-tab="entry" aria-pressed="true">入力</button>
+    <button type="button" data-tab="summary" aria-pressed="false">実績</button>
+    <button type="button" data-tab="settings" aria-pressed="false">設定・バックアップ</button>
+    <button type="button" id="themeToggle" disabled aria-label="暗色に切替" aria-pressed="false">Light/Dark</button>
+  </nav>
+  <nav id="subtabs" class="subtabs" aria-label="項目切り替え"></nav>
+  </div>
+  <section id="entry">
+    <h2 id="entryTitle" hidden></h2>
+    <form id="entryForm">
+      <fieldset id="entryFields" disabled>
+        <section class="battle-section" data-subpanel="round">
+          <h2>１．ラウンド情報</h2>
+          <div class="section-content">
+            <div id="roundFields" class="session-fields"></div>
+            <p id="opponentTimeInfo" class="hint" role="status" hidden></p>
+            <details id="roundCourseDetails" data-details-key="round-courses"><summary>ラウンド別対象コース</summary>
+              <div class="round-course-selectors">
+                <label>シーズン<select id="roundSeason"></select></label>
+                <label>ラウンド<select id="roundSelector"></select></label>
+              </div>
+              <div id="roundCourses"></div>
+            </details>
+          </div>
+        </section>
+        <section class="battle-section" data-subpanel="card" hidden>
+          <h2>２．カード情報</h2>
+          <div class="section-content">
+            <div id="cardFields" class="session-fields"></div>
+            <div id="cardSlotEditor" hidden>
+              <div class="session-fields card-slots">
+                <button type="button" id="cardSlot1" aria-haspopup="dialog" aria-controls="cardVehiclePicker"></button>
+                <button type="button" id="cardSlot2" aria-haspopup="dialog" aria-controls="cardVehiclePicker"></button>
+                <button type="button" id="cardSlot3" aria-haspopup="dialog" aria-controls="cardVehiclePicker"></button>
+              </div>
+              <dialog id="cardVehiclePicker" aria-labelledby="cardVehiclePickerTitle">
+                <h3 id="cardVehiclePickerTitle" tabindex="-1" autofocus></h3>
+                <div id="garageSlotVehicles"></div>
+                <details id="otherSlotVehicles" data-details-key="other-vehicles">
+                  <summary>その他車種</summary>
+                  <div id="allSlotVehicles"></div>
+                </details>
+                <button type="button" id="closeCardVehiclePicker">閉じる</button>
+              </dialog>
+              <button type="button" id="saveCardSlots" disabled>スロット変更を保存</button>
+              <button type="button" id="exportCardSlots">スロットCSV出力</button>
+              <p id="cardSlotStatus" class="hint" role="status"></p>
+            </div>
+            <button type="button" id="saveCardRank" hidden>表示中の自ランク・星をカード設定に保存</button>
+            <p id="cardRoundSummary" class="hint" role="status"></p>
+            <p id="catalogWarnings" class="hint" role="status"></p>
+          </div>
+        </section>
+        <section class="battle-section" data-subpanel="battle" hidden>
+          <h2>３．対戦情報</h2>
+          <div class="section-content">
+            <p id="pasteInfo" class="hint" role="status"></p>
+            <div id="primaryFields" class="grid"></div>
+            <details id="affiliationFields" class="full-width" data-details-key="affiliation"><summary>所属情報</summary><div id="extraFields" class="grid"></div></details>
+            <button type="submit" id="saveEntry" class="primary save-entry" aria-live="polite">この対戦を保存</button>
+            <p id="saveReminder" class="save-reminder" role="status" hidden>対戦はまだ確定していません。入力後に「この対戦を保存」を押してください。</p>
+            <div class="entry-actions">
+              <button type="button" id="newEntry">入力破棄</button>
+              <button type="button" id="quickCsv">CSV出力</button>
+              <button type="button" class="help-button" data-help="quickCsvHelp" aria-label="CSV出力のヘルプ">？</button>
+            </div>
+            <p id="quickCsvInfo" role="status"></p>
+          </div>
+        </section>
+      </fieldset>
+    </form>
+    <dialog id="battleAreaPicker" aria-labelledby="battleAreaPickerTitle">
+      <h2 id="battleAreaPickerTitle" tabindex="-1">対戦店舗エリア</h2>
+      <div id="battleAreaOptions"></div>
+      <button type="button" id="battleAreaCancel">キャンセル</button>
+    </dialog>
+    <section data-subpanel="history" hidden><h2>４．対戦実績</h2>
+      <div id="history" class="section-content"></div>
+    </section>
+  </section>
+  <section id="summary" hidden>
+    <section data-subpanel="cards">
+    <h2>１．カード別戦績 <button type="button" class="help-button" data-help="summaryHelp" aria-label="カード別戦績のヘルプ">？</button></h2>
+    <div id="summaryCards" class="section-content"></div>
+    </section>
+    <section data-subpanel="days" hidden>
+    <h2>２．日別戦績 <button type="button" class="help-button" data-help="summaryHelp" aria-label="日別戦績のヘルプ">？</button></h2>
+    <div id="summaryDays" class="section-content"></div>
+    </section>
+    <section data-subpanel="history" hidden>
+    <h2>３．対戦相手 <button type="button" class="help-button" data-help="historyHelp" aria-label="対戦相手のヘルプ">？</button></h2>
+    <div class="section-content">
+    <label>名前・エリア・店舗・チーム・メモで絞り込み<input id="search" type="search" aria-controls="recordList"></label>
+    <details id="savedRecords" data-details-key="saved-records">
+      <summary>対戦一覧 <span id="recordCount"></span></summary>
+      <p id="recordSearchInfo" role="status"></p>
+      <p id="opponentCopyStatus" class="hint" role="status" hidden></p>
+      <nav id="historyPages" aria-label="過去実績のページ切替" hidden>
+        <button type="button" id="historyPrevious" aria-controls="recordList">前へ</button>
+        <span id="historyPageNumber"></span>
+        <button type="button" id="historyNext" aria-controls="recordList">次へ</button>
+      </nav>
+      <div id="recordList"></div>
+    </details>
+    </div>
+    </section>
+    <dialog id="recordEditor" aria-labelledby="recordEditorTitle">
+      <form id="recordEditorForm">
+        <h2 id="recordEditorTitle">保存済み対戦の修正</h2>
+        <p id="recordEditorNumber" class="hint"></p>
+        <p class="hint">修正はこの端末の記録だけに反映されます。Excelに転記済みの場合はExcel側も修正してください。仮No.と元の対戦時刻は変わりません。日付やカードを変えても、ラウンドやランクは自動で変更されません。</p>
+        <p id="recordEditorError" role="alert" hidden></p>
+        <fieldset id="recordEditorFields">
+          <div id="recordEditorInputs"></div>
+          <div class="record-editor-actions">
+            <button type="submit" class="primary">修正を保存</button>
+            <button type="button" id="recordEditorCancel">キャンセル</button>
+          </div>
+        </fieldset>
+      </form>
+    </dialog>
+    <section data-subpanel="teams" hidden>
+    <h2>４．対戦チーム <button type="button" class="help-button" data-help="teamHelp" aria-label="対戦チームのヘルプ">？</button></h2>
+    <div class="section-content">
+      <label>チーム・店舗で絞り込み<input id="opponentTeamSearch" type="search"></label>
+      <details id="opponentTeams" data-details-key="opponent-teams"><summary>相手チーム・チーム所属店舗</summary>
+        <div id="opponentTeamList" class="table-scroll"></div>
+      </details>
+    </div>
+    </section>
+  </section>
+  <section id="settings" hidden>
+    <section data-subpanel="master">
+    <h2>１．マスター登録</h2>
+    <div class="settings-section">
+    <fieldset id="masterFields" disabled>
+      <section class="master-step">
+      <h3>（１）取り込む内容 <button type="button" class="help-button" data-help="masterHelp" aria-label="マスター登録のヘルプ">？</button></h3>
+      <div>
+        <button type="button" data-master-preset="daily">日次更新</button>
+        <button type="button" data-master-preset="all">全数更新</button>
+        <button type="button" data-master-preset="none">選択解除</button>
+      </div>
+      <div id="masterChoices" class="master-choices"></div>
+      </section>
+      <section class="master-step">
+      <h3>（２）ファイル取込</h3>
+      <div class="master-actions">
+      <button type="button" id="addMasterFiles">ファイル追加</button>
+      <button type="button" id="previewMasters" disabled>内容確認</button>
+      <form id="masterPreview">
+        <button type="submit" id="applyMasters" disabled>内容反映</button>
+        <button type="button" id="cancelMasters" disabled>取込中止</button>
+      </form>
+      </div>
+      <input id="masterFiles" type="file" accept=".json,application/json" multiple hidden>
+      <p id="masterSelectionInfo" role="status"></p>
+      <p id="masterInfo" role="status"></p>
+      <details id="masterDiffPanel" hidden>
+        <summary>カード差分</summary>
+        <div id="masterDiffs"></div>
+      </details>
+      </section>
+    </fieldset>
+    <p id="catalogInfo" role="status"></p>
+    </div>
+    </section>
+    <section data-subpanel="backup" hidden>
+    <h2>２．バックアップ</h2>
+    <aside class="notice">この端末のブラウザに保存します。サイトデータの削除や端末故障に備えてバックアップしてください。CSVはダウンロード出力です。</aside>
+    <div class="settings-section">
+    <details data-details-key="excel-export">
+      <summary>Excel貼り付け用CSV</summary>
+      <fieldset id="excelExportFields" disabled>
+        <legend>Ｄシート A～Y列 <button type="button" class="help-button" data-help="excelCsvHelp" aria-label="Excel貼り付け用CSVのヘルプ">？</button></legend>
+        <div class="export-date-range">
+          <label>開始日（省略可）<input id="excelFrom" type="date"></label>
+          <label>終了日（省略可）<input id="excelTo" type="date"></label>
+        </div>
+        <button type="button" id="excelCsv">Excel貼り付け用CSVを出力</button>
+        <p id="excelCsvInfo" role="status"></p>
+      </fieldset>
+    </details>
+    <button type="button" class="help-button" data-help="backupHelp" aria-label="バックアップのヘルプ">？</button>
+    <button type="button" id="csv" disabled>集計後CSV v1を出力（入力用）</button>
+    <button type="button" id="backup" disabled>JSONバックアップ</button>
+    <button type="button" id="rescue" disabled>画面内データの救出用JSON</button>
+    <label>対戦履歴JSONを読み込む（マスターは正式記録を置換）<input id="importHistory" type="file" accept=".json,application/json" disabled></label>
+    <p id="importInfo" role="status"></p>
+    <label>対戦記録CSV v1を追加（同一記録の重複を防止）<input id="importHistoryCsv" type="file" accept=".csv,text/csv" disabled></label>
+    <p id="importCsvInfo" role="status"></p>
+    <label>JSONバックアップを復元（現在のデータを置き換えます）<input id="restore" type="file" accept=".json,application/json" disabled></label>
+    </div>
+    </section>
+    <section data-subpanel="maintenance" hidden>
+    <h2>３．保守・データ管理</h2>
+    <div class="settings-section">
+      <section class="master-step">
+        <h3>（１）使用状況 <button type="button" class="help-button" data-help="usageHelp" aria-label="使用状況のヘルプ">？</button></h3>
+        <button type="button" id="checkUsage" disabled>使用状況を確認・更新</button>
+        <p id="usageInfo" class="maintenance-info" role="status"></p>
+        <button type="button" id="persist" disabled>端末内ストレージの保持をリクエスト</button>
+        <p id="storageInfo" role="status" hidden></p>
+      </section>
+      <fieldset id="maintenanceFields" disabled>
+        <section class="master-step">
+          <h3>（２）動作のリフレッシュ【データを残す】 <button type="button" class="help-button" data-help="refreshHelp" aria-label="リフレッシュのヘルプ">？</button></h3>
+          <button type="button" id="refreshApp">保存して再読み込み</button>
+          <button type="button" id="cleanCaches">不要な旧版キャッシュを整理</button>
+        </section>
+        <section class="master-step">
+          <h3>（３）正式な過去記録の消去 <button type="button" class="help-button" data-help="clearOfficialHelp" aria-label="正式な過去記録の消去のヘルプ">？</button></h3>
+          <button type="button" id="clearOfficial" class="danger">正式な過去記録だけ消去</button>
+        </section>
+        <section class="master-step">
+          <h3>（４）完全初期化【取り消せません】</h3>
+          <details data-details-key="reset">
+            <summary>このアプリの端末内データをすべて消去する</summary>
+            <p>保存済み記録・下書き・設定・採番履歴と、このアプリ用キャッシュ・オフライン登録を消去します。Excelやダウンロード済みファイル、ほかのアプリのデータは消しません。</p>
+            <p class="hint">最初に「２．バックアップ」でJSONバックアップを出力し、ファイルが保管できていることを確認してください。ダウンロード開始だけでは保管完了を確認できません。</p>
+            <label class="plain-label checkbox-field"><input id="resetBackupConfirmed" type="checkbox">最新のJSONバックアップを保管したことを確認しました</label>
+            <label class="plain-label checkbox-field"><input id="resetTabsConfirmed" type="checkbox">このアプリのほかのタブ・ウィンドウをすべて閉じました</label>
+            <button type="button" id="resetApp" class="danger">消去内容を確認して完全初期化</button>
+            <p class="hint">誤った再保存を防ぐため、個人データを含まない更新番号だけは内部に残します。ブラウザのストレージ保持許可や、OS・ほかのアプリのメモリは変更できません。</p>
+          </details>
+        </section>
+      </fieldset>
+      <p id="maintenanceInfo" class="maintenance-info" role="status"></p>
+      <section class="master-step">
+        <h3>（５）困ったとき <button type="button" class="help-button" data-help="troubleshootingHelp" aria-label="困ったときのヘルプ">？</button></h3>
+        <button type="button" id="showDiagnostics" disabled>診断情報を表示・更新</button>
+        <button type="button" id="copyDiagnostics" disabled>表示中の診断情報をコピー</button>
+        <label class="plain-label">診断情報（記録内容・名前・店舗・メモ・ファイル名は含みません）
+          <textarea id="diagnostics" rows="8" readonly></textarea>
+        </label>
+      </section>
+    </div>
+    </section>
+  </section>
+  <section id="viewer" hidden>
+    <p class="viewer-help">Viewerが表示されない場合は接続を確認し、再読み込みするか別画面で開いてください。オフラインでも記録画面は利用できます。</p>
+    <div class="viewer-actions">
+      <button type="button" id="reloadViewer">Viewerを再読み込み</button>
+      <a href="https://pand-gthb.github.io/initialdac-round-data-auto-json-00/" target="_blank" rel="noopener noreferrer">Viewerを別画面で開く</a>
+    </div>
+    <iframe id="viewerFrame" title="対戦相手 Viewer" allow="clipboard-write" referrerpolicy="no-referrer"></iframe>
+  </section>
+  <footer><small id="status" role="status" aria-live="polite">読み込み中…</small><small id="footerVersion"></small></footer>
+</main>
+<dialog id="helpDialog" aria-labelledby="helpTitle">
+  <h2 id="helpTitle"></h2>
+  <div id="helpContent"></div>
+  <button type="button" id="closeHelp">閉じる</button>
+</dialog>
+<template id="quickCsvHelp"><p>Excel未反映の保存済み記録を全件出力します。入力途中は含みません。再出力時はX列の仮No.で二重転記を確認してください。</p></template>
+<template id="summaryHelp"><p>この端末に保存された正式記録とアプリ入力記録を集計します。未保存の下書きと履歴の保持範囲外は含みません。</p></template>
+<template id="historyHelp"><p>正式・仮登録を含む対戦一覧を50件ずつ表示します。表の日付・自カード・相手からも絞り込めます。</p><p>「登録No.」列には仮No.または正式Data_No.を表示し、仮登録は茶色です。アプリで保存した記録は修正できますが、Excel由来の正式記録は修正できません。</p></template>
+<template id="teamHelp"><p>保存済みの対戦記録から、相手のチームと所属店舗の組を表示します。</p></template>
+<template id="masterHelp">
+  <p>項目と同じ番号のJSONを選んでください。1つずつでも、まとめてでも追加できます。追加済みの種類は自動で選択され、不要な種類はチェックを外せます。従来名のファイルも内容から判定します。</p>
+  <p>日次更新・全数更新はチェックの選択だけを変更します。選択した種類はJSONで完全に置き換え、JSONにない旧データは削除します。未選択の種類は変更しません。初回は対戦履歴以外の設定マスターがすべて必要です。</p>
+  <p>ファイルを追加しただけでは保存内容は変わりません。カード差分と参照先を確認してから反映します。アプリの新規記録・下書きは保持し、同じ仮No.が正式記録に含まれる場合だけExcelの内容で正式登録へ移行します。初回設定時だけ、下書きの未入力のシーズン・ラウンドを日付から補完します。</p>
+  <p>以前の未適用の設定編集はバックアップに残りますが、この画面では適用できません。以前アプリで編集したカード・チームも、該当マスターを取り込むとExcelの内容で置き換わります。</p>
+</template>
+<template id="excelCsvHelp"><p>アプリ形式の対戦IDで保存された記録が対象です。Excel由来の正式記録や入力途中は含みません。期間を省略すると対象の全件を出力します。</p><p>CSVをExcelで開き、見出しを除く25列をＤシートの追記先A列から「値」として貼り付けてください。X列は仮No.、Y列は日時（時刻不明は日付のみ）です。時刻を見るには表示形式を yyyy/mm/dd hh:mm:ss にしてください。Z列以降には貼り付けません。再出力時はX列の仮No.で二重転記を確認してください。</p></template>
+<template id="backupHelp"><p>CSVは保存済み対戦のみ。JSONには下書き・設定も含み、復元に使えます。出力したファイルの保管先を確認してください。</p><p>対戦記録CSV v1はUTF-8・全27項目の専用形式です。Excel集計後CSVは付属の変換ツールで変換できます。サーバー同期・自動CSV追記は未実装です。</p></template>
+<template id="usageHelp"><p>使用状況の更新で件数・保存容量の目安・キャッシュ状況を確認できます。保存容量は動作中のメモリ使用量ではなく、同じ接続先のほかのアプリの分を含む場合があります。</p></template>
+<template id="refreshHelp"><p>再読み込みは保存完了後に実行し、保存失敗時は中止します。キャッシュ整理では現在版・動作中・更新待ちの版を残し、記録・下書き・設定は消しません。</p></template>
+<template id="troubleshootingHelp"><p>動作を止めたい場合は、画面末尾が「端末内保存済み」になったことを確認し、このアプリのタブ・ウィンドウをすべて閉じてください。保存エラー時は先に「画面内データの救出用JSON」を保管してください。メモリの回収時期はブラウザ・OSが管理します。</p><p>復元は「２．バックアップ」→「JSONバックアップを復元」から行います。現在の内容を置き換えるため、復元前のバックアップも保管してください。</p></template>
+<template id="clearOfficialHelp"><p>正式なData_No.付きの記録だけを消去します。Excel未反映のアプリ入力記録・下書き・設定・仮No.の採番履歴は保持します。履歴検索の再利用には04マスターを読み込み直してください。</p></template>
+</body>
+</html>
