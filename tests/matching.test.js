@@ -52,6 +52,138 @@ test("Matching constants export and values", () => {
   assert.equal(matching.POPULATION_RANK_KEYS.length, 15);
 });
 
+function groupPlayer(name, rankKey, score) {
+  return { name, shopname: name, __rankKey: rankKey, __slotScore: score, __score: score,
+    __detail: { slotScore: score, historicalScore: score, tierProbability: 0.5,
+      tierCandidateCount: 1, effectivePhaseScore: 1 } };
+}
+
+test("Three groups include previously zero-slot lower ranks and exclude R6 PRIDE from fallback", () => {
+  const m = createMatchingContext().ViewerMatching;
+  const config = m.resolveScoringConfig(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+  const candidates = [
+    ...[1, 2, 3, 4].map((r, i) => groupPlayer(`low${i}`, `R${r}`, 1 - i / 100)),
+    ...[0, 1].map(i => groupPlayer(`same${i}`, 'R6', 0.9 - i / 100)),
+    ...[7, 8].map((r, i) => groupPlayer(`up${i}`, `R${r}`, 0.8 - i / 100)),
+    groupPlayer('pride', 'P_D', 10)
+  ];
+  const state = {};
+  const plan = m.buildThreeGroupSlotPlan(candidates, 'R6', config);
+  assert.deepEqual(Array.from(plan, p => p.slots), [4, 2, 2]);
+  const normal = m.selectNormalCandidatesBySlots(candidates, 8, {}, plan, { state, scoringConfig: config });
+  assert.equal(normal.length, 8);
+  assert(normal.some(p => p.__rankKey === 'R1'));
+  assert(normal.some(p => p.__rankKey === 'R2'));
+  assert(!normal.some(p => p.__rankKey.startsWith('P_')));
+  assert.equal(candidates.at(-1).__detail.slotBucket, 'outside-normal');
+  assert.equal(candidates.at(-1).__detail.slotRank, null);
+  assert.equal(m.selectCrossBucketCandidates(candidates, normal, 1)[0].name, 'pride');
+  const sparse = candidates.filter(p => p.__rankKey !== 'R7' && p.__rankKey !== 'R8');
+  const sparsePlan = m.buildThreeGroupSlotPlan(sparse, 'R6', config);
+  const selected = m.selectNormalCandidatesBySlots(sparse, 8, {}, sparsePlan, { state, scoringConfig: config });
+  assert.equal(selected.length, 6);
+  assert(!selected.some(p => p.name === 'pride'));
+});
+
+test("R7 upper diversity uses 12% independently of legacy PRIDE 8% and logs group ranks", () => {
+  const m = createMatchingContext().ViewerMatching;
+  const config = m.resolveScoringConfig(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+  const candidates = [
+    ...[1, 2, 3].map(r => groupPlayer(`low${r}`, `R${r}`, 1)),
+    groupPlayer('same', 'R7', 1),
+    groupPlayer('ruby1', 'R8', 1.04), groupPlayer('pride1', 'P_D', 1.02),
+    groupPlayer('ruby2', 'R8', 1.01), groupPlayer('pride2', 'P_D', 1),
+    groupPlayer('other-band', 'P_F', 0.9)
+  ];
+  const state = {};
+  const plan = m.buildThreeGroupSlotPlan(candidates, 'R7', config);
+  const selected = m.selectNormalCandidatesBySlots(candidates, 8, {}, plan, { state, scoringConfig: config });
+  assert(selected.some(p => p.name === 'other-band'));
+  assert.equal(candidates.at(-1).__detail.slotBucket, 'higher');
+  assert.equal(candidates.at(-1).__detail.slotRank, 5);
+  const config8 = structuredClone(config);
+  config8.candidateSelection.slotAllocation.threeGroupDiversityGapThreshold = 0.08;
+  assert(!m.selectNormalCandidatesBySlots(candidates, 8, {}, plan, { state: {}, scoringConfig: config8 })
+    .some(p => p.name === 'other-band'));
+  assert.equal(config.candidateSelection.slotAllocation.prideBandDiversityGapThreshold, 0.08);
+  assert.equal(m.buildThreeGroupSlotPlan(candidates, 'R8', config), null);
+  config.candidateSelection.slotAllocation.threeGroupEnabled = false;
+  assert.equal(m.buildThreeGroupSlotPlan(candidates, 'R7', config), null);
+});
+
+test("Three-group capacity backfill records actual slots without duplicating candidates", () => {
+  const m = createMatchingContext().ViewerMatching;
+  const config = m.resolveScoringConfig(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+  const candidates = Array.from({ length: 12 }, (_, i) => groupPlayer(`p${i}`, 'R6', 1 - i / 100));
+  const state = {};
+  const plan = m.buildThreeGroupSlotPlan(candidates, 'R7', config);
+  const selected = m.selectNormalCandidatesBySlots(candidates, 8, {}, plan, { state, scoringConfig: config });
+  assert.equal(selected.length, 8);
+  assert.equal(new Set(selected).size, 8);
+  assert.equal(state.matchingSlotPlan[0].slots, 8);
+  assert.equal(state.matchingSlotPlan[0].requestedSlots, 3);
+  assert.equal(selected.at(-1).__slotRank, 8);
+});
+
+test("Three-group settings validate types, thresholds and eight-slot invariant", () => {
+  const m = createMatchingContext().ViewerMatching;
+  const source = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8'));
+  for (const value of [-1, 1.01, '0.12']) {
+    const config = structuredClone(source);
+    config.candidateSelection.slotAllocation.threeGroupDiversityGapThreshold = value;
+    assert.throws(() => m.resolveScoringConfig(config), /threeGroupDiversityGapThreshold/);
+  }
+  const config = structuredClone(source);
+  config.candidateSelection.slots = { normal: 7, crossBucket: 1, wildcard: 2 };
+  assert.throws(() => m.resolveScoringConfig(config), /requires 8 normal slots/);
+  delete source.candidateSelection.slotAllocation.threeGroupEnabled;
+  assert.equal(m.resolveScoringConfig(source).candidateSelection.slotAllocation.threeGroupEnabled, false);
+});
+
+test("R6 frequency uses the shared ledger defaults and validation without changing decisions", () => {
+  const context = createMatchingContext();
+  const persistence = context.ViewerPersistence;
+  const defaultLedger = persistence.createDefaultR6PrideLedger;
+  const validate = persistence.isValidR6PrideLedger;
+  let defaultCalls = 0;
+  let validationCalls = 0;
+  persistence.createDefaultR6PrideLedger = () => { defaultCalls++; return defaultLedger(); };
+  persistence.isValidR6PrideLedger = ledger => { validationCalls++; return validate(ledger); };
+  const warnings = [];
+  context.console = { warn: (...args) => warnings.push(args) };
+  const messages = [];
+  let stored = null;
+  const options = {
+    distribution: { total: 10, prideProbabilityTotal: 0.3 },
+    generationMs: 1000, storageKey: "test-ledger",
+    storage: { getItem: key => { assert.equal(key, "test-ledger"); return stored; } },
+    log: message => messages.push(message)
+  };
+  const result = context.ViewerMatching.prepareR6PrideFrequency(0.5, true, options);
+  assert.equal(defaultCalls, 1);
+  assert.equal(validationCalls, 1);
+  assert.equal(result.ledger.credit, 0.3);
+  assert.equal(result.ledger.countedGenerations, 1);
+  assert.equal(result.ledger.lastGenerationMs, 1000);
+  assert.equal(result.allowPride, false);
+  assert.equal(result.diagnostics.reason, "credit-below-one");
+  for (const patch of [
+    { version: 2 }, { credit: -1 }, { credit: 1.1 }, { granted: 1 },
+    { lastGenerationMs: "1000" }, { countedGenerations: 0.5 },
+    { grantedGenerations: 1 }, { grantedGenerations: -1 }
+  ]) {
+    stored = JSON.stringify({ ...defaultLedger(), ...patch });
+    const invalid = context.ViewerMatching.prepareR6PrideFrequency(0.5, true, options);
+    assert.equal(invalid.ledger, null);
+    assert.equal(invalid.allowPride, false);
+    assert.equal(invalid.diagnostics.reason, "storage-read-failed");
+  }
+  assert.equal(defaultCalls, 1);
+  assert.equal(validationCalls, 9);
+  assert.equal(warnings.length, 8);
+  assert.equal(messages.length, 8);
+});
+
 test("getMatchingSlotBucketKey maps ruby and pride ranks", () => {
   const context = createMatchingContext();
   const { getMatchingSlotBucketKey } = context.ViewerMatching;
@@ -322,6 +454,82 @@ test("AREA replacement preserves basic boost once in slot/cross scoring and leav
   assert.equal(JSON.stringify(pool), before);
 });
 
+test("live day-relative AREA changes selection and its without-day shadow reproduces the baseline", () => {
+  const M = createMatchingContext().ViewerMatching;
+  const config = M.resolveScoringConfig({ meta: { schemaVersion: 1, version: "test" } });
+  config.candidateSelection.areaBoost.dayRelativeEnabled = true;
+  const at = Date.parse("2026-11-16T10:00:00+09:00");
+  const history = [
+    { t: Date.parse("2026-11-16T03:59:59+09:00"), area: "rare" },
+    { t: Date.parse("2026-11-16T04:00:00+09:00"), area: "rare" },
+    { t: at - 2, area: "rare" }, { t: at - 1, area: "rare" },
+    { t: at + 1, area: "common" }
+  ];
+  const pool = Array.from({ length: 12 }, (_, i) => ({
+    name: `P${i}`, shopname: "S", area: i === 11 ? "rare" : "common",
+    __rankKey: "R7", __score: i === 11 ? 0.01 : 0.1 - i * 0.001,
+    __slotScore: (i === 11 ? 0.9 : 1) * 1.05,
+    __detail: {
+      slotScore: (i === 11 ? 0.9 : 1) * 1.05,
+      effectivePhaseScore: i === 11 ? 0.9 : 1, areaBoost: 1.05,
+      realtimeBoost: 1, pinkMismatchBoostFactor: 1, prideBandPriorWeight: 1,
+      recentAreaAppliedBoost: 1, tierProbability: i === 11 ? 0.9 : 1,
+      tierCandidateCount: 12
+    }
+  }));
+  const plan = [{ bucket: "R7", slots: 8 }];
+  const options = { scoringConfig: config, slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at };
+  const baseline = M.buildShadowCandidateComparison(pool, { ...options, variant: "areaWithoutDay" });
+  assert.equal(baseline.selected.some(p => p.name === "P11"), false);
+  const global = pool.map(p => p.__score);
+  M.applyCandidateDayRelativeAreaBoost(pool, options);
+  assert.deepEqual(pool.map(p => p.__score), global);
+  assert.equal(pool[11].__detail.diagnosticAreaObservedCount, 3);
+  assert.ok(pool[11].__slotScore > pool[0].__slotScore);
+  assert.ok(M.getCandidateCrossBucketScore(pool[11]) > 0.9 * 0.9 * 1.05 / 12);
+  const day = M.buildShadowCandidateComparison(pool, { ...options, variant: "dayRelativeArea" });
+  assert.ok(day.selected.some(p => p.name === "P11"));
+  const without = M.buildShadowCandidateComparison(pool, { ...options, variant: "areaWithoutDay" });
+  assert.deepEqual(Array.from(without.selected, p => p.name), Array.from(baseline.selected, p => p.name));
+  assert.ok(Math.abs(without.selected[0].__slotScore - baseline.selected[0].__slotScore) < 1e-12);
+  const wildcard = day.selected.find(p => p.__wildcard);
+  const used = new Set(day.selected.filter(p => !p.__wildcard).map(p => p.name));
+  assert.equal(wildcard.__score, Math.max(...pool.filter(p => !used.has(p.name)).map(p => p.__score)));
+});
+
+test("without-day comparison restores group quotas before shortage backfill", () => {
+  const M = createMatchingContext().ViewerMatching;
+  const config = M.resolveScoringConfig({ meta: { schemaVersion: 1, version: "test" } });
+  config.candidateSelection.slotAllocation.threeGroupEnabled = true;
+  config.candidateSelection.areaBoost.dayRelativeEnabled = true;
+  const at = Date.parse("2026-11-16T10:00:00+09:00");
+  const pool = [
+    ...Array.from({ length: 2 }, (_, i) => ({ name: `L${i}`, rank: "R5", area: "common", phase: 1 })),
+    ...Array.from({ length: 5 }, (_, i) => ({ name: `S${i}`, rank: "R6", area: "rare", phase: 0.9 })),
+    ...Array.from({ length: 5 }, (_, i) => ({ name: `H${i}`, rank: "R7", area: "common", phase: 1 }))
+  ].map(p => ({
+    name: p.name, shopname: "S", area: p.area, __rankKey: p.rank,
+    __score: 0.1, __slotScore: p.phase,
+    __detail: { slotScore: p.phase, effectivePhaseScore: p.phase, areaBoost: 1,
+      realtimeBoost: 1, pinkMismatchBoostFactor: 1, prideBandPriorWeight: 1,
+      recentAreaAppliedBoost: 1, tierProbability: 1, tierCandidateCount: 12 }
+  }));
+  const history = Array.from({ length: 10 }, (_, i) => ({ t: at - i - 1, area: "rare" }));
+  const plan = M.buildThreeGroupSlotPlan(pool, "R6", config);
+  const options = { scoringConfig: config, slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at };
+  const baseline = M.buildShadowCandidateComparison(pool, { ...options, variant: "areaWithoutDay" });
+  M.applyCandidateDayRelativeAreaBoost(pool, options);
+  const state = {};
+  M.selectNormalCandidatesBySlots(pool, 8, {}, plan, { state, scoringConfig: config });
+  assert.deepEqual(Array.from(state.matchingSlotPlan, entry => entry.slots), [2, 4, 2]);
+  const comparison = M.buildShadowCandidateComparison(pool, {
+    ...options, slotPlan: state.matchingSlotPlan, variant: "areaWithoutDay"
+  });
+  assert.deepEqual(Array.from(comparison.selected, p => p.name),
+    Array.from(baseline.selected, p => p.name));
+  assert.deepEqual(Array.from(comparison.parameters.slotPlan, entry => entry.slots), [2, 2, 2]);
+});
+
 test("policy comparisons independently rescore Phase and AREA without learning or future history", () => {
   const context = createMatchingContext();
   const M = context.ViewerMatching;
@@ -367,11 +575,14 @@ test("policy comparisons independently rescore Phase and AREA without learning o
     for (const p of result.selected) {
       const old = pool.find(q => q.name === p.name);
       const d = p.__detail;
-      const phase = policy.lambda !== undefined && !d.isPinkManaged
-        ? context.ViewerDomain.computePhaseMetrics(700, 345, policy.lambda, policy.scaleSec)
+      const expectedLambda = policy.noDecayThroughCycleCount !== undefined
+        ? 0
+        : policy.lambda;
+      const phase = expectedLambda !== undefined && !d.isPinkManaged
+        ? context.ViewerDomain.computePhaseMetrics(700, 345, expectedLambda, policy.scaleSec)
         : old.__detail;
       const effective = 1 - 0.55 * (1 - phase.finalPhaseScore);
-      const basic = policy.area && policy.area !== "basic-recent" ? 1 : 1.05;
+      const basic = policy.area && !["basic-recent", "without-day"].includes(policy.area) ? 1 : 1.05;
       const boost = policy.area?.includes("recent") ? recent : 1;
       assert.ok(Math.abs(d.finalPhaseScore - phase.finalPhaseScore) < 1e-12);
       assert.ok(Math.abs(p.__score - 0.1 * effective) < 1e-12);
@@ -383,6 +594,34 @@ test("policy comparisons independently rescore Phase and AREA without learning o
     if (policy.area === "day-only") assert.equal(result.parameters.sampleCount, 1);
     assert.equal(JSON.stringify({ pool, history, plan, config }), before);
   }
+
+  const cyclePool = pool.map((candidate, i) => {
+    if (candidate.__detail.isPinkManaged) return candidate;
+    const cycleCount = i % 6;
+    const diffSec = cycleCount * 345 + 17;
+    return {
+      ...candidate,
+      __detail: {
+        ...candidate.__detail,
+        phaseAnchorAtMs: at - diffSec * 1000,
+        phaseAnchorType: "last-update"
+      }
+    };
+  });
+  const cutoffResult = M.buildShadowCandidateComparison(cyclePool, {
+    variant: "yellowNoDecayThrough4", scoringConfig: config,
+    slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at
+  });
+  assert.deepEqual({ ...cutoffResult.parameters.cycleCounts }, {
+    "0": 1, "1": 2, "2": 2, "3": 2, "4": 2, "5+": 2, unknown: 0
+  });
+  assert.equal(cutoffResult.parameters.lambdaAfterCutoff, config.phaseError.yellowLambda);
+  for (const candidate of cutoffResult.selected.filter(p => !p.__detail.isPinkManaged)) {
+    const cycles = candidate.__detail.cycleCount;
+    assert.equal(candidate.__detail.phaseDecayLambda, cycles <= 4 ? 0 : config.phaseError.yellowLambda);
+  }
+
+  assert.equal(Object.hasOwn(cutoffResult, "strengthTierTransitions"), false);
   const options = { scoringConfig: config, slotPlan: plan, copyAreaHistory: history, evaluationTimeMs: at };
   const variants = [
     { variant: "dayRelativeArea", id: "day-relative-area" },
@@ -780,11 +1019,15 @@ test("scoring config resolves defaults, validates inputs and records effective v
   assert.equal(capped.phase.yellow.weight, 0.8);
   assert.equal(config.candidateSelection.slotAllocation.relativePopulationAdjustment.enabled, true);
   assert.equal(config.phaseError.yellowLambda, 0.06);
+  assert.equal(config.phaseError.yellowNoDecayThroughCycleCount, 4);
+  assert.equal(snapshot.effective.phaseError.yellowNoDecayThroughCycleCount, 4);
+  assert.match(snapshot.phaseScoring.effectiveLambda, /yellowNoDecayThroughCycleCount/);
   assert.equal(config.phaseError.pinkLambda, 0.03);
   assert.equal(config.candidateSelection.areaBoost.recentMatch.enabled, false);
   assert.equal(snapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
   assert.equal(getMatchingSlotCounts(config).normal, 8);
   const defaults = resolveScoringConfig({ meta: { schemaVersion: 1, version: "minimal" } });
+  assert.equal(defaults.phaseError.yellowNoDecayThroughCycleCount, 0);
   assert.equal(config.viewerDefaults.filterMinutes, 15);
   assert.equal(defaults.viewerDefaults.filterMinutes, 15);
   assert.equal(resolveScoringConfig({ ...source, viewerDefaults: {
@@ -822,6 +1065,9 @@ test("scoring config resolves defaults, validates inputs and records effective v
     [["candidateSelection", "slots", "wildCard"], 0],
     [["candidateSelection", "areaBoost", "diagnosticRecentWeight"], 0.1],
     [["phaseError", "scaleSec"], 0],
+    [["phaseError", "yellowNoDecayThroughCycleCount"], -1],
+    [["phaseError", "yellowNoDecayThroughCycleCount"], 4.5],
+    [["phaseError", "yellowNoDecayThroughCycleCount"], "4"],
     [["phaseError", "yellowScaleSec"], "90"],
     [["experimental", "dayRelativeArea", "weight"], 1.1],
     [["experimental", "dayRelativeArea", "smoothingCount"], 0],

@@ -53,6 +53,66 @@ function createUIContext(customState = {}) {
   return context;
 }
 
+test("MONITOR info updates one row without moving warnings or changing runtime records", () => {
+  const context = createUIContext();
+  const box = {
+    children: [],
+    prepend(line) { this.children.unshift(line); },
+    removeChild(line) { this.children.splice(this.children.indexOf(line), 1); },
+    get lastChild() { return this.children.at(-1); }
+  };
+  context.document.getElementById = id => id === "logBox" ? box : null;
+  context.document.createElement = () => ({ dataset: {}, style: {} });
+  let time = "00:00:00";
+  context.getNowLabelJa = () => time;
+  const records = [];
+  context.logEvent = (type, payload) => records.push({ type, payload });
+  const { log, logWarn, logError, appendLog, MAX_LOG_LINES } = context.ViewerUI;
+  const options = { replaceKey: "monitor-candidates" };
+  log("候補生成: first", options);
+  const monitorLine = box.children[0];
+  logError("connection failed");
+  time = "00:00:10";
+  log("候補生成: second", options);
+  assert.equal(box.children.length, 2);
+  assert.equal(box.children[1], monitorLine);
+  assert.equal(monitorLine.textContent, "[00:00:10] 候補生成: second");
+  assert.equal(records.length, 1);
+  assert.equal(records[0].payload.severity, "error");
+  logWarn("先読み失敗");
+  appendLog("another failure", "error", options);
+  assert.equal(box.children.length, 4);
+  assert.equal(records.length, 3);
+  assert.equal(monitorLine.dataset.type, "info");
+  log("候補生成: MATCHING");
+  assert.equal(box.children.length, 5);
+  for (let i = 0; i < MAX_LOG_LINES; i++) log(`コピー: ${i}`);
+  assert.equal(box.children.length, MAX_LOG_LINES);
+  assert(!box.children.includes(monitorLine));
+  log("候補生成: recreated", options);
+  const replacement = box.children[0];
+  log("候補生成: updated", options);
+  assert.equal(box.children.length, MAX_LOG_LINES);
+  assert.equal(box.children[0], replacement);
+  assert.equal(box.children.filter(line => line.dataset.logKey === options.replaceKey).length, 1);
+  log("候補生成: MATCHING");
+  const matchingLine = box.children[0];
+  const nextSession = { replaceKey: "monitor-candidates-next" };
+  log("MONITOR候補生成: new MONITOR", nextSession);
+  const nextLine = box.children[0];
+  log("MONITOR候補生成: refreshed MONITOR", nextSession);
+  assert.equal(box.children[0], nextLine);
+  assert.equal(box.children[1], matchingLine);
+  assert.equal(box.children[2], replacement);
+  assert(nextLine.textContent.includes("refreshed MONITOR"));
+  assert.equal(nextLine.style.color, "#7dd3fc");
+  assert.equal(matchingLine.style.color, "#00ff00");
+  appendLog("MONITOR候補生成: failure", "error");
+  assert.equal(box.children[0].style.color, "#ff5555");
+  appendLog("MONITOR候補生成: warning", "warn");
+  assert.equal(box.children[0].style.color, "#ffeb3b");
+});
+
 test("renderStars outputs correct stars and line breaks", () => {
   const context = createUIContext();
   const { renderStars } = context.ViewerUI;
@@ -65,6 +125,34 @@ test("renderStars outputs correct stars and line breaks", () => {
   assert.equal(renderStars(5), "★★★★<br>★");
   assert.equal(renderStars(7), "★★★★<br>★★★");
   assert.equal(renderStars(8), "★★★★<br>★★★★");
+});
+
+test("player rows display and copy names and shops containing HTML and quotes literally", () => {
+  const context = createUIContext();
+  context.getAreaDisplayName = () => 'Area & <North>';
+  context.isCopiedPlayer = () => false;
+  context.isMatchingCandidateByCopyPhase = () => false;
+  const player = {
+    name: `A "double" 'single' \\ <name>`,
+    shopname: `Shop "quoted" & 'store'`,
+    onlineBattleRankId: context.ViewerDomain.RUBY_ID,
+    starCnt: 6, point: 123, updateDate: '2026/11/15 14:30:00'
+  };
+  const html = context.ViewerUI.buildPlayerRowHTML(player);
+  assert(html.includes('A &quot;double&quot; \'single\' \\ &lt;name&gt;'));
+  assert(html.includes('Shop &quot;quoted&quot; &amp; \'store\''));
+  const handlers = [...html.matchAll(/onclick="([^"]*)"/g)].map(match =>
+    match[1].replace(/&quot;/g, '"').replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>').replace(/&amp;/g, '&'));
+  assert.equal(handlers.length, 3);
+  const calls = [];
+  context.copyToClipboard = (...args) => calls.push(args);
+  for (const handler of handlers) vm.runInContext(handler, context);
+  assert.deepEqual(calls, [
+    [`★★★★★★\t${player.name}\tArea & <North>\t${player.shopname}`, player.name, player.shopname],
+    [player.name, player.name, player.shopname],
+    [player.shopname, player.name, player.shopname]
+  ]);
 });
 
 test("buildFilterGroupHTML generates expected checkbox labels", () => {
@@ -194,7 +282,32 @@ test("MATCHING and PREVIEW render no Phase cycle graph", () => {
     context.ViewerUI.renderMatchingTable();
     assert.match(area.innerHTML, /matchingTableBody/);
     assert.doesNotMatch(area.innerHTML, /許容幅|信頼度|周期 /);
+    assert.equal(area.innerHTML.includes('id="monitorCountdownHeader"'), mode === "preview");
   }
+});
+
+test("MONITOR header countdown uses the shared deadline and pauses or stops without labels", () => {
+  const context = createUIContext({
+    monitorRefreshAtMs: 20000, monitorIntervalMs: 10000
+  });
+  context.Date = class extends Date { static now() { return 15000; } };
+  const header = { style: {} };
+  context.document.getElementById = id => id === 'monitorCountdownHeader' ? header : null;
+  context.ViewerUI.syncMonitorCountdown();
+  assert.equal(header.style.animationName, 'monitor-countdown');
+  assert.equal(header.style.animationDuration, '10000ms');
+  assert.equal(header.style.animationDelay, '-5000ms');
+  assert.equal(header.style.animationPlayState, 'running');
+  context.document.hidden = true;
+  context.ViewerUI.syncMonitorCountdown();
+  assert.equal(header.style.animationPlayState, 'paused');
+  assert.equal(header.style.animationDelay, '-5000ms');
+  context.State.monitorRefreshAtMs = null;
+  context.ViewerUI.syncMonitorCountdown();
+  assert.equal(header.style.animationName, 'none');
+  assert.match(uiSource, /to \{ background-size: 0% 100%; \}/);
+  assert.match(uiSource, /#monitorCountdownHeader th\s*\{\s*background: transparent !important;\s*color: var\(--monitor-text-color\) !important;/);
+  assert.match(uiSource, /\.summary-mode-btn-preview\.active\s*\{\s*background: var\(--monitor-band-color\);/);
 });
 
 test("AREA search skips Phase and chart aggregation while unfiltered view retains it", () => {
@@ -237,4 +350,64 @@ test("AREA search skips Phase and chart aggregation while unfiltered view retain
   assert.equal(phaseCalls, 1);
   assert.match(area.innerHTML, /TOTAL_1/);
   assert.match(area.innerHTML, /area-summary-list/);
+});
+
+test("AREA detail snapshots rank filters once for all players", () => {
+  const players = Array.from({ length: 100 }, (_, i) => ({
+    name: `PLAYER_${i}`, area: i < 80 ? "1" : "2",
+    __rankKey: i % 2 ? "R6" : "R7", starCnt: i % 2 ? 6 : 7
+  }));
+  const context = createUIContext({ detailOriginal: players, searchText: "" });
+  const area = { innerHTML: "", querySelector: () => null, querySelectorAll: () => [] };
+  context.document.getElementById = id => id === "detailArea" ? area
+    : id === "area-summary-view-styles" ? {} : null;
+  context.getAreaDisplayName = () => "AREA";
+  context.setupAreaNavigation = () => {};
+  let rubyReads = 0;
+  let prideReads = 0;
+  let predicates = 0;
+  context.readSelectedStars = () => { rubyReads++; return [7]; };
+  context.readSelectedPrides = () => { prideReads++; return []; };
+  context.isPlayerIncludedInRankFilters = (player, filters) => {
+    predicates++;
+    return filters.selectedStars.includes(player.starCnt);
+  };
+  context.ViewerUI.renderAreaDetailTable(1);
+  assert.equal(rubyReads, 1);
+  assert.equal(prideReads, 1);
+  assert.equal(predicates, 80);
+  assert.match(area.innerHTML, /title="★7: 40人"/);
+  assert.doesNotMatch(area.innerHTML, /title="★6:/);
+});
+
+test("Row highlighting shares its timestamp and skips Yellow checks for active Pink", () => {
+  const context = createUIContext();
+  const rows = ["pink", "yellow", "neither"].map(name => ({
+    dataset: { name, shopname: "S", updated: "2026-10-29T10:00:00Z" },
+    classes: new Set(["match-row-pink", "match-row-yellow"])
+  }));
+  for (const row of rows) {
+    row.classList = {
+      remove: (...names) => names.forEach(name => row.classes.delete(name)),
+      add: name => row.classes.add(name)
+    };
+  }
+  const pinkCalls = [];
+  const yellowCalls = [];
+  context.isMatchingCandidateByCopyPhase = (player, now) => {
+    pinkCalls.push([player.name, now]);
+    return player.name === "pink";
+  };
+  context.isMatchingCandidateByPhase = (player, now) => {
+    yellowCalls.push([player.name, now]);
+    return player.name === "yellow";
+  };
+  context.ViewerUI.highlightMatchingRows({ querySelectorAll: () => rows });
+  assert.deepEqual(pinkCalls.map(c => c[0]), ["pink", "yellow", "neither"]);
+  assert.deepEqual(yellowCalls.map(c => c[0]), ["yellow", "neither"]);
+  assert.equal(new Set([...pinkCalls, ...yellowCalls].map(c => c[1])).size, 1);
+  assert.equal(typeof pinkCalls[0][1], "number");
+  assert.deepEqual(Array.from(rows[0].classes), ["match-row-pink"]);
+  assert.deepEqual(Array.from(rows[1].classes), ["match-row-yellow"]);
+  assert.equal(rows[2].classes.size, 0);
 });

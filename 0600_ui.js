@@ -243,40 +243,6 @@ function buildPlayerRowHTML(
           ? "pink-managed"
           : "";
 
-  const safeName =
-    String(
-      p.name ?? ""
-    )
-      .replace(
-        /\\/g,
-        "\\\\"
-      )
-      .replace(
-        /'/g,
-        "\\'"
-      )
-      .replace(
-        /"/g,
-        '\\"'
-      );
-
-  const safeShop =
-    String(
-      fullShop ?? ""
-    )
-      .replace(
-        /\\/g,
-        "\\\\"
-      )
-      .replace(
-        /'/g,
-        "\\'"
-      )
-      .replace(
-        /"/g,
-        "&quot;"
-      );
-
   const copyValue =
     [
       isRuby
@@ -288,17 +254,12 @@ function buildPlayerRowHTML(
     ]
       .join("\t")
       .replace(
-        /\\/g,
-        "\\\\"
-      )
-      .replace(
-        /'/g,
-        "\\'"
-      )
-      .replace(
         /\r?\n/g,
         " "
       );
+  const copyHandler = value => escapeHtmlAttr(
+    `copyToClipboard(${JSON.stringify(value)},${JSON.stringify(p.name ?? "")},${JSON.stringify(fullShop)})`
+  );
 
   const rowStateClass =
     isPinkPhase
@@ -315,30 +276,22 @@ function buildPlayerRowHTML(
   return `
     <tr
       class="${rowStateClass}${crossBucketClass}"
-      data-updated="${p.updateDate}"
+      data-updated="${escapeHtmlAttr(p.updateDate ?? "")}"
       data-name="${escapeHtmlAttr(p.name ?? "")}"
       data-shopname="${escapeHtmlAttr(fullShop)}"
     >
       <td
         class="center clickable"
-        onclick="copyToClipboard(
-          '${copyValue}',
-          '${safeName}',
-          '${safeShop}'
-        )"
+        onclick="${copyHandler(copyValue)}"
       >
-        ${starOrLevel}
+        ${isRuby ? starOrLevel : escapeHtmlAttr(starOrLevel)}
       </td>
 
       <td
         class="left player-name clickable ${playerNameClass}"
-        onclick="copyToClipboard(
-          '${safeName}',
-          '${safeName}',
-          '${safeShop}'
-        )"
+        onclick="${copyHandler(p.name ?? "")}"
       >
-        ${p.name}${
+        ${escapeHtmlAttr(p.name ?? "")}${
           p.__crossBucket
             ? ' <span style="background:#e8f5e9;color:#246b2d;border-radius:3px;padding:0 4px;font-size:0.8em;" title="バケット横断枠：過去バケット確率を現在候補数で個人へ配分した推定確率により選出">X↑</span>'
             : ""
@@ -346,20 +299,16 @@ function buildPlayerRowHTML(
       </td>
 
       <td class="center">
-        ${areaName}
+        ${escapeHtmlAttr(areaName)}
       </td>
 
       <td
         class="left clickable"
-        data-fullname="${safeShop}"
-        onclick="copyToClipboard(
-          '${safeShop}',
-          '${safeName}',
-          '${safeShop}'
-        )"
+        data-fullname="${escapeHtmlAttr(fullShop)}"
+        onclick="${copyHandler(fullShop)}"
       >
         <div class="store-name">
-          ${shortShop}
+          ${escapeHtmlAttr(shortShop)}
         </div>
       </td>
 
@@ -381,13 +330,13 @@ function buildPlayerRowHTML(
             cursor:pointer;
           "
           title="タップして情報を表示"
-        >${p.updateDate}</button>
+        >${escapeHtmlAttr(p.updateDate ?? "")}</button>
       </td>
 
       <td class="center">
         ${
           titleUrl
-            ? `<img src="${titleUrl}" height="24">`
+            ? `<img src="${escapeHtmlAttr(titleUrl)}" height="24">`
             : ""
         }
       </td>
@@ -671,11 +620,11 @@ function buildSummaryModeNavHTML(activeMode) {
         type="button"
         class="summary-mode-btn summary-mode-btn-preview${State.matchingContext?.mode === "preview" && activeMode === "both" ? " active" : ""}"
         data-matching-preview
-      >🔭 PREVIEW</button>
+      >🔭 MONITOR</button>
       ${buildMatchingOffsetSelectHTML(
         "previewOffsetSelect",
         State.previewOffsetSec,
-        "PREVIEWの予測時刻"
+        "MONITORの予測時刻"
       )}
     </div>
   `;
@@ -732,6 +681,8 @@ function ensureAreaSummaryStyles() {
   style.textContent = `
     :root {
       --theme-header-color: #168a45;
+      --monitor-band-color: #b9daf5;
+      --monitor-text-color: #17324d;
     }
 
     th {
@@ -742,6 +693,36 @@ function ensureAreaSummaryStyles() {
     .matching-cross-rank-table th {
       background: #168a45 !important;
       color: #fff !important;
+    }
+
+    #monitorCountdownHeader {
+      background-color: #edf2f7;
+      background-image: linear-gradient(var(--monitor-band-color), var(--monitor-band-color));
+      background-position: left center;
+      background-repeat: no-repeat;
+      background-size: 0% 100%;
+      animation-fill-mode: both;
+      animation-timing-function: linear;
+    }
+
+    #monitorCountdownHeader th {
+      background: transparent !important;
+      color: var(--monitor-text-color) !important;
+    }
+
+    @keyframes monitor-countdown {
+      from { background-size: 100% 100%; }
+      to { background-size: 0% 100%; }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --monitor-band-color: #244b70;
+        --monitor-text-color: #f1f5f9;
+      }
+      #monitorCountdownHeader {
+        background-color: #182536;
+      }
     }
 
     .area-summary-list {
@@ -779,13 +760,14 @@ function ensureAreaSummaryStyles() {
 
     .summary-mode-btn-preview,
     .summary-mode-btn-preview.active {
-      background: #2563a6;
+      background: var(--monitor-band-color);
       border-color: #1d4f84;
-      color: #fff;
+      color: var(--monitor-text-color);
     }
 
     .summary-mode-btn-preview:hover {
-      background: #1d4f84;
+      background: var(--monitor-band-color);
+      border-color: var(--monitor-text-color);
     }
 
     .summary-mode-btn.active {
@@ -1273,6 +1255,12 @@ function bindSummaryModeButtons(root) {
       e => {
         State.previewOffsetSec =
           Number(e.target.value) || 0;
+        if (State.currentView === STATE.MATCHING && State.matchingContext?.mode === "preview") {
+          showMatchingCandidates({
+            push: false, mode: "preview", offsetSec: State.previewOffsetSec
+          });
+          if (State.searchText) applyMatchingFilter(State.searchText);
+        }
       }
     );
   }
@@ -1978,9 +1966,12 @@ function renderAreaDetailTable(areaNo) {
 
   const areaKey = String(areaNo);
   const areaName = getAreaDisplayName(areaKey);
+  const rankFilters = {
+    selectedStars: readSelectedStars(),
+    selectedPrides: readSelectedPrides()
+  };
   const list = (State.searchText ? applyPlayerFilter(State.searchText, true) : (State.detailOriginal || []).slice())
-    .filter(p => String(p.area ?? "") === areaKey)
-    .filter(isPlayerIncludedInRankFilters);
+    .filter(p => String(p.area ?? "") === areaKey && isPlayerIncludedInRankFilters(p, rankFilters));
   area.innerHTML = `
     ${buildSummaryModeNavHTML()}
 
@@ -2067,10 +2058,7 @@ function renderPlayerRowsToBody(
               row.dataset.updated || ""
           };
 
-          showPlayerPhaseDetailDialog(
-            player,
-            { showStrength: tbodyId === "matchingTableBody" }
-          );
+          showPlayerPhaseDetailDialog(player);
         }
       );
     });
@@ -2089,6 +2077,7 @@ function highlightMatchingRows(
 
   if (!tbody) return;
 
+  const nowMs = Date.now();
   tbody.querySelectorAll("tr").forEach(tr => {
 
     const updated =
@@ -2106,21 +2095,14 @@ function highlightMatchingRows(
       updateDate: updated
     };
 
-    const isYellow =
-      isMatchingCandidateByPhase(
-        rowPlayer
-      );
-
     const isPink =
       isMatchingCandidateByCopyPhase(
-        rowPlayer
+        rowPlayer,
+        nowMs
       );
 
     tr.classList.remove(
-      "match-row-yellow"
-    );
-
-    tr.classList.remove(
+      "match-row-yellow",
       "match-row-pink"
     );
 
@@ -2130,7 +2112,7 @@ function highlightMatchingRows(
         "match-row-pink"
       );
 
-    } else if (isYellow) {
+    } else if (isMatchingCandidateByPhase(rowPlayer, nowMs)) {
 
       tr.classList.add(
         "match-row-yellow"
@@ -2198,7 +2180,7 @@ function renderMatchingTable() {
       <div id="matchingTableWrapper" style="overflow-x:auto;">
         <table>
           <thead>
-            <tr>
+            <tr${State.matchingContext?.mode === "preview" ? ' id="monitorCountdownHeader"' : ""}>
               <th>★・PRIDE</th>
               <th>プレイヤー名</th>
               <th>エリア</th>
@@ -2237,6 +2219,7 @@ function renderMatchingTable() {
   `;
 
   bindSummaryModeButtons(area);
+  syncMonitorCountdown();
 
   if (typeof applyMatchingFilter === "function" && State.searchText) {
     applyMatchingFilter(State.searchText);
@@ -2247,6 +2230,26 @@ function renderMatchingTable() {
         : State.matchingList
     );
   }
+}
+
+function syncMonitorCountdown() {
+  const header = document.getElementById("monitorCountdownHeader");
+  if (!header) return;
+  const deadline = State.monitorRefreshAtMs;
+  const duration = State.monitorIntervalMs;
+  if (!Number.isFinite(deadline) || !Number.isFinite(duration) || duration <= 0) {
+    header.style.animationName = "none";
+    return;
+  }
+  if (document.hidden) {
+    header.style.animationPlayState = "paused";
+    return;
+  }
+  const elapsed = Math.max(0, Math.min(duration, Date.now() - (deadline - duration)));
+  header.style.animationName = "monitor-countdown";
+  header.style.animationDuration = `${duration}ms`;
+  header.style.animationDelay = `-${elapsed}ms`;
+  header.style.animationPlayState = "running";
 }
 
 /* =========================================================
@@ -2271,7 +2274,8 @@ function renderMatchingRows(
 ========================================================= */
 function appendLog(
   msg,
-  type = "info"
+  type = "info",
+  options = {}
 ) {
 
   /* =====================================
@@ -2294,10 +2298,14 @@ function appendLog(
 
   if (box) {
 
-    const line =
-      document.createElement(
-        "div"
-      );
+    const existingLine = type === "info" && options.replaceKey
+      ? Array.from(box.children).find(child => child.dataset?.logKey === options.replaceKey)
+      : null;
+    const line = existingLine || document.createElement("div");
+
+    if (type === "info" && options.replaceKey) {
+      line.dataset.logKey = options.replaceKey;
+    }
 
     line.textContent =
       `[${t}] ${msg}`;
@@ -2313,6 +2321,13 @@ function appendLog(
         "#ff5555";
 
     } else if (
+      type === "info" &&
+      String(msg).startsWith("MONITOR候補生成:")
+    ) {
+
+      line.style.color = "#7dd3fc";
+
+    } else if (
       type === "warn" ||
       String(msg).includes("人口枠調整=")
     ) {
@@ -2326,7 +2341,7 @@ function appendLog(
         "#00ff00";
     }
 
-    box.prepend(line);
+    if (!existingLine) box.prepend(line);
 
     while (
       box.children.length >
@@ -2417,7 +2432,7 @@ function allowLog(
 
   if (
     message.includes(
-      "PREVIEWではコピー操作"
+      "MONITORではコピー操作"
     )
   ) {
     return true;
@@ -2528,10 +2543,11 @@ function allowLog(
 }
 
 const log =
-  msg =>
+  (msg, options) =>
     appendLog(
       msg,
-      "info"
+      "info",
+      options
     );
 
 const logWarn =
@@ -2589,6 +2605,7 @@ const logError =
     highlightMatchingRows,
     renderMatchingHeader,
     renderMatchingTable,
+    syncMonitorCountdown,
     renderMatchingRows,
     appendLog,
     allowLog,

@@ -91,6 +91,589 @@ test('Default time filter includes exactly 15 minutes before generatedAt, not pr
   }
 });
 
+test('Initial JSON request results preserve successes and isolate failures', async () => {
+  let successCalls = 0;
+  let failureCalls = 0;
+  const results = await ViewerApp.settleInitialJsonRequests([
+    () => {
+      successCalls++;
+      return Promise.resolve({ name: 'loaded' });
+    },
+    () => {
+      failureCalls++;
+      return Promise.reject(new Error('offline'));
+    }
+  ]);
+
+  assert.equal(successCalls, 1);
+  assert.equal(failureCalls, 1);
+  assert.equal(results[0].status, 'fulfilled');
+  assert.deepEqual(results[0].value, { name: 'loaded' });
+  assert.equal(results[1].status, 'rejected');
+  assert.match(results[1].reason.message, /offline/);
+});
+
+function createLoadedDataApp({ realData = false, areaPhaseCalls = null, renders = null } = {}) {
+  const vm = require('node:vm');
+  const records = [];
+  const errors = [];
+  const warnings = [];
+  const messages = [];
+  const clipboard = [];
+  const storage = {};
+  const context = vm.createContext({
+    console, Date, setTimeout, clearTimeout, performance, TextEncoder, AbortController,
+    localStorage: {
+      getItem: key => storage[key] ?? null,
+      setItem: (key, value) => { storage[key] = String(value); },
+      removeItem: key => { delete storage[key]; },
+      key: i => Object.keys(storage)[i],
+      get length() { return Object.keys(storage).length; }
+    },
+    document: {
+      addEventListener() {},
+      removeEventListener() {},
+      getElementById: () => null,
+      querySelectorAll: selector => selector.includes('.ruby-filter:checked')
+        ? [{ value: '6' }, { value: '7' }] : [],
+      createElement: () => ({ style: {} }),
+      head: { appendChild() {} }
+    },
+    navigator: { clipboard: { writeText: async text => { clipboard.push(text); } } }
+  });
+  for (const file of ['0100_utils.js', '0200_domain.js', '0300_persistence.js',
+    '0400_data.js', '0500_matching.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
+  }
+  if (areaPhaseCalls) {
+    const calculate = context.ViewerMatching.applyCandidateAreaPhaseDiagnostics;
+    context.ViewerMatching.applyCandidateAreaPhaseDiagnostics = (...args) => {
+      areaPhaseCalls.push(args[0].length);
+      return calculate(...args);
+    };
+  }
+  context.ViewerPersistence.logEvent = (type, record) => records.push({ e: type, ...record });
+  if (!realData) {
+    context.ViewerData.fetchLatestUpdateJson = (...args) => context.latestUpdateRequest(...args);
+    context.ViewerData.fetchRoundDataJson = (...args) => context.roundDataRequest(...args);
+  }
+  context.ViewerUI = {
+    log: (message, options) => messages.push({ message, options }),
+    logWarn: message => warnings.push(message), logError: message => errors.push(message),
+    renderMatchingHeader() {}, renderMatchingTable() {}, renderSummary() {},
+    renderDetailTable() { renders?.push(['rank']); },
+    renderAreaDetailTable(area) { renders?.push(['area', area]); },
+    switchDisplayView() {}, startProgress() {}, stopProgress() {}
+  };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '0700_app.js'), 'utf8'), context);
+  const app = context.ViewerApp;
+  app.applyScoringConfigJson(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+  const { State } = app;
+  State.generatedAt = new Date(Date.now() - 600000).toISOString();
+  State.latestUpdateAt = new Date(Date.now() - 60000).toISOString();
+  State.all = Array.from({ length: 15 }, (_, i) => ({
+    name: `LOADED_${i}`, shopname: `SHOP_${i}`,
+    onlineBattleRankId: context.ViewerDomain.RUBY_ID,
+    starCnt: i < 10 ? 6 : 7, area: '1',
+    updateDate: new Date(Date.now() - 690000).toISOString()
+  }));
+  app.applyFilters();
+  return { app, context, records, errors, warnings, clipboard, messages };
+}
+
+test('Newer published data does not block matching, preview, or candidate regeneration', () => {
+  const { app, records, errors } = createLoadedDataApp();
+  const { State } = app;
+  assert.equal(app.isIntegratedDataBehindLatestUpdate(), true);
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  assert.equal(State.currentView, app.STATE.MATCHING);
+  assert.equal(State.matchingList.length, 10);
+  assert.equal(State.matchingScoredAll.length, 15);
+  const saved = records.find(r => r.e === 'candidate');
+  assert(saved);
+  assert.equal(saved.integratedDataGeneratedAt, State.generatedAt);
+  assert.equal(saved.latestUpdateAt, State.latestUpdateAt);
+  assert.equal(State.latestCandidateEventIdForCopy, saved.id);
+  app.showMatchingCandidates({ mode: 'preview', push: false });
+  assert.equal(State.matchingContext.mode, 'preview');
+  assert.equal(State.matchingList.length, 10);
+  assert.equal(State.latestCandidateEventIdForCopy, null);
+  app.buildMatchingCandidates({ saveEvent: false });
+  assert.equal(State.matchingList.length, 10);
+  assert.equal(errors.length, 0);
+  app.stopMonitor();
+});
+
+test('MONITOR repeats every ten seconds with a rolling offset, without saves, copying or history pushes', () => {
+  const { app, context, records, clipboard, messages } = createLoadedDataApp();
+  let now = Date.now();
+  context.Date = class extends Date { static now() { return now; } };
+  const timers = new Map();
+  let sequence = 0;
+  context.setTimeout = (callback, delay) => {
+    assert.equal(delay, 10000);
+    timers.set(++sequence, callback);
+    return sequence;
+  };
+  context.clearTimeout = id => timers.delete(id);
+  const listeners = new Map();
+  context.document.addEventListener = (event, callback) => listeners.set(event, callback);
+  context.document.removeEventListener = (event, callback) => {
+    if (listeners.get(event) === callback) listeners.delete(event);
+  };
+  context.history = { pushState() { assert.fail('automatic refresh must not push history'); } };
+  app.State.previewOffsetSec = 15;
+  app.showMatchingCandidates({ mode: 'preview', offsetSec: 15, push: false });
+  assert.equal(app.State.matchingContext.evaluationTimeMs, now + 15000);
+  assert.equal(timers.size, 1);
+  now += 10000;
+  const [id, callback] = timers.entries().next().value;
+  timers.delete(id);
+  callback();
+  assert.equal(app.State.matchingContext.evaluationTimeMs, now + 15000);
+  assert.equal(timers.size, 1);
+  assert.equal(records.filter(r => r.e === 'candidate').length, 0);
+  const monitorMessages = messages.filter(entry => entry.message.startsWith('MONITOR候補生成:'));
+  assert.equal(monitorMessages.length, 2);
+  const firstKey = monitorMessages[0].options.replaceKey;
+  assert(firstKey.startsWith('monitor-candidates-'));
+  assert(monitorMessages.every(entry => entry.options?.replaceKey === firstKey));
+  app.State.previewOffsetSec = 5;
+  app.State.searchText = 'LOADED';
+  app.refreshMonitor();
+  assert.equal(app.State.matchingContext.evaluationTimeMs, now + 5000);
+  assert.equal(app.State.searchText, 'LOADED');
+  assert.equal(timers.size, 1);
+  app.copyToClipboard('name', 'name', 'shop');
+  assert.equal(records.filter(r => r.e === 'copy').length, 0);
+  assert.equal(clipboard.length, 0);
+  context.document.hidden = true;
+  listeners.get('visibilitychange')();
+  assert.equal(timers.size, 0);
+  const previous = app.State.matchingContext.evaluationTimeMs;
+  now += 30000;
+  context.document.hidden = false;
+  listeners.get('visibilitychange')();
+  assert(app.State.matchingContext.evaluationTimeMs > previous);
+  assert.equal(timers.size, 1);
+  assert.equal(messages.filter(entry => entry.message.startsWith('MONITOR候補生成:')).at(-1).options.replaceKey, firstKey);
+  app.setCurrentView(app.STATE.SUMMARY);
+  assert.equal(timers.size, 0);
+  assert.equal(listeners.size, 0);
+  app.showMatchingCandidates({ mode: 'preview', push: false });
+  const secondKey = messages.filter(entry => entry.message.startsWith('MONITOR候補生成:')).at(-1).options.replaceKey;
+  assert.notEqual(secondKey, firstKey);
+  app.showMatchingCandidates({ mode: 'matching', push: false });
+  assert.equal(messages.filter(entry => entry.message.startsWith('候補生成:')).at(-1).options, undefined);
+  assert.equal(timers.size, 0);
+  assert.equal(listeners.size, 0);
+  app.showMatchingCandidates({ mode: 'preview', push: false });
+  const thirdKey = messages.filter(entry => entry.message.startsWith('MONITOR候補生成:')).at(-1).options.replaceKey;
+  assert.notEqual(thirdKey, secondKey);
+  app.refreshMonitor();
+  assert.equal(messages.filter(entry => entry.message.startsWith('MONITOR候補生成:')).at(-1).options.replaceKey, thirdKey);
+  app.stopMonitor();
+});
+
+test('MONITOR skips log-only AREA diagnostics without changing selected candidates', () => {
+  const calls = [];
+  const { app } = createLoadedDataApp({ areaPhaseCalls: calls });
+  const evaluationTimeMs = Date.now();
+  for (const [index, rank] of ['R6', 'R7'].entries()) {
+    app.syncMyRankSelection(rank);
+    app.buildMatchingCandidates({ mode: 'matching', evaluationTimeMs });
+    const selected = app.State.matchingList.map(p => [p.name, p.shopname, p.__score, p.__slotScore]);
+    assert.equal(calls.length, index + 1);
+    app.buildMatchingCandidates({ mode: 'preview', evaluationTimeMs });
+    assert.deepEqual(app.State.matchingList.map(p => [p.name, p.shopname, p.__score, p.__slotScore]), selected);
+    assert.equal(calls.length, index + 1);
+  }
+});
+
+test('MONITOR stops explicitly on automatic generation errors', () => {
+  const { app, context, errors } = createLoadedDataApp();
+  context.setTimeout = () => 1;
+  context.clearTimeout = () => {};
+  app.showMatchingCandidates({ mode: 'preview', push: false });
+  context.document.querySelectorAll = () => { throw new Error('monitor render failed'); };
+  app.refreshMonitor();
+  assert.equal(app.State.monitorTimer, null);
+  assert.equal(app.State.monitorVisibilityHandler, null);
+  assert(errors.some(message => message.includes('monitor render failed')));
+});
+
+test('Live three-group selection logs and copies group ranks and bypasses population transfers', async () => {
+  const { app, records } = createLoadedDataApp();
+  app.State.myRankKey = 'R6';
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  const event = records.find(r => r.e === 'candidate');
+  assert.equal(app.State.matchingSlotAllocationDiagnostics.reason, 'three-group-fixed-quotas');
+  assert.equal(app.State.matchingSlotPlan.reduce((sum, p) => sum + p.slots, 0), 8);
+  assert(app.State.matchingSlotPlan.every(p => p.selectionPolicy === 'three-group'));
+  const pool = event.allCandidates.map(values =>
+    Object.fromEntries(event.allCandidatesColumns.map((key, index) => [key, values[index]])));
+  assert(pool.every(p => ['same', 'higher'].includes(p.slotBucket)));
+  assert(pool.every(p => Number.isInteger(p.slotRank) && p.slotRank > 0));
+  const unchangedShadow = event.analysisDiagnostics.comparisons.find(
+    comparison => comparison.id === 'yellow-phase-no-decay-through-4');
+  assert.deepEqual(
+    Array.from(unchangedShadow.candidates, p => p.name).sort(),
+    Array.from(app.State.matchingList, p => p.name).sort()
+  );
+  const selected = app.State.matchingList[0];
+  assert.match(app.buildPlayerRankSummaryText(selected), /枠内/);
+  app.copyToClipboard(selected.name, selected.name, selected.shopname);
+  await new Promise(resolve => setImmediate(resolve));
+  const copy = records.find(r => r.e === 'copy');
+  assert.equal(copy.slotBucket, selected.__detail.slotBucket);
+  assert.equal(copy.slotRankAtPrediction, selected.__slotRank);
+  assert.equal(copy.predictionSnapshotAvailable, true);
+  assert.equal(copy.scoreSource, 'prediction');
+});
+
+test('Update detection retains loaded candidates, ranks and prediction links', async () => {
+  const { app, context, errors, warnings } = createLoadedDataApp();
+  const { State } = app;
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  const list = State.matchingList;
+  const ranked = State.matchingRankedAll;
+  const predictionId = State.latestCandidateEventIdForCopy;
+  State.latestUpdateAt = State.generatedAt;
+  const newer = new Date().toISOString();
+  context.latestUpdateRequest = async () => ({ lastUpdated: newer });
+  context.roundDataRequest = async () => { throw new Error('prefetch offline'); };
+  await app.checkUpdate();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(State.latestUpdateAt, newer);
+  assert.equal(State.pendingPrefetchForUpdateAt, newer);
+  assert.equal(State.matchingList, list);
+  assert.equal(State.matchingRankedAll, ranked);
+  assert.equal(State.latestCandidateEventIdForCopy, predictionId);
+  assert.equal(State.activeCandidateEventId, predictionId);
+  assert.equal(State.prefetchInFlight, null);
+  assert(warnings.some(message => message.includes('prefetch offline')));
+  assert.equal(errors.length, 0);
+});
+
+test('Reload failure preserves loaded data and predictions and reports the fetch error', async () => {
+  const { app, context, errors } = createLoadedDataApp();
+  const { State } = app;
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  const data = State.all;
+  const filtered = State.filtered;
+  const list = State.matchingList;
+  const generatedAt = State.generatedAt;
+  const predictionId = State.latestCandidateEventIdForCopy;
+  const newer = new Date().toISOString();
+  context.latestUpdateRequest = async () => ({ lastUpdated: newer });
+  context.roundDataRequest = async () => { throw new Error('offline'); };
+  assert.equal(await app.reloadLatestDataPreferPrefetch(), false);
+  assert.equal(State.all, data);
+  assert.equal(State.filtered, filtered);
+  assert.equal(State.generatedAt, generatedAt);
+  assert.equal(State.matchingList, list);
+  assert.equal(State.latestCandidateEventIdForCopy, predictionId);
+  assert.equal(State.activeCandidateEventId, predictionId);
+  assert.equal(State.latestUpdateAt, newer);
+  assert.equal(State.pendingPrefetchForUpdateAt, newer);
+  assert.equal(State.currentView, app.STATE.MATCHING);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /offline/);
+});
+
+test('Reload rejects malformed integrated data without changing loaded data or prediction links', async () => {
+  for (const records of [undefined, {}, [null]]) {
+    const { app, context, errors } = createLoadedDataApp();
+    const { State } = app;
+    app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+    const previous = {
+      all: State.all, filtered: State.filtered, generatedAt: State.generatedAt,
+      matchingList: State.matchingList, latestCandidateEventIdForCopy: State.latestCandidateEventIdForCopy,
+      activeCandidateEventId: State.activeCandidateEventId
+    };
+    const generation = new Date().toISOString();
+    context.latestUpdateRequest = async () => ({ lastUpdated: generation });
+    context.roundDataRequest = async () => ({ generatedAt: generation, records });
+    assert.equal(await app.reloadLatestDataPreferPrefetch(), false);
+    for (const [key, value] of Object.entries(previous)) assert.equal(State[key], value, key);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /integrated_data\.json.*records/);
+  }
+});
+
+test('Applying integrated data rejects missing or invalid generatedAt before updating state', () => {
+  const { app } = createLoadedDataApp();
+  const { State } = app;
+  const generatedAt = State.generatedAt;
+  const data = State.all;
+  for (const value of [null, '', 'not-a-date']) {
+    assert.throws(() => app.applyRoundDataJson({ generatedAt: value, records: [] }), /generatedAt/);
+    assert.equal(State.generatedAt, generatedAt);
+    assert.equal(State.all, data);
+  }
+});
+
+test('Prefetch rejects malformed integrated data rather than caching it', async () => {
+  const { app, context, warnings } = createLoadedDataApp();
+  const generation = app.State.latestUpdateAt;
+  context.roundDataRequest = async () => ({ generatedAt: generation, records: null });
+  await app.prefetchLatestRoundData(generation);
+  assert.equal(app.State.prefetchedRoundData, null);
+  assert(warnings.some(message => /integrated_data\.json.*records/.test(message)));
+});
+
+test('Copy after update detection keeps saved prediction ranks and runs normal copy processing', async () => {
+  const { app, records, clipboard, errors } = createLoadedDataApp();
+  const { State } = app;
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  const predictionId = State.latestCandidateEventIdForCopy;
+  const player = State.matchingList[0];
+  const predictedRank = player.displayRank;
+  const scoreRank = player.__scoreRank;
+  app.copyToClipboard(player.name, player.name, player.shopname);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(clipboard, [player.name]);
+  const copy = records.find(r => r.e === 'copy');
+  assert(copy);
+  assert.equal(copy.candidateEventId, predictionId);
+  assert.equal(copy.predictionSnapshotAvailable, true);
+  assert.equal(copy.scoreSource, 'prediction');
+  assert.equal(copy.predictedRank, predictedRank);
+  assert.equal(copy.scoreRank, scoreRank);
+  assert.equal(copy.wasInTop10, true);
+  assert.equal(copy.integratedDataGeneratedAtAtCopy, State.generatedAt);
+  assert.equal(copy.latestUpdateAtAtCopy, State.latestUpdateAt);
+  assert.equal(State.recentClicks[0].name, player.name);
+  assert(app.getPinkTarget(player));
+  assert(State.matchingScoredAll.length > 0);
+  assert.equal(errors.length, 0);
+});
+
+test('Copy preserves the current AREA or rank detail view after success', async () => {
+  for (const detailType of ['area', 'rank']) {
+    const renders = [];
+    const { app, clipboard } = createLoadedDataApp({ renders });
+    const player = app.State.all[0];
+    app.State.currentView = app.STATE.DETAIL;
+    app.State.currentDetailType = detailType;
+    app.State.currentDetailKey = detailType === 'area' ? '1' : 'R6';
+    app.copyToClipboard(player.name, player.name, player.shopname);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(clipboard, [player.name]);
+    assert.deepEqual(renders, detailType === 'area' ? [['area', 1]] : [['rank']]);
+  }
+});
+
+test('Reload latest-update failure returns false without losing candidates or masking the fetch error', async () => {
+  const { app, context, errors } = createLoadedDataApp();
+  const { State } = app;
+  app.showMatchingCandidates({ mode: 'matching', saveEvent: true, push: false });
+  const list = State.matchingList;
+  const latest = State.latestUpdateAt;
+  const predictionId = State.latestCandidateEventIdForCopy;
+  context.latestUpdateRequest = async () => { throw new Error('latest offline'); };
+  assert.equal(await app.reloadLatestDataPreferPrefetch(), false);
+  assert.equal(State.matchingList, list);
+  assert.equal(State.latestUpdateAt, latest);
+  assert.equal(State.latestCandidateEventIdForCopy, predictionId);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /latest offline/);
+});
+
+test('Concurrent Reload calls share one operation, one render and a disabled button', async () => {
+  const { app, context, errors } = createLoadedDataApp();
+  const { State } = app;
+  const button = { disabled: false, style: {}, classList: { remove() {} } };
+  context.document.getElementById = id => id === 'reloadBtn' ? button : null;
+  const generation = new Date().toISOString();
+  let finish;
+  let bodyCalls = 0;
+  const manifestOptions = [];
+  context.latestUpdateRequest = async options => {
+    manifestOptions.push(options);
+    return { lastUpdated: generation };
+  };
+  context.roundDataRequest = () => {
+    bodyCalls++;
+    return new Promise(resolve => { finish = () => resolve({ generatedAt: generation, records: [] }); });
+  };
+  const first = app.reloadLatestDataPreferPrefetch();
+  const second = app.reloadLatestDataPreferPrefetch();
+  assert.equal(first, second);
+  assert.equal(button.disabled, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bodyCalls, 1);
+  finish();
+  assert.equal(await first, true);
+  assert.equal(await second, true);
+  assert.equal(State.generatedAt, generation);
+  assert.equal(State.reloadInFlight, null);
+  assert.equal(button.disabled, false);
+  assert.equal(manifestOptions.length, 2);
+  assert.equal(manifestOptions[1].purpose, 'reload-after');
+  assert.equal(manifestOptions[1].fresh, true);
+  assert.equal(errors.length, 0);
+});
+
+test('Reload waits for a pending prefetch and verifies its generation without another body request', async () => {
+  const { app, context, errors } = createLoadedDataApp();
+  const generation = new Date().toISOString();
+  let finish;
+  let bodyCalls = 0;
+  context.latestUpdateRequest = async () => ({ lastUpdated: generation });
+  context.roundDataRequest = () => {
+    bodyCalls++;
+    return new Promise(resolve => { finish = () => resolve({ generatedAt: generation, records: [] }); });
+  };
+  const prefetch = app.prefetchLatestRoundData(generation);
+  const reload = app.reloadLatestDataPreferPrefetch();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bodyCalls, 1);
+  finish();
+  await prefetch;
+  assert.equal(await reload, true);
+  assert.equal(bodyCalls, 1);
+  assert.equal(app.State.prefetchInFlight, null);
+  assert.equal(app.State.prefetchedRoundData, null);
+  assert.equal(errors.length, 0);
+});
+
+test('Failed pending prefetch releases Reload for a sequential retry, restoring its button on failure', async () => {
+  const { app, context, warnings, errors } = createLoadedDataApp();
+  const { State } = app;
+  const data = State.all;
+  const button = { disabled: false };
+  context.document.getElementById = id => id === 'reloadBtn' ? button : null;
+  const generation = new Date().toISOString();
+  let fail;
+  let calls = 0;
+  context.latestUpdateRequest = async () => ({ lastUpdated: generation });
+  context.roundDataRequest = () => {
+    calls++;
+    return calls === 1
+      ? new Promise((_resolve, reject) => { fail = () => reject(new Error('prefetch failed')); })
+      : Promise.reject(new Error('reload failed'));
+  };
+  const prefetch = app.prefetchLatestRoundData(generation);
+  const reload = app.reloadLatestDataPreferPrefetch();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1);
+  fail();
+  await prefetch;
+  assert.equal(await reload, false);
+  assert.equal(calls, 2);
+  assert.equal(State.all, data);
+  assert.equal(State.reloadInFlight, null);
+  assert.equal(button.disabled, false);
+  assert.equal(errors.length, 1);
+  assert(warnings.some(message => message.includes('prefetch failed')));
+});
+
+test('Watcher does not start a competing prefetch while Reload is waiting for data', async () => {
+  const { app, context } = createLoadedDataApp();
+  const generation = new Date().toISOString();
+  let finish;
+  let calls = 0;
+  context.latestUpdateRequest = async () => ({ lastUpdated: generation });
+  context.roundDataRequest = () => {
+    calls++;
+    return new Promise(resolve => { finish = () => resolve({ generatedAt: generation, records: [] }); });
+  };
+  const reload = app.reloadLatestDataPreferPrefetch();
+  await new Promise(resolve => setImmediate(resolve));
+  await app.checkUpdate();
+  assert.equal(calls, 1);
+  assert.equal(app.State.prefetchInFlight, null);
+  finish();
+  assert.equal(await reload, true);
+});
+
+test('Older watcher notifications cannot move the latest known generation backwards', async () => {
+  const { app, context, warnings } = createLoadedDataApp();
+  const latest = app.State.latestUpdateAt;
+  context.latestUpdateRequest = async () => ({ lastUpdated: app.State.generatedAt });
+  context.roundDataRequest = () => assert.fail('old notification must not trigger prefetch');
+  await app.checkUpdate();
+  assert.equal(app.State.latestUpdateAt, latest);
+  assert(warnings.some(message => message.includes('旧世代')));
+});
+
+test('Watcher ignores malformed generation timestamps without losing the known generation', async () => {
+  const { app, context, warnings } = createLoadedDataApp();
+  const { State } = app;
+  const latest = State.latestUpdateAt;
+  State.pendingPrefetchForUpdateAt = latest;
+  context.latestUpdateRequest = async () => ({ lastUpdated: 'not-a-date' });
+  context.roundDataRequest = () => assert.fail('invalid notification must not trigger prefetch');
+  await app.checkUpdate();
+  assert.equal(State.latestUpdateAt, latest);
+  assert.equal(State.pendingPrefetchForUpdateAt, latest);
+  assert(warnings.some(message => message.includes('更新時刻') && message.includes('不正')));
+});
+
+test('Reload rejects an internally consistent old generation and never downgrades loaded data', async () => {
+  const { app, context, errors } = createLoadedDataApp();
+  const { State } = app;
+  const generatedAt = State.generatedAt;
+  const data = State.all;
+  const older = new Date(Date.parse(generatedAt) - 60000).toISOString();
+  State.latestUpdateAt = older;
+  context.setTimeout = callback => { queueMicrotask(callback); return 0; };
+  context.latestUpdateRequest = async () => ({ lastUpdated: older });
+  context.roundDataRequest = async () => ({ generatedAt: older, records: [] });
+  assert.equal(await app.reloadLatestDataPreferPrefetch(), false);
+  assert.equal(State.generatedAt, generatedAt);
+  assert.equal(State.all, data);
+  assert.equal(errors.length, 1);
+});
+
+test('A newer observation during prefetch keeps pending generation and discards the old prefetched body', async () => {
+  const { app, context, warnings } = createLoadedDataApp();
+  const generation = app.State.latestUpdateAt;
+  let finish;
+  context.roundDataRequest = () => new Promise(resolve => {
+    finish = () => resolve({ generatedAt: generation, records: [] });
+  });
+  const prefetch = app.prefetchLatestRoundData(generation);
+  const newer = new Date().toISOString();
+  app.State.latestUpdateAt = newer;
+  app.State.pendingPrefetchForUpdateAt = newer;
+  finish();
+  await prefetch;
+  assert.equal(app.State.prefetchedRoundData, null);
+  assert.equal(app.State.pendingPrefetchForUpdateAt, newer);
+  assert(warnings.some(message => message.includes('先読み中に新世代')));
+});
+
+test('Real data loader records shared request IDs and successful Reload timing in runtime logs', async () => {
+  const { app, context, records } = createLoadedDataApp({ realData: true });
+  const generation = new Date().toISOString();
+  let finish;
+  let calls = 0;
+  context.fetch = async url => {
+    if (url.includes('latest_update.json')) {
+      return { ok: true, status: 200, json: async () => ({ lastUpdated: generation }) };
+    }
+    calls++;
+    return new Promise(resolve => {
+      finish = () => resolve({ ok: true, status: 200, json: async () => ({ generatedAt: generation, records: [] }) });
+    });
+  };
+  const first = app.fetchRoundDataJson({ purpose: 'prefetch', expectedGeneration: generation });
+  const second = app.fetchRoundDataJson({ purpose: 'reload', expectedGeneration: generation });
+  finish();
+  await Promise.all([first, second]);
+  const bodyLogs = records.filter(r => r.message === 'data-fetch' && r.path === 'integrated_data.json');
+  assert.equal(calls, 1);
+  assert.equal(bodyLogs.length, 2);
+  assert.equal(bodyLogs[0].result, 'shared');
+  assert.equal(bodyLogs[0].requestId, bodyLogs[1].requestId);
+  assert.equal(bodyLogs[1].generatedAt, generation);
+  assert.equal(bodyLogs[1].logSchemaVersion, 'data_fetch_v1');
+  assert.equal(typeof bodyLogs[1].headersMs, 'number');
+  assert.equal(typeof bodyLogs[1].bodyMs, 'number');
+});
+
 test('Pink cycle learning respects zero shift and zero alpha settings', () => {
   const { State } = ViewerApp;
   const previous = {
@@ -219,13 +802,15 @@ test('analysis diagnostics do not count unavailable Phase as a zero-error match'
   const previous = {
     scoringConfig: State.scoringConfig, matchingScoredAll: State.matchingScoredAll,
     matchingRankedAll: State.matchingRankedAll, matchingList: State.matchingList,
-    matchingContext: State.matchingContext
+    matchingContext: State.matchingContext, generatedAt: State.generatedAt
   };
   try {
     State.scoringConfig = ViewerMatching.resolveScoringConfig(
       JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8'))
     );
-    State.matchingContext = { evaluationTimeMs: Date.now() };
+    const evaluationTimeMs = Date.parse('2026-01-01T00:01:00+09:00');
+    State.generatedAt = '2026/01/01 00:00:00';
+    State.matchingContext = { evaluationTimeMs };
     State.matchingRankedAll = [];
     State.matchingList = [];
     State.matchingScoredAll = [
@@ -235,6 +820,7 @@ test('analysis diagnostics do not count unavailable Phase as a zero-error match'
     const diagnostics = ViewerApp.buildAnalysisDiagnostics();
     assert.equal(diagnostics.phasePopulation.R7.phaseUnknown, 1);
     assert.equal(diagnostics.phasePopulation.R7.phaseUnder30, 1);
+    assert.equal(diagnostics.integratedDataAgeSecAtPrediction, 60);
     assert.equal(diagnostics.provenance.scoringConfigVersion, State.scoringConfig.meta.version);
     assert.equal(Object.hasOwn(diagnostics.provenance, 'scoringConfigSnapshot'), false);
   } finally {
@@ -379,11 +965,11 @@ test('Yellow and Pink share Phase weight but use independent decay, without scor
       assert.equal(yellow.phaseTrust, trust);
       assert.equal(pink.phaseTrust, 1 - trust);
       assert.equal(pink.phaseError, yellow.phaseError);
-      assert.ok(Math.abs(yellow.decay - Math.exp(-0.06 * 2)) < 1e-12);
+      assert.equal(yellow.decay, 1);
       assert.ok(Math.abs(pink.decay - Math.exp(-0.03 * 2)) < 1e-12);
-      assert.ok(yellow.finalPhaseScore < pink.finalPhaseScore);
-      assert.ok(yellow.effectivePhaseScore < pink.effectivePhaseScore);
-      assert.ok(yellow.score < pink.score);
+      assert.ok(yellow.finalPhaseScore > pink.finalPhaseScore);
+      assert.ok(yellow.effectivePhaseScore > pink.effectivePhaseScore);
+      assert.ok(yellow.score > pink.score);
       if (baseline !== undefined) assert.equal(pink.score, baseline);
       baseline = pink.score;
       assert.equal(JSON.stringify({
@@ -392,6 +978,90 @@ test('Yellow and Pink share Phase weight but use independent decay, without scor
     }
   } finally {
     Object.assign(State, previous);
+  }
+});
+
+test('Yellow no-decay cutoff is shared by scoring, phase judgment and live detail at exact boundaries', () => {
+  const { State } = ViewerApp;
+  const previous = { ...State };
+  try {
+    State.scoringConfig = ViewerMatching.resolveScoringConfig(
+      JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8')));
+    State.phaseAdjust = { yellow: 0, pink: 0 };
+    State.pinkTargets = {};
+    State.yellowSamples = [];
+    State.myRankKey = 'R7';
+    const anchor = Date.parse('2026-10-29T17:00:00+09:00');
+    const player = {
+      name: 'CUTOFF', shopname: 'S', area: '1',
+      onlineBattleRankId: ViewerDomain.RUBY_ID, starCnt: 7,
+      updateDate: '2026/10/29 17:00:00'
+    };
+    for (const diffSec of [0, 100, 345, 4 * 345, 4 * 345 + 70, 5 * 345 - .001, 5 * 345, 5 * 345 + 30, 6 * 345]) {
+      const now = anchor + diffSec * 1000;
+      const cycle = Math.floor(diffSec / 345);
+      const lambda = cycle <= 4 ? 0 : .06;
+      const expected = ViewerDomain.computePhaseMetrics(diffSec, 345, lambda, 90);
+      const detail = ViewerApp.calcMatchingScoreDetail(player, { R7: 1 }, null, now);
+      assert.equal(ViewerApp.getPhaseLambda('yellow', diffSec, 345), lambda);
+      assert.equal(detail.decay, expected.decay);
+      assert.equal(detail.finalPhaseScore, expected.finalPhaseScore);
+      assert.equal(ViewerApp.getYellowPhaseScore(player, now), expected.finalPhaseScore);
+      assert.equal(ViewerApp.isMatchingCandidateByPhase(player, now), expected.finalPhaseScore > .7);
+      const live = ViewerApp.getPlayerPhaseDetail(player, now);
+      assert.equal(live.cycleCount, expected.cycleCount);
+      assert.equal(live.phaseError, expected.phaseError);
+      assert.equal(ViewerApp.getPhaseLambda('pink', diffSec, 345), .03);
+    }
+    assert.equal(ViewerApp.getYellowPhaseScore(player, anchor - 1), 0);
+    assert.equal(ViewerApp.isMatchingCandidateByPhase(player, anchor - 1), false);
+    const missing = { ...player, updateDate: null };
+    assert.equal(ViewerApp.getYellowPhaseScore(missing, anchor), 0);
+    assert(ViewerApp.getPlayerPhaseDetail(missing, anchor).error);
+    State.scoringConfig.phaseError.yellowNoDecayThroughCycleCount = 0;
+    assert.equal(ViewerApp.getPhaseLambda('yellow', 690, 345), .06);
+    assert.equal(ViewerApp.getYellowPhaseScore(player, anchor + 690000), Math.exp(-.06 * 2));
+  } finally {
+    Object.assign(State, previous);
+  }
+});
+
+test('AREA history keeps the newest same-player copy within 60 seconds without changing raw records', () => {
+  const { State } = ViewerApp;
+  const previous = State.copyAreaHistory;
+  const at = Date.parse('2026-11-16T03:59:30+09:00');
+  const raw = [
+    { e: 'copy', t: at, n: 'Alice', shopname: 'S', area: '1' },
+    { e: 'copy', t: at + 1000, n: 'Bob', shopname: 'S', area: '2' },
+    { e: 'copy', t: at + 2000, n: 'Alice', shopname: 'Other', area: '3' },
+    { e: 'copy', t: at + 60000, n: 'Alice', shopname: 'S', area: '4' },
+    { e: 'copy', t: at + 120000, n: 'Alice', shopname: 'S', area: '5' },
+    { e: 'copy', t: at + 180001, n: 'Alice', shopname: 'S', area: '6' },
+    { e: 'copy', t: at + 180002, n: 'Memo', shopname: 'S', area: '7', unmatchedPlayer: true },
+    { e: 'candidate', t: at + 180003, n: 'Ignored', shopname: 'S', area: '8' }
+  ];
+  const before = JSON.stringify(raw);
+  try {
+    const loaded = ViewerApp.normalizeCopyAreaHistory(raw);
+    assert.deepEqual(loaded.map(r => [r.name, r.shopname, r.area, r.t]), [
+      ['Bob', 'S', '2', at + 1000],
+      ['Alice', 'Other', '3', at + 2000],
+      ['Alice', 'S', '5', at + 120000],
+      ['Alice', 'S', '6', at + 180001]
+    ]);
+    State.copyAreaHistory = [];
+    for (const record of raw.filter(r => r.e === 'copy')) ViewerApp.appendCopyAreaHistory(record);
+    assert.deepEqual(State.copyAreaHistory, loaded);
+    assert.equal(JSON.stringify(raw), before);
+
+    const longHistory = Array.from({ length: 201 }, (_, i) =>
+      ({ e: 'copy', t: at + i * 1000, n: `P${i}`, shopname: 'S', area: '1' }));
+    longHistory.push({ ...longHistory.at(-1), t: longHistory.at(-1).t + 1 });
+    State.copyAreaHistory = [];
+    for (const record of longHistory) ViewerApp.appendCopyAreaHistory(record);
+    assert.deepEqual(State.copyAreaHistory, ViewerApp.normalizeCopyAreaHistory(longHistory));
+  } finally {
+    State.copyAreaHistory = previous;
   }
 });
 
@@ -519,8 +1189,9 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     const diagnostics = ViewerApp.buildAnalysisDiagnostics();
     assert.deepEqual(diagnostics.comparisons.map(c => c.id), [
       'pride-rescue-cross-slot', 'day-relative-area', 'yellow-phase-weight-070',
-      'yellow-phase-decay-010', 'yellow-phase-decay-003', 'yellow-phase-error-060', 'yellow-phase-no-decay',
-      'area-basic-recent', 'area-recent-only', 'area-none', 'area-day-relative-only',
+      'yellow-phase-decay-006', 'yellow-phase-decay-010', 'yellow-phase-decay-003', 'yellow-phase-no-decay-through-4',
+      'yellow-phase-error-060', 'yellow-phase-no-decay',
+      'area-basic-recent', 'area-recent-only', 'area-none', 'area-day-relative-only', 'area-without-day-relative',
       'previous-phase-area-policy',
       'resurfacing-rank-score', 'resurfacing-phase'
     ]);
@@ -540,11 +1211,16 @@ test('saved shadow diagnostics and timing logs do not change production candidat
     assert.equal(record.scriptVersion, ViewerApp.ANALYSIS_SCRIPT_VERSION);
     assert.equal(record.matchingScriptVersion, ViewerMatching.MATCHING_SCRIPT_VERSION);
     assert.equal(record.scoringConfigSnapshot.effective.phaseError.yellowLambda, 0.06);
+    assert.equal(record.scoringConfigSnapshot.effective.phaseError.yellowNoDecayThroughCycleCount, 4);
+    const productionNames = record.candidates.map(p => `${p.name}|${p.shopname}`).sort();
+    const cutoffShadow = record.analysisDiagnostics.comparisons.find(c => c.id === 'yellow-phase-no-decay-through-4');
+    assert.deepEqual(cutoffShadow.candidates.map(p => `${p.name}|${p.shopname}`).sort(), productionNames);
     assert.equal(record.scoringConfigSnapshot.effective.phaseError.pinkLambda, 0.03);
     assert.equal(record.scoringConfigSnapshot.effective.candidateSelection.areaBoost.recentMatch.weight, 0);
     assert.equal(Object.hasOwn(record, 'softmaxBacktest'), false);
     assert.equal(record.analysisDiagnostics.storageCoverage.complete, true);
-    assert.equal(record.logSchemaVersion, 'slot_area_v19_strength_tier');
+    assert.equal(record.logSchemaVersion, 'slot_area_v23_day_relative_area');
+    assert.equal(record.scoringConfigSnapshot.effective.candidateSelection.areaBoost.dayRelativeEnabled, true);
     assert.equal(record.analysisDiagnostics.resurfacing.diagnosticOnly, true);
     assert.deepEqual(record.analysisDiagnostics.resurfacing, diagnostics.resurfacing);
     assert.deepEqual(record.analysisDiagnostics.comparisons, diagnostics.comparisons);
@@ -558,12 +1234,17 @@ test('saved shadow diagnostics and timing logs do not change production candidat
       assert.equal(row[record.allCandidatesColumns.indexOf('phaseAnchorType')], 'last-update');
       assert.equal(typeof row[record.allCandidatesColumns.indexOf('lastUpdateAgeSec')], 'number');
       const decoded = Object.fromEntries(record.allCandidatesColumns.map((key, i) => [key, row[i]]));
-      assert.equal(decoded.recentAreaCounterfactualBoostWindow, 1);
       assert.ok(Math.abs(decoded.slotScore -
-        decoded.effectivePhaseScore * decoded.areaBoost * decoded.prideBandPriorWeight) < 1e-12);
+        decoded.effectivePhaseScore * decoded.areaBoost * decoded.prideBandPriorWeight *
+        decoded.recentAreaCounterfactualBoostWindow) < 1e-12);
     }
     assert.equal(record.candidates[0].scoreBreakdown.phaseAnchorType, 'last-update');
     const names = State.matchingList.map(p => p.name);
+    const baseline = diagnostics.comparisons.find(c => c.id === 'area-without-day-relative');
+    State.scoringConfig.candidateSelection.areaBoost.dayRelativeEnabled = false;
+    ViewerApp.buildMatchingCandidates(buildOptions);
+    assert.deepEqual(State.matchingList.map(p => p.name), baseline.candidates.map(p => p.name));
+    State.scoringConfig.candidateSelection.areaBoost.dayRelativeEnabled = true;
     State.scoringConfig.experimental.dayRelativeArea.enabled = false;
     State.scoringConfig.experimental.yellowPhase.enabled = false;
     ViewerApp.buildMatchingCandidates(buildOptions);
@@ -1004,6 +1685,8 @@ test('manual copies still reach IndexedDB after local quota failure and show exp
   assert.equal(stored.length, 1);
   assert.equal(stored[0].candidateEventId, 123);
   assert.equal(stored[0].searchMemo, 'outside memo');
+  assert.equal(stored[0].logSchemaVersion, 'slot_area_v23_day_relative_area');
+  assert.equal(stored[0].scriptVersion, context.ViewerApp.ANALYSIS_SCRIPT_VERSION);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /quota exhausted/);
   assert.match(usage.textContent, /1\.00 MiB/);
@@ -1055,6 +1738,7 @@ test('buildMatchingCandidates correctly integrates normal, crossBucket and wildc
   try {
     const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scoring_config.json'), 'utf8'));
     config.candidateSelection.slots = { normal: 7, crossBucket: 1, wildcard: 2 };
+    config.candidateSelection.slotAllocation.threeGroupEnabled = false;
     ViewerApp.applyScoringConfigJson(config);
     ViewerApp.State.historicalMatchupDistribution = {
       historicalSupportSize: 2,
@@ -1209,61 +1893,160 @@ test('Cooldown-held copied players are displayed at their pre-copy position with
     State.matchingCooldownHeld = previous;
   }
 });
-test('Strength lines show strengths and global/slot ranks only for selected candidates', () => {
-  const { State, buildPlayerStrengthLines } = ViewerApp;
-  const previous = State.matchingList;
-  try {
-    State.matchingList = [
-      { name: 'a', shopname: 's', __scoreRank: 3, __detail: { effectivePhaseScore: 0.97, areaBoost: 1.045, slotRank: 1 } },
-      { name: 'b', shopname: 's', __scoreRank: 12, __crossBucket: true, __detail: { effectivePhaseScore: 0.92, areaBoost: 1.03, slotRank: 4 } },
-      { name: 'c', shopname: 's', __scoreRank: 20, __crossBucket: true, __wildcard: true, __detail: { effectivePhaseScore: 0.8, areaBoost: 1.02, slotRank: 9 } }
-    ];
-    assert.deepEqual(buildPlayerStrengthLines({ name: 'a', shopname: 's' }), [
-      '強み：Phase◎ AREA○', '順位：全体 3位／枠内 1位'
-    ]);
-    assert.deepEqual(buildPlayerStrengthLines({ name: 'b', shopname: 's' }), [
-      '強み：Phase○', '順位：全体 12位／枠内 4位（帯外・個体確率）'
-    ]);
-    assert.deepEqual(buildPlayerStrengthLines({ name: 'c', shopname: 's' }), [
-      '強み：なし（枠の補充）', '順位：全体 20位／枠内 9位（全体高スコア）'
-    ]);
-    assert.deepEqual(buildPlayerStrengthLines({ name: 'x', shopname: 's' }), []);
-  } finally {
-    State.matchingList = previous;
-  }
+test('strength and feature-label display helpers are removed', () => {
+  assert.equal(ViewerApp.buildPlayerStrengthLines, undefined);
+  assert.equal(ViewerApp.getStrengthTierLabels, undefined);
 });
-test('Strength lines fall back to the pre-copy snapshot for cooldown-held rows', () => {
-  const { State, buildPlayerStrengthLines } = ViewerApp;
-  const prevList = State.matchingList;
-  const prevClicks = State.recentClicks;
+test('Phase detail rank summary shows global and slot ranks without strength labels', () => {
+  const previous = State.matchingRankedAll;
   try {
-    State.matchingList = [];
-    State.recentClicks = [{
-      name: 'p', shopname: 's',
-      strengthSnapshot: { phase: 0.97, area: 1.02, globalRank: 2, slotRank: 1, wildcard: false, crossBucket: false }
+    State.matchingRankedAll = [{
+      name: 'ranked-player', shopname: 'S',
+      __scoreRank: 1, __slotRank: 1, __detail: { slotRank: 1 }
     }];
-    assert.deepEqual(buildPlayerStrengthLines({ name: 'p', shopname: 's' }), [
-      '強み：Phase◎（cooldown/コピー前）', '順位：全体 2位／枠内 1位（cooldown/コピー前）'
-    ]);
+    assert.equal(
+      ViewerApp.buildPlayerRankSummaryText({ name: 'ranked-player', shopname: 'S' }),
+      '順位：全体 1位／枠内 1位'
+    );
+    assert.equal(
+      ViewerApp.buildPlayerRankSummaryText({ name: 'unranked-player', shopname: 'S' }),
+      ''
+    );
   } finally {
-    State.matchingList = prevList;
-    State.recentClicks = prevClicks;
+    State.matchingRankedAll = previous;
   }
 });
-test('Candidate log rows carry strengthTier and copy events record it at prediction', () => {
-  const idx = ViewerApp.ALL_CANDIDATES_COLUMNS.indexOf('strengthTier');
-  assert.equal(idx, ViewerApp.ALL_CANDIDATES_COLUMNS.length - 1);
-  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.97, 1.045), ['Phase◎', 'AREA○']);
-  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.92, 1.03), ['Phase○']);
-  assert.deepEqual(ViewerApp.getStrengthTierLabels(0.8, 1.02), []);
+test('Phase popup renders Phase and rank as separate rows and omits the strength row', () => {
+  const previous = {
+    matchingRankedAll: State.matchingRankedAll,
+    document: globalThis.document,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval
+  };
+  const elements = [];
+  const makeElement = () => {
+    const element = {
+      style: {},
+      children: [],
+      addEventListener() {},
+      append(...children) { this.children.push(...children); },
+      remove() {}
+    };
+    elements.push(element);
+    return element;
+  };
+  try {
+    State.matchingRankedAll = [{
+      name: 'popup-player', shopname: 'S',
+      __scoreRank: 1, __slotRank: 1
+    }];
+    globalThis.document = {
+      createElement: makeElement,
+      body: { append() {} }
+    };
+    globalThis.setInterval = () => 1;
+    globalThis.clearInterval = () => {};
+
+    ViewerApp.showPlayerPhaseDetailDialog({ name: 'popup-player', shopname: 'S' });
+
+    const phaseLine = elements[3];
+    const rankLine = elements[4];
+    assert.ok(phaseLine.textContent.length > 0);
+    assert.equal(rankLine.textContent, '順位：全体 1位／枠内 1位');
+    assert.equal(rankLine.hidden, false);
+    assert.doesNotMatch(`${phaseLine.textContent}${rankLine.textContent}`, /強み/);
+  } finally {
+    State.matchingRankedAll = previous.matchingRankedAll;
+    globalThis.document = previous.document;
+    globalThis.setInterval = previous.setInterval;
+    globalThis.clearInterval = previous.clearInterval;
+  }
+});
+test('candidate logs preserve numeric Phase, AREA, matchup and selection features', () => {
+  const columns = ViewerApp.ALL_CANDIDATES_COLUMNS;
+  for (const key of [
+    'historicalScore', 'historicalMatched', 'historicalBackoff',
+    'tierProbability', 'pooledTierProbability', 'tierCandidateCount',
+    'candidateCountAlpha', 'ownSampleCount', 'adjacentSampleCount',
+    'phaseCycleCount', 'phaseError', 'phaseScore', 'effectivePhaseScore',
+    'areaBucketCount', 'areaTotalCount', 'areaBucketTotal', 'areaBucketTrust',
+    'areaDensity', 'areaBoost', 'globalScoreRank', 'slotRank',
+    'crossBucketSelectionReason'
+  ]) assert.ok(columns.includes(key), key);
+  assert.equal(columns.includes('strengthTier'), false);
+
+  const source = {
+    name: 'feature-test', __scoreRank: 1,
+    __detail: {
+      historicalScore: 0.12, historicalMatched: true, historicalBackoff: false,
+      tierProbability: 0.4, pooledTierProbability: 0.4, tierCandidateCount: 8,
+      candidateCountAlpha: 0.35, ownSampleCount: 120, adjacentSampleCount: 0,
+      cycleCount: 4, phaseError: 22, phaseScore: 0.97, effectivePhaseScore: 0.96,
+      areaBucketCount: 5, areaTotalCount: 9, areaBucketTotal: 40,
+      areaBucketTrust: 0.8, areaDensity: 0.7, areaBoost: 1.035,
+      slotRank: 1
+    }
+  };
+  const row = ViewerApp.buildAllCandidateRow(source);
+  const decoded = Object.fromEntries(columns.map((key, index) => [key, row[index]]));
+  assert.equal(decoded.historicalScore, source.__detail.historicalScore);
+  assert.equal(decoded.candidateCountAlpha, source.__detail.candidateCountAlpha);
+  assert.equal(decoded.phaseCycleCount, source.__detail.cycleCount);
+  assert.equal(decoded.areaBucketTrust, source.__detail.areaBucketTrust);
 });
 test('Startup record carries versions and checksums without per-event bloat', async () => {
   const record = await ViewerApp.buildStartupRecord();
-  assert.equal(record.logSchemaVersion, 'slot_area_v19_strength_tier');
+  assert.equal(record.logSchemaVersion, 'slot_area_v23_day_relative_area');
   assert.ok(record.scriptVersion);
   assert.ok(record.matchingScriptVersion);
   assert.ok('configChecksum' in record);
   assert.deepEqual(record.assetCacheKeys, {});
+});
+
+test('Startup reads the resolved config version and reports checksum retrieval failures', async () => {
+  const { app, context, warnings } = createLoadedDataApp();
+  warnings.length = 0;
+  const sources = ['0500_matching.js?cb=36', '0600_ui.js?cb=40', '0700_app.js?cb=46'];
+  context.document.querySelectorAll = () => sources.map(src => ({ getAttribute: () => src }));
+  const requested = [];
+  context.fetch = async (src, options) => {
+    requested.push(src);
+    assert.equal(options.cache, 'force-cache');
+    if (src.startsWith('0500')) return { ok: false, status: 503, text: () => assert.fail('must not checksum an HTTP error page') };
+    if (src.startsWith('0600')) throw new Error('offline');
+    return { ok: true, text: async () => 'script\r\ntext' };
+  };
+  const record = await app.buildStartupRecord();
+  assert.equal(record.configVersion, app.State.scoringConfig.meta.version);
+  assert.equal(record.configChecksum, app.analysisChecksum(app.State.scoringConfig));
+  assert.equal(record.scriptChecksum['0500_matching.js'], null);
+  assert.equal(record.scriptChecksum['0600_ui.js'], null);
+  assert.equal(record.scriptChecksum['0700_app.js'], app.analysisChecksum('script\ntext'));
+  assert.deepEqual(requested, sources);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /0500_matching.*HTTP 503/);
+  assert.match(warnings[1], /0600_ui.*offline/);
+});
+
+test('Rank filters accept a shared snapshot without additional DOM queries', () => {
+  const { app, context } = createLoadedDataApp();
+  const filters = { selectedStars: [7], selectedPrides: ['P_B'] };
+  const ruby = starCnt => ({ onlineBattleRankId: context.ViewerDomain.RUBY_ID, starCnt });
+  let reads = 0;
+  context.document.querySelectorAll = selector => {
+    reads++;
+    return selector.includes('.ruby') ? [{ value: '7' }] : [{ value: 'P_B' }];
+  };
+  for (const [player, included] of [
+    [ruby(7), true], [ruby(6), false],
+    [{ pridePoint: 100 }, true], [{ pridePoint: 99 }, false], [{}, false]
+  ]) {
+    assert.equal(app.isPlayerIncludedInRankFilters(player, filters), included);
+  }
+  assert.equal(reads, 0);
+  assert.equal(app.isPlayerIncludedInRankFilters(ruby(7)), true);
+  assert.equal(app.isPlayerIncludedInRankFilters({ pridePoint: 100 }), true);
+  assert.equal(reads, 2);
 });
 test('Undo clears held cooldown rows and restores Pink state', () => {
   const prev = { clicks: State.recentClicks, held: State.matchingCooldownHeld, pink: State.pinkTargets, enc: State.encounterHistory };

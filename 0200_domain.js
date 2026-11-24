@@ -202,17 +202,23 @@
   function calcStats(list, total) {
     const cnt = list ? list.length : 0;
     const percent = total ? Math.round((cnt / total) * 100) : 0;
-    const points = (list || []).map(p => Number(p.point ?? 0));
-    const avg = cnt ? Math.round(points.reduce((a, b) => a + b, 0) / cnt) : 0;
-    const min = cnt ? Math.min(...points) : 0;
-    const max = cnt ? Math.max(...points) : 0;
+    let sum = 0;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const player of list || []) {
+      const point = Number(player.point ?? 0);
+      sum += point;
+      min = Math.min(min, point);
+      max = Math.max(max, point);
+    }
+    const avg = cnt ? Math.round(sum / cnt) : 0;
 
     return {
       cnt,
       percent,
       avg,
-      min,
-      max
+      min: cnt ? min : 0,
+      max: cnt ? max : 0
     };
   }
 

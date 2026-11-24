@@ -84,11 +84,11 @@
     fetchJSON,
     fetchAreaListJson,
     fetchLatestRoundJson,
-    fetchLatestUpdateJson,
+    fetchLatestUpdateJson: requestLatestUpdateJson,
     fetchHistoricalMatchupDistributionJson,
     fetchScoringConfigJson,
     fetchUpdateWatchConfigJson,
-    fetchRoundDataJson
+    fetchRoundDataJson: requestRoundDataJson
   } = ViewerData || {};
 
   const {
@@ -103,10 +103,12 @@
     applyCandidateSlotScores,
     getRecentAreaBoostConfig,
     applyCandidateAreaHistoryBoost,
+    applyCandidateDayRelativeAreaBoost,
     applyCandidateAreaPhaseDiagnostics,
     getCandidateSlotScore,
     buildMatchingSlotBucketProbabilities,
     buildMatchingSlotPlan,
+    buildThreeGroupSlotPlan,
     adjustSlotsByRelativePopulation,
     selectNormalCandidatesBySlots,
     getCandidateSelectionScore,
@@ -161,9 +163,11 @@ const STATE = {
   MATCHING: "matching"
 };
 
-const ANALYSIS_SCRIPT_VERSION = "analysis-v10-strength-tier-20261027";
-const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v19_strength_tier";
+const ANALYSIS_SCRIPT_VERSION = "analysis-v21-day-relative-area-20261116";
+const ANALYSIS_LOG_SCHEMA_VERSION = "slot_area_v23_day_relative_area";
 const MAX_LOG_LINES = 100;
+const MONITOR_INTERVAL_MS = 10000;
+let monitorLogSession = 0;
 const DEFAULT_FILTER_MINUTES = 15;
 const DEFAULT_MY_RANK_KEY = "R7";
 /*
@@ -199,9 +203,11 @@ async function buildStartupRecord() {
       assetCacheKeys[file] = src.split("?")[1] ?? null;
       try {
         const response = await fetch(src, { cache: "force-cache" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         scriptChecksum[file] = analysisChecksum((await response.text()).replace(/\r\n/g, "\n"));
-      } catch {
+      } catch (error) {
         scriptChecksum[file] = null;
+        logWarn(`起動ログ：${file}のchecksum取得失敗：${error.message}`);
       }
     }
   }
@@ -212,7 +218,7 @@ async function buildStartupRecord() {
     logSchemaVersion: ANALYSIS_LOG_SCHEMA_VERSION,
     scriptVersion: ANALYSIS_SCRIPT_VERSION,
     matchingScriptVersion: MATCHING_SCRIPT_VERSION,
-    configVersion: State.scoringConfig?.version ?? null,
+    configVersion: State.scoringConfig?.meta?.version ?? null,
     configChecksum: State.scoringConfig ? analysisChecksum(State.scoringConfig) : null,
     scriptChecksum,
     assetCacheKeys,
@@ -252,6 +258,8 @@ function buildAnalysisDiagnostics() {
   const startedAt = performance.now();
   const pool = State.matchingRankedAll;
   const current = State.matchingList;
+  const generatedAtMs = parseDateJST(State.generatedAt)?.getTime();
+  const evaluationTimeMs = State.matchingContext.evaluationTimeMs;
   const identify = p => ({
     name: p.name,
     shopname: p.shopname ?? "",
@@ -265,6 +273,7 @@ function buildAnalysisDiagnostics() {
     effectivePhaseScore: p.__detail?.effectivePhaseScore ?? null,
     phaseScore: p.__detail?.phaseScore ?? null,
     phaseDecay: p.__detail?.decay ?? null,
+    phaseDecayLambda: p.__detail?.phaseDecayLambda ?? null,
     finalPhaseScore: p.__detail?.finalPhaseScore ?? null,
     phaseError: p.__detail?.phaseError ?? null,
     phaseAnchorAtMs: p.__detail?.phaseAnchorAtMs ?? null,
@@ -317,7 +326,7 @@ function buildAnalysisDiagnostics() {
   const comparisons = [];
 
   const rescuePool = pool.filter(p =>
-    p.__detail?.slotBucket === "PRIDE" &&
+    /^P_/.test(p.__rankKey) &&
     !current.includes(p) && !p.__detail?.isPinkManaged &&
     typeof p.__detail?.phaseError === "number" &&
     Number.isFinite(p.__detail.phaseError) &&
@@ -364,7 +373,10 @@ function buildAnalysisDiagnostics() {
 
   return {
     version: ANALYSIS_SCRIPT_VERSION,
-    evaluatedAt: State.matchingContext.evaluationTimeMs,
+    evaluatedAt: evaluationTimeMs,
+    integratedDataAgeSecAtPrediction:
+      Number.isFinite(generatedAtMs) && Number.isFinite(evaluationTimeMs)
+        ? (evaluationTimeMs - generatedAtMs) / 1000 : null,
     phasePopulationSource: "scoredCandidates",
     phasePopulation,
     resurfacing: State.matchingResurfacing?.diagnostics ?? {
@@ -421,7 +433,7 @@ function recordUnmatchedSearchMemo() {
       : null;
   const t = Date.now();
   const record = {
-    t, dk: buildDailyKey(), logSchemaVersion: ANALYSIS_SCRIPT_VERSION,
+    t, dk: buildDailyKey(), logSchemaVersion: ANALYSIS_LOG_SCHEMA_VERSION,
     scriptVersion: ANALYSIS_SCRIPT_VERSION,
     matchingScriptVersion: MATCHING_SCRIPT_VERSION,
     recordKind: "unmatched-search-memo",
@@ -531,8 +543,15 @@ const ALL_CANDIDATES_COLUMNS = [
   "pinkPhaseMatched",
   "pinkMismatchBoostFactor",
   "historicalScore",
+  "historicalMatched",
   "historicalBackoff",
   "tierProbability",
+  "pooledTierProbability",
+  "tierCandidateCount",
+  "candidateCountAlpha",
+  "ownSampleCount",
+  "adjacentSampleCount",
+  "minOwnSamplesForNoBackoff",
   "playerBoost",
   "rankBoost",
   "realtimeBoost",
@@ -548,6 +567,8 @@ const ALL_CANDIDATES_COLUMNS = [
   "prideBandPriorWeight",
   "areaBucketCount",
   "areaTotalCount",
+  "areaBucketTotal",
+  "areaBucketTrust",
   "areaDensity",
   "areaBoost",
   "recentAreaMatchCount5",
@@ -579,6 +600,7 @@ const ALL_CANDIDATES_COLUMNS = [
   "peakDirection",
   "phaseBucket",
   "phaseScore",
+  "phaseCycleCount",
   "decay",
   "finalPhaseScore",
   "effectivePhaseScore",
@@ -586,8 +608,7 @@ const ALL_CANDIDATES_COLUMNS = [
   "phaseSampleCount",
   "phaseTrust",
   "phaseAdjustValue",
-  ...CANDIDATE_TIMING_COLUMNS,
-  "strengthTier"
+  ...CANDIDATE_TIMING_COLUMNS
 ];
 
 const MAX_YELLOW_PHASE_WEIGHT = 0.55;
@@ -635,6 +656,10 @@ const State = {
   matchingPinkCapDiagnostics: null,
   matchingOffsetSec: 0,
   previewOffsetSec: 0,
+  monitorTimer: null,
+  monitorRefreshAtMs: null,
+  monitorIntervalMs: MONITOR_INTERVAL_MS,
+  monitorVisibilityHandler: null,
   matchingContext: {
     mode: "matching",
     clickedAtMs: null,
@@ -656,6 +681,7 @@ const State = {
   prefetchedRoundData: null,
   prefetchedForUpdateAt: "",
   prefetchInFlight: null,
+  reloadInFlight: null,
 
   phaseAdjust: {
     yellow: 0,
@@ -709,7 +735,60 @@ function isCurrentView(view) {
  [1110] View State:setCurrentView【State】（旧 [0210]）
 ========================================================= */
 function setCurrentView(view) {
+  if (view !== STATE.MATCHING) stopMonitor();
   State.currentView = view;
+}
+
+function stopMonitor() {
+  if (State.monitorTimer !== null) {
+    clearTimeout(State.monitorTimer);
+    State.monitorTimer = null;
+  }
+  State.monitorRefreshAtMs = null;
+  ViewerUI?.syncMonitorCountdown?.();
+  if (State.monitorVisibilityHandler) {
+    document.removeEventListener("visibilitychange", State.monitorVisibilityHandler);
+    State.monitorVisibilityHandler = null;
+  }
+}
+
+function refreshMonitor() {
+  if (State.currentView !== STATE.MATCHING || State.matchingContext?.mode !== "preview") {
+    stopMonitor();
+    return;
+  }
+  if (document.hidden) return;
+  try {
+    showMatchingCandidates({
+      mode: "preview", offsetSec: State.previewOffsetSec, push: false
+    });
+    if (State.searchText) applyMatchingFilter(State.searchText);
+  } catch (error) {
+    stopMonitor();
+    logError(`MONITOR自動更新を停止しました：${error.message}`);
+  }
+}
+
+function startMonitor() {
+  stopMonitor();
+  State.monitorVisibilityHandler = () => {
+    if (document.hidden) {
+      if (State.monitorTimer !== null) clearTimeout(State.monitorTimer);
+      State.monitorTimer = null;
+      ViewerUI?.syncMonitorCountdown?.();
+    } else {
+      refreshMonitor();
+    }
+  };
+  document.addEventListener("visibilitychange", State.monitorVisibilityHandler);
+  if (!document.hidden) {
+    State.monitorRefreshAtMs = Date.now() + MONITOR_INTERVAL_MS;
+    State.monitorTimer = setTimeout(() => {
+      State.monitorTimer = null;
+      refreshMonitor();
+    }, MONITOR_INTERVAL_MS);
+  }
+  ViewerUI?.syncMonitorCountdown?.();
 }
 
 /* =========================================================
@@ -930,8 +1009,17 @@ function computeSampleTrust(
 
 
 
-function getPhaseLambda(mode = "yellow") {
+function getPhaseLambda(mode = "yellow", diffSec, cycleSec) {
   const isPink = mode === "pink";
+  if (
+    !isPink &&
+    Number.isFinite(diffSec) && diffSec >= 0 &&
+    Number.isFinite(cycleSec) && cycleSec > 0 &&
+    Math.floor(diffSec / cycleSec) <=
+      (State.scoringConfig?.phaseError?.yellowNoDecayThroughCycleCount ?? 0)
+  ) {
+    return 0;
+  }
   const value = Number(
     State.scoringConfig?.phaseError?.[isPink ? "pinkLambda" : "yellowLambda"]
   );
@@ -1029,6 +1117,30 @@ function applyLatestRoundJson(
 
   log(
     "latest_round.json 読み込み完了"
+  );
+}
+
+function isIntegratedDataBehindLatestUpdate(
+  latestUpdateAt = State.latestUpdateAt,
+  generatedAt = State.generatedAt
+) {
+  const latestTime =
+    parseDateJST(latestUpdateAt)?.getTime();
+  const generatedTime =
+    parseDateJST(generatedAt)?.getTime();
+
+  return Number.isFinite(latestTime) &&
+    (
+      !Number.isFinite(generatedTime) ||
+      generatedTime < latestTime
+    );
+}
+
+async function settleInitialJsonRequests(fetchers) {
+  return Promise.allSettled(
+    fetchers.map(fetcher =>
+      Promise.resolve().then(fetcher)
+    )
   );
 }
 
@@ -1169,14 +1281,28 @@ function applyScoringConfigJson(
 /* =========================================================
  [3250] Data Applier:applyRoundDataJson【State】【DOM】（旧 [3610]）
 ========================================================= */
+function validateRoundDataJson(json) {
+  if (!Number.isFinite(parseDateJST(json?.generatedAt)?.getTime())) {
+    throw new Error("integrated_data.json の generatedAt が不正です");
+  }
+  if (!Array.isArray(json?.records) ||
+      json.records.some(record => !record || typeof record !== "object" || Array.isArray(record))) {
+    throw new Error("integrated_data.json の records が不正です");
+  }
+}
+
 function applyRoundDataJson(
   json,
   options = {}
 ) {
-
+  validateRoundDataJson(json);
+  const records = json.records.map(p => ({
+    ...p,
+    normalizedName: normalize(p.name),
+    areaName: getAreaDisplayName(p.area)
+  }));
   State.latestCandidateEventIdForCopy =
     null;
-
   const {
     resetReloadButton = true
   } = options;
@@ -1203,19 +1329,8 @@ function applyRoundDataJson(
       );
   }
 
-  const records =
-    json?.records || [];
-
   State.all =
-    records.map(p => ({
-      ...p,
-
-      normalizedName:
-        normalize(p.name),
-
-      areaName:
-        getAreaDisplayName(p.area)
-    }));
+    records;
 
   State.filtered =
     [...State.all];
@@ -1338,12 +1453,39 @@ async function loadLatestRound() {
 /* =========================================================
  [5220] Data Loader:loadLatestUpdate【State】（旧 [3300]）
 ========================================================= */
+function recordDataFetchDiagnostic(diagnostic) {
+  if (
+    diagnostic.path === "latest_update.json" &&
+    diagnostic.purpose === "watch" &&
+    diagnostic.result === "success" &&
+    diagnostic.elapsedMs < 1000
+  ) return;
+  logEvent("runtime", {
+    logSchemaVersion: "data_fetch_v1",
+    severity: diagnostic.result === "error" ? "warn" : "info",
+    message: "data-fetch",
+    ...diagnostic
+  });
+}
+
+function fetchLatestUpdateJson(options = {}) {
+  return requestLatestUpdateJson({
+    ...options, onDiagnostic: recordDataFetchDiagnostic
+  });
+}
+
+function fetchRoundDataJson(options = {}) {
+  return requestRoundDataJson({
+    ...options, onDiagnostic: recordDataFetchDiagnostic
+  });
+}
+
 async function loadLatestUpdate() {
 
   try {
 
     const json =
-      await fetchLatestUpdateJson();
+      await fetchLatestUpdateJson({ purpose: "startup-recovery" });
 
     applyLatestUpdateJson(
       json
@@ -1567,7 +1709,10 @@ async function prefetchLatestRoundData(
         );
 
         const json =
-          await fetchRoundDataJson();
+          await fetchRoundDataJson({
+            purpose: "prefetch", expectedGeneration: lastUpdatedValue
+          });
+        validateRoundDataJson(json);
 
         const expectedTime =
           parseDateJST(lastUpdatedValue)?.getTime();
@@ -1582,6 +1727,16 @@ async function prefetchLatestRoundData(
           logWarn(
             `先読み世代不一致：期待=${lastUpdatedValue} / ` +
             `取得=${json?.generatedAt ?? "none"}。監視窓内で再試行します`
+          );
+          return;
+        }
+
+        const latestTime =
+          parseDateJST(State.latestUpdateAt)?.getTime();
+        if (Number.isFinite(latestTime) && latestTime > generatedTime) {
+          logWarn(
+            `先読み中に新世代を検知：取得=${json.generatedAt} / ` +
+            `最新=${State.latestUpdateAt}。旧世代は保持しません`
           );
           return;
         }
@@ -1634,14 +1789,25 @@ async function prefetchLatestRoundData(
 /* =========================================================
  [5310] Reload:reloadLatestDataPreferPrefetch【State】（旧 [3700]）
 ========================================================= */
-async function reloadLatestDataPreferPrefetch() {
+function reloadLatestDataPreferPrefetch() {
+  if (State.reloadInFlight) return State.reloadInFlight;
+  State.reloadInFlight = performLatestDataReload().finally(() => {
+    State.reloadInFlight = null;
+  });
+  return State.reloadInFlight;
+}
+
+async function performLatestDataReload() {
 
   startProgress();
+  const reloadButton = document.getElementById("reloadBtn");
+  const wasDisabled = reloadButton?.disabled ?? false;
+  if (reloadButton) reloadButton.disabled = true;
+  let latestObserved = "";
 
   try {
 
     const maxAttempts = 3;
-    let latestObserved = "";
     let verifiedRoundData = null;
     let verifiedLatestAt = "";
     let verifiedFromPrefetch = false;
@@ -1652,7 +1818,7 @@ async function reloadLatestDataPreferPrefetch() {
       attempt++
     ) {
       const beforeJson =
-        await fetchLatestUpdateJson();
+        await fetchLatestUpdateJson({ purpose: "reload-before" });
       const beforeValue =
         beforeJson?.lastUpdated ??
         beforeJson?.latestUpdateAt ??
@@ -1668,6 +1834,10 @@ async function reloadLatestDataPreferPrefetch() {
         );
       }
       latestObserved = beforeLatest;
+
+      if (State.prefetchInFlight) {
+        await State.prefetchInFlight;
+      }
 
       const prefetchedData =
         State.prefetchedRoundData;
@@ -1694,14 +1864,16 @@ async function reloadLatestDataPreferPrefetch() {
       const roundDataJson =
         usePrefetch
           ? prefetchedData
-          : await fetchRoundDataJson();
+          : await fetchRoundDataJson({
+              purpose: "reload", expectedGeneration: beforeLatest
+            });
       const roundDataTime =
         parseDateJST(
           roundDataJson?.generatedAt
         )?.getTime();
 
       const afterJson =
-        await fetchLatestUpdateJson();
+        await fetchLatestUpdateJson({ purpose: "reload-after", fresh: true });
       const afterValue =
         afterJson?.lastUpdated ??
         afterJson?.latestUpdateAt ??
@@ -1720,6 +1892,8 @@ async function reloadLatestDataPreferPrefetch() {
 
       const stateLatestTime =
         parseDateJST(State.latestUpdateAt)?.getTime();
+      const loadedTime =
+        parseDateJST(State.generatedAt)?.getTime();
       const generationMatches =
         Number.isFinite(roundDataTime) &&
         roundDataTime === beforeTime &&
@@ -1727,6 +1901,10 @@ async function reloadLatestDataPreferPrefetch() {
         (
           !Number.isFinite(stateLatestTime) ||
           stateLatestTime <= afterTime
+        ) &&
+        (
+          !Number.isFinite(loadedTime) ||
+          loadedTime <= roundDataTime
         );
 
       if (generationMatches) {
@@ -1822,6 +2000,19 @@ async function reloadLatestDataPreferPrefetch() {
 
   } catch (e) {
 
+    if (latestObserved) {
+      const observedTime = parseDateJST(latestObserved)?.getTime();
+      const currentTime = parseDateJST(State.latestUpdateAt)?.getTime();
+      if (!Number.isFinite(currentTime) || observedTime >= currentTime) {
+        State.latestUpdateAt = latestObserved;
+      }
+
+      if (isIntegratedDataBehindLatestUpdate()) {
+        State.pendingPrefetchForUpdateAt =
+          State.latestUpdateAt;
+      }
+    }
+
     logError(
       "Reload失敗：既存データを保持します：" +
       e.message
@@ -1831,6 +2022,7 @@ async function reloadLatestDataPreferPrefetch() {
 
   } finally {
 
+    if (reloadButton) reloadButton.disabled = wasDisabled;
     stopProgress();
   }
 }
@@ -1902,7 +2094,7 @@ async function checkUpdate() {
       State.latestUpdateAt || "";
 
     const json =
-      await fetchLatestUpdateJson();
+      await fetchLatestUpdateJson({ purpose: "watch" });
 
     let latest =
       json?.lastUpdated ??
@@ -1921,19 +2113,35 @@ async function checkUpdate() {
       return;
     }
 
+    const latestTime = parseDateJST(latest)?.getTime();
+    if (!Number.isFinite(latestTime)) {
+      logWarn(`latest_update.json の更新時刻が不正です：${latest}。更新状態を維持します`);
+      return;
+    }
+    const stateLatestTime = parseDateJST(State.latestUpdateAt)?.getTime();
+    const loadedTime = parseDateJST(State.generatedAt)?.getTime();
+    if (
+      Number.isFinite(latestTime) &&
+      (
+        (Number.isFinite(stateLatestTime) && latestTime < stateLatestTime) ||
+        (Number.isFinite(loadedTime) && latestTime < loadedTime)
+      )
+    ) {
+      logWarn(
+        `更新通知が旧世代です：通知=${latest} / ` +
+        `確認済み=${State.latestUpdateAt} / 読込済み=${State.generatedAt}。更新状態を維持します`
+      );
+      return;
+    }
+
     const changed =
       prev &&
       prev !== latest;
 
-    const latestTime =
-      parseDateJST(latest)?.getTime();
-    const generatedTime =
-      parseDateJST(State.generatedAt)?.getTime();
     const integratedDataBehind =
-      Number.isFinite(latestTime) &&
-      (
-        !Number.isFinite(generatedTime) ||
-        generatedTime < latestTime
+      isIntegratedDataBehindLatestUpdate(
+        latest,
+        State.generatedAt
       );
 
     if (integratedDataBehind) {
@@ -1986,6 +2194,7 @@ async function checkUpdate() {
       State.pendingPrefetchForUpdateAt &&
       !State.prefetchedRoundData &&
       !State.prefetchInFlight &&
+      !State.reloadInFlight &&
       isWithinUpdateWatchWindow()
     ) {
       prefetchLatestRoundData(
@@ -3374,33 +3583,7 @@ function normalizeCopyAreaHistory(
       continue;
     }
 
-    const previous =
-      result[result.length - 1];
-    const samePlayer =
-      previous &&
-      normalizePlayerName(
-        previous.name ?? ""
-      ) ===
-        normalizePlayerName(
-          record.n ?? ""
-        ) &&
-      normalizePlayerName(
-        previous.shopname ?? ""
-      ) ===
-        normalizePlayerName(
-          record.shopname ?? ""
-        );
-    const withinDuplicateGuard =
-      samePlayer &&
-      Number(record.t ?? 0) -
-        Number(previous.t ?? 0) <
-        15000;
-
-    if (withinDuplicateGuard) {
-      continue;
-    }
-
-    result.push({
+    addAreaHistoryRecord(result, {
       t:
         Number(record.t ?? 0),
       name:
@@ -3410,11 +3593,30 @@ function normalizeCopyAreaHistory(
       area:
         String(record.area)
     });
+    if (result.length > LOG_STORAGE_LIMITS.copyAreaHistory) result.shift();
   }
 
   return result.slice(
     -LOG_STORAGE_LIMITS.copyAreaHistory
   );
+}
+
+function addAreaHistoryRecord(history, record) {
+  const name = normalizePlayerName(record.name ?? "");
+  const shop = normalizePlayerName(record.shopname ?? "");
+  if (name && shop && Number.isFinite(record.t)) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const previous = history[i];
+      const elapsed = record.t - previous.t;
+      if (elapsed < 0 || elapsed > 60000) continue;
+      if (normalizePlayerName(previous.name ?? "") === name &&
+          normalizePlayerName(previous.shopname ?? "") === shop) {
+        history.splice(i, 1);
+        break;
+      }
+    }
+  }
+  history.push(record);
 }
 
 async function loadCopyAreaHistory() {
@@ -3467,35 +3669,7 @@ function appendCopyAreaHistory(
     area:
       String(record.area)
   };
-  const previous =
-    State.copyAreaHistory[
-      State.copyAreaHistory.length - 1
-    ];
-  const isDuplicate =
-    previous &&
-    normalizePlayerName(
-      previous.name ?? ""
-    ) ===
-      normalizePlayerName(
-        nextRecord.name
-      ) &&
-    normalizePlayerName(
-      previous.shopname ?? ""
-    ) ===
-      normalizePlayerName(
-        nextRecord.shopname
-      ) &&
-    nextRecord.t -
-      Number(previous.t ?? 0) <
-      15000;
-
-  if (isDuplicate) {
-    return;
-  }
-
-  State.copyAreaHistory.push(
-    nextRecord
-  );
+  addAreaHistoryRecord(State.copyAreaHistory, nextRecord);
   State.copyAreaHistory =
     State.copyAreaHistory.slice(
       -LOG_STORAGE_LIMITS.copyAreaHistory
@@ -3783,7 +3957,7 @@ function getPlayerPhaseDetail(
    };
  }
 
- const lambda = getPhaseLambda(mode);
+ const lambda = getPhaseLambda(mode, diffSec, cycleSec);
 
  const metrics =
    computePhaseMetrics(
@@ -3856,71 +4030,39 @@ function buildPlayerPhaseSummaryText(
  return `${detail.mode === "pink" ? "Pink" : "Yellow"}=${detail.cycleSec.toFixed(1)}秒　${detail.cycleCount}サイクル／${signedLabel}`;
 }
 
-/* =========================================================
- [7206] Phase Detail:buildPlayerStrengthLines【State】
- MATCHING/PREVIEWで選出された候補の強み・順位を、予測時点の保存値から作る。
- 強みは表示の目安であり採点には使わない（閾値は10/23〜10/26の表示候補分布に基づく）。
-========================================================= */
-function extractStrengthSource(candidate) {
-  const detail = candidate?.__detail ?? {};
-  return {
-    phase: Number(detail.effectivePhaseScore),
-    area: Number(detail.areaBoost),
-    globalRank: candidate.__scoreRank ?? null,
-    slotRank: detail.slotRank ?? null,
-    wildcard: Boolean(candidate.__wildcard),
-    crossBucket: Boolean(candidate.__crossBucket)
-  };
+function buildPlayerRankSummaryText(player) {
+ const identityKey =
+   buildPlayerIdentityKey(player);
+ const candidate =
+   (State.matchingRankedAll || []).find(
+     item => buildPlayerIdentityKey(item) === identityKey
+   );
+
+ if (!candidate) {
+   return "";
+ }
+
+ const globalRank =
+   Number(candidate.__scoreRank);
+ const slotRank =
+   Number(candidate.__slotRank ?? candidate.__detail?.slotRank);
+
+ if (!Number.isInteger(globalRank) || globalRank < 1) {
+   return "";
+ }
+
+ const slotLabel =
+   Number.isInteger(slotRank) && slotRank > 0
+     ? `${slotRank}位`
+     : "対象外";
+
+ return `順位：全体 ${globalRank}位／枠内 ${slotLabel}`;
 }
 
-// 強みの判定は表示と分析ログで共通（閾値は10/23〜10/26の表示候補分布に基づく表示の目安で、採点には使わない）
-function getStrengthTierLabels(phase, area) {
-  const labels = [];
-  if (Number(phase) >= 0.96) labels.push("Phase◎");
-  else if (Number(phase) >= 0.90) labels.push("Phase○");
-  if (Number(area) >= 1.04) labels.push("AREA○");
-  return labels;
-}
-
-function buildPlayerStrengthLines(player) {
-  const key = buildPlayerIdentityKey(player);
-  const selected = (State.matchingList || []).find(
-    p => buildPlayerIdentityKey(p) === key
-  );
-  let source = selected ? extractStrengthSource(selected) : null;
-  let fromCopy = false;
-
-  // cooldown中の表示残し行は採点対象外のため、コピー直前の保存値を使う
-  if (!source) {
-    const click = (State.recentClicks || []).find(
-      r => r?.strengthSnapshot && buildPlayerIdentityKey(r) === key
-    );
-    source = click?.strengthSnapshot ?? null;
-    fromCopy = Boolean(source);
-  }
-  if (!source) return [];
-
-  const strengths = getStrengthTierLabels(source.phase, source.area);
-  const suffix = fromCopy ? "（cooldown/コピー前）" : "";
-
-  const route = source.wildcard
-    ? "（全体高スコア）"
-    : source.crossBucket
-      ? "（帯外・個体確率）"
-      : "";
-
-  return [
-    `強み：${strengths.length ? strengths.join(" ") : "なし（枠の補充）"}${suffix}`,
-    `順位：全体 ${source.globalRank ?? "－"}位／枠内 ${source.slotRank ?? "－"}位${route}${suffix}`
-  ];
-}
 /* =========================================================
  [7207] Phase Detail:showPlayerPhaseDetailDialog【DOM】
 ========================================================= */
-function showPlayerPhaseDetailDialog(
- player,
- { showStrength = false } = {}
-) {
+function showPlayerPhaseDetailDialog(player) {
  const overlay =
    document.createElement("div");
 
@@ -3930,30 +4072,19 @@ function showPlayerPhaseDetailDialog(
  const closeButton =
    document.createElement("button");
 
- const detail =
+ const phaseLine =
+   document.createElement("div");
+ const rankLine =
    document.createElement("div");
 
- const strength =
-   document.createElement("div");
-
- const strengthLines =
-   showStrength
-     ? buildPlayerStrengthLines(player)
-     : [];
-
- strengthLines.forEach(line => {
-   const row = document.createElement("div");
-   row.textContent = line;
-   strength.append(row);
- });
-
- strength.style.cssText =
-   "margin-top:6px;font-size:15px;font-weight:normal;line-height:1.5;color:#444;";
  overlay.style.cssText =
    "position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,0.35);box-sizing:border-box;";
 
  dialog.style.cssText =
    "width:min(420px,100%);padding:20px;border-radius:10px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,0.28);font-size:20px;font-weight:bold;line-height:1.6;color:#222;";
+
+ rankLine.style.cssText =
+   "color:#555;font-weight:normal;";
 
  closeButton.type = "button";
  closeButton.textContent = "閉じる";
@@ -3961,11 +4092,14 @@ function showPlayerPhaseDetailDialog(
    "display:block;margin:16px 0 0 auto;padding:8px 14px;border:1px solid #999;border-radius:5px;background:#f5f5f5;font-size:16px;cursor:pointer;";
 
  const updateDetail = () => {
-   detail.textContent =
+   phaseLine.textContent =
      buildPlayerPhaseSummaryText(
        player,
        Date.now()
      );
+   rankLine.textContent =
+     buildPlayerRankSummaryText(player);
+   rankLine.hidden = !rankLine.textContent;
  };
 
  updateDetail();
@@ -3991,8 +4125,8 @@ function showPlayerPhaseDetailDialog(
  );
 
  dialog.append(
-   detail,
-   strength,
+   phaseLine,
+   rankLine,
    closeButton
  );
  overlay.append(dialog);
@@ -4033,7 +4167,7 @@ function getYellowPhaseScore(player, nowMs = Date.now()) {
   const diffSec =
     (nowMs - anchor) / 1000;
 
-  const lambda = getPhaseLambda("yellow");
+  const lambda = getPhaseLambda("yellow", diffSec, cycleSec);
 
   return computePhaseMetrics(
     diffSec,
@@ -4145,12 +4279,11 @@ function computePhaseContext(player, nowMs = Date.now()) {
      parseDateJST(player?.updateDate)?.getTime();
    cycleSec =
      getCurrentCycle(player);
-   const lambda = getPhaseLambda("yellow");
-
    diffSec =
      anchor
        ? (nowMs - anchor) / 1000
        : 0;
+   const lambda = getPhaseLambda("yellow", diffSec, cycleSec);
 
    metrics =
      anchor && cycleSec
@@ -4414,6 +4547,8 @@ function calcMatchingScoreDetail(
             Number(historical.tierProbability ?? historical.score),
         pooledTierProbability:
             Number(historical.pooledTierProbability ?? historical.score),
+        candidateCountAlpha:
+            Number(historical.candidateCountAlpha ?? 0),
         tierCandidateCount:
             Number(historical.tierCandidateCount ?? 1),
         minOwnSamplesForNoBackoff:
@@ -4538,6 +4673,11 @@ function buildMatchingCandidates(
       null;
   }
 
+  if (mode === "preview" &&
+      (State.currentView !== STATE.MATCHING || State.matchingContext?.mode !== "preview")) {
+    monitorLogSession++;
+  }
+
   State.matchingContext = {
     mode,
     clickedAtMs,
@@ -4637,9 +4777,9 @@ function buildMatchingCandidates(
 
     });
   const afterCooldownSet = new Set(afterCooldown);
+  const cooldownExcluded = filteredByUi.filter(p => !afterCooldownSet.has(p));
   State.matchingCooldownHeld =
-    filteredByUi
-      .filter(p => !afterCooldownSet.has(p))
+    cooldownExcluded
       .map(p => {
         const click = (State.recentClicks || []).find(
           r =>
@@ -4656,8 +4796,7 @@ function buildMatchingCandidates(
   State.matchingFilteredPopulationCount =
     filteredByUi.length;
   State.matchingCooldownExcludedCandidates =
-    filteredByUi
-      .filter(p => !afterCooldownSet.has(p))
+    cooldownExcluded
       .map(p => ({
         name: p.name,
         shopname: p.shopname ?? "",
@@ -4720,12 +4859,16 @@ function buildMatchingCandidates(
 
   applyCandidateAreaHistoryBoost(
     scoredAll,
-    { assignSlotRanks: true }
+    { assignSlotRanks: true, copyAreaHistory: State.copyAreaHistory.filter(record => record.t <= evaluationTimeMs) }
   );
 
-  applyCandidateAreaPhaseDiagnostics(
-    scoredAll
-  );
+  applyCandidateDayRelativeAreaBoost(scoredAll, { evaluationTimeMs });
+
+  if (mode !== "preview") {
+    applyCandidateAreaPhaseDiagnostics(
+      scoredAll
+    );
+  }
 
   assignCandidateCrossBucketRanks(
     scoredAll
@@ -4758,7 +4901,7 @@ function buildMatchingCandidates(
   );
 
   /* =====================================
-   * STEP7: 履歴分布を通常8枠へ配分し、自ランク基準の人口構成で補正
+   * STEP7: R6/R7は3群固定枠、その他は従来の履歴・人口補正
    * STEP8: 個人推定確率によるバケット横断1枠を追加
    * ===================================== */
   const enabledRankKeys = [
@@ -4787,8 +4930,16 @@ function buildMatchingCandidates(
       slotCounts.normal,
       slotBucketProbabilities
     );
-  const adjustedSlotPlan =
-    adjustSlotsByRelativePopulation(
+  const threeGroupPlan = buildThreeGroupSlotPlan(
+    scoreEligible, mapRankKeyToTierKey(State.myRankKey), State.scoringConfig
+  );
+  const adjustedSlotPlan = threeGroupPlan
+    ? { plan: threeGroupPlan, diagnostics: {
+        enabled: true, applied: false, reason: "three-group-fixed-quotas",
+        selectionPolicy: "three-group", viewerTier: mapRankKeyToTierKey(State.myRankKey),
+        slotPlanBeforeAdjustment: originalSlotPlan, slotPlanAfterAdjustment: threeGroupPlan
+      } }
+    : adjustSlotsByRelativePopulation(
       originalSlotPlan,
       filteredPopulation,
       enabledRankKeys,
@@ -4805,6 +4956,10 @@ function buildMatchingCandidates(
       slotBucketProbabilities,
       adjustedSlotPlan.plan
     );
+  if (threeGroupPlan) {
+    State.matchingSlotAllocationDiagnostics.slotPlanAfterAdjustment =
+      State.matchingSlotPlan.map(entry => ({ ...entry }));
+  }
 
   const crossBucketSelected =
     selectCrossBucketCandidates(
@@ -4916,7 +5071,7 @@ function buildMatchingCandidates(
   }
 
   log(
-    `候補生成: Base=${base.length} / Selected=${finalSelected.length}` +
+    `${mode === "preview" ? "MONITOR候補生成" : "候補生成"}: Base=${base.length} / Selected=${finalSelected.length}` +
     `（通常${normalSelected.length}＋バケット横断${crossBucketSelected.length}` +
     `＋ワイルドカード${wildcardSelected.length}` +
     `／Pink ${pinkManagedCount}人・上限なし）` +
@@ -4929,7 +5084,8 @@ function buildMatchingCandidates(
           .map(transfer => `${transfer.from}→${transfer.to}(+1)`).join(",")}` +
         ` population=${JSON.stringify(State.matchingSlotAllocationDiagnostics.population.shares)}`
       : ""}` +
-    `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`
+    `  Yellow周期=${Math.round(calcYellowCycle())}秒  Pink周期=${Math.round(calcPinkCycle())}秒`,
+    mode === "preview" ? { replaceKey: `monitor-candidates-${monitorLogSession}` } : undefined
   );
 
   if (saveEvent) {
@@ -5410,7 +5566,7 @@ function copyToClipboard(
       "preview"
   ) {
     log(
-      "PREVIEWではコピー操作と実績記録を行いません"
+      "MONITORではコピー操作と実績記録を行いません"
     );
     return;
   }
@@ -5481,7 +5637,11 @@ function copyToClipboard(
       )
     ) {
 
-      renderDetailTable();
+      if (State.currentDetailType === "area") {
+        renderAreaDetailTable(Number(State.currentDetailKey));
+      } else {
+        renderDetailTable();
+      }
 
     } else {
 
@@ -5956,10 +6116,8 @@ async function exportTodayViewerLogsAsJSON() {
  *   情報量が小さいため、こちらを使う。
  *
  * slim=true:
- *   Phase傾向分析（signedPhaseError・phaseBucket・
- *   phaseScore系）に必要な項目のみへ絞った軽量版。
- *   allCandidates（候補全件・件数が多くログ肥大化の主因）で
- *   使用する。
+ *   過去の軽量オブジェクト形式を再現する互換用。
+ *   現行allCandidatesはbuildAllCandidateRowで配列化する。
  */
 function buildScoreBreakdownLog(
   detail,
@@ -6098,6 +6256,8 @@ function buildScoreBreakdownLog(
       Number(detail.tierProbability ?? 0),
     pooledTierProbability:
       Number(detail.pooledTierProbability ?? 0),
+    candidateCountAlpha:
+      Number(detail.candidateCountAlpha ?? 0),
     tierCandidateCount:
       Number(detail.tierCandidateCount ?? 1),
     minOwnSamplesForNoBackoff:
@@ -6216,6 +6376,8 @@ function buildScoreBreakdownLog(
       Number(detail.diffSec ?? 0),
     phaseScore:
       Number(detail.phaseScore ?? 0),
+    phaseCycleCount:
+      Number.isFinite(detail.cycleCount) ? detail.cycleCount : null,
     decay:
       Number(detail.decay ?? 0),
     finalPhaseScore:
@@ -6267,8 +6429,15 @@ function buildAllCandidateRow(
     d.pinkPhaseMatched ? 1 : 0,
     Number(d.pinkMismatchBoostFactor ?? 1),
     Number(d.historicalScore ?? 0),
+    d.historicalMatched ? 1 : 0,
     d.historicalBackoff ? 1 : 0,
     Number(d.tierProbability ?? 0),
+    Number(d.pooledTierProbability ?? 0),
+    Number(d.tierCandidateCount ?? 0),
+    Number(d.candidateCountAlpha ?? 0),
+    Number(d.ownSampleCount ?? 0),
+    Number(d.adjacentSampleCount ?? 0),
+    Number(d.minOwnSamplesForNoBackoff ?? 0),
     Number(d.playerBoost ?? 1),
     Number(d.rankBoost ?? 1),
     Number(d.realtimeBoost ?? 1),
@@ -6284,6 +6453,8 @@ function buildAllCandidateRow(
     Number(d.prideBandPriorWeight ?? 1),
     Number(d.areaBucketCount ?? 0),
     Number(d.areaTotalCount ?? 0),
+    Number(d.areaBucketTotal ?? 0),
+    Number(d.areaBucketTrust ?? 0),
     Number(d.areaDensity ?? 0),
     Number(d.areaBoost ?? 1),
     Number(d.recentAreaMatchCount5 ?? 0),
@@ -6315,6 +6486,7 @@ function buildAllCandidateRow(
     d.peakDirection ?? "unknown",
     d.phaseBucket ?? "unknown",
     Number(d.phaseScore ?? 0),
+    Number.isFinite(d.cycleCount) ? d.cycleCount : null,
     Number(d.decay ?? 0),
     Number(d.finalPhaseScore ?? 0),
     Number(d.effectivePhaseScore ?? 0),
@@ -6322,8 +6494,7 @@ function buildAllCandidateRow(
     Number(d.phaseSampleCount ?? 0),
     Number(d.phaseTrust ?? 1),
     Number(d.phaseAdjustValue ?? 0),
-    ...CANDIDATE_TIMING_COLUMNS.map(key => d[key] ?? null),
-    getStrengthTierLabels(d.effectivePhaseScore, d.areaBoost).join("+") || "none"
+    ...CANDIDATE_TIMING_COLUMNS.map(key => d[key] ?? null)
   ];
 
 }
@@ -6437,6 +6608,9 @@ function saveCopyEventUnified(
       candidateEventId:
         candidateEventIdForCopy,
 
+      selectionRouteAtPrediction:
+        null,
+
       predictionSnapshotAvailable:
         false,
 
@@ -6468,6 +6642,9 @@ function saveCopyEventUnified(
     scoredAtPrediction;
 
   if (!scoredPlayer) {
+    const copyEvaluationTimeMs = candidateEventIdForCopy
+      ? Number(State.matchingContext?.evaluationTimeMs) || Date.now()
+      : Date.now();
     scoredPlayer =
       buildCandidateScore(
         player,
@@ -6475,12 +6652,7 @@ function saveCopyEventUnified(
         buildViewerHistoricalContext(
           State.myRankKey
         ),
-        candidateEventIdForCopy
-          ? Number(
-              State.matchingContext
-                ?.evaluationTimeMs
-            ) || Date.now()
-          : Date.now()
+        copyEvaluationTimeMs
       );
 
     applyCandidateSlotScores(
@@ -6499,13 +6671,16 @@ function saveCopyEventUnified(
         candidate =>
           buildPlayerIdentityKey(candidate) !==
           buildPlayerIdentityKey(scoredPlayer)
-      ),
+      ).map(candidate => ({ ...candidate, __detail: { ...candidate.__detail } })),
       scoredPlayer
     ];
 
     applyCandidateAreaHistoryBoost(
-      diagnosticCandidates
+      diagnosticCandidates,
+      { copyAreaHistory: State.copyAreaHistory.filter(record => record.t <= copyEvaluationTimeMs) }
     );
+
+    applyCandidateDayRelativeAreaBoost(diagnosticCandidates, { evaluationTimeMs: copyEvaluationTimeMs });
 
     applyCandidateAreaPhaseDiagnostics(
       diagnosticCandidates
@@ -6575,6 +6750,18 @@ function saveCopyEventUnified(
     displayedIndex >= 0
       ? displayedIndex + 1
       : null;
+  const selectedAtPrediction =
+    displayedIndex >= 0 ? displayedCandidates[displayedIndex] : null;
+  const selectionRouteAtPrediction =
+    !scoredAtPrediction
+      ? null
+      : !selectedAtPrediction
+        ? "not-selected"
+        : selectedAtPrediction.__wildcard
+          ? "global-score-wildcard"
+          : selectedAtPrediction.__crossBucket
+            ? "individual-probability"
+            : "normal-rank-slot";
 
   /*
    * Pink管理対象の再登場分析用
@@ -6658,13 +6845,7 @@ function saveCopyEventUnified(
     wasInTop10:
       predictedRank !== null,
 
-    strengthTierAtPrediction:
-      scoredAtPrediction
-        ? getStrengthTierLabels(
-            scoredAtPrediction.__detail?.effectivePhaseScore,
-            scoredAtPrediction.__detail?.areaBoost
-          ).join("+") || "none"
-        : null,
+    selectionRouteAtPrediction,
 
     predictionSnapshotAvailable:
       Boolean(scoredAtPrediction),
@@ -6924,16 +7105,6 @@ function recordClickFromCopiedInfo(
           normalizePlayerName(p.name ?? "") === normalizedName &&
           normalizePlayerName(p.shopname ?? "") === normalizedShop
       ),
-
-    strengthSnapshot:
-      (() => {
-        const selected = (State.matchingList || []).find(
-          p =>
-            normalizePlayerName(p.name ?? "") === normalizedName &&
-            normalizePlayerName(p.shopname ?? "") === normalizedShop
-        );
-        return selected ? extractStrengthSource(selected) : null;
-      })(),
 
     /*
      * コピークリック前の状態に戻すためのスナップショット
@@ -7637,6 +7808,11 @@ function saveCandidateEvent(
           ?.prideBandDiversityGapThreshold ??
         DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD
       ),
+    threeGroupEnabled: Boolean(
+      State.scoringConfig?.candidateSelection?.slotAllocation?.threeGroupEnabled
+    ),
+    threeGroupDiversityGapThreshold:
+      State.scoringConfig?.candidateSelection?.slotAllocation?.threeGroupDiversityGapThreshold ?? null,
 
     /*
      * 【2026-09 ログ拡充】ownSampleCount等は同一candidateEvent内
@@ -8063,6 +8239,7 @@ function showAreaDetail(
 function showMatchingCandidates(
   options = true
 ) {
+  stopMonitor();
 
   const normalizedOptions =
     typeof options === "boolean"
@@ -8125,6 +8302,7 @@ function showMatchingCandidates(
   switchDisplayView(
     STATE.MATCHING
   );
+  if (mode === "preview") startMonitor();
 
   if (push) {
 
@@ -8425,7 +8603,7 @@ function readSelectedPrides() {
     );
 }
 
-function isPlayerIncludedInRankFilters(player) {
+function isPlayerIncludedInRankFilters(player, filters = null) {
   const rankKey =
     getPlayerRankKey(player);
 
@@ -8434,12 +8612,12 @@ function isPlayerIncludedInRankFilters(player) {
   }
 
   if (rankKey.startsWith("R")) {
-    return readSelectedStars().includes(
+    return (filters?.selectedStars ?? readSelectedStars()).includes(
       Number(player.starCnt)
     );
   }
 
-  return readSelectedPrides().includes(rankKey);
+  return (filters?.selectedPrides ?? readSelectedPrides()).includes(rankKey);
 }
 
 
@@ -8465,90 +8643,125 @@ async function init() {
 
   buildPrideFilters();
 
-  try {
-
-    const [
-      areaJson,
-      latestRoundJson,
-      latestUpdateJson,
-      historicalMatchupDistributionJson,
-      scoringConfigJson,
-      roundDataJson
-    ] = await Promise.all([
-      fetchAreaListJson(),
-      fetchLatestRoundJson(),
-      fetchLatestUpdateJson(),
-      fetchHistoricalMatchupDistributionJson(),
-      fetchScoringConfigJson(),
-      fetchRoundDataJson()
+  const initialResourceNames = [
+    "areaList.json",
+    "latest_round.json",
+    "latest_update.json",
+    "historical_matchup_distribution.json",
+    "scoring_config.json",
+    "integrated_data.json"
+  ];
+  const initialResults =
+    await settleInitialJsonRequests([
+      fetchAreaListJson,
+      fetchLatestRoundJson,
+      () => fetchLatestUpdateJson({ purpose: "startup" }),
+      fetchHistoricalMatchupDistributionJson,
+      fetchScoringConfigJson,
+      () => fetchRoundDataJson({ purpose: "startup" })
     ]);
 
-    applyAreaListJson(areaJson);
+  const [
+    areaResult,
+    latestRoundResult,
+    latestUpdateResult,
+    historicalResult,
+    scoringConfigResult,
+    roundDataResult
+  ] = initialResults;
+  const initialFailures =
+    initialResults
+      .map((result, index) => (
+        result.status === "rejected"
+          ? `${initialResourceNames[index]}: ${result.reason?.message ?? result.reason}`
+          : null
+      ))
+      .filter(Boolean);
 
-    applyLatestRoundJson(
-      latestRoundJson
+  if (initialFailures.length > 0) {
+    logError(
+      "初期並列取得の一部に失敗（失敗したデータだけ再取得します）：" +
+      initialFailures.join(" / ")
     );
+  }
 
-    applyLatestUpdateJson(
-      latestUpdateJson
+  const recoveryTasks = [];
+  if (areaResult.status === "rejected") {
+    recoveryTasks.push(loadAreaList());
+  }
+  if (latestRoundResult.status === "rejected") {
+    recoveryTasks.push(loadLatestRound());
+  }
+  if (latestUpdateResult.status === "rejected") {
+    recoveryTasks.push(loadLatestUpdate());
+  }
+  if (historicalResult.status === "rejected") {
+    recoveryTasks.push(loadHistoricalMatchupDistribution());
+  }
+  if (scoringConfigResult.status === "rejected") {
+    recoveryTasks.push(loadScoringConfig());
+  }
+
+  let roundDataJson =
+    roundDataResult.status === "fulfilled"
+      ? roundDataResult.value
+      : null;
+  let roundDataLoaded =
+    roundDataResult.status === "fulfilled";
+
+  if (!roundDataLoaded) {
+    recoveryTasks.push(
+      (async () => {
+        try {
+          roundDataJson = await fetchRoundDataJson({ purpose: "startup-recovery" });
+          roundDataLoaded = true;
+        } catch (error) {
+          logError(
+            "integrated_data.json の取得に失敗：" +
+            error.message
+          );
+          State.generatedAt = "";
+          State.all = [];
+          State.filtered = [];
+        }
+      })()
     );
+  }
 
-    applyHistoricalMatchupDistributionJson(
-      historicalMatchupDistributionJson
-    );
+  if (areaResult.status === "fulfilled") {
+    applyAreaListJson(areaResult.value);
+  }
+  if (latestRoundResult.status === "fulfilled") {
+    applyLatestRoundJson(latestRoundResult.value);
+  }
+  if (latestUpdateResult.status === "fulfilled") {
+    applyLatestUpdateJson(latestUpdateResult.value);
+  }
+  if (historicalResult.status === "fulfilled") {
+    applyHistoricalMatchupDistributionJson(historicalResult.value);
+  }
+  if (scoringConfigResult.status === "fulfilled") {
+    applyScoringConfigJson(scoringConfigResult.value);
+  }
 
-    applyScoringConfigJson(
-      scoringConfigJson
-    );
+  await Promise.all(recoveryTasks);
 
-    await loadCopyAreaHistory();
+  await loadCopyAreaHistory();
 
-    await seedPhaseAdjustFromCopyHistory();
+  await seedPhaseAdjustFromCopyHistory();
 
+  if (roundDataLoaded) {
     applyRoundDataJson(
       roundDataJson,
       {
         resetReloadButton: true
       }
     );
-
-    log(
-      "初期データ取得完了"
-    );
-
-  } catch (e) {
-
-    logError(
-      "初期化並列取得に失敗：" +
-      e.message
-    );
-
-    await loadAreaList();
-
-    await loadLatestRound();
-
-    await loadLatestUpdate();
-
-    await loadHistoricalMatchupDistribution();
-
-    await loadScoringConfig();
-
-    await loadCopyAreaHistory();
-
-    await seedPhaseAdjustFromCopyHistory();
-
-    try {
-        const roundDataJson = await fetchRoundDataJson();
-        applyRoundDataJson(roundDataJson, { resetReloadButton: true });
-        } catch (err) {
-          logError("integrated_data.json の取得に失敗：" + err.message);
-        State.all = [];
-          State.filtered = [];
-        }
-    log(
-      "初期データ取得完了"
-    );
   }
+
+  log(
+    "初期データ取得完了"
+  );
 
   applyFilters();
 
@@ -8600,6 +8813,9 @@ async function init() {
     State,
     isCurrentView,
     setCurrentView,
+    refreshMonitor,
+    stopMonitor,
+    MONITOR_INTERVAL_MS,
     syncMyRankSelection,
 
     // Diagnostics / Analysis
@@ -8620,6 +8836,7 @@ async function init() {
     getPhaseErrorScaleSec,
 
     // Data Appliers
+    isIntegratedDataBehindLatestUpdate,
     applyAreaListJson,
     applyLatestRoundJson,
     applyLatestUpdateJson,
@@ -8640,6 +8857,7 @@ async function init() {
     pruneCandidateEventsStore,
 
     // Data Loaders & Watch Loop
+    settleInitialJsonRequests,
     fetchJSON,
     fetchAreaListJson,
     fetchLatestRoundJson,
@@ -8686,9 +8904,8 @@ async function init() {
     computePhaseSignal,
     getPlayerPhaseDetail,
     buildPlayerPhaseSummaryText,
+    buildPlayerRankSummaryText,
     showPlayerPhaseDetailDialog,
-    buildPlayerStrengthLines,
-    getStrengthTierLabels,
     buildStartupRecord,
     getYellowPhaseScore,
     isMatchingCandidateByPhase,

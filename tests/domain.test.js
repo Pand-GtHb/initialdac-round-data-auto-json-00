@@ -128,6 +128,33 @@ test("Calc stats calculation", () => {
   assert.equal(stats.max, 3000);
 });
 
+test("Calc stats preserves empty, numeric conversion and non-finite results", () => {
+  for (const list of [
+    null, [], [{}, { point: null }, { point: "12.5" }, { point: -20 }],
+    [{ point: -0 }], [{ point: NaN }], [{ point: "invalid" }],
+    [{ point: Infinity }, { point: -Infinity }]
+  ]) {
+    const points = (list || []).map(p => Number(p.point ?? 0));
+    const cnt = points.length;
+    const actual = domain.calcStats(list, 10);
+    assert.equal(actual.cnt, cnt);
+    assert.equal(actual.percent, Math.round(cnt / 10 * 100));
+    assert.equal(actual.avg, cnt ? Math.round(points.reduce((sum, n) => sum + n, 0) / cnt) : 0);
+    assert.equal(actual.min, cnt ? Math.min(...points) : 0);
+    assert.equal(actual.max, cnt ? Math.max(...points) : 0);
+  }
+});
+
+test("Calc stats handles large populations without spreading an argument list", () => {
+  const list = Array.from({ length: 300000 }, (_, i) => ({ point: i }));
+  const actual = domain.calcStats(list, list.length);
+  assert.equal(actual.cnt, 300000);
+  assert.equal(actual.percent, 100);
+  assert.equal(actual.avg, 150000);
+  assert.equal(actual.min, 0);
+  assert.equal(actual.max, 299999);
+});
+
 test("Rank population snapshot", () => {
   const players = [
     { onlineBattleRankId: domain.RUBY_ID, starCnt: 1 },

@@ -13,7 +13,7 @@
   const mapRankKeyToTierKey = ViewerDomain.mapRankKeyToTierKey || (k => k?.startsWith?.("P_") ? "PRIDE" : k);
   const R6_PRIDE_FREQUENCY_STORAGE_KEY = ViewerPersistence.R6_PRIDE_FREQUENCY_STORAGE_KEY || "viewer_r6_pride_frequency_ledger";
   const LOG_STORAGE_LIMITS = ViewerPersistence.LOG_STORAGE_LIMITS || { copyEvents: 50 };
-  const MATCHING_SCRIPT_VERSION = "matching-policy-v7-yellow-cycle5-20261026";
+  const MATCHING_SCRIPT_VERSION = "matching-policy-v12-day-relative-area-20261116";
 
   const HISTORICAL_RELIABILITY_K = 100;
   const HISTORICAL_CANDIDATE_COUNT_ALPHA = 0.35;
@@ -80,6 +80,8 @@
       candidateSelection: {
         slots: getMatchingSlotCounts(null),
         slotAllocation: {
+          threeGroupEnabled: false,
+          threeGroupDiversityGapThreshold: 0.12,
           prideBandPriorExponent: DEFAULT_PRIDE_BAND_PRIOR_EXPONENT,
           prideBandDiversityGapThreshold: DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD,
           r6PridePopulationThreshold: R6_PRIDE_POPULATION_THRESHOLD,
@@ -87,6 +89,7 @@
         },
         areaBoost: {
           enabled: true, weight: DEFAULT_AREA_BOOST_WEIGHT, smoothingSampleSize: DEFAULT_AREA_SMOOTHING_SAMPLE_SIZE,
+          dayRelativeEnabled: false,
           recentMatch: {
             enabled: DEFAULT_RECENT_AREA_BOOST_ENABLED,
             weight: DEFAULT_RECENT_AREA_BOOST_WEIGHT,
@@ -101,7 +104,10 @@
         yellow: { weight: 0.55, baseCycleSec: 345, alpha: 0.12, maxShiftSec: 30, minSamples: 8, maxSampleAgeSec: 2700 },
         pink: { weight: 0.55, baseCycleSec: 345, alpha: 0.18, maxShiftSec: 45, minSamples: 8 }
       },
-      phaseError: { scaleSec: 90, yellowThreshold: 0.7, pinkThreshold: 0.55, yellowLambda: 0.06, pinkLambda: 0.03 },
+      phaseError: {
+        scaleSec: 90, yellowThreshold: 0.7, pinkThreshold: 0.55,
+        yellowLambda: 0.06, pinkLambda: 0.03, yellowNoDecayThroughCycleCount: 0
+      },
       experimental: {
         dayRelativeArea: { enabled: true, weight: 0.30, smoothingCount: 2 },
         yellowPhase: { enabled: true, weight: 0.70 }
@@ -156,6 +162,7 @@
     for (const name of [
       "historical.candidateCountAlpha", "candidateSelection.slotAllocation.prideBandPriorExponent",
       "candidateSelection.slotAllocation.prideBandDiversityGapThreshold", "candidateSelection.slotAllocation.r6PridePopulationThreshold",
+      "candidateSelection.slotAllocation.threeGroupDiversityGapThreshold",
       "candidateSelection.areaBoost.weight", "candidateSelection.areaBoost.recentMatch.weight",
       "candidateSelection.areaBoost.recentMatch.maxWeight",
       "candidateSelection.areaBoost.diagnosticPhaseWeight", "phase.weight", "phase.yellowMaxWeight",
@@ -170,6 +177,7 @@
       number(name, 0, Number.MAX_SAFE_INTEGER, true);
     }
     number("viewerDefaults.filterMinutes", 1, Number.MAX_SAFE_INTEGER, true);
+    number("phaseError.yellowNoDecayThroughCycleCount", 0, Number.MAX_SAFE_INTEGER, true);
     if (![15, 30, 60, 120, 180].includes(config.viewerDefaults.filterMinutes)) {
       invalid("viewerDefaults.filterMinutes must match a filter option: 15, 30, 60, 120, 180");
     }
@@ -182,6 +190,10 @@
     for (const key of ["normal", "crossBucket", "wildcard"]) number(`candidateSelection.slots.${key}`, 0, 10, true);
     if (Object.values(config.candidateSelection.slots).reduce((sum, n) => sum + n, 0) !== 10) {
       invalid("candidateSelection.slots must total 10");
+    }
+    if (config.candidateSelection.slotAllocation.threeGroupEnabled &&
+        config.candidateSelection.slots.normal !== 8) {
+      invalid("threeGroupEnabled requires 8 normal slots");
     }
     if (!POPULATION_RANK_KEYS.includes(config.viewerDefaults.myRankKey)) invalid("viewerDefaults.myRankKey is invalid");
     if (source.phase?.yellow?.weight === undefined) config.phase.yellow.weight = config.phase.weight;
@@ -203,7 +215,8 @@
       schemaVersion: config.meta.schemaVersion, version: config.meta.version, effective,
       phaseScoring: {
         formula: "1 - phaseWeight * (1 - finalPhaseScore)",
-        finalPhaseFormula: "exp(-0.5 * (phaseError / scaleSec)^2) * exp(-lambda * cycleCount)",
+        finalPhaseFormula: "exp(-0.5 * (phaseError / scaleSec)^2) * exp(-effectiveLambda * cycleCount)",
+        effectiveLambda: "Yellow: cycleCount <= yellowNoDecayThroughCycleCount ? 0 : yellowLambda; Pink: pinkLambda",
         scoringTrustApplied: false,
         phaseTrustRole: "cycle-learning-diagnostic"
       }
@@ -528,6 +541,10 @@
           : ownCell?.pooledTierProbability ?? 1.0,
       tierCandidateCount,
       minOwnSamplesForNoBackoff: ctx.minOwnSamplesForNoBackoff,
+      candidateCountAlpha: Number(
+        (scoringConfig ?? getState()?.scoringConfig)?.historical?.candidateCountAlpha ??
+        HISTORICAL_CANDIDATE_COUNT_ALPHA
+      ),
       ownReliability,
       ownSampleCount: ctx.ownDistribution.total,
       adjacentSampleCount: ctx.adjacentDistribution?.total ?? 0,
@@ -1086,6 +1103,27 @@
     }));
   }
 
+  function getThreeGroupBucket(rankKey, viewerTier) {
+    if (!/^R[67]$/.test(viewerTier)) return null;
+    if (/^P_/.test(rankKey)) return viewerTier === "R7" ? "higher" : "outside-normal";
+    if (!/^R[1-8]$/.test(rankKey)) return "outside-normal";
+    const rank = Number(rankKey.slice(1));
+    const own = Number(viewerTier.slice(1));
+    return rank < own ? "lower" : rank === own ? "same" : "higher";
+  }
+
+  function buildThreeGroupSlotPlan(candidates, viewerTier, scoringConfig) {
+    if (!scoringConfig?.candidateSelection?.slotAllocation?.threeGroupEnabled ||
+        !/^R[67]$/.test(viewerTier)) return null;
+    const quotas = viewerTier === "R6" ? [4, 2, 2] : [3, 1, 4];
+    return ["lower", "same", "higher"].map((bucket, index) => {
+      const capacity = candidates.filter(p => getThreeGroupBucket(p.__rankKey, viewerTier) === bucket).length;
+      return { bucket, viewerTier, selectionPolicy: "three-group",
+        requestedSlots: quotas[index], slots: Math.min(capacity, quotas[index]),
+        capacity, probability: quotas[index] / 8, rawQuota: quotas[index] };
+    });
+  }
+
   function prepareR6PrideFrequency(populationShare, advanceBudget, options = {}) {
     const state = options.state ?? getState();
     const distribution = options.distribution ?? getHistoricalDistribution(state?.historicalMatchupDistribution, "R6");
@@ -1125,17 +1163,8 @@
     let ledger;
     try {
       const raw = storage ? storage.getItem(storageKey) : null;
-      ledger = raw ? JSON.parse(raw) : {
-        version: 1, lastGenerationMs: null, credit: 0, granted: false,
-        countedGenerations: 0, grantedGenerations: 0
-      };
-      if (ledger?.version !== 1 ||
-          !(ledger.lastGenerationMs === null || Number.isFinite(ledger.lastGenerationMs)) ||
-          !Number.isFinite(ledger.credit) || ledger.credit < 0 || ledger.credit > 1 ||
-          typeof ledger.granted !== "boolean" ||
-          !Number.isSafeInteger(ledger.countedGenerations) || ledger.countedGenerations < 0 ||
-          !Number.isSafeInteger(ledger.grantedGenerations) || ledger.grantedGenerations < 0 ||
-          ledger.grantedGenerations > ledger.countedGenerations) {
+      ledger = raw ? JSON.parse(raw) : ViewerPersistence.createDefaultR6PrideLedger();
+      if (!ViewerPersistence.isValidR6PrideLedger(ledger)) {
         throw new Error("invalid R6 PRIDE frequency ledger");
       }
     } catch (error) {
@@ -1399,9 +1428,7 @@
         frequency.creditAfter = frequency.reason === "storage-write-failed"
           ? frequency.creditBefore : ledger.credit;
         frequency.granted = transfers.some(transfer => transfer.to === "PRIDE");
-        if (frequency.reason !== "storage-write-failed") {
-          frequency.countedGeneration = frequency.countedGeneration;
-        } else {
+        if (frequency.reason === "storage-write-failed") {
           frequency.countedGeneration = false;
         }
         frequency.countedGenerations = frequency.reason === "storage-write-failed"
@@ -1457,7 +1484,7 @@
     );
 
     const configuredGapThreshold = Number(
-      (options.scoringConfig ?? getState()?.scoringConfig)
+      options.gapThreshold ?? (options.scoringConfig ?? getState()?.scoringConfig)
         ?.candidateSelection?.slotAllocation?.prideBandDiversityGapThreshold ??
       DEFAULT_PRIDE_BAND_DIVERSITY_GAP_THRESHOLD
     );
@@ -1521,6 +1548,14 @@
     const plan = Array.isArray(slotPlanOverride)
       ? slotPlanOverride.map(entry => ({ ...entry }))
       : buildMatchingSlotPlan(candidates, slotCount, bucketProbabilities);
+    const groupTier = plan.find(entry => entry.selectionPolicy === "three-group")?.viewerTier;
+    if (groupTier && slotCount !== 8) throw new Error("Three-group selection requires 8 normal slots");
+    const bucketOf = player => groupTier
+      ? getThreeGroupBucket(player.__rankKey, groupTier)
+      : getMatchingSlotBucketKey(player.__rankKey);
+    const eligible = groupTier
+      ? candidates.filter(player => bucketOf(player) !== "outside-normal")
+      : candidates;
 
     if (plan.length === 0) {
       if (state) state.matchingSlotPlan = [];
@@ -1532,9 +1567,22 @@
     const selected = [];
     const poolsByBucket = new Map();
     for (const player of candidates) {
-      const bucket = getMatchingSlotBucketKey(player.__rankKey);
+      const bucket = bucketOf(player);
       if (!poolsByBucket.has(bucket)) poolsByBucket.set(bucket, []);
       poolsByBucket.get(bucket).push(player);
+    }
+    if (groupTier) {
+      for (const [bucket, pool] of poolsByBucket) {
+        [...pool].sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a) ||
+          getCandidateSelectionScore(b) - getCandidateSelectionScore(a)).forEach((player, index) => {
+          player.__slotBucket = bucket;
+          player.__slotRank = bucket === "outside-normal" ? null : index + 1;
+          if (player.__detail) {
+            player.__detail.slotBucket = bucket;
+            player.__detail.slotRank = player.__slotRank;
+          }
+        });
+      }
     }
 
     for (const entry of plan) {
@@ -1544,10 +1592,16 @@
 
       const pool = poolsByBucket.get(entry.bucket) ?? [];
 
-      const bucketSelected = entry.bucket === "PRIDE"
-        ? selectPrideSlotCandidates(pool, entry.slots, options)
+      const diversityOptions = groupTier === "R7" && entry.bucket === "higher"
+        ? { ...options, gapThreshold:
+            (options.scoringConfig ?? state?.scoringConfig)?.candidateSelection?.slotAllocation
+              ?.threeGroupDiversityGapThreshold ?? 0.12 }
+        : options;
+      const bucketSelected = entry.bucket === "PRIDE" || (groupTier === "R7" && entry.bucket === "higher")
+        ? selectPrideSlotCandidates(pool, entry.slots, diversityOptions)
         : [...pool]
-            .sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a))
+            .sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a) ||
+              (groupTier ? getCandidateSelectionScore(b) - getCandidateSelectionScore(a) : 0))
             .slice(0, entry.slots);
 
       for (const player of bucketSelected) {
@@ -1556,22 +1610,25 @@
       }
     }
 
-    const targetCount = Math.min(slotCount, candidates.length);
+    const targetCount = Math.min(slotCount, eligible.length);
 
     if (selected.length < targetCount) {
-      const fallback = [...candidates]
+      const fallback = [...eligible]
         .filter(player => !selected.includes(player))
-        .sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a))
+        .sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a) ||
+          (groupTier ? getCandidateSelectionScore(b) - getCandidateSelectionScore(a) : 0))
         .slice(0, targetCount - selected.length);
 
       for (const player of fallback) {
-        player.__slotBucket = getMatchingSlotBucketKey(player.__rankKey);
+        player.__slotBucket = bucketOf(player);
         selected.push(player);
       }
     }
 
     if (state) {
-      state.matchingSlotPlan = plan;
+      state.matchingSlotPlan = groupTier ? plan.map(entry => ({
+        ...entry, slots: selected.filter(player => bucketOf(player) === entry.bucket).length
+      })) : plan;
     }
 
     return selected.sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a));
@@ -1729,14 +1786,20 @@
   }
 
   const SCORING_POLICY_COMPARISONS = Object.freeze([
+    Object.freeze({ variant: "yellowDecay006", id: "yellow-phase-decay-006", lambda: 0.06, scaleSec: 90 }),
     Object.freeze({ variant: "yellowDecay010", id: "yellow-phase-decay-010", lambda: 0.10, scaleSec: 90 }),
     Object.freeze({ variant: "yellowPrevious", id: "yellow-phase-decay-003", lambda: 0.03, scaleSec: 90 }),
+    Object.freeze({
+      variant: "yellowNoDecayThrough4", id: "yellow-phase-no-decay-through-4",
+      lambda: null, noDecayThroughCycleCount: 4, scaleSec: 90
+    }),
     Object.freeze({ variant: "yellowError60", id: "yellow-phase-error-060", lambda: 0.03, scaleSec: 60 }),
     Object.freeze({ variant: "yellowNoDecay", id: "yellow-phase-no-decay", lambda: 0, scaleSec: 90 }),
     Object.freeze({ variant: "areaRecent", id: "area-basic-recent", area: "basic-recent" }),
     Object.freeze({ variant: "areaRecentOnly", id: "area-recent-only", area: "recent-only" }),
     Object.freeze({ variant: "areaNone", id: "area-none", area: "none" }),
     Object.freeze({ variant: "areaDayOnly", id: "area-day-relative-only", area: "day-only" }),
+    Object.freeze({ variant: "areaWithoutDay", id: "area-without-day-relative", area: "without-day" }),
     Object.freeze({ variant: "previousPolicy", id: "previous-phase-area-policy",
       lambda: 0.03, scaleSec: 90, area: "basic-recent" })
   ]);
@@ -1781,6 +1844,29 @@
     return { dayKey, sampleCount: history.length, areaCounts, observedCounts, details };
   }
 
+  function applyCandidateDayRelativeAreaBoost(candidates, {
+    scoringConfig = getState()?.scoringConfig, copyAreaHistory = getState()?.copyAreaHistory ?? [],
+    evaluationTimeMs
+  } = {}) {
+    if (!scoringConfig?.candidateSelection?.areaBoost?.dayRelativeEnabled) return;
+    const context = buildShadowAreaContext(
+      candidates, copyAreaHistory, evaluationTimeMs, scoringConfig.experimental.dayRelativeArea);
+    for (const player of candidates) {
+      const detail = player.__detail;
+      const { expected, observed, boost } = context.details.get(String(player.area ?? ""));
+      const slotScore = getCandidateSlotScore(player) /
+        Math.max(Number(detail.recentAreaAppliedBoost ?? 1), Number.EPSILON) * boost;
+      detail.recentAreaAppliedBoost = boost;
+      detail.recentAreaCounterfactualBoostWindow = boost;
+      detail.recentAreaCounterfactualSlotScore = slotScore;
+      detail.diagnosticAreaExpectedCount = expected;
+      detail.diagnosticAreaObservedCount = observed;
+      detail.slotScore = slotScore;
+      player.__slotScore = slotScore;
+    }
+    assignCandidateSlotRanks(candidates, { assignRecentAreaRanks: true });
+  }
+
   function buildShadowCandidateComparison(pool, options) {
     return evaluateShadowCandidateComparison(pool, options, {});
   }
@@ -1795,6 +1881,36 @@
     const settings = policy ? { enabled: true, ...policy } : scoringConfig.experimental[variant];
     if (!settings.enabled) return { status: "disabled", parameters: { ...settings }, selected: [] };
 
+    const phasePolicyEnabled = policy &&
+      (policy.lambda !== undefined || policy.noDecayThroughCycleCount !== undefined);
+    const configuredYellowLambda = Number(
+      scoringConfig.phaseError?.yellowLambda ?? scoringConfig.phaseError?.lambda ?? 0.06
+    );
+    const phaseCycleCounts = {
+      "0": 0, "1": 0, "2": 0, "3": 0, "4": 0, "5+": 0, unknown: 0
+    };
+    if (policy?.noDecayThroughCycleCount !== undefined) {
+      for (const candidate of pool) {
+        const detail = candidate.__detail ?? {};
+        if (detail.isPinkManaged) continue;
+        const diffSec = (evaluationTimeMs - detail.phaseAnchorAtMs) / 1000;
+        const cycleCount =
+          typeof detail.phaseAnchorAtMs === "number" &&
+          detail.phaseAnchorType !== "unavailable" &&
+          Number.isFinite(detail.cycleSec) && detail.cycleSec > 0 &&
+          Number.isFinite(diffSec) && diffSec >= 0
+            ? Math.floor(diffSec / detail.cycleSec)
+            : detail.cycleCount;
+        if (!Number.isFinite(cycleCount) || cycleCount < 0) {
+          phaseCycleCounts.unknown++;
+        } else {
+          const key = cycleCount > policy.noDecayThroughCycleCount
+            ? "5+" : String(cycleCount);
+          phaseCycleCounts[key] = (phaseCycleCounts[key] ?? 0) + 1;
+        }
+      }
+    }
+
     const isArea = variant === "dayRelativeArea" || policy?.area === "day-only";
     let dayArea = null;
     if (isArea) {
@@ -1802,7 +1918,7 @@
         pool, copyAreaHistory, evaluationTimeMs, scoringConfig.experimental.dayRelativeArea);
     }
     let recentHistory = null;
-    if (policy?.area?.includes("recent")) {
+    if (policy?.area?.includes("recent") || policy?.area === "without-day") {
       if (!context.recentHistory) {
         const config = getRecentAreaBoostConfig({
           candidateSelection: { areaBoost: { recentMatch: {
@@ -1817,6 +1933,8 @@
       }
       recentHistory = context.recentHistory;
     }
+    const withoutDayConfig = policy?.area === "without-day"
+      ? getRecentAreaBoostConfig(scoringConfig) : null;
     let unavailablePhaseCount = 0;
 
     // All selection flags and score details belong to diagnostic clones only.
@@ -1827,12 +1945,21 @@
       const d = clone.__detail;
       if (policy) {
         let effective = d.effectivePhaseScore;
-        if (policy.lambda !== undefined && !d.isPinkManaged) {
+        if (phasePolicyEnabled && !d.isPinkManaged) {
           const diffSec = (evaluationTimeMs - d.phaseAnchorAtMs) / 1000;
           if (typeof d.phaseAnchorAtMs === "number" && Number.isFinite(d.phaseAnchorAtMs) &&
               d.phaseAnchorType !== "unavailable" && Number.isFinite(d.cycleSec) &&
               d.cycleSec > 0 && Number.isFinite(diffSec) && diffSec >= 0) {
-            Object.assign(d, ViewerDomain.computePhaseMetrics(diffSec, d.cycleSec, policy.lambda, policy.scaleSec));
+            const cycleCount = Math.floor(diffSec / d.cycleSec);
+            const lambda = policy.noDecayThroughCycleCount !== undefined
+              ? cycleCount <= policy.noDecayThroughCycleCount ? 0 : configuredYellowLambda
+              : policy.lambda;
+            Object.assign(d, ViewerDomain.computePhaseMetrics(
+              diffSec, d.cycleSec, lambda,
+              policy.scaleSec ?? scoringConfig.phaseError?.yellowScaleSec ??
+                scoringConfig.phaseError?.scaleSec ?? 90
+            ));
+            d.phaseDecayLambda = lambda;
             effective = 1 - d.phaseWeight * (1 - d.finalPhaseScore);
           } else {
             unavailablePhaseCount++;
@@ -1841,11 +1968,12 @@
         let basic = d.areaBoost;
         let recent = d.recentAreaAppliedBoost;
         if (policy.area) {
-          basic = policy.area === "basic-recent" ? basic : 1;
+          basic = ["basic-recent", "without-day"].includes(policy.area) ? basic : 1;
           recent = 1;
           const area = String(p.area ?? "");
           if (recentHistory && area) {
-            recent = 1 + recentHistory.config.weight * Math.sqrt(
+            const weight = withoutDayConfig ? withoutDayConfig.weight : recentHistory.config.weight;
+            recent = 1 + weight * Math.sqrt(
               Number(recentHistory.recentWindowCounts[area] ?? 0) / recentHistory.config.windowSize);
           }
           if (policy.area === "day-only") {
@@ -1860,7 +1988,7 @@
         d.recentAreaAppliedBoost = recent;
         d.recentAreaCounterfactualBoostWindow = recent;
         // Preserve non-AREA global weighting exactly for AREA-only comparisons.
-        if (policy.lambda !== undefined && !d.isPinkManaged) {
+        if (phasePolicyEnabled && !d.isPinkManaged) {
           clone.__score = d.historicalScore * d.realtimeBoost * d.pinkMismatchBoostFactor * effective;
           d.score = clone.__score;
         }
@@ -1889,7 +2017,10 @@
     const eligible = clones.filter(p =>
       getCandidateSelectionScore(p) > 0 && getCandidateSlotScore(p) > 0);
     const slots = getMatchingSlotCounts(scoringConfig);
-    const normal = selectNormalCandidatesBySlots(eligible, slots.normal, {}, slotPlan, {
+    const selectionPlan = slotPlan.map(entry => entry.selectionPolicy === "three-group"
+      ? { ...entry, slots: Math.min(entry.capacity, entry.requestedSlots) }
+      : { ...entry });
+    const normal = selectNormalCandidatesBySlots(eligible, slots.normal, {}, selectionPlan, {
       state: {}, scoringConfig
     });
     const cross = selectCrossBucketCandidates(eligible, normal, slots.crossBucket);
@@ -1925,15 +2056,23 @@
           formula: "1 + weight * clamp((observed - expected) / (expected + smoothingCount), 0, 1)"
         } : policy ? {
           phaseScope: policy.lambda === undefined ? "unchanged" : "yellow-only",
+          ...(policy.noDecayThroughCycleCount !== undefined ? {
+            phaseScope: "yellow-cycle-count",
+            lambdaAfterCutoff: configuredYellowLambda,
+            noDecayThroughCycleCount: policy.noDecayThroughCycleCount,
+            cycleCountBasis: "floor((evaluationTimeMs-phaseAnchorAtMs)/cycleSec)",
+            cycleCounts: phaseCycleCounts
+          } : {}),
           pinkPhaseUnchanged: true, scoringTrustApplied: false,
           unavailablePhaseCount, unavailablePhaseRule: "preserve-observed-phase",
           ...(recentHistory ? {
-            recentMatch: { weight: recentHistory.config.weight, windowSize: recentHistory.config.windowSize,
+            recentMatch: { weight: withoutDayConfig ? withoutDayConfig.weight : recentHistory.config.weight,
+              windowSize: recentHistory.config.windowSize,
               includePreviousDays: true, historySource: "prior-normal-copies" }
           } : {})
         } : { replaces: "yellow-effective-phase-weight", pinkUnchanged: true, scoringTrustApplied: false }),
         populationAndSlotPlan: "same-as-production",
-        slotPlan: slotPlan.map(entry => ({ ...entry }))
+        slotPlan: selectionPlan
       },
       selected
     };
@@ -1963,10 +2102,13 @@
       .filter(entry => evaluationTimeMs - entry.at <= 30 * 60000)
       .map(entry => [entry.key, entry]));
     const selectedKeys = new Set(current.map(identify));
+    const groupTier = slotPlan.find(entry => entry.selectionPolicy === "three-group")?.viewerTier;
+    const bucketOf = p => groupTier ? getThreeGroupBucket(p.__rankKey, groupTier)
+      : getMatchingSlotBucketKey(p.__rankKey);
     const populations = new Map();
     const keyCounts = new Map();
     for (const p of pool) {
-      const bucket = getMatchingSlotBucketKey(p.__rankKey);
+      const bucket = bucketOf(p);
       const group = populations.get(bucket) ?? [];
       group.push(p);
       populations.set(bucket, group);
@@ -1979,7 +2121,7 @@
       [...group].sort((a, b) => getCandidateSlotScore(b) - getCandidateSlotScore(a))
         .forEach((p, i) => bucketRanks.set(p, i + 1));
       const normal = current.filter(p => !p.__crossBucket &&
-        getMatchingSlotBucketKey(p.__rankKey) === bucket);
+        bucketOf(p) === bucket);
       buckets[bucket] = {
         count: group.length, members: group.map(identify).sort().join("\n"),
         slots: slotPlan.find(entry => entry.bucket === bucket)?.slots ?? 0,
@@ -1991,7 +2133,7 @@
       const d = p.__detail ?? {};
       return {
         key: identify(p), name: p.name, shopname: p.shopname ?? "",
-        rankKey: p.__rankKey, bucket: getMatchingSlotBucketKey(p.__rankKey),
+        rankKey: p.__rankKey, bucket: bucketOf(p),
         uniqueIdentity: keyCounts.get(identify(p)) === 1,
         selected: selectedKeys.has(identify(p)),
         slotScore: getCandidateSlotScore(p), slotRank: bucketRanks.get(p),
@@ -2168,11 +2310,13 @@
     buildCopyAreaHistoryContext,
     getRecentAreaBoostConfig,
     applyCandidateAreaHistoryBoost,
+    applyCandidateDayRelativeAreaBoost,
     applyCandidateAreaPhaseDiagnostics,
     getCandidateSlotScore,
     assignCandidateSlotRanks,
     buildMatchingSlotBucketProbabilities,
     buildMatchingSlotPlan,
+    buildThreeGroupSlotPlan,
     prepareR6PrideFrequency,
     getRelativePopulationAdjustmentConfig,
     adjustSlotsByRelativePopulation,
